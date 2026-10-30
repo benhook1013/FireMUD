@@ -3,11 +3,15 @@ package net.firedevops.firemud.accountservice.controller;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.AccountUuidText;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
+import net.firedevops.firemud.accountservice.dto.UpdateProfileRestRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,10 +38,10 @@ public class ProfileController {
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    UUID parsedAccountUuid = requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
     requireProfileOwner(parsedAccountUuid);
-    Long parsedAccountId = accountService.resolveAccountStorageId(parsedAccountUuid);
+    Long parsedAccountId = resolveAccountStorageId(parsedAccountUuid);
     ProfileDto dto = accountService.getProfile(parsedTenantId, parsedAccountId);
     requireProfileResult(dto, parsedAccountUuid, parsedTenantId);
     return ResponseEntity.ok(ApiResponse.success(dto));
@@ -45,14 +49,15 @@ public class ProfileController {
 
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
-      @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
-    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+      @PathVariable String accountId, @Valid @RequestBody UpdateProfileRestRequest request) {
+    UUID parsedAccountUuid = requireAccountUuid(accountId);
+    UUID bodyAccountUuid = requireAccountUuid(request.accountId());
+    if (!parsedAccountUuid.equals(bodyAccountUuid)) {
+      throw new IllegalArgumentException("accountId must match the path selector");
+    }
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
     requireProfileOwner(parsedAccountUuid);
-    UUID bodyAccountUuid = AccountRequestReaders.requireAccountUuid(request.accountId());
-    if (!parsedAccountUuid.equals(bodyAccountUuid)) {
-      throw new IllegalArgumentException("Profile path and body accountId must match");
-    }
+    resolveAccountStorageId(parsedAccountUuid);
     if (request.presenceVisibilityPolicy() == null) {
       throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
     }
@@ -67,6 +72,26 @@ public class ProfileController {
                 request.presenceVisibilityPolicy()));
     requireProfileResult(dto, parsedAccountUuid, parsedTenantId);
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  private long resolveAccountStorageId(UUID accountUuid) {
+    try {
+      Long storageId = accountService.resolveAccountStorageId(accountUuid);
+      if (storageId == null || storageId <= 0L) {
+        throw new IllegalStateException("Account UUID resolved to an invalid storage owner");
+      }
+      return storageId;
+    } catch (IllegalStateException | DataAccessException ex) {
+      throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
+    }
+  }
+
+  private static UUID requireAccountUuid(String accountId) {
+    UUID parsed = AccountUuidText.parseOrNull(accountId);
+    if (parsed == null) {
+      throw new IllegalArgumentException("accountId must be a canonical non-nil Account UUID");
+    }
+    return parsed;
   }
 
   private static void requireProfileResult(ProfileDto dto, UUID accountUuid, long tenantId) {
