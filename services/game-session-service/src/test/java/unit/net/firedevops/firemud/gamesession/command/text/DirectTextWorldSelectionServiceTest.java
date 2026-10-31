@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.RealmView;
@@ -34,6 +36,9 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 class DirectTextWorldSelectionServiceTest {
   private static final Instant NOW = Instant.parse("2026-10-31T12:00:00Z");
@@ -45,10 +50,282 @@ class DirectTextWorldSelectionServiceTest {
   private static final UUID HOLD = UUID.fromString("66666666-6666-4666-8666-666666666666");
   private static final UUID FENCE = UUID.fromString("77777777-7777-4777-8777-777777777777");
   private static final UUID OTHER = UUID.fromString("88888888-8888-4888-8888-888888888888");
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final CanonicalPlayerRouteReadService reader =
       mock(CanonicalPlayerRouteReadService.class);
   private final MutableClock clock = new MutableClock();
+
+  @Test
+  void restoresAcrossInstancesWithOriginalOrderOwnershipAndDeadline() {
+    var first = target("");
+    var second = target("second");
+    var source = service(List.of(world(second), world(first)), List.of(first, second));
+    var original = source.browse().orElseThrow();
+    byte[] stored = source.encodeSnapshot(original).orElseThrow();
+    var replacement = service(List.of(world(second), world(first)), List.of(first, second));
+    clock.now = NOW.plusSeconds(299);
+
+    var restored = replacement.restoreSnapshot(stored).orElseThrow();
+
+    assertThat(restored.selectors()).containsExactly("other-tenant/other-world", "studio/forest");
+    assertThat(restored.worlds()).containsExactly(world(second), world(first));
+    assertThat(restored.expiresAt()).isEqualTo(original.expiresAt());
+    assertThat(replacement.encodeSnapshot(restored).orElseThrow()).isEqualTo(stored);
+    assertThat(replacement.resolve(restored, "1")).contains(second);
+    assertThat(replacement.resolve(restored, "2")).contains(first);
+    assertThat(replacement.resolve(restored, "STUDIO/FOREST")).contains(first);
+    assertThat(replacement.resolve(restored, "studio")).contains(first);
+    clearInvocations(reader);
+    assertThat(source.resolve(restored, "1")).isEmpty();
+    assertThat(replacement.resolve(original, "1")).isEmpty();
+    assertThat(replacement.encodeSnapshot(original)).isEmpty();
+    assertThat(replacement.encodeSnapshot(null)).isEmpty();
+    verifyNoInteractions(reader);
+
+    clock.now = NOW.plusSeconds(300).minusNanos(1);
+    assertThat(replacement.restoreSnapshot(stored)).isPresent();
+    assertThat(replacement.resolve(restored, "1")).contains(second);
+    clearInvocations(reader);
+    clock.now = NOW.plusSeconds(300);
+    assertThat(replacement.restoreSnapshot(stored)).isEmpty();
+    assertThat(replacement.resolve(restored, "1")).isEmpty();
+    verifyNoInteractions(reader);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"short", "long", "future", "expired"})
+  void rejectsInvalidOriginalTimesBeforeReadingSources(String change) {
+    var first = target("");
+    var source = service(List.of(world(first)), List.of(first));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    Instant created = "future".equals(change) ? NOW.plusSeconds(1) : NOW;
+    Instant expires = created.plusSeconds("short".equals(change) ? 299 : 300);
+    if ("long".equals(change)) {
+      expires = expires.plusNanos(1);
+    }
+    Instant deadline = expires;
+    byte[] altered =
+        alterSnapshot(
+            stored,
+            snapshot -> {
+              snapshot.set("createdAt", JSON.valueToTree(created));
+              snapshot.set("expiresAt", JSON.valueToTree(deadline));
+            });
+    if ("expired".equals(change)) {
+      clock.now = deadline;
+    }
+    clearInvocations(reader);
+
+    assertThat(source.restoreSnapshot(altered)).isEmpty();
+    verifyNoInteractions(reader);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"subset", "reorder", "duplicate", "empty", "fingerprint", "target", "world"})
+  void refusesSyntheticMenusEvenWhenTheCatalogFingerprintIsRetained(String change) {
+    var first = target("");
+    var second = target("second");
+    var source = service(List.of(world(first), world(second)), List.of(first, second));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    byte[] altered =
+        alterSnapshot(
+            stored,
+            snapshot -> {
+              ArrayNode choices = (ArrayNode) snapshot.get("choices");
+              switch (change) {
+                case "subset" -> choices.remove(1);
+                case "empty" -> choices.removeAll();
+                case "duplicate" -> choices.set(1, choices.get(0));
+                case "reorder" -> {
+                  var originalFirst = choices.get(0);
+                  choices.set(0, choices.get(1));
+                  choices.set(1, originalFirst);
+                }
+                case "fingerprint" -> snapshot.put("fingerprint", "forged");
+                case "target" ->
+                    ((ObjectNode) choices.get(0))
+                        .set("target", JSON.valueToTree(target("owner-namespace")));
+                case "world" ->
+                    ((ObjectNode) choices.get(0))
+                        .set("world", JSON.valueToTree(world(first, true)));
+                default -> throw new AssertionError(change);
+              }
+            });
+
+    assertThat(source.restoreSnapshot(altered)).isEmpty();
+    // Decodable but changed evidence was checked against the actual source, not just its digest.
+    verify(reader, times(2)).readVisiblePublicProductionTargets();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "unknown-target",
+        "unknown-world",
+        "missing-target-field",
+        "null-realms",
+        "coerced-number"
+      })
+  void refusesMalformedNestedRecordsWithoutConsultingSources(String change) {
+    var first = target("");
+    var source = service(List.of(world(first)), List.of(first));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    byte[] altered =
+        alterSnapshot(
+            stored,
+            snapshot -> {
+              var choice = snapshot.get("choices").get(0);
+              ObjectNode target = (ObjectNode) choice.get("target");
+              ObjectNode world = (ObjectNode) choice.get("world");
+              switch (change) {
+                case "unknown-target" -> target.put("unexpected", true);
+                case "unknown-world" -> world.put("unexpected", true);
+                case "missing-target-field" -> target.remove("positiveDurableAbort");
+                case "null-realms" -> world.putNull("realms");
+                case "coerced-number" -> target.put("gameInstanceId", "202");
+                default -> throw new AssertionError(change);
+              }
+            });
+    clearInvocations(reader);
+
+    assertThat(source.restoreSnapshot(altered)).isEmpty();
+    verifyNoInteractions(reader);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"reorder", "changed", "duplicate", "empty"})
+  void refusesRestorationAgainstChangedCurrentCatalog(String change) {
+    var first = target("");
+    var second = target("second");
+    AtomicReference<List<WorldView>> worlds =
+        new AtomicReference<>(List.of(world(first), world(second)));
+    var catalog = GameplayWorldCatalog.forWorldSupplier(worlds::get);
+    var source = service(catalog, List.of(first, second));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    worlds.set(
+        switch (change) {
+          case "reorder" -> List.of(world(second), world(first));
+          case "changed" -> List.of(world(first, true), world(second));
+          case "duplicate" -> List.of(world(first), world(first));
+          case "empty" -> List.of();
+          default -> throw new AssertionError(change);
+        });
+
+    assertThat(service(catalog, List.of(first, second)).restoreSnapshot(stored)).isEmpty();
+  }
+
+  @Test
+  void restorationRetainsFullCanonicalOwnerChecksBeforeAndAfterCreatingTheHandle() {
+    var first = target("");
+    var source = service(List.of(world(first)), List.of(first));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    var replacement = service(List.of(world(first)), List.of(first));
+    when(reader.readVisiblePublicProductionTargets())
+        .thenReturn(List.of(target("owner-namespace")));
+    assertThat(replacement.restoreSnapshot(stored)).isEmpty();
+
+    when(reader.readVisiblePublicProductionTargets()).thenReturn(List.of(first));
+    var restored = replacement.restoreSnapshot(stored).orElseThrow();
+    when(reader.readCurrentTarget(first)).thenReturn(target("owner-namespace"));
+    assertThat(replacement.resolve(restored, "1")).isEmpty();
+  }
+
+  @Test
+  void restorationRechecksOriginalExpiryAfterCanonicalAndCatalogReads() {
+    var first = target("");
+    AtomicReference<Runnable> readEffect = new AtomicReference<>(() -> {});
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              readEffect.get().run();
+              return List.of(world(first));
+            });
+    var source = service(catalog, List.of(first));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    var replacement = service(catalog, List.of(first));
+    when(reader.readVisiblePublicProductionTargets())
+        .thenAnswer(
+            invocation -> {
+              clock.now = NOW.plusSeconds(300);
+              return List.of(first);
+            });
+    assertThat(replacement.restoreSnapshot(stored)).isEmpty();
+
+    clock.now = NOW;
+    when(reader.readVisiblePublicProductionTargets()).thenReturn(List.of(first));
+    AtomicInteger reads = new AtomicInteger();
+    readEffect.set(
+        () -> {
+          if (reads.incrementAndGet() == 2) {
+            clock.now = NOW.plusSeconds(300);
+          }
+        });
+    assertThat(replacement.restoreSnapshot(stored)).isEmpty();
+  }
+
+  @Test
+  void restorationKeepsParsingRefusalSeparateFromUnavailableAndInvalidSources() {
+    var first = target("");
+    var source = service(List.of(world(first)), List.of(first));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    var replacement = service(List.of(world(first)), List.of(first));
+    var unavailable = new ReadUnavailableException("owner unreachable");
+    when(reader.readVisiblePublicProductionTargets()).thenThrow(unavailable);
+    clearInvocations(reader);
+    assertThat(replacement.restoreSnapshot(null)).isEmpty();
+    assertThat(replacement.restoreSnapshot(new byte[] {'{'})).isEmpty();
+    verifyNoInteractions(reader);
+    assertThatThrownBy(() -> replacement.restoreSnapshot(stored)).isSameAs(unavailable);
+    doThrow(new InvalidAuthorityException("owner invalid"))
+        .when(reader)
+        .readVisiblePublicProductionTargets();
+    assertThat(replacement.restoreSnapshot(stored)).isEmpty();
+
+    var catalogUnavailable =
+        new GameplayWorldCatalog.AuthorityPointerUnavailableException("unavailable");
+    var unreachableCatalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              throw catalogUnavailable;
+            });
+    var catalogReplacement = new DirectTextWorldSelectionService(unreachableCatalog, reader, clock);
+    assertThatThrownBy(() -> catalogReplacement.restoreSnapshot(stored))
+        .isSameAs(catalogUnavailable);
+    var defaultOff =
+        new DirectTextWorldSelectionService(
+            GameplayWorldCatalog.forWorldViews(List.of(world(first))),
+            CanonicalPlayerRouteReadService.unavailable(),
+            clock);
+    assertThatThrownBy(() -> defaultOff.restoreSnapshot(stored))
+        .isInstanceOf(ReadUnavailableException.class);
+  }
+
+  @Test
+  void restorationDoesNotHideCatalogDriftDuringFreshCompositionOrDuplicateCanonicalSources() {
+    var first = target("");
+    AtomicReference<List<WorldView>> worlds = new AtomicReference<>(List.of(world(first)));
+    var catalog = GameplayWorldCatalog.forWorldSupplier(worlds::get);
+    var source = service(catalog, List.of(first));
+    byte[] stored = source.encodeSnapshot(source.browse().orElseThrow()).orElseThrow();
+    when(reader.readVisiblePublicProductionTargets())
+        .thenAnswer(
+            invocation -> {
+              worlds.set(List.of());
+              return List.of(first);
+            });
+    assertThat(source.restoreSnapshot(stored)).isEmpty();
+    worlds.set(List.of(world(first)));
+    when(reader.readVisiblePublicProductionTargets()).thenReturn(List.of(first, first));
+    assertThat(source.restoreSnapshot(stored)).isEmpty();
+  }
+
+  private static byte[] alterSnapshot(byte[] stored, Consumer<ObjectNode> alteration) {
+    ObjectNode envelope = (ObjectNode) JSON.readTree(stored);
+    alteration.accept((ObjectNode) envelope.get("snapshot"));
+    return JSON.writeValueAsBytes(envelope);
+  }
 
   @Test
   void correlatesExactEvidenceInCatalogOrderAndRetainsCompleteTarget() {

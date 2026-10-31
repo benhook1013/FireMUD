@@ -27,7 +27,8 @@ class HelpTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.HELP, List.of("who"), "HELP who"),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     Mockito.verify(scriptEventPublisher)
@@ -49,6 +50,7 @@ class HelpTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.HELP, List.of(), "HELP"),
                 false,
+                Optional.empty(),
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();

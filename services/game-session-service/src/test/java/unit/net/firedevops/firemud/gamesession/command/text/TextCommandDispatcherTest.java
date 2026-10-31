@@ -31,6 +31,7 @@ class TextCommandDispatcherTest {
                 new TextCommand(
                     TextCommandType.HELP, List.of(), "HELP", "HELP", new TextCommandPayload.None()),
                 false,
+                Optional.empty(),
                 Optional.empty()));
 
     assertEquals(expected.commandResult(), actual.commandResult());

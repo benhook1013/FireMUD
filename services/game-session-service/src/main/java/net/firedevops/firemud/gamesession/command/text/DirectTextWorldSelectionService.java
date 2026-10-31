@@ -43,6 +43,43 @@ public final class DirectTextWorldSelectionService {
   public Optional<SelectionSnapshot> browse() {
     Instant createdAt = clock.instant();
     Instant expiresAt = createdAt.plus(MENU_LIFETIME);
+    return compose(createdAt, expiresAt).map(snapshot -> new SelectionSnapshot(this, snapshot));
+  }
+
+  /** Encodes only this instance's genuine handle as bounded, nonsecret storage evidence. */
+  public Optional<byte[]> encodeSnapshot(SelectionSnapshot retained) {
+    if (retained == null || retained.owner != this) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(DirectTextWorldSelectionSnapshotCodec.encode(retained.snapshot));
+    } catch (IllegalArgumentException exception) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Restores the same original observational menu, never authority or a renewed deadline. Parsing
+   * refusal is separate from guarded source reads so unavailable sources still escape unchanged.
+   */
+  public Optional<SelectionSnapshot> restoreSnapshot(byte[] stored) {
+    Optional<Snapshot> decoded = DirectTextWorldSelectionSnapshotCodec.decode(stored);
+    if (decoded.isEmpty()) {
+      return Optional.empty();
+    }
+    Snapshot retained = decoded.orElseThrow();
+    if (!MENU_LIFETIME.equals(Duration.between(retained.createdAt(), retained.expiresAt()))
+        || !isLive(retained)) {
+      return Optional.empty();
+    }
+    Optional<Snapshot> fresh = compose(retained.createdAt(), retained.expiresAt());
+    if (fresh.isEmpty() || !retained.equals(fresh.orElseThrow()) || !isLive(retained)) {
+      return Optional.empty();
+    }
+    return Optional.of(new SelectionSnapshot(this, retained));
+  }
+
+  private Optional<Snapshot> compose(Instant createdAt, Instant expiresAt) {
     var original = catalog.discoverySnapshot();
     List<CanonicalPlayableTarget> targets;
     try {
@@ -70,9 +107,7 @@ public final class DirectTextWorldSelectionService {
         || !clock.instant().isBefore(expiresAt)) {
       return Optional.empty();
     }
-    return Optional.of(
-        new SelectionSnapshot(
-            this, new Snapshot(choices, original.fingerprint(), createdAt, expiresAt)));
+    return Optional.of(new Snapshot(choices, original.fingerprint(), createdAt, expiresAt));
   }
 
   /** Resolves only the retained vector, then revalidates the complete selected owner record. */
@@ -214,14 +249,21 @@ public final class DirectTextWorldSelectionService {
     }
   }
 
-  private record Snapshot(
-      List<Choice> choices, String fingerprint, Instant createdAt, Instant expiresAt) {
-    private Snapshot {
+  record Snapshot(List<Choice> choices, String fingerprint, Instant createdAt, Instant expiresAt) {
+    Snapshot {
       choices = List.copyOf(choices);
+      Objects.requireNonNull(fingerprint, "fingerprint");
+      Objects.requireNonNull(createdAt, "createdAt");
+      Objects.requireNonNull(expiresAt, "expiresAt");
     }
   }
 
-  private record Choice(WorldView world, CanonicalPlayableTarget target) {
+  record Choice(WorldView world, CanonicalPlayableTarget target) {
+    Choice {
+      Objects.requireNonNull(world, "world");
+      Objects.requireNonNull(target, "target");
+    }
+
     private String selector() {
       return target.tenantSlug() + "/" + target.worldSlug();
     }

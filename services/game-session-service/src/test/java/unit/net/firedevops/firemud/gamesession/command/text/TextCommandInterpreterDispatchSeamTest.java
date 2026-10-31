@@ -5,20 +5,23 @@ import static org.mockito.Mockito.verify;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class TextCommandInterpreterDispatchSeamTest {
 
-  @Test
-  void interpretUsesRegistryAndDispatcherInsteadOfCommandTypeBranches() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void interpretUsesRegistryAndDispatcherInsteadOfCommandTypeBranches(boolean observedTransport) {
     SessionAuthenticationService authenticationService =
         Mockito.mock(SessionAuthenticationService.class);
     SessionContext gameplayContext =
@@ -30,6 +33,8 @@ class TextCommandInterpreterDispatchSeamTest {
     PromptComposer promptComposer = Mockito.mock(PromptComposer.class);
     AtomicReference<TextCommandDispatchGroup> dispatchedGroup = new AtomicReference<>();
     AtomicReference<TextCommandType> dispatchedType = new AtomicReference<>();
+    AtomicReference<Optional<ObservedDirectTextTransport>> dispatchedObservation =
+        new AtomicReference<>();
     TextCommandInterpretationResult expectedDispatchResult =
         new TextCommandInterpretationResult(
             CommandEnqueueResult.success(), List.of(PlayerOutput.notice("handled-by-help-group")));
@@ -47,6 +52,7 @@ class TextCommandInterpreterDispatchSeamTest {
                       TextCommandDispatchRequest request) {
                     dispatchedGroup.set(group());
                     dispatchedType.set(request.command().type());
+                    dispatchedObservation.set(request.observedDirectTextTransport());
                     return expectedDispatchResult;
                   }
                 }));
@@ -81,10 +87,19 @@ class TextCommandInterpreterDispatchSeamTest {
             dispatcher,
             commandHistoryRecorder);
 
-    TextCommandInterpretationResult actual = interpreter.interpret("1", "LOOK", false);
+    ObservedDirectTextTransport observed =
+        new ObservedDirectTextTransport(
+            "1", UUID.fromString("9fb38c88-2f1d-42aa-8e0b-7eb69caf8814"));
+    TextCommandInterpretationResult actual =
+        observedTransport
+            ? interpreter.interpret(
+                "1", new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"), false, observed)
+            : interpreter.interpret("1", "LOOK", false);
 
     assertEquals(TextCommandDispatchGroup.HELP, dispatchedGroup.get());
     assertEquals(TextCommandType.LOOK, dispatchedType.get());
+    assertEquals(
+        observedTransport ? Optional.of(observed) : Optional.empty(), dispatchedObservation.get());
     assertEquals(expectedDispatchResult.commandResult(), actual.commandResult());
     assertEquals(expectedDispatchResult.outputs(), actual.outputs());
     assertEquals(

@@ -44,7 +44,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
@@ -73,7 +74,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
@@ -117,7 +119,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.CHARS, List.of("demo"), "CHARS demo"),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
@@ -147,6 +150,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
                 false,
+                Optional.empty(),
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();

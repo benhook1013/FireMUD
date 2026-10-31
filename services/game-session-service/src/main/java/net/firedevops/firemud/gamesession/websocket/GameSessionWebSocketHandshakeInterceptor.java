@@ -6,6 +6,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 import java.util.Map;
+import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.stereotype.Component;
@@ -29,6 +30,8 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
   static final String LOCALE_HEADER = "X-Firemud-Locale";
   static final String ACCEPT_LANGUAGE_HEADER = "Accept-Language";
   static final String SESSION_ID_ATTR = "firemud.websocket.sessionId";
+  static final String OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR =
+      "firemud.websocket.observedDirectTextTransport";
   static final String BOOTSTRAP_GAME_INSTANCE_ATTR = "firemud.websocket.bootstrapGameInstanceId";
   static final String TENANT_ID_ATTR = "firemud.websocket.tenantId";
   static final String WORLD_SLUG_ATTR = "firemud.websocket.worldSlug";
@@ -53,9 +56,17 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
             bootstrapGameInstanceId,
             request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
     attributes.put(SESSION_ID_ATTR, sessionId);
+    attributes.remove(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR);
     boolean firstParty =
         "first_party_web".equals(request.getHeaders().getFirst(CONNECTION_MODE_HEADER))
             || StringUtils.hasText(request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
+    if (!firstParty) {
+      ObservedDirectTextTransport.fromHandshake(
+              request.getHeaders().getFirst(CONNECTION_MODE_HEADER),
+              sessionId,
+              request.getHeaders().getFirst(PROXY_CONNECTION_HEADER))
+          .ifPresent(value -> attributes.put(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR, value));
+    }
     if (firstParty) {
       attributes.put(CONNECTION_MODE_ATTR, "first_party_web");
       attributes.put(CONNECT_CONTEXT_ATTR, request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
