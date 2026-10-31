@@ -401,16 +401,8 @@ class SessionResumptionFlowTest {
 
     verify(accountRecentPresenceService)
         .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
-    verify(scriptEventPublisher)
-        .publishRegionExitEvent(
-            Mockito.argThat(
-                context ->
-                    context.sessionId() == 1L
-                        && context.gameInstanceId() == 1L
-                        && context.characterId() == 7001L
-                        && "R-1021".equals(context.roomInstanceId())),
-            Mockito.eq("disconnect:takeover:1:1:7001"),
-            Mockito.eq("TAKEOVER"));
+    verify(scriptEventPublisher, Mockito.never())
+        .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
