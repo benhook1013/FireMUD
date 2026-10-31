@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -75,7 +76,12 @@ class GameSessionJwtReadinessReceiverEngineTest {
     InOrder order = inOrder(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
     order.verify(fixture.localIdentityProvider).observe();
     order.verify(fixture.ownerReadPort).readCurrent(ownerRequest.capture());
-    order.verify(fixture.crypto).verify(any());
+    order
+        .verify(fixture.crypto)
+        .verify(
+            eq(fixture.mapper.parse(fixture.request)),
+            eq(fixture.sourceIdentity),
+            eq(fixture.local.wireIdentity().getAccountPublicJwksSha256()));
     order.verify(fixture.localIdentityProvider).observe();
     order.verify(fixture.ownerReadPort).readCurrent(ownerRequest.capture());
     verify(fixture.localIdentityProvider, times(2)).observe();
@@ -138,7 +144,11 @@ class GameSessionJwtReadinessReceiverEngineTest {
 
     verify(fixture.ownerReadPort, times(1)).readCurrent(any());
     verify(fixture.localIdentityProvider, times(1)).observe();
-    verify(fixture.crypto).verify(any());
+    verify(fixture.crypto)
+        .verify(
+            any(),
+            eq(fixture.sourceIdentity),
+            eq(fixture.local.wireIdentity().getAccountPublicJwksSha256()));
     verifyNoMoreInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
   }
 
@@ -160,7 +170,11 @@ class GameSessionJwtReadinessReceiverEngineTest {
 
     verify(fixture.ownerReadPort, times(2)).readCurrent(any());
     verify(fixture.localIdentityProvider, times(2)).observe();
-    verify(fixture.crypto).verify(any());
+    verify(fixture.crypto)
+        .verify(
+            any(),
+            eq(fixture.sourceIdentity),
+            eq(fixture.local.wireIdentity().getAccountPublicJwksSha256()));
     verifyNoMoreInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
   }
 
@@ -181,7 +195,11 @@ class GameSessionJwtReadinessReceiverEngineTest {
         .isInstanceOf(GameSessionJwtReadinessReceiverEngine.OwnerReadbackChangedException.class);
 
     verify(fixture.ownerReadPort, times(2)).readCurrent(any());
-    verify(fixture.crypto).verify(any());
+    verify(fixture.crypto)
+        .verify(
+            any(),
+            eq(fixture.sourceIdentity),
+            eq(fixture.local.wireIdentity().getAccountPublicJwksSha256()));
   }
 
   private static <T> T withAccountPeer(java.util.concurrent.Callable<T> action) {
@@ -241,7 +259,8 @@ class GameSessionJwtReadinessReceiverEngineTest {
     }
 
     private void stubVerifiedOutcome(ReceiveReadinessProbeResponse.ObservationOutcome outcome) {
-      when(crypto.verify(any()))
+      when(crypto.verify(
+              any(), eq(sourceIdentity), eq(local.wireIdentity().getAccountPublicJwksSha256())))
           .thenReturn(new GameSessionJwtReadinessProbeCrypto.VerifiedProbe(KID, outcome));
     }
 

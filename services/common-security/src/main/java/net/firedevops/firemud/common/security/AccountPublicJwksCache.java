@@ -166,6 +166,28 @@ public final class AccountPublicJwksCache {
   }
 
   /**
+   * Returns a key only from the exact protected source and JWKS bytes observed by the caller.
+   * Ordinary cache refresh and denial rules still apply; a binding mismatch does not force a load.
+   */
+  public RSAPublicKey keyFor(String kid, SourceIdentity requiredSource, String requiredJwksSha256) {
+    if (requiredSource == null
+        || requiredJwksSha256 == null
+        || !SHA256.matcher(requiredJwksSha256).matches()) {
+      throw new InvalidJwksException();
+    }
+    synchronized (monitor) {
+      RSAPublicKey key = keyFor(kid);
+      // Every installed snapshot has already matched expectedSource. Keep the lookup and
+      // comparison under the same monitor so a concurrent refresh cannot relabel this key.
+      if (!expectedSource.equals(requiredSource)
+          || !requiredJwksSha256.equals(loadedJwksFingerprint)) {
+        throw new InvalidJwksException();
+      }
+      return key;
+    }
+  }
+
+  /**
    * Permanently denies this kid for this cache instance, including during source outages. If the
    * finite deny history is exhausted, the instance enters terminal fail-closed quarantine so no key
    * can be re-admitted without growing or evicting deny history.

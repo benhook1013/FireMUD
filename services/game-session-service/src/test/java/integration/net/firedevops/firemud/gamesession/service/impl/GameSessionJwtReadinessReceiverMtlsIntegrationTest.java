@@ -146,6 +146,9 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
   private final AtomicReference<GameSessionJwtReadinessLocalIdentityProvider.LocalObservation>
       localObservation = new AtomicReference<>();
   private final AtomicBoolean responseHadNoApplicationAuthContext = new AtomicBoolean();
+  private final AtomicReference<AccountPublicJwksCache.PublicJwksSnapshot> currentJwksSnapshot =
+      new AtomicReference<>();
+  private final AtomicInteger jwksLoads = new AtomicInteger();
   private KeyPair signingKey;
   private AccountPublicJwksCache.SourceIdentity jwksSourceIdentity;
   private String fixturePublicJwksSha256;
@@ -191,6 +194,7 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     ownerTarget.set(null);
     localObservation.set(null);
     responseHadNoApplicationAuthContext.set(false);
+    jwksLoads.set(0);
 
     caCertificateFile = writePem("readiness-test-ca.crt", "CERTIFICATE", pki.caCertificate());
     accountClientFiles = writeIdentityFiles("account", pki.account());
@@ -206,11 +210,15 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     jwksSourceIdentity = sourceIdentity();
     String jwks = jwks(KID, (RSAPublicKey) signingKey.getPublic());
     fixturePublicJwksSha256 = sha256(jwks);
+    currentJwksSnapshot.set(
+        new AccountPublicJwksCache.PublicJwksSnapshot(
+            jwksSourceIdentity, jwks.getBytes(StandardCharsets.US_ASCII)));
     AccountPublicJwksCache keyCache =
         new AccountPublicJwksCache(
-            () ->
-                new AccountPublicJwksCache.PublicJwksSnapshot(
-                    jwksSourceIdentity, jwks.getBytes(StandardCharsets.US_ASCII)),
+            () -> {
+              jwksLoads.incrementAndGet();
+              return currentJwksSnapshot.get();
+            },
             jwksSourceIdentity,
             CLOCK,
             Duration.ofSeconds(300));
@@ -304,6 +312,86 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(SessionContext.isInternalService()).isFalse();
     assertThat(SessionContext.getServiceName()).isNull();
     assertThat(SessionContext.getServiceInstanceId()).isNull();
+  }
+
+  @Test
+  void warmKnownKeyCannotIssueReceiptForNewJwksBytesUnderTheSameSourceIdentity() throws Exception {
+    assertThat(receive(pki.account(), validRequest).getReceiverIdentity()).isEqualTo(localIdentity);
+    String changedJwks = jwks(KID, (RSAPublicKey) signingKey.getPublic()) + "\n";
+    currentJwksSnapshot.set(
+        new AccountPublicJwksCache.PublicJwksSnapshot(
+            jwksSourceIdentity, changedJwks.getBytes(StandardCharsets.US_ASCII)));
+    ReadinessReceiverLocalIdentity changedIdentity =
+        localIdentity.toBuilder().setAccountPublicJwksSha256(sha256(changedJwks)).build();
+    localObservation.set(
+        new GameSessionJwtReadinessLocalIdentityProvider.LocalObservation(
+            changedIdentity, jwksSourceIdentity));
+    ownerReadCalls.set(0);
+    responseHadNoApplicationAuthContext.set(false);
+
+    assertWarmSnapshotBindingDenied();
+
+    // A failed bound lookup neither refreshes a known kid nor corrupts the still-matching cache.
+    localObservation.set(
+        new GameSessionJwtReadinessLocalIdentityProvider.LocalObservation(
+            localIdentity, jwksSourceIdentity));
+    assertThat(receive(pki.account(), validRequest).getReceiverIdentity()).isEqualTo(localIdentity);
+    assertThat(jwksLoads).hasValue(1);
+  }
+
+  @Test
+  void warmKnownKeyCannotIssueReceiptNamingADifferentProtectedSourceIdentity() throws Exception {
+    receive(pki.account(), validRequest);
+    AccountPublicJwksCache.SourceIdentity changedSource =
+        new AccountPublicJwksCache.SourceIdentity(
+            jwksSourceIdentity.environmentId(),
+            jwksSourceIdentity.clusterId(),
+            jwksSourceIdentity.clusterIncarnationUid(),
+            jwksSourceIdentity.namespace(),
+            jwksSourceIdentity.namespaceUid(),
+            "66666666-6666-4666-8666-666666666666",
+            "account-api-r2",
+            jwksSourceIdentity.apiServerOrigin(),
+            jwksSourceIdentity.servingCaSha256());
+    currentJwksSnapshot.set(
+        new AccountPublicJwksCache.PublicJwksSnapshot(
+            changedSource, currentJwksSnapshot.get().jwksBytes()));
+    ReadinessReceiverLocalIdentity changedIdentity =
+        localIdentity.toBuilder()
+            .setAccountJwksSourceIdentity(
+                localIdentity.getAccountJwksSourceIdentity().toBuilder()
+                    .setConfigMapUid(changedSource.configMapUid())
+                    .setBindingRevision(changedSource.bindingRevision()))
+            .setAccountJwksTrustBindingRevision(changedSource.bindingRevision())
+            .build();
+    localObservation.set(
+        new GameSessionJwtReadinessLocalIdentityProvider.LocalObservation(
+            changedIdentity, changedSource));
+    ownerReadCalls.set(0);
+    responseHadNoApplicationAuthContext.set(false);
+
+    assertWarmSnapshotBindingDenied();
+  }
+
+  private void assertWarmSnapshotBindingDenied() {
+    assertThatThrownBy(() -> receive(pki.account(), validRequest))
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(Status.fromThrowable(failure).getDescription())
+                  .doesNotContain(
+                      validCompactJwt,
+                      fixturePublicJwksSha256,
+                      jwksSourceIdentity.apiServerOrigin());
+            });
+    assertThat(ownerReadCalls).hasValue(1);
+    assertThat(jwksLoads).hasValue(1);
+    assertThat(lastOwnerRequest.get().getProtectedLocalIdentity())
+        .isEqualTo(localObservation.get().wireIdentity());
+    assertThat(responseHadNoApplicationAuthContext).isFalse();
+    assertThat(SessionContext.getAccountId()).isNull();
   }
 
   @Test

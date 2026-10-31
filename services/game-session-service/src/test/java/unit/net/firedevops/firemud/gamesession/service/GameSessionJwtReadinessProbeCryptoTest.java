@@ -40,6 +40,8 @@ class GameSessionJwtReadinessProbeCryptoTest {
 
   private KeyPair signingKey;
   private GameSessionJwtReadinessProbeCrypto crypto;
+  private AccountPublicJwksCache cache;
+  private String publicJwksSha256;
   private final GameSessionJwtReadinessReceiverProtoMapper mapper =
       new GameSessionJwtReadinessReceiverProtoMapper();
 
@@ -48,7 +50,8 @@ class GameSessionJwtReadinessProbeCryptoTest {
     signingKey = rsa3072();
     AccountPublicJwksCache.SourceIdentity source = sourceIdentity();
     String jwks = jwks(KID, (RSAPublicKey) signingKey.getPublic());
-    AccountPublicJwksCache cache =
+    publicJwksSha256 = sha256(jwks);
+    cache =
         new AccountPublicJwksCache(
             () ->
                 new AccountPublicJwksCache.PublicJwksSnapshot(
@@ -71,7 +74,7 @@ class GameSessionJwtReadinessProbeCryptoTest {
       UUID jti = UUID.randomUUID();
       var parsed = mapper.parse(request(profile, expected, signedToken(profile, jti), jti).build());
 
-      var verified = crypto.verify(parsed);
+      var verified = crypto.verify(parsed, sourceIdentity(), publicJwksSha256);
 
       assertThat(verified.keyId()).isEqualTo(KID);
       assertThat(verified.outcome())
@@ -94,7 +97,7 @@ class GameSessionJwtReadinessProbeCryptoTest {
                       jti)
                   .build());
 
-      var verified = crypto.verify(parsed);
+      var verified = crypto.verify(parsed, sourceIdentity(), publicJwksSha256);
 
       assertThat(verified.outcome())
           .isEqualTo(ReceiveReadinessProbeResponse.ObservationOutcome.INAPPLICABLE_REJECT);
@@ -117,7 +120,7 @@ class GameSessionJwtReadinessProbeCryptoTest {
                     tampered,
                     jti)
                 .build());
-    assertThatThrownBy(() -> crypto.verify(tamperedProbe))
+    assertThatThrownBy(() -> crypto.verify(tamperedProbe, sourceIdentity(), publicJwksSha256))
         .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
 
     var mismatchedProbe =
@@ -138,8 +141,45 @@ class GameSessionJwtReadinessProbeCryptoTest {
             ReadinessProbeCoordinates.ExpectedOutcome.INAPPLICABLE_REJECT,
             mismatchedProbe.compactJwt(),
             mismatchedProbe.compactTokenSha256());
-    assertThatThrownBy(() -> crypto.verify(alteredExpectation))
+    assertThatThrownBy(() -> crypto.verify(alteredExpectation, sourceIdentity(), publicJwksSha256))
         .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
+  }
+
+  @Test
+  void requiresProtectedSnapshotBindingEvenForWarmKnownKeyAndHonorsHardDenial() throws Exception {
+    UUID jti = UUID.randomUUID();
+    var parsed =
+        mapper.parse(
+            request(
+                    GameSessionAccountDelegationProfile.PROFILE,
+                    ReadinessProbeCoordinates.ExpectedOutcome.ACCEPT,
+                    signedToken(GameSessionAccountDelegationProfile.PROFILE, jti),
+                    jti)
+                .build());
+    assertThat(crypto.verify(parsed, sourceIdentity(), publicJwksSha256).keyId()).isEqualTo(KID);
+    String changedBytesHash = sha256(jwks(KID, (RSAPublicKey) signingKey.getPublic()) + "\n");
+    assertThatThrownBy(() -> crypto.verify(parsed, sourceIdentity(), changedBytesHash))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasNoCause();
+    for (String malformed : new String[] {null, "", "A".repeat(64)}) {
+      assertThatThrownBy(() -> crypto.verify(parsed, sourceIdentity(), malformed))
+          .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+          .hasNoCause();
+    }
+    assertThatThrownBy(() -> crypto.verify(parsed, null, publicJwksSha256))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasNoCause();
+    cache.invalidateKid(KID);
+    assertThatThrownBy(() -> crypto.verify(parsed, sourceIdentity(), publicJwksSha256))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasNoCause();
+  }
+
+  private static String sha256(String value) throws Exception {
+    return java.util.HexFormat.of()
+        .formatHex(
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(StandardCharsets.US_ASCII)));
   }
 
   private static net.firedevops.firemud.gamesession.v1.ReceiveReadinessProbeRequest.Builder request(

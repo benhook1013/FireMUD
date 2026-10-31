@@ -7,6 +7,7 @@ import java.util.Set;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.ExplicitRouteProfilePolicy;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.VerifiedClaims;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.ControlUiJwtProfileValidator;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
@@ -46,9 +47,11 @@ public final class GameSessionJwtReadinessProbeCrypto {
   /**
    * Verifies signature, production profile shape, exact owner coordinates, and non-authorizing use.
    */
-  public VerifiedProbe verify(ParsedRequest request) {
+  public VerifiedProbe verify(
+      ParsedRequest request, SourceIdentity requiredSource, String requiredJwksSha256) {
     ExplicitRouteProfilePolicy policy = policy(request);
-    VerifiedClaims claims = verifier.verify(request.compactJwt(), policy);
+    VerifiedClaims claims =
+        verifier.verify(request.compactJwt(), policy, requiredSource, requiredJwksSha256);
     validateOwnerBoundProbe(request, claims);
     ReceiveReadinessProbeResponse.ObservationOutcome outcome =
         request.probeKind() == GameSessionJwtReadinessReceiverProtoMapper.ProbeKind.CANARY

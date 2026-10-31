@@ -53,7 +53,11 @@ public final class GameSessionJwtReadinessReceiverEngine {
     OwnerEvidence ownerBefore =
         protoMapper.requireCurrentOwner(parsed, protectedIdentity, ownerResponseBefore);
 
-    GameSessionJwtReadinessProbeCrypto.VerifiedProbe verified = crypto.verify(parsed);
+    GameSessionJwtReadinessProbeCrypto.VerifiedProbe verified =
+        crypto.verify(
+            parsed,
+            localBefore.jwksSourceIdentity(),
+            protectedIdentity.getAccountPublicJwksSha256());
     ReceiveReadinessProbeResponse.ObservationOutcome expectedObservation =
         parsed.expectedOutcome()
                 == net.firedevops.firemud.account.v1.ReadinessProbeCoordinates.ExpectedOutcome
