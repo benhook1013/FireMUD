@@ -88,6 +88,8 @@ dependencies {
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
     integrationTestImplementation(project(path = ":game-session-service", configuration = "gameSessionClassesProof"))
+    integrationTestImplementation(project(path = ":entity-management-service", configuration = "entityClassesProof"))
+    integrationTestImplementation(testFixtures(project(":common-test-support")))
     integrationTestImplementation(project(":social-groups-service"))
     integrationTestImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
@@ -163,6 +165,10 @@ tasks.named<Test>("integrationTest") {
     // Composition fixtures load Game Session and Common Saga migrations directly from the filesystem.
     inputs.dir(project(":game-session-service").file("src/main/resources/db/migration"))
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    val entityMigrationDirectory =
+        project(":entity-management-service").file("src/main/resources/db/migration")
+    inputs.dir(entityMigrationDirectory).withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("firemud.entity-management.migration-directory", entityMigrationDirectory.absolutePath)
     inputs.dir(project(":common-saga").file("src/main/resources/db/migration/saga"))
         .withPathSensitivity(PathSensitivity.RELATIVE)
     val loggingArtifacts = loggingAdminIntegrationTestArtifacts.artifactFiles
