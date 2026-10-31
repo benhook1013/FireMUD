@@ -1378,7 +1378,18 @@ class AccountGrpcServiceTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"", "{", "null", "[]", "{\"presenceVisibilityPolicy\":\"UNKNOWN\"}", "{}", "{\"presenceVisibilityPolicy\":null}", "{\"presenceVisibilityPolicy\":17}", "{\"presenceVisibilityPolicy\":\"HIDDEN_STAFF\"}"})
+  @ValueSource(
+      strings = {
+        "",
+        "{",
+        "null",
+        "[]",
+        "{\"presenceVisibilityPolicy\":\"UNKNOWN\"}",
+        "{}",
+        "{\"presenceVisibilityPolicy\":null}",
+        "{\"presenceVisibilityPolicy\":17}",
+        "{\"presenceVisibilityPolicy\":\"HIDDEN_STAFF\"}"
+      })
   void updateProfileRejectsMalformedJsonAndPolicyWithInvalidArgument(String profileJson) {
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service =
