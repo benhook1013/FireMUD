@@ -279,6 +279,41 @@ class SocialGroupsApplicationIntegrationTest {
   }
 
   @Test
+  void authenticatedFriendPresenceRejectsDuplicateOwnerSubjectsWithoutPartialRoster()
+      throws Exception {
+    String token = privilegedAccountToken(2L);
+    for (long friendAccountId : List.of(3L, 4L)) {
+      HttpResponse<String> addResponse =
+          send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                  .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                  .POST(
+                      HttpRequest.BodyPublishers.ofString(
+                          "{\"tenantId\":1,\"accountId\":2,\"friendAccountId\":%d}"
+                              .formatted(friendAccountId)))
+                  .build());
+      assertThat(addResponse.statusCode()).isEqualTo(200);
+      acceptFriendLink(1L, 2L, friendAccountId);
+    }
+    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true))
+                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(false))
+                .build());
+
+    HttpResponse<String> response =
+        send(
+            authedGet(
+                token, "http://localhost:" + port + "/friends/presence?tenantId=1&accountId=2"));
+
+    assertThat(response.statusCode()).isGreaterThanOrEqualTo(500);
+    assertThat(response.body()).doesNotContain("\"friendAccountId\":3");
+    assertThat(response.body()).doesNotContain("\"friendAccountId\":4");
+  }
+
+  @Test
   void friendRosterEndpointFallsBackToOfflineWhenPresenceIsUnavailable() throws Exception {
     String token = privilegedAccountToken(2L);
     send(
@@ -466,7 +501,7 @@ class SocialGroupsApplicationIntegrationTest {
     assertThat(response.body()).contains("\"publicCount\":0");
     assertThat(response.body()).contains("\"friendsOnlyCount\":2");
     assertThat(response.body()).contains("\"privateCount\":0");
-    assertThat(response.body()).contains("\"hiddenStaffCount\":0");
+    assertThat(response.body()).doesNotContain("hiddenStaffCount");
     assertThat(response.body()).contains("\"unspecifiedVisibilityCount\":0");
   }
 

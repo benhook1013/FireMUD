@@ -223,22 +223,6 @@ public final class SocialGroupsStubServer implements AutoCloseable {
                       UpdateFriendPresencePolicyRequest request,
                       StreamObserver<UpdateFriendPresencePolicyResponse> responseObserver) {
                     lastUpdateVisibilityRequest.set(request);
-                    if (request.getVisibilityPolicy()
-                        == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
-                            .FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF) {
-                      responseObserver.onNext(
-                          UpdateFriendPresencePolicyResponse.newBuilder()
-                              .setSuccess(false)
-                              .setError(
-                                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                                      .setCode("INVALID_ARGUMENT")
-                                      .setMessage(
-                                          "Friend presence visibility policy HIDDEN_STAFF is reserved")
-                                      .build())
-                              .build());
-                      responseObserver.onCompleted();
-                      return;
-                    }
                     friendPresencePolicy.set(request.getVisibilityPolicy());
                     responseObserver.onNext(
                         UpdateFriendPresencePolicyResponse.newBuilder()
@@ -410,7 +394,6 @@ public final class SocialGroupsStubServer implements AutoCloseable {
     int publicCount = 0;
     int friendsOnlyCount = 0;
     int privateCount = 0;
-    int hiddenStaffCount = 0;
     int unspecifiedVisibilityCount = 0;
     int sharedCount = 0;
     int isolatedCount = 0;
@@ -425,7 +408,6 @@ public final class SocialGroupsStubServer implements AutoCloseable {
         case FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC -> publicCount++;
         case FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY -> friendsOnlyCount++;
         case FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE -> privateCount++;
-        case FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF -> hiddenStaffCount++;
         case FRIEND_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED, UNRECOGNIZED ->
             unspecifiedVisibilityCount++;
       }
@@ -443,7 +425,6 @@ public final class SocialGroupsStubServer implements AutoCloseable {
         .setPublicCount(publicCount)
         .setFriendsOnlyCount(friendsOnlyCount)
         .setPrivateCount(privateCount)
-        .setHiddenStaffCount(hiddenStaffCount)
         .setUnspecifiedVisibilityCount(unspecifiedVisibilityCount)
         .setSharedCount(sharedCount)
         .setIsolatedCount(isolatedCount)
@@ -477,10 +458,6 @@ public final class SocialGroupsStubServer implements AutoCloseable {
           entry.getPresence().getVisibilityPolicy()
               == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
                   .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE;
-      case FRIEND_ROSTER_FILTER_HIDDEN_STAFF ->
-          entry.getPresence().getVisibilityPolicy()
-              == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy
-                  .FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF;
       case FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY ->
           entry.getPresence().getVisibilityPolicy()
                   == net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy

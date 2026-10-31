@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import io.jsonwebtoken.JwtException;
+import java.util.List;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionClaims;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
@@ -18,13 +19,14 @@ final class GameplayPresenceRoleClassifier {
     try {
       SessionClaims claims = SessionClaims.fromJwt(jwtUtil.parseToken(context.jwt()));
       String tenantId = Long.toString(context.tenantId());
-      if (claims.hasGameplayRole(tenantId, "god")) {
+      List<String> gameplayRoles = claims.scopedRoles().getOrDefault(tenantId, List.of());
+      if (gameplayRoles.stream().anyMatch("god"::equalsIgnoreCase)) {
         return GameplayPresenceRole.GOD;
       }
-      if (claims.hasGameplayRole(tenantId, "platformAdmin", "tenantAdmin")) {
+      if (gameplayRoles.stream().anyMatch("tenantAdmin"::equalsIgnoreCase)) {
         return GameplayPresenceRole.ADMIN;
       }
-      if (claims.hasGameplayRole(tenantId, "moderator")) {
+      if (gameplayRoles.stream().anyMatch("moderator"::equalsIgnoreCase)) {
         return GameplayPresenceRole.MODERATOR;
       }
     } catch (IllegalArgumentException | JwtException ex) {

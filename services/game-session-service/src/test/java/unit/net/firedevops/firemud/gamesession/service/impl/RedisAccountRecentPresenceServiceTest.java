@@ -385,6 +385,100 @@ class RedisAccountRecentPresenceServiceTest {
   }
 
   @Test
+  void findByAccountIdsReturnsOnlyStateOwnedByRequestedTenantAndAccount() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    AccountRecentPresenceState valid =
+        new AccountRecentPresenceState(
+            22L, "123", 1_700_000_000_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    AccountRecentPresenceState wrongTenant =
+        new AccountRecentPresenceState(
+            23L, "124", 1_700_000_000_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    AccountRecentPresenceState wrongAccount =
+        new AccountRecentPresenceState(
+            22L, "999", 1_700_000_000_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    when(valueOperations.get("accountrecentpresence:22:123")).thenReturn(valid);
+    when(valueOperations.get("accountrecentpresence:22:124")).thenReturn(wrongTenant);
+    when(valueOperations.get("accountrecentpresence:22:125")).thenReturn(wrongAccount);
+    RedisAccountRecentPresenceService service =
+        newService(redisTemplate, Mockito.mock(GameplayPresenceService.class));
+
+    assertEquals(Map.of("123", valid), service.findByAccountIds(22L, List.of("123", "124", "125")));
+  }
+
+  @Test
+  void recordConnectedPreservesReadableRetainedStateWithDifferentTenant() {
+    assertRetainedOwnerMismatchPreserved(
+        new AccountRecentPresenceState(
+            23L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS));
+  }
+
+  @Test
+  void recordConnectedPreservesReadableRetainedStateWithDifferentAccount() {
+    assertRetainedOwnerMismatchPreserved(
+        new AccountRecentPresenceState(
+            22L, "999", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS));
+  }
+
+  @Test
+  void recordDisconnectUsesContextRoutingWhenLiveTenantAccountOrSessionDisagrees() {
+    assertRecordDisconnectUsesContextRoutingWhenLivePresenceDoesNotMatch(
+        new GameplayPresence(
+            41L,
+            23L,
+            101L,
+            "ISOLATED",
+            "other-tenant-world",
+            "production",
+            18L,
+            "123",
+            7001L,
+            "Emberline",
+            GameplayPresenceRole.PLAYER,
+            1000L,
+            null,
+            1200L,
+            1300L));
+    assertRecordDisconnectUsesContextRoutingWhenLivePresenceDoesNotMatch(
+        new GameplayPresence(
+            41L,
+            22L,
+            101L,
+            "ISOLATED",
+            "other-account-world",
+            "production",
+            18L,
+            "999",
+            7001L,
+            "Emberline",
+            GameplayPresenceRole.PLAYER,
+            1000L,
+            null,
+            1200L,
+            1300L));
+    assertRecordDisconnectUsesContextRoutingWhenLivePresenceDoesNotMatch(
+        new GameplayPresence(
+            42L,
+            22L,
+            101L,
+            "ISOLATED",
+            "other-session-world",
+            "production",
+            18L,
+            "123",
+            7001L,
+            "Emberline",
+            GameplayPresenceRole.PLAYER,
+            1000L,
+            null,
+            1200L,
+            1300L));
+  }
+
+  @Test
   void recordConnectedRetriesAfterWatchedValueChanges() {
     @SuppressWarnings("unchecked")
     RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
@@ -556,6 +650,77 @@ class RedisAccountRecentPresenceServiceTest {
     assertThrows(IllegalStateException.class, () -> service.recordConnected(testContext()));
     verify(redisTemplate, never()).multi();
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+  }
+
+  private static void assertRetainedOwnerMismatchPreserved(AccountRecentPresenceState retained) {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    stubTransactionExecution(redisTemplate);
+    when(valueOperations.get("accountrecentpresence:22:123")).thenReturn(retained);
+    RedisAccountRecentPresenceService service =
+        newService(redisTemplate, Mockito.mock(GameplayPresenceService.class));
+
+    service.recordConnected(testContext());
+
+    verify(redisTemplate).watch("accountrecentpresence:22:123");
+    verify(redisTemplate).unwatch();
+    verify(redisTemplate, never()).multi();
+    verify(redisTemplate, never()).exec();
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+    verify(redisTemplate, never()).delete(anyString());
+  }
+
+  private static void assertRecordDisconnectUsesContextRoutingWhenLivePresenceDoesNotMatch(
+      GameplayPresence livePresence) {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    stubTransactionExecution(redisTemplate);
+
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            "123",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            99L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            99L,
+            "fallback-world",
+            "fallback-realm",
+            3L,
+            "ISOLATED");
+    SessionRoutingNormalizationService sessionRoutingNormalizationService =
+        Mockito.mock(SessionRoutingNormalizationService.class);
+    when(sessionRoutingNormalizationService.resolveProjectedSessionContext("41"))
+        .thenReturn(Optional.of(context));
+    GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
+    when(gameplayPresenceService.findConnectedBySessionId(41L))
+        .thenReturn(Optional.of(livePresence));
+    RedisAccountRecentPresenceService service =
+        newService(redisTemplate, gameplayPresenceService, sessionRoutingNormalizationService);
+
+    service.recordDisconnect(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+
+    ArgumentCaptor<Object> stateCaptor = ArgumentCaptor.forClass(Object.class);
+    verify(valueOperations)
+        .set(eq("accountrecentpresence:22:123"), stateCaptor.capture(), eq(Duration.ofMinutes(5)));
+    AccountRecentPresenceState state =
+        assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
+    assertEquals(99L, state.gameInstanceId());
+    assertEquals("ISOLATED", state.playableStateScope());
+    assertEquals("fallback-world", state.worldSlug());
+    assertEquals("fallback-realm", state.realmSlug());
+    assertEquals(3L, state.pointerVersion());
   }
 
   private static RedisAccountRecentPresenceService newService(

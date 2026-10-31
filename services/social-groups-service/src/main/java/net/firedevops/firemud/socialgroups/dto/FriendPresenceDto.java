@@ -16,8 +16,7 @@ public record FriendPresenceDto(
     String characterName,
     String visibilityPolicy,
     FriendPresenceActivityState activityState,
-    Instant lastSeenAt,
-    FriendRecentPresenceDisposition recentDisposition) {
+    Instant lastSeenAt) {
   public FriendPresenceDto(
       Long friendAccountId,
       boolean online,
@@ -29,8 +28,7 @@ public record FriendPresenceDto(
       Long characterId,
       String characterName,
       FriendPresenceActivityState activityState,
-      Instant lastSeenAt,
-      FriendRecentPresenceDisposition recentDisposition) {
+      Instant lastSeenAt) {
     this(
         friendAccountId,
         online,
@@ -43,8 +41,7 @@ public record FriendPresenceDto(
         characterName,
         null,
         activityState,
-        lastSeenAt,
-        recentDisposition);
+        lastSeenAt);
   }
 
   public FriendPresenceDto(
@@ -59,8 +56,7 @@ public record FriendPresenceDto(
       String characterName,
       String visibilityPolicy,
       FriendPresenceActivityState activityState,
-      Instant lastSeenAt,
-      FriendRecentPresenceDisposition recentDisposition) {
+      Instant lastSeenAt) {
     this(
         friendAccountId,
         online,
@@ -75,8 +71,7 @@ public record FriendPresenceDto(
         characterName,
         visibilityPolicy,
         activityState,
-        lastSeenAt,
-        recentDisposition);
+        lastSeenAt);
   }
 
   public FriendPresenceDto(
@@ -92,8 +87,7 @@ public record FriendPresenceDto(
       Long characterId,
       String characterName,
       FriendPresenceActivityState activityState,
-      Instant lastSeenAt,
-      FriendRecentPresenceDisposition recentDisposition) {
+      Instant lastSeenAt) {
     this(
         friendAccountId,
         online,
@@ -108,8 +102,7 @@ public record FriendPresenceDto(
         characterName,
         null,
         activityState,
-        lastSeenAt,
-        recentDisposition);
+        lastSeenAt);
   }
 
   public FriendPresenceDto(
@@ -125,8 +118,7 @@ public record FriendPresenceDto(
       String characterName,
       String visibilityPolicy,
       FriendPresenceActivityState activityState,
-      Instant lastSeenAt,
-      FriendRecentPresenceDisposition recentDisposition) {
+      Instant lastSeenAt) {
     this(
         friendAccountId,
         online,
@@ -141,7 +133,6 @@ public record FriendPresenceDto(
         characterName,
         visibilityPolicy,
         activityState,
-        lastSeenAt,
-        recentDisposition);
+        lastSeenAt);
   }
 }

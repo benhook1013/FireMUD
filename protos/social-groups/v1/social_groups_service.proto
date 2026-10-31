@@ -97,6 +97,8 @@ message ListFriendsRequest {
 }
 
 enum FriendRosterFilter {
+  reserved 8;
+  reserved "FRIEND_ROSTER_FILTER_HIDDEN_STAFF";
   FRIEND_ROSTER_FILTER_UNSPECIFIED = 0;
   FRIEND_ROSTER_FILTER_ALL = 1;
   FRIEND_ROSTER_FILTER_ONLINE = 2;
@@ -105,7 +107,6 @@ enum FriendRosterFilter {
   FRIEND_ROSTER_FILTER_PUBLIC = 5;
   FRIEND_ROSTER_FILTER_FRIENDS_ONLY = 6;
   FRIEND_ROSTER_FILTER_PRIVATE = 7;
-  FRIEND_ROSTER_FILTER_HIDDEN_STAFF = 8;
   FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY = 9;
   FRIEND_ROSTER_FILTER_SHARED = 10;
   FRIEND_ROSTER_FILTER_ISOLATED = 11;
@@ -165,6 +166,8 @@ message GetFriendRosterSummaryRequest {
 }
 
 message FriendRosterSummary {
+  reserved 8;
+  reserved "hidden_staff_count";
   int32 total_count = 1;
   int32 online_count = 2;
   int32 offline_count = 3;
@@ -172,7 +175,6 @@ message FriendRosterSummary {
   int32 public_count = 5;
   int32 friends_only_count = 6;
   int32 private_count = 7;
-  int32 hidden_staff_count = 8;
   int32 unspecified_visibility_count = 9;
   int32 shared_count = 10;
   int32 isolated_count = 11;
@@ -197,22 +199,18 @@ enum FriendPresenceActivityState {
   FRIEND_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK = 3;
 }
 
-enum FriendRecentPresenceDisposition {
-  FRIEND_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED = 0;
-  FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS = 1;
-  FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT = 2;
-  FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER = 3;
-}
-
 enum FriendPresenceVisibilityPolicy {
+  reserved 4;
+  reserved "FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF";
   FRIEND_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED = 0;
   FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC = 1;
   FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY = 2;
   FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE = 3;
-  FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF = 4;
 }
 
 message FriendPresenceEntry {
+  reserved 12;
+  reserved "recent_disposition";
   string friend_account_id = 1;
   bool online = 2;
   string game_instance_id = 3;
@@ -224,7 +222,6 @@ message FriendPresenceEntry {
   string world_display_name = 9;
   string realm_slug = 10;
   string realm_display_name = 11;
-  FriendRecentPresenceDisposition recent_disposition = 12;
   int64 pointer_version = 13;
   entity_management.v1.PlayableStateScope playable_state_scope = 14;
   FriendPresenceVisibilityPolicy visibility_policy = 15;

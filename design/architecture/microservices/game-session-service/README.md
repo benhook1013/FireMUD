@@ -48,7 +48,7 @@ The canonical authored-world launch preparation service is an evidence-only, sou
 - Maintain gameplay session state, reconnection bindings, and tick timing in Redis.
 - Persist Game Session control-plane metadata in PostgreSQL, including game-instance rows, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and operator/audit-relevant disconnect/remediation metadata.
 - Queue player commands, validate front-door session state, and dispatch gameplay work to Game Logic Service.
-- Own the canonical live gameplay-presence and recent-presence substrate for active sessions, first `WHO`, AFK/activity resolution, and disconnect disposition handoff into later social surfaces.
+- Own the canonical live gameplay-presence and recent-presence substrate for active sessions, first `WHO`, AFK/activity resolution, and internal disconnect diagnostics. Player-facing friend projections exclude disconnect disposition under the [Friend Presence Privacy Contract](../social-groups-service/api-contracts.md#friend-presence-privacy-contract).
 - Broadcast lifecycle events and world updates to other services.
 - Support reconnection and recovery of running games.
 - **Target-state script authority:** Game Session owns the durable exact `{scriptPatchVersion, scriptPinEpoch}` for each running game instance, atomically advances the epoch on every pin/repin/rollback, and retains the append-only committed rollout history. Automation readiness and observed-pin projections never replace this authority.

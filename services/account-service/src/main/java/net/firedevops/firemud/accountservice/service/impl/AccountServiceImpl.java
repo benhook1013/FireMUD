@@ -2303,7 +2303,7 @@ public class AccountServiceImpl implements AccountService {
   private ProfileDto projectProfile(
       Profile profile, Long tenantId, Long accountId, String accountUuid) {
     requireProfileOwner(profile, tenantId, accountId);
-    ProfileDto dto = profileMapper.toDto(profile, accountUuid);
+    ProfileDto dto = profileMapper.toProfileResponse(profile, accountUuid);
     if (dto == null
         || !accountUuid.equals(dto.accountId())
         || !Objects.equals(tenantId, dto.tenantId())) {

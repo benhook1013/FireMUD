@@ -5,12 +5,14 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
@@ -73,14 +75,18 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers = new HashMap<>();
     Map<String, AccountRecentPresenceState> recentStates =
         accountRecentPresenceService.findByAccountIds(tenantId, requestedIds);
+    validateRecentPresenceResponse(tenantId, requestedIds, recentStates);
+
+    Map<String, List<GameplayPresence>> activePresences =
+        gameplayPresenceService.listConnectedByAccountIds(tenantId, requestedIds);
+    validateActivePresenceResponse(tenantId, requestedIds, activePresences);
+
     for (String accountId : requestedIds) {
       results.put(
           accountId,
           offline(tenantId, accountId, recentStates.get(accountId), currentRuntimePointers));
     }
 
-    Map<String, List<GameplayPresence>> activePresences =
-        gameplayPresenceService.listConnectedByAccountIds(tenantId, requestedIds);
     for (Map.Entry<String, List<GameplayPresence>> entry : activePresences.entrySet()) {
       String accountId = entry.getKey();
       GameplayPresence presence =
@@ -127,6 +133,51 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     return List.copyOf(new ArrayList<>(results.values()));
   }
 
+  private void validateRecentPresenceResponse(
+      long tenantId,
+      Set<String> requestedIds,
+      Map<String, AccountRecentPresenceState> recentStates) {
+    if (recentStates == null) {
+      throw new IllegalStateException("Recent account presence response is unavailable");
+    }
+    for (Map.Entry<String, AccountRecentPresenceState> entry : recentStates.entrySet()) {
+      String accountId = entry.getKey();
+      AccountRecentPresenceState state = entry.getValue();
+      if (!requestedIds.contains(accountId)
+          || state == null
+          || state.tenantId() != tenantId
+          || !accountId.equals(state.accountId())) {
+        throw new IllegalStateException("Recent account presence response is inconsistent");
+      }
+    }
+  }
+
+  private void validateActivePresenceResponse(
+      long tenantId,
+      Set<String> requestedIds,
+      Map<String, List<GameplayPresence>> activePresences) {
+    if (activePresences == null) {
+      throw new IllegalStateException("Active account presence response is unavailable");
+    }
+    Set<Long> sessionIds = new HashSet<>();
+    for (Map.Entry<String, List<GameplayPresence>> entry : activePresences.entrySet()) {
+      String accountId = entry.getKey();
+      List<GameplayPresence> presences = entry.getValue();
+      if (!requestedIds.contains(accountId) || presences == null) {
+        throw new IllegalStateException("Active account presence response is inconsistent");
+      }
+      for (GameplayPresence presence : presences) {
+        if (presence == null
+            || presence.tenantId() != tenantId
+            || !accountId.equals(presence.accountId())
+            || presence.sessionId() <= 0
+            || !sessionIds.add(presence.sessionId())) {
+          throw new IllegalStateException("Active account presence response is inconsistent");
+        }
+      }
+    }
+  }
+
   private GameplayPresence selectCurrentPresence(
       long tenantId,
       List<GameplayPresence> presences,
@@ -145,7 +196,10 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       long tenantId,
       GameplayPresence presence,
       Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
-    if (presence == null || presence.tenantId() != tenantId || presence.gameInstanceId() <= 0) {
+    if (presence == null
+        || presence.sessionId() <= 0
+        || presence.tenantId() != tenantId
+        || presence.gameInstanceId() <= 0) {
       return false;
     }
     GameplayAdmissionPointerSnapshots.RoutingBundle routingBundle =
