@@ -80,6 +80,32 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual('OSError', manifest['diagnostics'][0]['reason'])
         self.assertNotIn('private details', json.dumps(manifest))
 
+    def test_same_module_compile_tasks_keep_distinct_diagnostics(self):
+        tasks = [':common-saga:compileJava', ':common-saga:compileTestJava']
+        self.log.write_text(''.join(f'> Task {task} FAILED\n' for task in tasks))
+        results = {tasks[0]: ('complete', 0), tasks[1]: ('failed', 1)}
+
+        def diagnostic(root, task, target):
+            status, exit_code = results[task]
+            target.write_text(json.dumps({'task': task, 'facts': f'facts for {task}'}) + '\n')
+            return {'status': status, 'exit': exit_code}
+
+        with patch.object(CAPTURE, 'diagnostic', side_effect=diagnostic):
+            CAPTURE.collect(self.root, self.log, self.output, 23)
+
+        expected_names = {CAPTURE.diagnostic_basename(task) for task in tasks}
+        actual_names = {path.name for path in self.output.glob('*-diagnostic.json')}
+        self.assertEqual(expected_names, actual_names)
+        for task in tasks:
+            contents = json.loads((self.output / CAPTURE.diagnostic_basename(task)).read_text())
+            self.assertEqual({'task': task, 'facts': f'facts for {task}'}, contents)
+
+        manifest = json.loads((self.output / 'manifest.json').read_text())
+        self.assertEqual(tasks, manifest['failed_tasks'])
+        self.assertEqual(23, manifest['check_exit'])
+        self.assertEqual({task: results[task][0] for task in tasks},
+                         {entry['task']: entry['status'] for entry in manifest['diagnostics']})
+
     def test_diagnostic_retains_only_structured_facts_and_no_check_command(self):
         runner = self.write('gradlew', '#!/bin/bash\n'
                             'printf "%s\\n" "$@" > diagnostic-args\n'
