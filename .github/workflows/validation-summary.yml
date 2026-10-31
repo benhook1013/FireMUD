@@ -157,18 +157,50 @@ jobs:
               "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
               "world-management-service", "hosted-environment-identity-controller", "load-testing",
             ]);
-            const placeholder = "Build and Test ($" + "{{ matrix.module }})";
+            const placeholders = new Set([
+              "Build and Test ($" + "{{ matrix.module }})",
+              "Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})",
+            ]);
+            const aggregateJobs = jobs.filter(job => job.name === "Account Coverage Aggregate");
+            if (aggregateJobs.length > 1) throw new Error("Duplicate Account Coverage Aggregate job");
+            const aggregate = aggregateJobs[0];
             const fixedNames = new Set([...fixedChecks.map(([, name]) => name), "Detect CI-Relevant Changes", "PostgreSQL Runtime Upgrade Proof"]);
             const matrix = [];
             for (const job of jobs) {
               if (fixedNames.has(job.name)) continue;
-              const module = /^Build and Test \(([a-z0-9-]+)\)$/.exec(job.name || "")?.[1];
-              if (modules.has(module) || (job.name === placeholder && job.conclusion === "skipped")) matrix.push(job);
-              else throw new Error(`Unknown Validation source job: ${job.name}`);
+              if (job.name === "Account Coverage Aggregate") continue;
+              const match = /^Build and Test \(([a-z0-9-]+)(?: \/ (full|[12]))?\)$/.exec(job.name || "");
+              if (match && modules.has(match[1])) {
+                const [, module, partition] = match;
+                if (partition && (module === "account-service" ? !["1", "2"].includes(partition) : partition !== "full")) {
+                  throw new Error(`Invalid module partition: ${job.name}`);
+                }
+                matrix.push({ job, module, partition: partition || null });
+              } else if (placeholders.has(job.name) && job.conclusion === "skipped") {
+                matrix.push({ job, placeholder: true });
+              } else {
+                throw new Error(`Unknown Validation source job: ${job.name}`);
+              }
             }
             one("PostgreSQL Runtime Upgrade Proof");
-            if (!matrix.length || new Set(matrix.map(job => job.name)).size !== matrix.length ||
-                (matrix.some(job => job.name === placeholder) && matrix.length !== 1)) {
+            const accountMatrix = matrix.filter(entry => entry.module === "account-service");
+            const hasPartitionedAccount = accountMatrix.length > 0 && accountMatrix.every(entry => entry.partition !== null);
+            const hasLegacyAccount = accountMatrix.length === 1 && accountMatrix[0].partition === null;
+            const duplicateNonAccountModule = matrix.some(entry =>
+              entry.module && entry.module !== "account-service" &&
+              matrix.filter(candidate => candidate.module === entry.module).length !== 1
+            );
+            if (!matrix.length || new Set(matrix.map(entry => entry.job.name)).size !== matrix.length ||
+                (matrix.some(entry => entry.placeholder) && matrix.length !== 1) ||
+                duplicateNonAccountModule ||
+                (accountMatrix.length > 0 && !hasPartitionedAccount && !hasLegacyAccount) ||
+                (hasPartitionedAccount && (
+                  accountMatrix.length !== 2 ||
+                  accountMatrix.map(entry => entry.partition).sort().join(",") !== "1,2" ||
+                  !aggregate
+                )) ||
+                (hasLegacyAccount && aggregate) ||
+                (accountMatrix.length === 0 && aggregate && aggregate.conclusion !== "skipped")) {
               throw new Error("Missing or ambiguous module matrix");
             }
             const reduceResult = results => {
@@ -178,7 +210,8 @@ jobs:
               return results.includes("success") ? "success" : "skipped";
             };
             const validationChecks = fixedChecks.map(([label, name]) => [label, one(name)]);
-            validationChecks.push(["Service build/test matrix", reduceResult(matrix.map(job => job.conclusion))]);
+            validationChecks.push(["Service build/test matrix", reduceResult(matrix.map(entry => entry.job.conclusion))]);
+            if (aggregate) validationChecks.push(["Account coverage aggregation", aggregate.conclusion]);
             if (validationChecks.some(([, result]) => result === "neutral")) throw new Error("Unexpected neutral Validation job");
 
             const statusIcon = (result) => {

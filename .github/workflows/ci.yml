@@ -149,10 +149,10 @@ jobs:
             outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>
               module === "account-service"
                 ? [
-                    { module, partition: "1" },
-                    { module, partition: "2" },
+                    { module, partition: "1", "java-version": 21 },
+                    { module, partition: "2", "java-version": 21 },
                   ]
-                : [{ module, partition: "full" }]
+                : [{ module, partition: "full", "java-version": 21 }]
             );
             for (const [name, value] of Object.entries(outputs)) {
               core.setOutput(
@@ -1068,7 +1068,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java-version: [21]
         include: ${{ fromJSON(needs.changes.outputs.module_check_matrix) }}
 
     steps:
@@ -1231,6 +1230,7 @@ jobs:
 
       - name: Download both Account partition artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
         with:
           pattern: account-ci-partition-${{ github.sha }}-attempt-${{ github.run_attempt }}-partition-*
           path: services/account-service/build/account-ci-partition-inputs

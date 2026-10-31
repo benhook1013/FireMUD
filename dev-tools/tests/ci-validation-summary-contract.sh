@@ -59,7 +59,11 @@ const pr = {
 };
 const row = (name, id) => ({ id, name, run_id: 70, run_attempt: 1, head_sha: head, status: 'completed', conclusion: 'success' });
 const jobs = payload.names.filter(name => !name.includes('${{')).map((name, i) => row(name, i + 1));
-jobs.push(row('Build and Test (account-service)', 90), row('Build and Test (common-security)', 91));
+jobs.push(
+  row('Build and Test (account-service / 1)', 90),
+  row('Build and Test (account-service / 2)', 92),
+  row('Build and Test (common-security / full)', 91),
+);
 const botComment = (id, body, created_at) => ({ id, body, user: { login: 'github-actions[bot]' }, created_at });
 const comments = [
   { id: 1, body: '### Validation Summary\nspoofed contributor comment', user: { login: 'contributor' } },
@@ -213,14 +217,38 @@ async function noWrites(config, reject = false) {
     clone(jobs).map((x, i) => i === 0 ? { ...x, conclusion: null } : x),
   ]) await noWrites({ jobs: data }, true);
   await noWrites({ total: jobs.length + 1 }, true); await noWrites({ total: 201 }, true);
-  const matrixFail = clone(jobs); matrixFail.find(x => x.name === 'Build and Test (common-security)').conclusion = 'failure';
+  const matrixFail = clone(jobs); matrixFail.find(x => x.name === 'Build and Test (common-security / full)').conclusion = 'failure';
   const failed = harness({ jobs: matrixFail }); await failed.run();
   assert.match(failed.calls.creates[0].body, /One or more validation checks failed/);
   assert.match(failed.calls.creates[0].body, /Service build\/test matrix: `failure`/);
+  const accountPartitionFail = clone(jobs);
+  accountPartitionFail.find(x => x.name === 'Build and Test (account-service / 2)').conclusion = 'failure';
+  accountPartitionFail.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';
+  const failedAccountPartition = harness({ jobs: accountPartitionFail }); await failedAccountPartition.run();
+  assert.match(failedAccountPartition.calls.creates[0].body, /Service build\/test matrix: `failure`/);
+  assert.match(failedAccountPartition.calls.creates[0].body, /Account coverage aggregation: `skipped`/);
+  const failedAggregate = clone(jobs);
+  failedAggregate.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'failure';
+  const failedAggregateRun = harness({ jobs: failedAggregate }); await failedAggregateRun.run();
+  assert.match(failedAggregateRun.calls.creates[0].body, /Account coverage aggregation: `failure`/);
+  await noWrites({ jobs: clone(jobs).filter(x => x.name !== 'Build and Test (account-service / 2)') }, true);
+  await noWrites({ jobs: clone(jobs).filter(x => x.name !== 'Account Coverage Aggregate') }, true);
+
   const skipped = clone(jobs).filter(x => !x.name.startsWith('Build and Test ('));
-  skipped.push({ ...row('Build and Test ($' + '{{ matrix.module }})', 201), conclusion: 'skipped' });
+  skipped.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';
+  skipped.push({ ...row('Build and Test ($' + '{{ matrix.module }} / $' + '{{ matrix.partition }})', 201), conclusion: 'skipped' });
   const skippedRun = harness({ jobs: skipped }); await skippedRun.run();
   assert.match(skippedRun.calls.creates[0].body, /Service build\/test matrix: `skipped`/);
+  assert.match(skippedRun.calls.creates[0].body, /Account coverage aggregation: `skipped`/);
+
+  const legacy = clone(jobs).filter(x =>
+    x.name !== 'Account Coverage Aggregate' &&
+    !x.name.startsWith('Build and Test (account-service /') &&
+    x.name !== 'Build and Test (common-security / full)'
+  );
+  legacy.push(row('Build and Test (account-service)', 202), row('Build and Test (common-security)', 203));
+  const legacyRun = harness({ jobs: legacy }); await legacyRun.run();
+  assert.match(legacyRun.calls.creates[0].body, /Service build\/test matrix: `success`/);
   const neutral = clone(jobs); neutral.find(x => x.name.startsWith('Build and Test (')).conclusion = 'neutral';
   await noWrites({ jobs: neutral }, true);
   await noWrites({ comments: Array.from({ length: 1001 }, (_, i) => botComment(i + 1, 'Unrelated', '2025-01-01T00:00:00Z')) }, true);

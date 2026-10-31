@@ -294,11 +294,20 @@ def verify_aggregate(
         f"account-ci-partition-{source_revision}-attempt-{run_attempt}-partition-1": 1,
         f"account-ci-partition-{source_revision}-attempt-{run_attempt}-partition-2": 2,
     }
+    if not input_dir.is_dir():
+        raise ValueError(
+            "could not retrieve both current-attempt Account partition artifacts. A "
+            "failed-job retry may retain successful partitions from an earlier attempt; "
+            "use Actions > Re-run all jobs for this workflow run to regenerate both "
+            "partitions before aggregation."
+        )
     artifacts = sorted(path for path in input_dir.iterdir() if path.is_dir())
     if {path.name for path in artifacts} != set(expected_dirs):
         raise ValueError(
-            "aggregate requires exactly the two current Account partition artifacts; "
-            f"found {[path.name for path in artifacts]}"
+            "aggregate requires both current-attempt Account partition artifacts; "
+            f"found {[path.name for path in artifacts]}. A failed-job retry may retain a "
+            "successful partition from an earlier attempt; use Actions > Re-run all jobs "
+            "for this workflow run to regenerate both partitions before aggregation."
         )
 
     manifests = {}

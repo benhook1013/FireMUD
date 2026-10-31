@@ -76,6 +76,37 @@ def require_equal(mapping, path, expected, label):
         )
 
 
+def evaluate_module_check_matrix(step, modules):
+    script = value_at(step, ("with", "script"), "ci workflow")
+    match = re.search(
+        r"(?ms)^[ \t]*outputs\.module_check_matrix = .*?^[ \t]*\);",
+        script,
+    )
+    if match is None:
+        raise SystemExit("ci workflow: module check matrix builder is missing")
+    node_script = """
+const fs = require("node:fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const outputs = { affected_modules: input.modules };
+const rows = new Function("outputs", `${input.assignment}\nreturn outputs.module_check_matrix;`)(outputs);
+process.stdout.write(JSON.stringify(rows));
+"""
+    try:
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            check=True,
+            capture_output=True,
+            text=True,
+            input=json.dumps({"modules": modules, "assignment": match.group(0).strip()}),
+        )
+        rows = json.loads(result.stdout)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"ci workflow: module check matrix fixture failed: {exc}") from exc
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise SystemExit("ci workflow: module check matrix builder must return job records")
+    return rows
+
+
 def require_contains(mapping, path, expected, label):
     actual = value_at(mapping, path, label)
     if not isinstance(actual, str) or expected not in actual:
@@ -345,6 +376,21 @@ require_equal(
     "${{ fromJSON(needs.changes.outputs.module_check_matrix) }}",
     "ci workflow",
 )
+matrix_config = value_at(ci, ("jobs", "build-and-test", "strategy", "matrix"), "ci workflow")
+if set(matrix_config) != {"include"}:
+    raise SystemExit("ci workflow: module check matrix must use independent include-only records")
+matrix_rows = evaluate_module_check_matrix(ci_compute_step, ["account-service", "common-security"])
+expected_matrix_rows = [
+    {"module": "account-service", "partition": "1", "java-version": 21},
+    {"module": "account-service", "partition": "2", "java-version": 21},
+    {"module": "common-security", "partition": "full", "java-version": 21},
+]
+# With an include-only matrix each input record is one complete job combination.
+expanded_jobs = [dict(row) for row in matrix_rows]
+if expanded_jobs != expected_matrix_rows or len({
+    (row["module"], row["partition"]) for row in expanded_jobs
+}) != 3:
+    raise SystemExit(f"ci workflow: matrix expansion lost or duplicated a job: {expanded_jobs!r}")
 require_contains(
     ci_compute_step,
     ("with", "script"),
@@ -354,19 +400,32 @@ require_contains(
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    '{ module, partition: "1" },',
+    '{ module, partition: "1", "java-version": 21 },',
     "ci workflow",
 )
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    '{ module, partition: "2" },',
+    '{ module, partition: "2", "java-version": 21 },',
     "ci workflow",
 )
 require_contains(
     ci_compute_step,
     ("with", "script"),
     'partition: "full"',
+    "ci workflow",
+)
+require_contains(
+    ci_compute_step,
+    ("with", "script"),
+    '"java-version": 21',
+    "ci workflow",
+)
+java_setup_step = find_step(ci, "build-and-test", "Set Up Java", "ci workflow")
+require_equal(
+    java_setup_step,
+    ("with", "java-version"),
+    "${{ matrix.java-version }}",
     "ci workflow",
 )
 
@@ -516,6 +575,12 @@ download_account_partitions = find_step(
     ci,
     "account-coverage-aggregate",
     "Download both Account partition artifacts",
+    "ci workflow",
+)
+require_equal(
+    download_account_partitions,
+    ("continue-on-error",),
+    "true",
     "ci workflow",
 )
 require_equal(

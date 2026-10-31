@@ -134,8 +134,15 @@ class AccountCiPartitionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             write_artifact(root, 1, plan)
-            with self.assertRaisesRegex(ValueError, "exactly the two current"):
+            with self.assertRaisesRegex(ValueError, "Re-run all jobs"):
                 PARTITION.verify_aggregate(root, plan["source_revision"], "3")
+
+    def test_aggregate_explains_the_whole_run_retry_when_no_current_shards_exist(self):
+        plan = make_plan()
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary) / "missing-current-attempt"
+            with self.assertRaisesRegex(ValueError, "Re-run all jobs"):
+                PARTITION.verify_aggregate(missing, plan["source_revision"], "3")
 
     def test_partition_pair_rejects_duplicate_or_incomplete_assignment(self):
         plan = make_plan()
