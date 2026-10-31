@@ -303,6 +303,39 @@ class DirectTextAuthenticatedLobbyTest {
   }
 
   @Test
+  void accountEvaluationAheadOfGameSessionClockIsRetainedExactlyWhileLoginRemainsLive() {
+    Clock gameSessionClock = Clock.fixed(NOW.minusMillis(30), ZoneOffset.UTC);
+    var f = new Fixture(gameSessionClock);
+    var accountScope = scopeResponse().toBuilder().setEvaluatedAt(NOW.toString()).build();
+    when(f.selection.resolve(null, "public")).thenReturn(Optional.of(f.scope.publicTarget()));
+    when(f.account.issueDirectTextConnectScope(any(), any())).thenReturn(accountScope);
+    when(f.repository.readCommittedScope(any())).thenAnswer(call -> call.getArgument(0));
+
+    var retained = f.owner.realms(f.original, f.result, f.custody, null, "public");
+
+    assertThat(retained.issued().evaluatedAt()).isEqualTo(accountScope.getEvaluatedAt());
+    assertThat(retained.issued().connectScopeExpiresAt())
+        .isEqualTo(accountScope.getConnectScopeExpiresAt());
+    verify(f.repository).retainScope(retained, f.result, gameSessionClock);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"issuedAt", "notBefore"})
+  void futureLoginTimestampDeniesRealmPreparationBeforeEffects(String futureClaim) {
+    var f = new Fixture();
+    long future = NOW.plusSeconds(1).getEpochSecond();
+    long issuedAt = futureClaim.equals("issuedAt") ? future : NOW.minusSeconds(2).getEpochSecond();
+    long notBefore =
+        futureClaim.equals("notBefore") ? future : NOW.minusSeconds(2).getEpochSecond();
+    when(f.result.evidence()).thenReturn(evidence(f.original, issuedAt, notBefore));
+
+    assertThatThrownBy(() -> f.owner.realms(f.original, f.result, f.custody, null, "public"))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    verifyNoInteractions(f.repository, f.account, f.selection);
+  }
+
+  @Test
   void committedExactRequestAndPossibleStatePrecedeAccountAndReplyPersistence() {
     var f = new Fixture();
     when(f.account.joinPublicProductionMembership(any(), any(), any(), any()))
@@ -397,7 +430,15 @@ class DirectTextAuthenticatedLobbyTest {
                 f.scope.requireCurrent(
                     f.original,
                     f.result,
-                    new ObservedDirectTextTransport("42", UUID.randomUUID()),
+                    new ObservedDirectTextTransport("42", f.transport.proxyConnectionId()),
+                    CLOCK))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                f.scope.requireCurrent(
+                    f.original,
+                    f.result,
+                    new ObservedDirectTextTransport("00042", UUID.randomUUID()),
                     CLOCK))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
@@ -446,6 +487,10 @@ class DirectTextAuthenticatedLobbyTest {
         };
 
     Fixture() {
+      this(CLOCK);
+    }
+
+    Fixture(Clock ownerClock) {
       when(result.evidence()).thenReturn(evidence(original));
       when(result.compactJwtBytes())
           .thenAnswer(call -> "fixture-private-token".getBytes(StandardCharsets.US_ASCII));
@@ -524,12 +569,18 @@ class DirectTextAuthenticatedLobbyTest {
           };
       owner =
           new DirectTextAuthenticatedLobbyOwner(
-              repository, selection, account, transactions, CLOCK);
+              repository, selection, account, transactions, ownerClock);
     }
   }
 
   private static CanonicalGameplayLoginResult.NonSecretEvidence evidence(
       InitialGameplayLoginAttemptCoordinates original) {
+    return evidence(
+        original, NOW.minusSeconds(2).getEpochSecond(), NOW.minusSeconds(2).getEpochSecond());
+  }
+
+  private static CanonicalGameplayLoginResult.NonSecretEvidence evidence(
+      InitialGameplayLoginAttemptCoordinates original, long issuedAt, long notBefore) {
     try {
       return new CanonicalGameplayLoginResult.NonSecretEvidence(
           ACCOUNT,
@@ -538,8 +589,8 @@ class DirectTextAuthenticatedLobbyTest {
           UUID.randomUUID(),
           "a".repeat(64),
           GameSessionAccountDelegationProfile.PROFILE,
-          NOW.minusSeconds(2).getEpochSecond(),
-          NOW.minusSeconds(2).getEpochSecond(),
+          issuedAt,
+          notBefore,
           NOW.plusSeconds(120).getEpochSecond(),
           "1",
           "5",

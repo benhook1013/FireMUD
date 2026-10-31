@@ -1196,7 +1196,8 @@ class AccountClientTest {
             new ServiceEndpointsProperties(),
             new CommonGrpcClientProperties(),
             channelFactory,
-            BlockingGrpcStubCustomizer.noop());
+            BlockingGrpcStubCustomizer.noop(),
+            Clock.fixed(JOIN_TEST_NOW, ZoneOffset.UTC));
     setStub(client, stub);
     return client;
   }

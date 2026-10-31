@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -22,6 +23,7 @@ import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -101,6 +103,10 @@ class DirectTextWorldMenuRedisStoreTest {
                       new String(
                           invocation.getArgument(6, byte[].class), StandardCharsets.US_ASCII))
                   .isEqualTo(clear ? "0" : Long.toString(CLOCK.millis() + 300_000L));
+              byte[] expected = invocation.getArgument(4, byte[].class);
+              if (!Arrays.equals(expected, stored.get() == null ? new byte[0] : stored.get())) {
+                return "PREIMAGE_MISMATCH";
+              }
               if ("MENU_WRITTEN".equals(outcome.get())) {
                 stored.set(invocation.getArgument(5, byte[].class));
               }
@@ -117,20 +123,25 @@ class DirectTextWorldMenuRedisStoreTest {
 
   @Test
   void retainsGenuineMenuAndRestoresOnlyToItsExactObservation() {
-    var menu = selection.browse().orElseThrow();
-    assertThat(store.replace(transport, menu)).isTrue();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
     var restored = store.find(transport).orElseThrow();
     assertThat(restored.expiresAt()).isEqualTo(menu.expiresAt());
     assertThat(selection.encodeSnapshot(restored))
         .hasValueSatisfying(
             bytes -> assertThat(bytes).isEqualTo(selection.encodeSnapshot(menu).orElseThrow()));
+    byte[] original = stored.get();
+    outcome.set("MENU_UNCHANGED");
+    assertThat(store.reassert(transport, menu)).isTrue();
+    assertThat(store.reassert(transport, restored)).isTrue();
+    assertThat(stored.get()).isEqualTo(original);
     assertThat(new String(stored.get(), StandardCharsets.UTF_8))
         .contains(transport.proxyConnectionId().toString(), "\"transportSessionId\":\"101\"")
         .doesNotContain("accountId", "connectScope", "credential", "joinIntent");
     clearInvocations(commands, routes);
     var wrong = new ObservedDirectTextTransport("102", transport.proxyConnectionId());
     assertThat(store.find(wrong)).isEmpty();
-    assertThat(store.replace(wrong, menu)).isFalse();
+    assertThat(store.reassert(wrong, menu)).isFalse();
+    assertThat(store.discoverAndReplace(wrong)).isEmpty();
     assertThat(store.clear(wrong)).isFalse();
     assertThat(store.find(new ObservedDirectTextTransport("0101", transport.proxyConnectionId())))
         .isEmpty();
@@ -144,7 +155,9 @@ class DirectTextWorldMenuRedisStoreTest {
     var signed = new ObservedDirectTextTransport("+101", transport.proxyConnectionId());
     var oversized =
         new ObservedDirectTextTransport("0".repeat(100) + "101", transport.proxyConnectionId());
-    assertThatThrownBy(() -> store.replace(signed, menu))
+    assertThatThrownBy(() -> store.reassert(signed, menu))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> store.discoverAndReplace(signed))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> store.find(oversized)).isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> store.clear(signed)).isInstanceOf(IllegalArgumentException.class);
@@ -165,7 +178,7 @@ class DirectTextWorldMenuRedisStoreTest {
         "oversize"
       })
   void rejectsMalformedOuterStateWithoutSourceReadsOrMutation(String change) {
-    assertThat(store.replace(transport, selection.browse().orElseThrow())).isTrue();
+    assertThat(store.discoverAndReplace(transport)).isPresent();
     byte[] original = stored.get();
     ObjectNode tree = (ObjectNode) JSON.readTree(original);
     switch (change) {
@@ -198,7 +211,8 @@ class DirectTextWorldMenuRedisStoreTest {
     assertThat(store.find(transport)).isEmpty();
     verifyNoInteractions(routes);
     assertThat(store.clear(transport)).isFalse();
-    assertThat(store.replace(transport, genuine)).isFalse();
+    assertThat(store.reassert(transport, genuine)).isFalse();
+    assertThat(store.discoverAndReplace(transport)).isEmpty();
     verify(commands, never()).scriptLoad(any(byte[].class));
     assertThat(stored.get()).isEqualTo(changed);
   }
@@ -207,10 +221,12 @@ class DirectTextWorldMenuRedisStoreTest {
   void missingAndInvalidInnerStateAreNotReconstructedAndSourceFailureEscapes() {
     assertThat(store.find(transport)).isEmpty();
     verifyNoInteractions(routes);
-    assertThat(store.replace(transport, selection.browse().orElseThrow())).isTrue();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
     var unavailable = new ReadUnavailableException("controlled unavailable source");
     when(routes.readVisiblePublicProductionTargets()).thenThrow(unavailable);
     assertThatThrownBy(() -> store.find(transport)).isSameAs(unavailable);
+    assertThatThrownBy(() -> store.reassert(transport, menu)).isSameAs(unavailable);
+    assertThatThrownBy(() -> store.discoverAndReplace(transport)).isSameAs(unavailable);
     ObjectNode tree = (ObjectNode) JSON.readTree(stored.get());
     tree.put("encodedOriginalMenu", "e30=");
     stored.set(JSON.writeValueAsBytes(tree));
@@ -226,20 +242,29 @@ class DirectTextWorldMenuRedisStoreTest {
             GameplayWorldCatalog.forWorldViews(List.of()), routes, CLOCK);
     var foreign = other.browse().orElseThrow();
     clearInvocations(commands, routes);
-    assertThat(store.replace(transport, foreign)).isFalse();
-    assertThat(store.replace(transport, null)).isFalse();
+    assertThat(store.reassert(transport, foreign)).isFalse();
+    assertThat(store.reassert(transport, null)).isFalse();
     verifyNoInteractions(commands, routes);
   }
 
   @ParameterizedTest
   @ValueSource(strings = {"PREIMAGE_MISMATCH", "EXPIRED_MENU", "INVALID_ARGS", "UNKNOWN"})
   void refusalsAndUnknownOutcomesNeverReportSuccessfulWrite(String result) {
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    byte[] original = stored.get();
     outcome.set(result);
-    var menu = selection.browse().orElseThrow();
     if ("PREIMAGE_MISMATCH".equals(result) || "EXPIRED_MENU".equals(result)) {
-      assertThat(store.replace(transport, menu)).isFalse();
+      assertThat(store.reassert(transport, menu)).isFalse();
     } else {
-      assertThatThrownBy(() -> store.replace(transport, menu))
+      assertThatThrownBy(() -> store.reassert(transport, menu))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(stored.get()).isEqualTo(original);
+    stored.set(null);
+    if ("PREIMAGE_MISMATCH".equals(result) || "EXPIRED_MENU".equals(result)) {
+      assertThat(store.discoverAndReplace(transport)).isEmpty();
+    } else {
+      assertThatThrownBy(() -> store.discoverAndReplace(transport))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(stored.get()).isNull();
@@ -251,27 +276,62 @@ class DirectTextWorldMenuRedisStoreTest {
     var failure = new IllegalStateException("controlled transport failure");
     when(commands.getrange(any(byte[].class), anyLong(), anyLong())).thenThrow(failure);
     assertThatThrownBy(() -> store.find(transport)).isSameAs(failure);
-    assertThatThrownBy(() -> store.replace(transport, menu)).isSameAs(failure);
+    assertThatThrownBy(() -> store.reassert(transport, menu)).isSameAs(failure);
+    assertThatThrownBy(() -> store.discoverAndReplace(transport)).isSameAs(failure);
     assertThatThrownBy(() -> store.clear(transport)).isSameAs(failure);
     verify(commands, never()).scriptLoad(any(byte[].class));
   }
 
   @Test
   void principalReconnectAndLoadedHashMismatchDenyBeforeEval() {
-    var menu = selection.browse().orElseThrow();
     when(commands.aclWhoami()).thenReturn("default");
-    assertThatThrownBy(() -> store.replace(transport, menu))
+    assertThatThrownBy(() -> store.discoverAndReplace(transport))
         .isInstanceOf(IllegalStateException.class);
     when(commands.aclWhoami()).thenReturn("gamesession_coord_app");
     when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
     assertThatThrownBy(() -> store.find(transport)).isInstanceOf(IllegalStateException.class);
     when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
     when(commands.scriptLoad(any(byte[].class))).thenReturn("wrong-loaded-hash");
-    assertThatThrownBy(() -> store.replace(transport, menu))
+    assertThatThrownBy(() -> store.discoverAndReplace(transport))
         .isInstanceOf(IllegalStateException.class);
     verify(commands, never())
         .evalsha(
             anyString(), eq(ScriptOutputType.STATUS), any(byte[][].class), any(byte[][].class));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void lostOriginalOrFindRestoredMenuCannotBeReassertedButExplicitDiscoveryRerunsSources(
+      boolean restoredHandle) {
+    var original = store.discoverAndReplace(transport).orElseThrow();
+    var retained = restoredHandle ? store.find(transport).orElseThrow() : original;
+    stored.set(null); // Controlled DEL/reset of an unexpired original menu.
+    clearInvocations(commands, routes);
+
+    assertThat(store.reassert(transport, retained)).isFalse();
+    assertThat(stored.get()).isNull();
+    verify(commands, never()).scriptLoad(any(byte[].class));
+
+    clearInvocations(routes);
+    var fresh = store.discoverAndReplace(transport).orElseThrow();
+    assertThat(fresh).isNotSameAs(retained);
+    // One new browse and its existing complete source revalidation, not local reconstruction.
+    verify(routes, times(2)).readVisiblePublicProductionTargets();
+    assertThat(stored.get()).isNotEmpty();
+    assertThat(store.find(transport)).isPresent();
+  }
+
+  @Test
+  void deletionAfterReassertPreReadIsRefusedWithoutRetryOrRecreation() {
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    when(commands.getrange(any(byte[].class), anyLong(), anyLong()))
+        .thenAnswer(invocation -> stored.getAndSet(null));
+    clearInvocations(commands);
+
+    assertThat(store.reassert(transport, menu)).isFalse();
+    assertThat(stored.get()).isNull();
+    verify(commands).getrange(any(byte[].class), eq(0L), eq(2097152L));
+    verify(commands).scriptLoad(any(byte[].class));
   }
 
   private static RedisScriptCatalog installed() {

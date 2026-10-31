@@ -1157,7 +1157,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   private static int upgradeRegionSchema(TestSchema schema) {
+    // This retained upgrade proves the exact region-bridge migration pair, independently of
+    // unrelated migrations added later. Fresh-schema/current-version coverage remains separate.
     return regionMigrations(schema.dataSource(), schema.schema())
+        .target("1051.1")
         .load()
         .migrate()
         .migrationsExecuted;

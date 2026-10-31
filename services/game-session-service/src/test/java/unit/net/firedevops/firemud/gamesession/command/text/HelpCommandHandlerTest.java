@@ -32,6 +32,17 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void helpDoesNotAdvertiseOrDescribeTheUnregisteredJoinCommand() {
+    var index = handler.handle(new TextCommand(TextCommandType.HELP, List.of(), "HELP"));
+    assertTrue(index.commandResult().accepted());
+    assertFalse(index.outputs().get(0).text().contains("HELP JOIN"));
+
+    var topic = handler.handle(new TextCommand(TextCommandType.HELP, List.of("join"), "HELP join"));
+    assertFalse(topic.commandResult().accepted());
+    assertEquals("HELP_UNKNOWN_TOPIC", topic.commandResult().errorCode());
+  }
+
+  @Test
   void helpWhoTopicExplainsGameplayOnlyScope() {
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HELP, List.of("who"), "HELP who"));

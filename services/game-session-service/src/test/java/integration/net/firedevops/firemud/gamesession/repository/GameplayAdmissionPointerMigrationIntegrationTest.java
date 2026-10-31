@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -42,6 +44,40 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void pointerListsOrderMatchingSlugsByTenantWithoutChangingRows() {
+    DriverManagerDataSource dataSource = isolatedDataSource();
+    migrateToVersion(dataSource, "5");
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    // Insert the matching selectors in descending tenant order, with world and realm controls.
+    insertPointer(dsl, 1L, 20L, "demo", "live", 201L, true, true, "SHARED");
+    insertPointer(dsl, 2L, 10L, "demo", "live", 101L, true, true, "SHARED");
+    insertPointer(dsl, 3L, 20L, "alpha", "preview", 202L, false, false, "ISOLATED");
+    insertPointer(dsl, 4L, 10L, "demo", "preview", 102L, true, false, "SHARED");
+    migrateToVersion(dataSource, "8");
+    DatabaseGameplayAdmissionPointerAuthorityService service =
+        new DatabaseGameplayAdmissionPointerAuthorityService(
+            new GameplayAdmissionPointerRepository(dsl),
+            new GameplayAdmissionPointerEventRepository(dsl));
+    var rowsBefore = dsl.fetch("SELECT * FROM gameplay_admission_pointer ORDER BY id");
+    List<GameplayAdmissionPointerSnapshot> expected =
+        List.of(
+            service.findPointer(20L, "alpha", "preview").orElseThrow(),
+            service.findPointer(10L, "demo", "live").orElseThrow(),
+            service.findPointer(20L, "demo", "live").orElseThrow(),
+            service.findPointer(10L, "demo", "preview").orElseThrow());
+
+    assertThat(service.listPointers()).containsExactlyElementsOf(expected);
+    assertThat(service.listPointersForTenants(List.of(20L, 10L)))
+        .containsExactlyElementsOf(expected);
+    assertThat(service.listPointersForTenants(List.of(10L, 20L)))
+        .containsExactlyElementsOf(expected);
+    assertThat(service.listPointersForTenants(List.of(10L)))
+        .containsExactly(expected.get(1), expected.get(3));
+    assertThat(dsl.fetch("SELECT * FROM gameplay_admission_pointer ORDER BY id"))
+        .isEqualTo(rowsBefore);
+  }
 
   @Test
   void v8RepairsOnlyProvenRetainedBootstrapPairAndLeavesDemoAndRuntimeIdentityUnchanged()

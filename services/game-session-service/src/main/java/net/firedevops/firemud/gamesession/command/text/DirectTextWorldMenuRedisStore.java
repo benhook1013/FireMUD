@@ -71,27 +71,61 @@ public final class DirectTextWorldMenuRedisStore {
     this.catalog = Objects.requireNonNull(installedCatalog, "installed catalog");
   }
 
-  /** One pre-read and one CAS, never an automatic retry loop. Unknown writes throw, not success. */
-  public boolean replace(ObservedDirectTextTransport transport, SelectionSnapshot snapshot) {
+  /** Explicit fresh WORLDS discovery; returns its new handle only after an acknowledged CAS. */
+  public Optional<SelectionSnapshot> discoverAndReplace(ObservedDirectTextTransport transport) {
     requireTransport(transport);
-    Optional<byte[]> encoded = selection.encodeSnapshot(snapshot);
-    if (encoded.isEmpty()) return false;
-    byte[] inner = encoded.orElseThrow();
-    // Source unavailability deliberately escapes separately from invalid UI state.
-    if (selection.restoreSnapshot(inner).isEmpty()) return false;
-    long nowEpochMillis = requirePositiveSafeEpochMillis(clock.millis());
-    long expiry = requirePositiveSafeEpochMillis(snapshot.expiresAt().toEpochMilli());
-    if (expiry <= nowEpochMillis || expiry - nowEpochMillis > 300_000L) return false;
-    byte[] desired = encode(transport, inner);
+    var discovered = selection.browse();
+    if (discovered.isEmpty()) return Optional.empty();
+    var snapshot = discovered.orElseThrow();
+    var prepared = prepare(transport, snapshot);
+    if (prepared.isEmpty()) return Optional.empty();
+    var write = prepared.orElseThrow();
     byte[] source = requireSource();
     try (var connection = connections.get()) {
       var commands = requireConnection(connection);
       byte[] key = key(transport);
       byte[] prior = readBounded(commands, key);
-      if (prior != null && decode(transport, prior).isEmpty()) return false;
-      return mutate(commands, source, key, "REPLACE", prior, desired, expiry, nowEpochMillis);
+      if (prior != null && decode(transport, prior).isEmpty()) return Optional.empty();
+      return mutate(
+              commands, source, key, "REPLACE", prior, write.desired(), write.expiry(), write.now())
+          ? discovered
+          : Optional.empty();
     }
   }
+
+  /** Reasserts only exact still-present original bytes; loss/reset never recreates an old menu. */
+  public boolean reassert(ObservedDirectTextTransport transport, SelectionSnapshot snapshot) {
+    requireTransport(transport);
+    var prepared = prepare(transport, snapshot);
+    if (prepared.isEmpty()) return false;
+    var write = prepared.orElseThrow();
+    byte[] source = requireSource();
+    try (var connection = connections.get()) {
+      var commands = requireConnection(connection);
+      byte[] key = key(transport);
+      byte[] prior = readBounded(commands, key);
+      if (prior == null || !Arrays.equals(prior, write.desired())) return false;
+      // The same nonempty preimage must survive until Lua. An unchanged value is not rewritten,
+      // so its original physical deadline/PTTL is retained without extension.
+      return mutate(
+          commands, source, key, "REPLACE", prior, write.desired(), write.expiry(), write.now());
+    }
+  }
+
+  private Optional<MenuWrite> prepare(
+      ObservedDirectTextTransport transport, SelectionSnapshot snapshot) {
+    Optional<byte[]> encoded = selection.encodeSnapshot(snapshot);
+    if (encoded.isEmpty()) return Optional.empty();
+    byte[] inner = encoded.orElseThrow();
+    // Source unavailability deliberately escapes separately from invalid UI state.
+    if (selection.restoreSnapshot(inner).isEmpty()) return Optional.empty();
+    long nowEpochMillis = requirePositiveSafeEpochMillis(clock.millis());
+    long expiry = requirePositiveSafeEpochMillis(snapshot.expiresAt().toEpochMilli());
+    if (expiry <= nowEpochMillis || expiry - nowEpochMillis > 300_000L) return Optional.empty();
+    return Optional.of(new MenuWrite(encode(transport, inner), expiry, nowEpochMillis));
+  }
+
+  private record MenuWrite(byte[] desired, long expiry, long now) {}
 
   /**
    * Restores an original handle only after exact correlation and current complete source checks.
@@ -216,7 +250,8 @@ public final class DirectTextWorldMenuRedisStore {
           || !digest("SHA-256", source).equals(descriptor.sha256())) throw unavailable();
       return source;
     } catch (IOException failure) {
-      throw unavailable();
+      throw new IllegalStateException(
+          "Public world menu Coordination store is unavailable", failure);
     }
   }
 

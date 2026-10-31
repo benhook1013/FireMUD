@@ -8,8 +8,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.lettuce.core.AclSetuserArgs;
@@ -155,8 +158,7 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     var fixture = fixture(Clock.systemUTC());
     var first = fixture.selection();
     var transport = observation();
-    var menu = first.browse().orElseThrow();
-    assertThat(store(first, fixture.clock()).replace(transport, menu)).isTrue();
+    var menu = store(first, fixture.clock()).discoverAndReplace(transport).orElseThrow();
     byte[] original = admin.get(key(transport));
     long deadline = admin.pexpiretime(key(transport));
     assertThat(deadline).isEqualTo(menu.expiresAt().toEpochMilli());
@@ -169,7 +171,7 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     assertThat(restored.expiresAt()).isEqualTo(menu.expiresAt());
     assertThat(replacement.resolve(restored, "1")).contains(fixture.targets().get(1));
     assertThat(replacement.resolve(restored, "2")).contains(fixture.targets().get(0));
-    assertThat(replacementStore.replace(transport, restored)).isTrue();
+    assertThat(replacementStore.reassert(transport, restored)).isTrue();
     assertThat(admin.get(key(transport))).isEqualTo(original);
     assertThat(admin.pexpiretime(key(transport))).isEqualTo(deadline);
 
@@ -181,22 +183,24 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
 
     when(fixture.routes().readVisiblePublicProductionTargets()).thenReturn(List.of());
     assertThat(replacementStore.find(transport)).isEmpty();
+    assertThat(replacementStore.reassert(transport, restored)).isFalse();
+    assertThat(replacementStore.discoverAndReplace(transport)).isEmpty();
     assertThat(admin.get(key(transport))).isEqualTo(original);
   }
 
   @Test
-  void exactTransportBindingRefusesReadReplaceAndDeleteWithoutMutating() {
+  void exactTransportBindingRefusesReadReassertDiscoveryAndDeleteWithoutMutating() {
     var fixture = fixture(Clock.systemUTC());
     var selection = fixture.selection();
     var store = store(selection, fixture.clock());
     var transport = observation();
-    var menu = selection.browse().orElseThrow();
-    assertThat(store.replace(transport, menu)).isTrue();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
     byte[] original = admin.get(key(transport));
     long expiry = admin.pexpiretime(key(transport));
     var wrong = new ObservedDirectTextTransport("102", transport.proxyConnectionId());
     assertThat(store.find(wrong)).isEmpty();
-    assertThat(store.replace(wrong, menu)).isFalse();
+    assertThat(store.reassert(wrong, menu)).isFalse();
+    assertThat(store.discoverAndReplace(wrong)).isEmpty();
     assertThat(store.clear(wrong)).isFalse();
     assertThat(admin.get(key(transport))).isEqualTo(original);
     assertThat(admin.pexpiretime(key(transport))).isEqualTo(expiry);
@@ -206,13 +210,12 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"replace", "clear"})
+  @ValueSource(strings = {"reassert", "delete-before-reassert", "discover", "clear"})
   void competingPreimageIsRefusedByRealLuaWithoutAutomaticRetry(String operation) {
     var fixture = fixture(Clock.systemUTC());
     var selection = fixture.selection();
     var transport = observation();
-    var menu = selection.browse().orElseThrow();
-    assertThat(store(selection, fixture.clock()).replace(transport, menu)).isTrue();
+    var menu = store(selection, fixture.clock()).discoverAndReplace(transport).orElseThrow();
     byte[] competitor = ascii("administrator-seeded-malformed-competing-ui");
     Supplier<StatefulRedisConnection<byte[], byte[]>> racingConnection =
         () -> {
@@ -222,7 +225,11 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
                   invocation -> {
                     byte[] prior = physical.sync().getrange(invocation.getArgument(0), 0, 2097152);
                     // Controlled administrator seed AFTER the actual bounded read, before real CAS.
-                    admin.set(key(transport), competitor);
+                    if ("delete-before-reassert".equals(operation)) {
+                      admin.del(new byte[][] {key(transport)});
+                    } else {
+                      admin.set(key(transport), competitor);
+                    }
                     return prior;
                   })
               .when(intercepted)
@@ -232,11 +239,21 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     var racing =
         new DirectTextWorldMenuRedisStore(
             selection, fixture.clock(), racingConnection, installed());
-    assertThat(
-            "replace".equals(operation) ? racing.replace(transport, menu) : racing.clear(transport))
-        .isFalse();
-    assertThat(admin.get(key(transport))).isEqualTo(competitor);
-    assertThat(admin.pexpiretime(key(transport))).isEqualTo(-1L);
+    if ("discover".equals(operation)) {
+      assertThat(racing.discoverAndReplace(transport)).isEmpty();
+    } else {
+      assertThat(
+              "clear".equals(operation)
+                  ? racing.clear(transport)
+                  : racing.reassert(transport, menu))
+          .isFalse();
+    }
+    if ("delete-before-reassert".equals(operation)) {
+      assertThat(admin.get(key(transport))).isNull();
+    } else {
+      assertThat(admin.get(key(transport))).isEqualTo(competitor);
+      assertThat(admin.pexpiretime(key(transport))).isEqualTo(-1L);
+    }
   }
 
   @Test
@@ -246,26 +263,26 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     var fixture = fixture(clock);
     var selection = fixture.selection();
     var transport = observation();
-    var menu = selection.browse().orElseThrow();
     var store = store(selection, Clock.systemUTC());
-    assertThat(store.replace(transport, menu)).isTrue();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
     long expiry = admin.pexpiretime(key(transport));
     assertThat(expiry).isEqualTo(menu.expiresAt().toEpochMilli());
-    assertThat(store.replace(transport, menu)).isTrue();
+    assertThat(store.reassert(transport, menu)).isTrue();
     assertThat(admin.pexpiretime(key(transport))).isEqualTo(expiry);
     long wait = Math.max(0L, expiry - System.currentTimeMillis()) + 100L;
     Thread.sleep(wait);
     assertThat(admin.get(key(transport))).isNull();
     assertThat(store.find(transport)).isEmpty();
-    assertThat(store.replace(transport, menu)).isFalse();
+    assertThat(store.reassert(transport, menu)).isFalse();
     assertThat(admin.get(key(transport))).isNull();
     // Fresh WORLDS is the only replacement. Administrator deletion models disposable UI loss.
     var freshFixture = fixture(Clock.systemUTC());
     var freshSelection = freshFixture.selection();
     var freshStore = store(freshSelection, freshFixture.clock());
-    assertThat(freshStore.replace(transport, freshSelection.browse().orElseThrow())).isTrue();
+    var fresh = freshStore.discoverAndReplace(transport).orElseThrow();
     admin.del(new byte[][] {key(transport)});
     assertThat(freshStore.find(transport)).isEmpty();
+    assertThat(freshStore.reassert(transport, fresh)).isFalse();
     assertThat(admin.get(key(transport))).isNull();
   }
 
@@ -275,18 +292,12 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     var selection = fixture.selection();
     var transport = observation();
     // The owner rejects an original expiry >5 minutes after its single observed clock input.
-    assertThat(
-            store(selection, Clock.systemUTC())
-                .replace(transport, selection.browse().orElseThrow()))
-        .isFalse();
+    assertThat(store(selection, Clock.systemUTC()).discoverAndReplace(transport)).isEmpty();
     assertThat(admin.get(key(transport))).isNull();
     var expiredFixture = fixture(Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-301)));
     var expiredSelection = expiredFixture.selection();
     // A menu expired relative to the owner's observation is refused without reconstruction.
-    assertThat(
-            store(expiredSelection, Clock.systemUTC())
-                .replace(transport, expiredSelection.browse().orElseThrow()))
-        .isFalse();
+    assertThat(store(expiredSelection, Clock.systemUTC()).discoverAndReplace(transport)).isEmpty();
     assertThat(admin.get(key(transport))).isNull();
     var current = fixture(Clock.systemUTC());
     var currentSelection = current.selection();
@@ -295,7 +306,8 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     admin.set(key(transport), oversized);
     assertThat(currentStore.find(transport)).isEmpty();
     assertThat(currentStore.clear(transport)).isFalse();
-    assertThat(currentStore.replace(transport, currentSelection.browse().orElseThrow())).isFalse();
+    assertThat(currentStore.reassert(transport, currentSelection.browse().orElseThrow())).isFalse();
+    assertThat(currentStore.discoverAndReplace(transport)).isEmpty();
     assertThat(admin.get(key(transport))).isEqualTo(oversized);
   }
 
@@ -304,14 +316,13 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     var fixture = fixture(Clock.systemUTC());
     var selection = fixture.selection();
     var transport = observation();
-    var menu = selection.browse().orElseThrow();
     var wrongPrincipal =
         new DirectTextWorldMenuRedisStore(
             selection,
             fixture.clock(),
             () -> administrator.connect(ByteArrayCodec.INSTANCE),
             installed());
-    assertThatThrownBy(() -> wrongPrincipal.replace(transport, menu))
+    assertThatThrownBy(() -> wrongPrincipal.discoverAndReplace(transport))
         .isInstanceOf(IllegalStateException.class);
     var original = installed().require(DirectTextWorldMenuRedisScriptContribution.SCRIPT_ID);
     ObjectNode changed = (ObjectNode) JSON.valueToTree(original);
@@ -334,7 +345,7 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     var wrongDigest =
         new DirectTextWorldMenuRedisStore(
             selection, fixture.clock(), () -> writer.connect(ByteArrayCodec.INSTANCE), badCatalog);
-    assertThatThrownBy(() -> wrongDigest.replace(transport, menu))
+    assertThatThrownBy(() -> wrongDigest.discoverAndReplace(transport))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> wrongDigest.find(transport)).isInstanceOf(IllegalStateException.class);
     assertThat(admin.get(key(transport))).isNull();
@@ -381,12 +392,53 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
         };
     var losing =
         new DirectTextWorldMenuRedisStore(selection, fixture.clock(), replyLoss, installed());
-    var menu = selection.browse().orElseThrow();
-    assertThatThrownBy(() -> losing.replace(transport, menu)).isSameAs(failure);
+    assertThatThrownBy(() -> losing.discoverAndReplace(transport)).isSameAs(failure);
     assertThat(admin.get(key(transport))).isNotEmpty();
     var replacement = fixture.selection();
-    assertThat(store(replacement, fixture.clock()).find(transport)).isPresent();
+    var menu = store(replacement, fixture.clock()).find(transport).orElseThrow();
     assertThat(admin.pexpiretime(key(transport))).isEqualTo(menu.expiresAt().toEpochMilli());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void unexpiredOriginalAndFindRestoredHandlesCannotRecreateDeletedOrResetMenu(
+      boolean restoredHandle) {
+    var clock = mock(Clock.class);
+    var now = Instant.now();
+    when(clock.instant()).thenReturn(now);
+    when(clock.millis()).thenReturn(now.toEpochMilli());
+    var fixture = fixture(clock);
+    var selection = fixture.selection();
+    var store = store(selection, clock);
+    var transport = observation();
+    var original = store.discoverAndReplace(transport).orElseThrow();
+    var retained = restoredHandle ? store.find(transport).orElseThrow() : original;
+    byte[] originalBytes = admin.get(key(transport));
+    assertThat(admin.pexpiretime(key(transport))).isEqualTo(original.expiresAt().toEpochMilli());
+
+    // Exact-key DEL models missing/reset UI state while both handles remain unexpired.
+    admin.del(new byte[][] {key(transport)});
+    assertThat(store.reassert(transport, retained)).isFalse();
+    assertThat(store.find(transport)).isEmpty();
+    assertThat(admin.get(key(transport))).isNull();
+
+    when(clock.instant()).thenReturn(now.plusSeconds(1));
+    when(clock.millis()).thenReturn(now.plusSeconds(1).toEpochMilli());
+    clearInvocations(fixture.routes());
+    var fresh = store.discoverAndReplace(transport).orElseThrow();
+    verify(fixture.routes(), times(2)).readVisiblePublicProductionTargets();
+    assertThat(fresh).isNotSameAs(retained);
+    assertThat(fresh.expiresAt()).isEqualTo(original.expiresAt().plusSeconds(1));
+    byte[] freshBytes = admin.get(key(transport));
+    assertThat(freshBytes).isNotEqualTo(originalBytes);
+    long freshDeadline = admin.pexpiretime(key(transport));
+    assertThat(freshDeadline).isEqualTo(fresh.expiresAt().toEpochMilli());
+    // Even a valid but different present preimage cannot be adopted by the old handle.
+    assertThat(store.reassert(transport, retained)).isFalse();
+    assertThat(admin.get(key(transport))).isEqualTo(freshBytes);
+    assertThat(admin.pexpiretime(key(transport))).isEqualTo(freshDeadline);
+    assertThat(store.reassert(transport, fresh)).isTrue();
+    assertThat(admin.pexpiretime(key(transport))).isEqualTo(freshDeadline);
   }
 
   private DirectTextWorldMenuRedisStore store(

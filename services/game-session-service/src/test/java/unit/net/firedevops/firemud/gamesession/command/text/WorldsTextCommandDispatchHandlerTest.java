@@ -35,6 +35,30 @@ class WorldsTextCommandDispatchHandlerTest {
           scriptEventPublisher);
 
   @Test
+  void preparedJoinExplicitlyRefusesWithoutDiscoveryOrGameplayEffects() {
+    var command = new TextCommandParser().parse("JOIN 1");
+    assertThat(command.type()).isEqualTo(TextCommandType.JOIN);
+    var result =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                command,
+                false,
+                Optional.of(GameplayCommandTestFixtures.authoredDispatchEmberline()),
+                Optional.empty()));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("FEATURE_UNAVAILABLE");
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output ->
+                assertThat(output.text())
+                    .isEqualTo("ERROR FEATURE_UNAVAILABLE JOIN is not available."));
+    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+  }
+
+  @Test
   void publishesCommandEventForGameplayScopedWorldsBrowse() {
     SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
 
