@@ -401,6 +401,9 @@ class ProfileControllerTest {
       }
       verify(accountService, never()).getProfile(any(), any());
       verify(accountService, never()).updateProfile(any(UpdateProfileRequest.class));
+      if (!absent) {
+        verify(accountService, never()).resolveAccountStorageId(any());
+      }
     }
   }
 

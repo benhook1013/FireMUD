@@ -250,6 +250,7 @@ class AccountControllerTest {
     verify(accountService, never()).getLoginAuthModes(43L);
     verify(accountService, never()).exportAccountData(43L);
     verify(accountService, never()).deleteAccount(43L);
+    verify(accountService, never()).resolveAccountStorageId(any());
   }
 
   @Test
@@ -448,6 +449,9 @@ class AccountControllerTest {
       verify(accountService, never()).exportAccountData(anyLong());
       verify(accountService, never()).exportTenantData(anyLong(), anyLong());
       verify(accountService, never()).deleteAccount(anyLong());
+      if (!absent) {
+        verify(accountService, never()).resolveAccountStorageId(any());
+      }
     }
   }
 

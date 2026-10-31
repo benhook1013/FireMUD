@@ -6,10 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.TreeSet;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.settings.EffectiveCommandCapabilitiesSettingsResolver;
 import net.firedevops.firemud.common.settings.PlayerCommandCapability;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -41,7 +41,6 @@ import org.springframework.util.StringUtils;
 public class CommunicationAggregationService {
   private static final Logger LOG = LoggerFactory.getLogger(CommunicationAggregationService.class);
   private static final String OBSERVER_METADATA_ONLY_FLAG = "observer_metadata_only";
-  private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
 
   private final SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
   private final EntityManagementServiceGrpc.EntityManagementServiceBlockingStub entityStub;
@@ -58,8 +57,11 @@ public class CommunicationAggregationService {
           SendCommunicationResponse.newBuilder()
               .setType(request.getType())
               .setMessage(normalizedText);
-      String validatedAccountUuid = parseCanonicalAccountUuid(request.getAccountId());
-      if (validatedAccountUuid == null) {
+      String validatedAccountUuid;
+      try {
+        validatedAccountUuid =
+            JwtClaims.requireCanonicalAccountUuid(request.getAccountId(), "accountId");
+      } catch (IllegalArgumentException ex) {
         return errorResponse(
             builder, "INVALID_ARGUMENT", "account_id must be a canonical non-nil Account UUID");
       }
@@ -394,20 +396,6 @@ public class CommunicationAggregationService {
     try {
       return Long.parseLong(tenantId);
     } catch (NumberFormatException ignored) {
-      return null;
-    }
-  }
-
-  private String parseCanonicalAccountUuid(String accountUuid) {
-    if (accountUuid == null || accountUuid.isEmpty()) {
-      return null;
-    }
-    try {
-      UUID parsed = UUID.fromString(accountUuid);
-      return parsed.equals(NIL_ACCOUNT_UUID) || !parsed.toString().equals(accountUuid)
-          ? null
-          : accountUuid;
-    } catch (IllegalArgumentException ignored) {
       return null;
     }
   }
