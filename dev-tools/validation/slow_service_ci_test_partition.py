@@ -444,6 +444,60 @@ def parse_timestamp(value: Any, description: str) -> datetime:
     return timestamp
 
 
+def earliest_physical_job_attempt(
+    attempt_map: dict[int, dict[str, Any]],
+    effective_attempt: int,
+    partition: int,
+    effective_job: dict[str, Any],
+) -> int:
+    job_identity = (
+        effective_job.get("run_id"),
+        effective_job.get("head_sha"),
+        effective_job.get("name"),
+        effective_job.get("started_at"),
+        effective_job.get("completed_at"),
+    )
+    physical_attempts = []
+    effective_snapshot_matched = False
+    for attempt_number, snapshot in sorted(attempt_map.items()):
+        snapshot_jobs = [
+            job
+            for job in snapshot["jobs"]
+            if (
+                job.get("run_id"),
+                job.get("head_sha"),
+                job.get("name"),
+                job.get("started_at"),
+                job.get("completed_at"),
+            )
+            == job_identity
+        ]
+        if len(snapshot_jobs) > 1:
+            raise ValueError(
+                f"partition {partition} has ambiguous physical execution provenance "
+                f"in attempt {attempt_number}"
+            )
+        if not snapshot_jobs:
+            continue
+        snapshot_job = snapshot_jobs[0]
+        if (
+            snapshot_job.get("status") != "completed"
+            or snapshot_job.get("conclusion") != "success"
+        ):
+            raise ValueError(
+                f"partition {partition} physical execution outcome changed in "
+                f"attempt {attempt_number}"
+            )
+        physical_attempts.append(attempt_number)
+        if attempt_number == effective_attempt:
+            effective_snapshot_matched = True
+    if not effective_snapshot_matched or not physical_attempts:
+        raise ValueError(
+            f"partition {partition} has no complete physical execution provenance"
+        )
+    return min(physical_attempts)
+
+
 def resolve_effective_artifacts(
     provenance: dict[str, Any],
     module: str,
@@ -627,26 +681,29 @@ def resolve_effective_artifacts(
         latest = latest_jobs.get(partition)
         if latest is None:
             raise ValueError(f"partition {partition} has no authoritative job outcome")
-        attempt_number, job = latest
+        effective_attempt, job = latest
         if job.get("status") != "completed" or job.get("conclusion") != "success":
             outcome = job.get("conclusion") or job.get("status") or "unknown"
             raise ValueError(
                 f"partition {partition} latest effective job outcome in attempt "
-                f"{attempt_number} is {outcome}; older successful artifacts cannot replace it"
+                f"{effective_attempt} is {outcome}; older successful artifacts cannot replace it"
             )
         started = parse_timestamp(job.get("started_at"), f"partition {partition} job start")
         completed = parse_timestamp(job.get("completed_at"), f"partition {partition} job completion")
         if completed < started:
             raise ValueError(f"partition {partition} job timestamps are out of order")
+        physical_attempt = earliest_physical_job_attempt(
+            attempt_map, effective_attempt, partition, job
+        )
 
         artifact_name = (
             f"slow-service-ci-partition-{expected_run_id}-{source_revision}-"
-            f"attempt-{attempt_number}-{module}-partition-{partition}"
+            f"attempt-{physical_attempt}-{module}-partition-{partition}"
         )
         matches = matching_artifacts.get(artifact_name, [])
         if len(matches) != 1:
             raise ValueError(
-                f"partition {partition} attempt {attempt_number} has "
+                f"partition {partition} physical attempt {physical_attempt} has "
                 f"{'missing' if not matches else 'ambiguous'} exact-source artifact provenance"
             )
         artifact = matches[0]
@@ -655,19 +712,19 @@ def resolve_effective_artifacts(
             raise ValueError("workflow partition artifacts do not have unique IDs")
         selected_ids.add(artifact_id)
         if artifact.get("expired") is not False:
-            raise ValueError(f"partition {partition} attempt {attempt_number} artifact is expired")
+            raise ValueError(f"partition {partition} physical attempt {physical_attempt} artifact is expired")
         if positive_integer(artifact.get("size_in_bytes"), "workflow artifact size") <= 0:
-            raise ValueError(f"partition {partition} attempt {attempt_number} artifact is empty")
+            raise ValueError(f"partition {partition} physical attempt {physical_attempt} artifact is empty")
         created = parse_timestamp(
             artifact.get("created_at"), f"partition {partition} artifact creation time"
         )
         if created < started or created > completed:
             raise ValueError(
                 f"partition {partition} artifact creation time does not belong to "
-                f"effective job attempt {attempt_number}"
+                f"effective job window in attempt {effective_attempt}"
             )
         selected[str(partition)] = {
-            "attempt": attempt_number,
+            "attempt": physical_attempt,
             "artifact_id": artifact_id,
             "artifact_name": artifact_name,
             "job_id": positive_integer(job.get("id"), "workflow job id"),

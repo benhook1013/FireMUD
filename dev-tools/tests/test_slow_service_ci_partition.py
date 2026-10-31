@@ -54,6 +54,7 @@ def job(module, partition, attempt, conclusion="success", start=START, finish=MI
         "id": attempt * 100 + partition,
         "run_id": run_id,
         "head_sha": source,
+        "run_attempt": attempt,
         "name": f"Build and Test ({module} / {partition})",
         "status": "completed",
         "conclusion": conclusion,
@@ -134,8 +135,9 @@ def make_provenance(
             },
             {
                 "attempt": 2,
-                "total_count": 1,
+                "total_count": 2,
                 "jobs": [
+                    job(module, 1, 2, start=START, finish=MIDDLE, source=native_head),
                     job(module, 2, 2, start=MIDDLE, finish=END, source=native_head)
                 ],
             },
@@ -414,9 +416,15 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             ):
                 PARTITION.verify_artifact_reports(artifact_dir, runnable_manifest)
 
-    def test_partial_retry_selects_older_success_and_newer_success_by_exact_effective_provenance(self):
+    def test_partial_retry_uses_latest_outcomes_and_physical_execution_attempts(self):
         module = "account-service"
         provenance = make_provenance(module)
+        carried_first_partition = provenance["attempts"][1]["jobs"][0]
+        original_first_partition = provenance["attempts"][0]["jobs"][0]
+        self.assertEqual(carried_first_partition["run_attempt"], 2)
+        self.assertNotEqual(carried_first_partition["id"], original_first_partition["id"])
+        self.assertEqual(carried_first_partition["started_at"], original_first_partition["started_at"])
+        self.assertEqual(carried_first_partition["completed_at"], original_first_partition["completed_at"])
         resolved = PARTITION.resolve_effective_artifacts(
             provenance, module, RUN_ID, SOURCE_SHA, "2"
         )
@@ -424,6 +432,9 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
         self.assertEqual(resolved["partitions"]["2"]["attempt"], 2)
         self.assertEqual(resolved["partitions"]["1"]["artifact_id"], 701)
         self.assertEqual(resolved["partitions"]["2"]["artifact_id"], 703)
+        self.assertEqual(resolved["partitions"]["1"]["job_id"], carried_first_partition["id"])
+        self.assertIn("attempt-1-account-service-partition-1", resolved["partitions"]["1"]["artifact_name"])
+        self.assertIn("attempt-2-account-service-partition-2", resolved["partitions"]["2"]["artifact_name"])
         reordered = copy.deepcopy(provenance)
         reordered["attempts"].reverse()
         self.assertEqual(
@@ -607,9 +618,11 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
         missing_attempt = make_provenance(module)
         missing_attempt["attempts"].pop()
         missing_job = make_provenance(module)
-        missing_job["attempts"][0]["jobs"] = [
-            row for row in missing_job["attempts"][0]["jobs"] if row["name"].endswith("/ 2)")
-        ]
+        for snapshot in missing_job["attempts"]:
+            snapshot["jobs"] = [
+                row for row in snapshot["jobs"] if not row["name"].endswith("/ 2)")
+            ]
+            snapshot["total_count"] = len(snapshot["jobs"])
         duplicate_job = make_provenance(module)
         duplicate_job["attempts"][0]["jobs"].append(
             copy.deepcopy(duplicate_job["attempts"][0]["jobs"][0])
@@ -647,6 +660,43 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
         provenance["artifacts"]["items"].append(artifact(module, 1, 2, 704, created=END))
         provenance["artifacts"]["total_count"] += 1
         with self.assertRaisesRegex(ValueError, "older successful artifacts cannot replace it"):
+            PARTITION.resolve_effective_artifacts(
+                provenance, module, RUN_ID, SOURCE_SHA, "2"
+            )
+
+    def test_changed_outcome_for_same_physical_window_is_ambiguous(self):
+        module = "account-service"
+        provenance = make_provenance(module)
+        provenance["attempts"][0]["jobs"][0]["conclusion"] = "failure"
+        with self.assertRaisesRegex(ValueError, "physical execution outcome changed"):
+            PARTITION.resolve_effective_artifacts(
+                provenance, module, RUN_ID, SOURCE_SHA, "2"
+            )
+
+    def test_changed_physical_window_requires_its_own_partition_artifact(self):
+        module = "game-session-service"
+        provenance = make_provenance(module)
+        carried_job = provenance["attempts"][1]["jobs"][0]
+        carried_job["started_at"] = MIDDLE
+        carried_job["completed_at"] = END
+        with self.assertRaisesRegex(ValueError, "physical attempt 2 has missing"):
+            PARTITION.resolve_effective_artifacts(
+                provenance, module, RUN_ID, SOURCE_SHA, "2"
+            )
+
+    def test_carried_partition_does_not_fall_back_to_newer_attempt_artifact(self):
+        module = "account-service"
+        provenance = make_provenance(module)
+        provenance["artifacts"]["items"] = [
+            item
+            for item in provenance["artifacts"]["items"]
+            if "attempt-1-account-service-partition-1" not in item["name"]
+        ]
+        provenance["artifacts"]["items"].append(
+            artifact(module, 1, 2, 704, created=MIDDLE)
+        )
+        provenance["artifacts"]["total_count"] = len(provenance["artifacts"]["items"])
+        with self.assertRaisesRegex(ValueError, "physical attempt 1 has missing"):
             PARTITION.resolve_effective_artifacts(
                 provenance, module, RUN_ID, SOURCE_SHA, "2"
             )
