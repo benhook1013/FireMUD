@@ -29,14 +29,14 @@ bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
   ":${MODULE}:check" \
   -PfullCheck \
   --profile --info --console=plain 2>&1 | \
-  {
+  (
     python3 "$ROOT_DIR/dev-tools/validation/collect-gradle-compile-failure.py" --capture-log "$CHECK_LOG"
     capture_status=$?
     if (( capture_status != 0 )); then
       cat >/dev/null
     fi
     exit "$capture_status"
-  }
+  )
 check_status=${PIPESTATUS[0]}
 set -e
 if (( check_status > 0 && check_status < 128 )); then
