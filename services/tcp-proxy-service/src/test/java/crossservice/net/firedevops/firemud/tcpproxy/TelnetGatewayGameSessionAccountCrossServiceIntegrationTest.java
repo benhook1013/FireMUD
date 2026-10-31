@@ -526,7 +526,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                   screen ->
                       screen.entries().stream()
                           .filter(entry -> !"look_view".equals(entry.payloadType()))
-                          .toList());
+                          .toList())
+              .orElse(List.of());
       var observerBefore =
           buffers
               .get(observer.tenantId(), observer.gameInstanceId(), observer.characterId())
@@ -534,11 +535,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                   screen ->
                       screen.entries().stream()
                           .filter(entry -> !"look_view".equals(entry.payloadType()))
-                          .toList());
+                          .toList())
+              .orElse(List.of());
       scenario.actor().sendLine("WHISPER Sora Keep quiet");
       assertThat(scenario.actor().readLineContaining("ERROR COMMUNICATION_NOT_DELIVERED"))
           .contains("ERROR COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
       assertThat(socialStub().lastRequest()).isEmpty();
+      // The initial LOOK projection can arrive between these reads; compare communication history.
       assertThat(
               buffers
                   .get(target.tenantId(), target.gameInstanceId(), target.characterId())
@@ -546,7 +549,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                       screen ->
                           screen.entries().stream()
                               .filter(entry -> !"look_view".equals(entry.payloadType()))
-                              .toList()))
+                              .toList())
+                  .orElse(List.of()))
           .isEqualTo(targetBefore);
       assertThat(
               buffers
@@ -555,7 +559,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                       screen ->
                           screen.entries().stream()
                               .filter(entry -> !"look_view".equals(entry.payloadType()))
-                              .toList()))
+                              .toList())
+                  .orElse(List.of()))
           .isEqualTo(observerBefore);
     }
   }
