@@ -454,16 +454,14 @@ subprojects {
                     include("**/jacoco/*.exec")
                 }
             )
+            val measuredClassFiles = fileTree(measuredClassesDirectory) {
+                include("**/*.class")
+            }
             classDirectories.setFrom(
-                fileTree(measuredClassesDirectory) {
-                    include("**/*.class")
-                }
+                measuredClassFiles
             )
             doFirst {
-                val measuredClassFiles = fileTree(measuredClassesDirectory) {
-                    include("**/*.class")
-                }.files
-                if (!measuredClassesDirectory.isDirectory || measuredClassFiles.isEmpty()) {
+                if (!measuredClassesDirectory.isDirectory || measuredClassFiles.isEmpty) {
                     throw GradleException("verified slow-service production classes are missing")
                 }
             }
