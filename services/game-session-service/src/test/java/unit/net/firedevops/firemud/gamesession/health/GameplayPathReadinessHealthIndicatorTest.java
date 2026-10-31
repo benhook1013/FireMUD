@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.health;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.common.health.HttpEndpointAvailabilityChecker;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbe.ProbeResult;
@@ -29,6 +31,7 @@ class GameplayPathReadinessHealthIndicatorTest {
   private static final String ENDPOINT = "http://game-logic-service:8080/actuator/health/readiness";
   private final AccountClient account = mock(AccountClient.class);
   private final GameLogicClient gameLogic = mock(GameLogicClient.class);
+  private final EntityManagementClient entityManagement = mock(EntityManagementClient.class);
   private final GameplayLocalPathReadinessProbe local = mock(GameplayLocalPathReadinessProbe.class);
   private final HttpEndpointAvailabilityChecker http = mock(HttpEndpointAvailabilityChecker.class);
   private final GameLogicProperties properties = new GameLogicProperties();
@@ -37,6 +40,7 @@ class GameplayPathReadinessHealthIndicatorTest {
     return new GameplayPathReadinessHealthIndicator(
         account,
         gameLogic,
+        entityManagement,
         local,
         new ReadinessTransitionTracker(new SimpleMeterRegistry()),
         properties,
@@ -56,6 +60,11 @@ class GameplayPathReadinessHealthIndicatorTest {
     when(gameLogic.pingForReadiness())
         .thenReturn(PingResponse.newBuilder().setMessage("pong").build());
     when(http.isHealthy(URI.create(ENDPOINT))).thenReturn(true);
+    when(entityManagement.pingForReadiness())
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.PingResponse.newBuilder()
+                .setMessage("pong")
+                .build());
   }
 
   @ParameterizedTest
@@ -80,12 +89,20 @@ class GameplayPathReadinessHealthIndicatorTest {
         (java.util.Map<String, java.util.Map<String, Object>>)
             health.getDetails().get("dependencies");
     assertEquals(
-        java.util.List.of(
-            "accountService", "sessionContextStore", "commandQueueStore", "gameLogicService"),
+        ping && readiness
+            ? java.util.List.of(
+                "accountService",
+                "sessionContextStore",
+                "commandQueueStore",
+                "gameLogicService",
+                "entityManagementService")
+            : java.util.List.of(
+                "accountService", "sessionContextStore", "commandQueueStore", "gameLogicService"),
         java.util.List.copyOf(dependencies.keySet()));
     assertEquals("pingAndReadiness", dependencies.get("gameLogicService").get("check"));
     if (!ping || !readiness) {
       assertEquals("gameLogicService", health.getDetails().get("failingDependency"));
+      verifyNoInteractions(entityManagement);
     }
     if (!ping) {
       verifyNoInteractions(http);
@@ -172,6 +189,7 @@ class GameplayPathReadinessHealthIndicatorTest {
           new GameplayPathReadinessHealthIndicator(
               account,
               gameLogic,
+              entityManagement,
               local,
               new ReadinessTransitionTracker(new SimpleMeterRegistry()),
               properties,
@@ -211,6 +229,7 @@ class GameplayPathReadinessHealthIndicatorTest {
           new GameplayPathReadinessHealthIndicator(
               account,
               gameLogic,
+              entityManagement,
               local,
               new ReadinessTransitionTracker(new SimpleMeterRegistry()),
               properties,
@@ -245,7 +264,7 @@ class GameplayPathReadinessHealthIndicatorTest {
     when(account.authenticateForReadiness(anyString(), anyString()))
         .thenThrow(new IllegalStateException("account down"));
     assertEquals("accountService", indicator().health().getDetails().get("failingDependency"));
-    verifyNoInteractions(gameLogic, http);
+    verifyNoInteractions(gameLogic, http, entityManagement);
   }
 
   @ParameterizedTest
@@ -258,6 +277,131 @@ class GameplayPathReadinessHealthIndicatorTest {
       when(local.probeCommandQueueStore()).thenReturn(ProbeResult.down("queue down"));
     }
     assertEquals(dependency, indicator().health().getDetails().get("failingDependency"));
-    verifyNoInteractions(gameLogic, http);
+    verifyNoInteractions(gameLogic, http, entityManagement);
+  }
+
+  @Test
+  void directEntityRefusalBlocksHealthyGameLogicAndRecoversOnSameIndicator() {
+    healthyPrerequisites();
+    when(entityManagement.pingForReadiness())
+        .thenThrow(Status.UNAVAILABLE.asRuntimeException())
+        .thenReturn(
+            net.firedevops.firemud.entitymanagement.v1.PingResponse.newBuilder()
+                .setMessage("pong")
+                .build());
+    var registry = new SimpleMeterRegistry();
+    try {
+      var indicator =
+          new GameplayPathReadinessHealthIndicator(
+              account,
+              gameLogic,
+              entityManagement,
+              local,
+              new ReadinessTransitionTracker(registry),
+              properties,
+              http);
+
+      assertEntityUnavailable(indicator.health());
+      assertEquals(
+          0.0,
+          registry
+              .get("firemud.readiness.current")
+              .tag("component", "game-session-service")
+              .gauge()
+              .value());
+      var recovered = indicator.health();
+      assertEquals(org.springframework.boot.health.contributor.Status.UP, recovered.getStatus());
+      assertThat(recovered.getDetails()).doesNotContainKey("failingDependency");
+      assertEquals(
+          1.0,
+          registry
+              .get("firemud.readiness.current")
+              .tag("component", "game-session-service")
+              .gauge()
+              .value());
+      assertEquals(
+          1.0,
+          registry
+              .get("firemud.readiness.transitions")
+              .tags(
+                  "component",
+                  "game-session-service",
+                  "to_status",
+                  "OUT_OF_SERVICE",
+                  "failing_dependency",
+                  "entityManagementService")
+              .counter()
+              .count());
+      assertEquals(
+          1.0,
+          registry
+              .get("firemud.readiness.transitions")
+              .tags(
+                  "component",
+                  "game-session-service",
+                  "to_status",
+                  "UP",
+                  "failing_dependency",
+                  "none")
+              .counter()
+              .count());
+    } finally {
+      registry.close();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"UNAVAILABLE", "DEADLINE_EXCEEDED", "UNAUTHENTICATED", "PERMISSION_DENIED"})
+  void rejectsEntityTransportTimeoutAndAuthenticationFailures(String code) {
+    healthyPrerequisites();
+    when(entityManagement.pingForReadiness())
+        .thenThrow(Status.fromCode(Status.Code.valueOf(code)).asRuntimeException());
+
+    assertEntityUnavailable(indicator().health());
+  }
+
+  @Test
+  void rejectsMissingMalformedAndApplicationErrorEntityPong() {
+    healthyPrerequisites();
+    for (var response :
+        new net.firedevops.firemud.entitymanagement.v1.PingResponse[] {
+          null,
+          net.firedevops.firemud.entitymanagement.v1.PingResponse.getDefaultInstance(),
+          net.firedevops.firemud.entitymanagement.v1.PingResponse.newBuilder()
+              .setMessage("not-pong")
+              .build(),
+          net.firedevops.firemud.entitymanagement.v1.PingResponse.newBuilder()
+              .setMessage("pong")
+              .setError(
+                  ErrorDetail.newBuilder().setCode("INTERNAL_ERROR").setMessage("private detail"))
+              .build()
+        }) {
+      when(entityManagement.pingForReadiness()).thenReturn(response);
+      var health = indicator().health();
+      assertEntityUnavailable(health);
+      assertThat(health.getDetails().toString()).doesNotContain("private detail");
+    }
+  }
+
+  private static void assertEntityUnavailable(
+      org.springframework.boot.health.contributor.Health health) {
+    assertEquals(
+        org.springframework.boot.health.contributor.Status.OUT_OF_SERVICE, health.getStatus());
+    assertEquals("entityManagementService", health.getDetails().get("failingDependency"));
+    assertEquals("LOGIN->LOOK", health.getDetails().get("contract"));
+    @SuppressWarnings("unchecked")
+    var dependencies =
+        (java.util.Map<String, java.util.Map<String, Object>>)
+            health.getDetails().get("dependencies");
+    assertEquals("UP", dependencies.get("accountService").get("status"));
+    assertEquals("UP", dependencies.get("sessionContextStore").get("status"));
+    assertEquals("UP", dependencies.get("commandQueueStore").get("status"));
+    assertEquals("UP", dependencies.get("gameLogicService").get("status"));
+    assertEquals("DOWN", dependencies.get("entityManagementService").get("status"));
+    assertEquals("ping", dependencies.get("entityManagementService").get("check"));
+    assertEquals(
+        "grpc:EntityManagementService#Ping",
+        dependencies.get("entityManagementService").get("target"));
   }
 }

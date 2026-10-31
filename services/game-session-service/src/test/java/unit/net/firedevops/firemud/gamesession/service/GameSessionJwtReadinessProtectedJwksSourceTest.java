@@ -103,6 +103,18 @@ class GameSessionJwtReadinessProtectedJwksSourceTest {
   }
 
   @Test
+  void rejects0777AndStickyWritableRootsWithoutDedicatedReadOnlyMount() throws Exception {
+    ProjectionFixture fixture = new ProjectionFixture(JWKS);
+    fixture.createProjection(MODE_0755, MODE_0755, MODE_0444);
+    var source =
+        fixture.source(fixture.observation(sha256(JWKS.getBytes(StandardCharsets.US_ASCII))));
+    for (int mode : new int[] {0777, 01777}) {
+      Files.setAttribute(fixture.projection, "unix:mode", mode);
+      assertUnavailable(source);
+    }
+  }
+
+  @Test
   @SuppressFBWarnings(
       value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
       justification =

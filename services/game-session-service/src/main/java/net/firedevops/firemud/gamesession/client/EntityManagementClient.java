@@ -43,6 +43,7 @@ public final class EntityManagementClient
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub> {
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementClient.class);
   private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final long FIND_CHARACTER_DEADLINE_MILLIS = 500L;
   private final GameplaySessionAttestationService gameplaySessionAttestationService;
 
@@ -81,6 +82,13 @@ public final class EntityManagementClient
   /** Simple ping to verify connectivity. */
   public PingResponse ping() {
     return callStub().ping(PingRequest.newBuilder().build());
+  }
+
+  /** Readiness-only connectivity check on the existing authenticated workload channel. */
+  public PingResponse pingForReadiness() {
+    return stub()
+        .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
+        .ping(PingRequest.getDefaultInstance());
   }
 
   public Optional<Character> findCharacterByName(

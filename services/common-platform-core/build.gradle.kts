@@ -17,6 +17,8 @@ dependencies {
     implementation(libs.opentelemetry.api)
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
+    // The SDK optional incubator signatures need analysis resolution, without enabling its runtime branch.
+    compileOnly("io.opentelemetry:opentelemetry-api-incubator:${libs.versions.opentelemetry.get()}-alpha")
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.validation)
@@ -27,6 +29,7 @@ dependencies {
     compileOnly(libs.grpc.spring.boot.starter)
 
     compileOnly(libs.spotbugs.annotations)
+    testCompileOnly(libs.spotbugs.annotations)
     testImplementation(libs.grpc.spring.boot.starter)
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(testFixtures(project(":common-test-support")))

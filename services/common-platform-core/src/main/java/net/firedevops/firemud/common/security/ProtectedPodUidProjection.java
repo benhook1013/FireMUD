@@ -138,19 +138,31 @@ public final class ProtectedPodUidProjection {
     if (Files.isSymbolicLink(root) || (!root.equals(realRoot) && !canonicalProductionAlias)) {
       throw unavailable();
     }
-    return verifyDirectory(root, expectedOwnerUid);
+    return verifyDirectory(root, expectedOwnerUid, true);
   }
 
   private static DirectorySnapshot verifyDirectory(Path directory, long expectedOwnerUid)
       throws IOException {
+    return verifyDirectory(directory, expectedOwnerUid, false);
+  }
+
+  private static DirectorySnapshot verifyDirectory(
+      Path directory, long expectedOwnerUid, boolean projectionRoot) throws IOException {
     BasicFileAttributes attributes = readAttributes(directory, true);
     Set<PosixFilePermission> mode =
         Files.getPosixFilePermissions(directory, LinkOption.NOFOLLOW_LINKS);
     long ownerUid = owner(directory);
-    if (!attributes.isDirectory() || writableByUntrusted(mode) || ownerUid != expectedOwnerUid) {
+    if (!attributes.isDirectory() || ownerUid != expectedOwnerUid) {
       throw unavailable();
     }
-    return new DirectorySnapshot(attributes, mode, ownerUid);
+    ProtectedProjectionMount.Snapshot mount = null;
+    if (writableByUntrusted(mode)) {
+      if (!projectionRoot) {
+        throw unavailable();
+      }
+      mount = ProtectedProjectionMount.read(directory.toRealPath());
+    }
+    return new DirectorySnapshot(attributes, mode, ownerUid, mount);
   }
 
   private static FileSnapshot readUidFileSnapshot(Path file, long expectedOwnerUid)
@@ -250,7 +262,10 @@ public final class ProtectedPodUidProjection {
   }
 
   private record DirectorySnapshot(
-      BasicFileAttributes attributes, Set<PosixFilePermission> mode, long ownerUid) {
+      BasicFileAttributes attributes,
+      Set<PosixFilePermission> mode,
+      long ownerUid,
+      ProtectedProjectionMount.Snapshot mount) {
     private DirectorySnapshot {
       Objects.requireNonNull(attributes);
       mode = Set.copyOf(mode);
@@ -259,7 +274,8 @@ public final class ProtectedPodUidProjection {
     private boolean sameAs(DirectorySnapshot other) {
       return sameAttributes(attributes, other.attributes)
           && mode.equals(other.mode)
-          && ownerUid == other.ownerUid;
+          && ownerUid == other.ownerUid
+          && Objects.equals(mount, other.mount);
     }
   }
 
