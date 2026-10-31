@@ -23,10 +23,17 @@ spec:
           ports:
             - containerPort: 8080
           env:
+            {{- if hasKey (default dict .Values.extraEnv) "FIREMUD_GRPC_WORKLOAD_NAMESPACE" }}
+            {{- fail "extraEnv must not set FIREMUD_GRPC_WORKLOAD_NAMESPACE; Account derives it from the pod namespace" }}
+            {{- end }}
             {{- range $key, $value := .Values.extraEnv }}
             - name: {{ $key }}
               value: "{{ $value }}"
             {{- end }}
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           readinessProbe:
             httpGet:
               path: {{ .Values.readinessProbe.path }}

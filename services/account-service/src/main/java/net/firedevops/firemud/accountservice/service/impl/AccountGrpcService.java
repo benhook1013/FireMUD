@@ -61,6 +61,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.dao.DataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.transaction.TransactionException;
@@ -79,6 +81,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private final AccountService accountService;
   private final MeterRegistry meterRegistry;
   private final String workloadNamespace;
+  private final boolean localDemoAuthenticationEnabled;
+  private final String localDemoEmail;
 
   public AccountGrpcService(PingService pingService, AccountService accountService) {
     this(pingService, accountService, null, null);
@@ -89,6 +93,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     this(pingService, accountService, meterRegistry, null);
   }
 
+  public AccountGrpcService(
+      PingService pingService,
+      AccountService accountService,
+      MeterRegistry meterRegistry,
+      String workloadNamespace) {
+    this(pingService, accountService, meterRegistry, workloadNamespace, null, false, "");
+  }
+
   @Autowired
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -97,11 +109,22 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       PingService pingService,
       AccountService accountService,
       MeterRegistry meterRegistry,
-      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace,
+      Environment environment,
+      @Value("${firemud.account.local-demo-authentication.enabled:false}")
+          boolean localDemoAuthenticationEnabled,
+      @Value("${firemud.account.local-demo-authentication.email:}") String localDemoEmail) {
     this.pingService = pingService;
     this.accountService = accountService;
     this.meterRegistry = meterRegistry;
     this.workloadNamespace = workloadNamespace;
+    this.localDemoAuthenticationEnabled =
+        localDemoAuthenticationEnabled
+            && environment != null
+            && environment.acceptsProfiles(Profiles.of("local-fixture"))
+            && !environment.acceptsProfiles(Profiles.of("prod"));
+    this.localDemoEmail =
+        this.localDemoAuthenticationEnabled ? EmailCanonicalization.normalize(localDemoEmail) : "";
   }
 
   @Override
@@ -215,6 +238,29 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private void requireGameSessionPeer() {
     requireWorkloadPeer(
         "Verified Game Session workload identity is required", "game-session-service");
+  }
+
+  private void requireCredentialPeer(AuthenticateRequest request) {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer != null
+        && peer.isService("game-session-service")
+        && peer.isInNamespace(workloadNamespace)) {
+      requireGameSessionPeer();
+      return;
+    }
+    requireWorkloadPeer(
+        "Verified Game Session workload identity is required", "entity-management-service");
+    if (!localDemoAuthenticationEnabled) {
+      throw new AdminAuthorizationException("Local demo authentication is unavailable");
+    }
+    try {
+      if (localDemoEmail.equals(EmailCanonicalization.normalize(request.getEmail()))) {
+        return;
+      }
+    } catch (IllegalArgumentException ignored) {
+      // Invalid fixture identity does not authorize credential verification.
+    }
+    throw new AdminAuthorizationException("Configured local demo account identity is required");
   }
 
   private void requireRuntimeEntitlementsPeer() {
@@ -377,6 +423,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void authenticate(
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
+      requireCredentialPeer(request);
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
           accountService.authenticateForGameplay(request.getEmail(), request.getPassword());
       AuthenticateResponse response =
@@ -385,6 +432,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setAccountId(result.accountId())
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(appError("Authenticate", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       AuthenticateResponse response =
@@ -423,8 +476,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       RequestEmailLoginOtpRequest request,
       StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
       accountService.requestEmailLoginOtp(requireEmail(request.getEmail()));
       responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          RequestEmailLoginOtpResponse.newBuilder()
+              .setError(appError("RequestEmailLoginOtp", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
           RequestEmailLoginOtpResponse.newBuilder()
@@ -439,11 +498,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void verifyEmailLoginOtp(
       VerifyEmailLoginOtpRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
+      requireGameSessionPeer();
       var result = accountService.verifyEmailLoginOtp(request.getEmail(), request.getCode());
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
               .setAccountId(result.accountId())
+              .build());
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(appError("VerifyEmailLoginOtp", "PERMISSION_DENIED", ex.getMessage()))
               .build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -936,97 +1001,30 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   @Timed(value = "accountGrpc.exportAccount")
   public void exportAccount(
       ExportAccountRequest request, StreamObserver<ExportAccountResponse> responseObserver) {
-    try {
-      var data =
-          accountService.exportAccountData(
-              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
-      ExportAccountResponse response =
-          ExportAccountResponse.newBuilder()
-              .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
-              .setProfilesJson(JsonMapper.builder().build().writeValueAsString(data.profiles()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AccountUuidReadbackUnavailableException ex) {
-      ExportAccountResponse response =
-          ExportAccountResponse.newBuilder()
-              .setError(accountUuidReadbackUnavailableError("ExportAccount"))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (InvalidRequestException ex) {
-      ExportAccountResponse response =
-          ExportAccountResponse.newBuilder()
-              .setError(appError("ExportAccount", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AuthenticationException ex) {
-      ExportAccountResponse response =
-          ExportAccountResponse.newBuilder()
-              .setError(appError("ExportAccount", ex.getCode(), ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      ExportAccountResponse response =
-          ExportAccountResponse.newBuilder()
-              .setError(appError("ExportAccount", "NOT_FOUND", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        ExportAccountResponse.newBuilder()
+            .setError(
+                appError(
+                    "ExportAccount",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   @Override
   @Timed(value = "accountGrpc.exportTenantData")
   public void exportTenantData(
       ExportTenantDataRequest request, StreamObserver<ExportTenantDataResponse> responseObserver) {
-    try {
-      var data =
-          accountService.exportTenantData(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
-      ExportTenantDataResponse response =
-          ExportTenantDataResponse.newBuilder()
-              .setTenantId(String.valueOf(data.tenantId()))
-              .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
-              .setProfileJson(
-                  data.profile() != null
-                      ? JsonMapper.builder().build().writeValueAsString(data.profile())
-                      : "")
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AccountUuidReadbackUnavailableException ex) {
-      ExportTenantDataResponse response =
-          ExportTenantDataResponse.newBuilder()
-              .setError(accountUuidReadbackUnavailableError("ExportTenantData"))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (InvalidRequestException ex) {
-      ExportTenantDataResponse response =
-          ExportTenantDataResponse.newBuilder()
-              .setError(appError("ExportTenantData", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AuthenticationException ex) {
-      ExportTenantDataResponse response =
-          ExportTenantDataResponse.newBuilder()
-              .setError(appError("ExportTenantData", ex.getCode(), ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      ExportTenantDataResponse response =
-          ExportTenantDataResponse.newBuilder()
-              .setError(appError("ExportTenantData", "NOT_FOUND", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        ExportTenantDataResponse.newBuilder()
+            .setError(
+                appError(
+                    "ExportTenantData",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -1151,44 +1149,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.account.v1.LinkExternalAccountRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse>
           responseObserver) {
-    try {
-      accountService.linkExternalAccount(
-          new net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())),
-              request.getProvider(),
-              request.getExternalId()));
-      var response =
-          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
-              .setSuccess(true)
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AccountUuidReadbackUnavailableException ex) {
-      var response =
-          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
-              .setSuccess(false)
-              .setError(accountUuidReadbackUnavailableError("LinkExternalAccount"))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (InvalidRequestException ex) {
-      var response =
-          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("LinkExternalAccount", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      var response =
-          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("LinkExternalAccount", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
+            .setSuccess(false)
+            .setError(
+                appError(
+                    "LinkExternalAccount",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -1197,40 +1167,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.account.v1.RequestEmailVerificationRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse>
           responseObserver) {
-    try {
-      accountService.requestEmailVerification(
-          resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
-      var response =
-          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
-              .setSuccess(true)
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AccountUuidReadbackUnavailableException ex) {
-      var response =
-          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
-              .setSuccess(false)
-              .setError(accountUuidReadbackUnavailableError("RequestEmailVerification"))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (InvalidRequestException ex) {
-      var response =
-          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("RequestEmailVerification", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      var response =
-          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("RequestEmailVerification", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
+            .setSuccess(false)
+            .setError(
+                appError(
+                    "RequestEmailVerification",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   @Override
