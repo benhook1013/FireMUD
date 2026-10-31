@@ -31,15 +31,22 @@ PY
 }
 
 expect_unchanged_failure() {
-  local fixture="$1" before after
-  shift
+  local fixture="$1" marker="$2" before after
+  shift 2
   before="$(snapshot "$fixture")"
-  if "$@" >"$TEST_ROOT/failure-output" 2>&1; then
+  if "$@" >"$TEST_ROOT/failure-stdout" 2>"$TEST_ROOT/failure-stderr"; then
     echo "Expected certificate operation to refuse retained fixture: $*" >&2
     exit 1
   fi
+  if ! grep -Fq -- "$marker" "$TEST_ROOT/failure-stderr"; then
+    echo "Missing refusal marker '$marker' for: $*" >&2
+    exit 1
+  fi
   after="$(snapshot "$fixture")"
-  [[ "$before" == "$after" ]]
+  if [[ "$before" != "$after" ]]; then
+    echo "Fixture changed during refused operation: $fixture" >&2
+    exit 1
+  fi
 }
 
 fresh="$TEST_ROOT/fresh"
@@ -62,8 +69,8 @@ bash "$ENSURE" "$fresh" >/dev/null
 partial="$TEST_ROOT/partial"
 mkdir "$partial"
 printf 'retained CA\n' >"$partial/ca.crt"
-expect_unchanged_failure "$partial" bash "$GENERATOR" "$partial"
-expect_unchanged_failure "$partial" bash "$ENSURE" "$partial"
+expect_unchanged_failure "$partial" "Incomplete retained development certificate bundle" bash "$GENERATOR" "$partial"
+expect_unchanged_failure "$partial" "Incomplete retained development certificate bundle" bash "$ENSURE" "$partial"
 
 other="$TEST_ROOT/other"
 bash "$GENERATOR" "$other" >"$TEST_ROOT/other-output" 2>&1
@@ -76,8 +83,8 @@ for corruption in malformed key ca ca-key; do
     ca) cp -- "$other/ca.crt" "$fixture/ca.crt"; cp -- "$other/ca.key" "$fixture/ca.key"; cp -- "$other/dev-ca.pem" "$fixture/dev-ca.pem" ;;
     ca-key) cp -- "$other/ca.key" "$fixture/ca.key" ;;
   esac
-  expect_unchanged_failure "$fixture" bash "$GENERATOR" "$fixture"
-  expect_unchanged_failure "$fixture" bash "$ENSURE" "$fixture"
+  expect_unchanged_failure "$fixture" "Invalid retained development certificate bundle" bash "$GENERATOR" "$fixture"
+  expect_unchanged_failure "$fixture" "Invalid retained development certificate bundle" bash "$ENSURE" "$fixture"
 done
 
 links="$TEST_ROOT/links"
@@ -88,15 +95,19 @@ ln "$links/outside/material" "$links/hard/ca.key"
 mkdir "$links/nonregular/ca.crt"
 ln -s "$links/outside" "$links/directory"
 for target in "$links/partial" "$links/hard" "$links/nonregular" "$links/directory/" "$links/directory/new"; do
-  expect_unchanged_failure "$links" bash "$GENERATOR" "$target"
-  expect_unchanged_failure "$links" bash "$ENSURE" "$target"
+  marker="Certificate paths must be regular files without symlinks or hardlinks"
+  case "$target" in
+    "$links/directory/"|"$links/directory/new") marker="Certificate directory and ancestors must be real directories" ;;
+  esac
+  expect_unchanged_failure "$links" "$marker" bash "$GENERATOR" "$target"
+  expect_unchanged_failure "$links" "$marker" bash "$ENSURE" "$target"
 done
 # A link in an otherwise complete bundle is also refused without a mode change.
 linked_complete="$TEST_ROOT/linked-complete"
 cp -a -- "$fresh" "$linked_complete"
 rm -- "$linked_complete/ca.key"
 ln -s "$fresh/ca.key" "$linked_complete/ca.key"
-expect_unchanged_failure "$linked_complete" bash "$ENSURE" "$linked_complete"
+expect_unchanged_failure "$linked_complete" "Certificate paths must be regular files without symlinks or hardlinks" bash "$ENSURE" "$linked_complete"
 
 workloads="$TEST_ROOT/workloads"
 mkdir "$workloads"
@@ -104,10 +115,10 @@ printf 'retained output\n' >"$workloads/existing.crt"
 ln -s "$links/outside/material" "$workloads/linked.key"
 ln "$links/outside/material" "$workloads/hard.key"
 for key in linked.key hard.key; do
-  expect_unchanged_failure "$workloads" bash "$GENERATOR" --workload \
+  expect_unchanged_failure "$workloads" "Certificate paths must be regular files without symlinks or hardlinks" bash "$GENERATOR" --workload \
     "$fresh/ca.crt" "$fresh/ca.key" "$workloads/new/client.crt" "$workloads/$key" dev world-management-service
 done
-expect_unchanged_failure "$workloads" bash "$GENERATOR" --workload \
+expect_unchanged_failure "$workloads" "Refusing to overwrite retained workload output" bash "$GENERATOR" --workload \
   "$fresh/ca.crt" "$fresh/ca.key" "$workloads/existing.crt" "$workloads/new/client.key" dev world-management-service
 
 cleanup="$TEST_ROOT/cleanup"
@@ -128,7 +139,44 @@ for entry in client.key server.key foreign.crt foreign-directory; do
   grep -Fq "Preserved certificate-directory entry: $cleanup/$entry" "$TEST_ROOT/cleanup-output"
 done
 for target in "$links/directory/" "$links/directory/new"; do
-  expect_unchanged_failure "$links" bash "$CLEAN" "$target"
+  expect_unchanged_failure "$links" "Certificate cleanup refuses linked or non-directory paths" bash "$CLEAN" "$target"
 done
 
-echo 'Development certificate retention contract passed.'
+# Resolve the implicit script root physically while refusing explicit linked paths.
+physical_root="$TEST_ROOT/physical-root"
+mkdir -p "$physical_root/certs"
+cp -p -- "$GENERATOR" "$ENSURE" "$CLEAN" "$physical_root/certs/"
+ln -s "$physical_root" "$TEST_ROOT/workspace-link"
+printf 'retained checkout material\n' >"$physical_root/certs/foreign.pem"
+(
+  unset CERT_DIR
+  cd "$TEST_ROOT/workspace-link"
+  bash certs/generate-dev-certs.sh >"$TEST_ROOT/default-generation-output" 2>&1
+)
+[[ -s "$physical_root/certs/ca.crt" && -s "$physical_root/certs/server.key" ]]
+before="$(snapshot "$physical_root")"
+(
+  unset CERT_DIR
+  cd "$TEST_ROOT/workspace-link"
+  bash certs/ensure-dev-certs.sh >"$TEST_ROOT/default-ensure-output" 2>&1
+)
+[[ "$before" == "$(snapshot "$physical_root")" ]]
+for operation in "$GENERATOR" "$ENSURE" "$CLEAN"; do
+  marker="Certificate directory and ancestors must be real directories"
+  if [[ "$operation" == "$CLEAN" ]]; then
+    marker="Certificate cleanup refuses linked or non-directory paths"
+  fi
+  expect_unchanged_failure "$physical_root" "$marker" bash "$operation" "$TEST_ROOT/workspace-link/certs"
+done
+(
+  unset CERT_DIR
+  cd "$TEST_ROOT/workspace-link"
+  bash certs/clean-dev-certs.sh >"$TEST_ROOT/default-cleanup-output" 2>&1
+)
+[[ ! -e "$physical_root/certs/ca.crt" && ! -e "$physical_root/certs/server.key" ]]
+[[ "$(cat "$physical_root/certs/foreign.pem")" == 'retained checkout material' ]]
+for script in generate-dev-certs.sh ensure-dev-certs.sh clean-dev-certs.sh; do
+  cmp -s "$physical_root/certs/$script" "$REPO_ROOT/dev-tools/certs/$script"
+done
+
+echo 'Development certificate retention and physical-default contracts passed.'

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CERT_DIR="${1:-${CERT_DIR:-$SCRIPT_DIR}}"
 GENERATOR="$SCRIPT_DIR/generate-dev-certs.sh"
 COMPOSE_MTLS_STAGE_ROOT=""
