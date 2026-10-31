@@ -188,6 +188,34 @@ def write_artifact(root, plan, partition, attempt):
     return destination
 
 
+def write_compiled_class(directory, class_name, access_flags):
+    internal_name = class_name.replace(".", "/")
+
+    def utf8_constant(value):
+        encoded = value.encode("utf-8")
+        return b"\x01" + len(encoded).to_bytes(2, "big") + encoded
+
+    constant_pool = b"".join(
+        (
+            utf8_constant(internal_name),
+            b"\x07\x00\x01",
+            utf8_constant("java/lang/Object"),
+            b"\x07\x00\x03",
+        )
+    )
+    class_file = directory.joinpath(*class_name.split(".")).with_suffix(".class")
+    class_file.parent.mkdir(parents=True, exist_ok=True)
+    class_file.write_bytes(
+        b"\xca\xfe\xba\xbe"
+        + b"\x00\x00\x00\x41"
+        + b"\x00\x05"
+        + constant_pool
+        + access_flags.to_bytes(2, "big")
+        + b"\x00\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00"
+    )
+    return class_file
+
+
 class SlowServiceCiPartitionTests(unittest.TestCase):
     def test_historical_assignments_and_new_classes_form_complete_disjoint_plans_for_both_services(self):
         for module, task in (
@@ -206,8 +234,19 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                         "net.example.NewFixtureHelper",
                     }
                 }
+                access_flags = {
+                    class_name: 0x0021
+                    for class_name in discovered[task]
+                    if PARTITION.is_test_class(class_name)
+                }
                 plan = PARTITION.build_plan(
-                    discovered, SOURCE_SHA, "1", RUN_ID, module, historical
+                    discovered,
+                    SOURCE_SHA,
+                    "1",
+                    RUN_ID,
+                    module,
+                    historical,
+                    class_access_flags_by_task={task: access_flags},
                 )
                 first = PARTITION.partition_manifest(plan, 1)
                 second = PARTITION.partition_manifest(plan, 2)
@@ -239,6 +278,120 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             discovered,
             {"net.example.NewServiceTest", "net.example.FixtureHelper"},
         )
+
+    def test_nested_runnable_group_survives_abstract_outer_and_nonrunnable_types_stay_excluded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            classes = Path(temporary) / "classes"
+            marker = "net.firedevops.firemud.gamesession.controller.GameSessionIntegrationTest"
+            interface_test = "net.example.InterfaceIntegrationTest"
+            real_test = "net.example.RealIntegrationTest"
+            abstract_test = "net.example.AbstractIntegrationTest"
+            helper = "net.example.FixtureHelper"
+            write_compiled_class(classes, marker, 0x2601)
+            write_compiled_class(classes, interface_test, 0x0621)
+            write_compiled_class(classes, real_test, 0x0021)
+            write_compiled_class(classes, f"{real_test}$Nested", 0x0021)
+            write_compiled_class(classes, abstract_test, 0x0421)
+            write_compiled_class(classes, f"{abstract_test}$NestedScenario", 0x0021)
+            write_compiled_class(classes, helper, 0x0021)
+
+            discovered = PARTITION.class_names_from_directories([classes])
+            candidates = {
+                class_name for class_name in discovered if PARTITION.is_test_class(class_name)
+            }
+            access_flags = PARTITION.test_class_access_flags_from_directories(
+                [classes], candidates
+            )
+            self.assertEqual(access_flags[marker], 0x2601)
+            self.assertTrue(PARTITION.is_runnable_test_class(real_test, access_flags[real_test]))
+            self.assertFalse(PARTITION.is_runnable_test_class(marker, access_flags[marker]))
+            self.assertFalse(
+                PARTITION.is_runnable_test_class(
+                    interface_test, access_flags[interface_test]
+                )
+            )
+            self.assertTrue(
+                PARTITION.is_runnable_test_class(
+                    abstract_test, access_flags[abstract_test]
+                )
+            )
+
+            historical = {"tasks": {"integrationTest": {}}}
+            plan = PARTITION.build_plan(
+                {"integrationTest": discovered},
+                SOURCE_SHA,
+                "1",
+                RUN_ID,
+                "game-session-service",
+                historical,
+                class_access_flags_by_task={"integrationTest": access_flags},
+            )
+            task_plan = plan["tasks"]["integrationTest"]
+            self.assertEqual(set(task_plan["class_universe"]), discovered)
+            self.assertEqual(set(task_plan["assignments"]), discovered)
+            self.assertEqual(
+                task_plan["expected_test_classes"], [abstract_test, real_test]
+            )
+            first = PARTITION.partition_manifest(plan, 1)
+            second = PARTITION.partition_manifest(plan, 2)
+            PARTITION.validate_partition_pair(first, second)
+
+            missing_metadata = dict(access_flags)
+            missing_metadata.pop(marker)
+            with self.assertRaisesRegex(ValueError, "compiled test class metadata is incomplete"):
+                PARTITION.build_plan(
+                    {"integrationTest": discovered},
+                    SOURCE_SHA,
+                    "1",
+                    RUN_ID,
+                    "game-session-service",
+                    historical,
+                    class_access_flags_by_task={
+                        "integrationTest": missing_metadata
+                    },
+                )
+
+            runnable_partition = task_plan["assignments"][abstract_test]
+            runnable_manifest = PARTITION.partition_manifest(plan, runnable_partition)
+            artifact_dir = Path(temporary) / f"partition-{runnable_partition}"
+            (artifact_dir / "jacoco").mkdir(parents=True)
+            (artifact_dir / "jacoco/integrationTest.exec").write_bytes(b"exec")
+            junit = artifact_dir / "test-results/integrationTest/TEST-runnable.xml"
+            junit.parent.mkdir(parents=True)
+            selected_expected = set(runnable_manifest["tasks"]["integrationTest"]["expected_test_classes"]) & set(
+                runnable_manifest["tasks"]["integrationTest"]["selected_classes"]
+            )
+
+            def write_reported_groups(reported_groups):
+                test_cases = []
+                for class_name in sorted(reported_groups):
+                    report_name = (
+                        f"{abstract_test}$NestedScenario"
+                        if class_name == abstract_test
+                        else class_name
+                    )
+                    test_cases.append(
+                        f'<testcase classname="{report_name}" name="runs" />'
+                    )
+                junit.write_text(
+                    "<testsuite>" + "".join(test_cases) + "</testsuite>\n",
+                    encoding="utf-8",
+                )
+
+            write_reported_groups(selected_expected)
+            report = artifact_dir / "reports/jacoco/test/jacocoTestReport.xml"
+            report.parent.mkdir(parents=True)
+            report.write_text("<report />\n", encoding="utf-8")
+            self.assertEqual(
+                PARTITION.verify_artifact_reports(artifact_dir, runnable_manifest),
+                [artifact_dir / "jacoco/integrationTest.exec"],
+            )
+            self.assertIn(abstract_test, selected_expected)
+            write_reported_groups(selected_expected - {abstract_test})
+            with self.assertRaisesRegex(
+                ValueError, f"JUnit reports miss integrationTest classes: {abstract_test}"
+            ):
+                PARTITION.verify_artifact_reports(artifact_dir, runnable_manifest)
 
     def test_partial_retry_selects_older_success_and_newer_success_by_exact_effective_provenance(self):
         module = "account-service"
