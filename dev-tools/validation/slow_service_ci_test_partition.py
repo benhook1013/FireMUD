@@ -341,14 +341,50 @@ def resolve_effective_artifacts(
     run = provenance.get("run")
     if not isinstance(run, dict):
         raise ValueError("workflow run provenance is missing")
+    native_head_sha = run.get("head_sha")
+    if not SHA_PATTERN.fullmatch(native_head_sha or ""):
+        raise ValueError("workflow native head revision is invalid")
     if (
         run.get("id") != expected_run_id
-        or run.get("head_sha") != source_revision
+        or run.get("tested_source_sha") != source_revision
         or run.get("run_attempt") != expected_attempt
         or run.get("path") != ".github/workflows/ci.yml"
         or run.get("name") != "CI — Validation"
+        or run.get("event_name") != run.get("event")
+        or not isinstance(run.get("repository"), str)
+        or not run["repository"]
     ):
         raise ValueError("workflow run provenance does not match the current source")
+    event_name = run.get("event_name")
+    if event_name == "pull_request":
+        pull_request = run.get("pull_request")
+        api_pull_requests = run.get("api_pull_requests")
+        if not isinstance(pull_request, dict) or not isinstance(api_pull_requests, list):
+            raise ValueError("workflow pull-request identity is missing or ambiguous")
+        number = pull_request.get("number")
+        base_sha = pull_request.get("base_sha")
+        head_sha = pull_request.get("head_sha")
+        expected_title = f"CI — Validation pr-{number} base-{base_sha} head-{head_sha}"
+        if (
+            isinstance(number, bool)
+            or not isinstance(number, int)
+            or number <= 0
+            or not SHA_PATTERN.fullmatch(base_sha or "")
+            or head_sha != native_head_sha
+            or run.get("display_title") != expected_title
+            or len(api_pull_requests) > 1
+            or (
+                len(api_pull_requests) == 1
+                and api_pull_requests[0]
+                != {"number": number, "base_sha": base_sha, "head_sha": head_sha}
+            )
+        ):
+            raise ValueError("workflow pull-request/run relationship does not match its event identity")
+    elif event_name in {"push", "workflow_dispatch"}:
+        if native_head_sha != source_revision or run.get("pull_request") is not None:
+            raise ValueError("non-pull-request run must use its native head as the tested source")
+    else:
+        raise ValueError(f"unsupported workflow event identity: {event_name}")
 
     attempts = provenance.get("attempts")
     if not isinstance(attempts, list) or len(attempts) != expected_attempt:
@@ -382,7 +418,7 @@ def resolve_effective_artifacts(
             if job_id in ids:
                 raise ValueError(f"workflow attempt {attempt_number} repeats a job id")
             ids.add(job_id)
-            if job.get("run_id") != expected_run_id or job.get("head_sha") != source_revision:
+            if job.get("run_id") != expected_run_id or job.get("head_sha") != native_head_sha:
                 raise ValueError(f"workflow attempt {attempt_number} contains wrong-run or wrong-source job provenance")
             name = job.get("name")
             if name in expected_names.values():
@@ -435,7 +471,7 @@ def resolve_effective_artifacts(
         if (
             not isinstance(workflow_run, dict)
             or workflow_run.get("id") != expected_run_id
-            or workflow_run.get("head_sha") != source_revision
+            or workflow_run.get("head_sha") != native_head_sha
         ):
             raise ValueError(f"workflow artifact {name} has wrong-run or wrong-source API provenance")
 

@@ -1149,7 +1149,7 @@ jobs:
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: jacoco-${{ matrix.module }}-${{ matrix.partition }}-report-${{ github.sha }}
+          name: jacoco-${{ matrix.module }}-${{ matrix.partition }}-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/' || format('services/{0}/build/reports/jacoco/test/', matrix.module) }}
 
       - name: ☂️ Upload Coverage to Codecov
@@ -1235,24 +1235,71 @@ jobs:
         env:
           CI_RUN_ID: ${{ github.run_id }}
           CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CI_EVENT_NAME: ${{ github.event_name }}
           CI_SOURCE_SHA: ${{ github.sha }}
+          CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           CI_PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
         with:
           script: |
             const fs = require("node:fs");
             const runId = Number(process.env.CI_RUN_ID);
             const runAttempt = Number(process.env.CI_RUN_ATTEMPT);
-            const run = (await github.rest.actions.getWorkflowRun({ run_id: runId })).data;
-            if (run.id !== runId || run.head_sha !== process.env.CI_SOURCE_SHA ||
+            const eventName = process.env.CI_EVENT_NAME;
+            const testedSourceSha = process.env.CI_SOURCE_SHA;
+            const nativeHeadSha = process.env.CI_NATIVE_HEAD_SHA;
+            const shaPattern = /^[0-9a-f]{40}$/;
+            const isPullRequest = eventName === "pull_request";
+            if (context.eventName !== eventName || !shaPattern.test(testedSourceSha || "") ||
+                !shaPattern.test(nativeHeadSha || "")) {
+              throw new Error("Workflow event or tested/native source identity is malformed.");
+            }
+            let pullRequest = null;
+            let expectedDisplayTitle = null;
+            if (isPullRequest) {
+              const eventPullRequest = context.payload?.pull_request;
+              const number = eventPullRequest?.number;
+              const baseSha = eventPullRequest?.base?.sha;
+              const headSha = eventPullRequest?.head?.sha;
+              if (!Number.isSafeInteger(number) || number <= 0 || !shaPattern.test(baseSha || "") ||
+                  !shaPattern.test(headSha || "") || headSha !== nativeHeadSha) {
+                throw new Error("Trusted pull-request event identity does not match the native head.");
+              }
+              expectedDisplayTitle = `CI — Validation pr-${number} base-${baseSha} head-${headSha}`;
+              pullRequest = { number, base_sha: baseSha, head_sha: headSha };
+            } else if (!["push", "workflow_dispatch"].includes(eventName) || nativeHeadSha !== testedSourceSha) {
+              throw new Error("Non-pull-request runs must test their native workflow head.");
+            }
+            const run = (await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId })).data;
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            if (run.id !== runId || run.head_sha !== nativeHeadSha ||
                 run.run_attempt !== runAttempt || run.path !== ".github/workflows/ci.yml" ||
-                run.name !== "CI — Validation") {
-              throw new Error("Current workflow run identity does not match the aggregate source.");
+                run.name !== "CI — Validation" || run.event !== eventName ||
+                run.repository?.full_name !== repository ||
+                (isPullRequest && run.display_title !== expectedDisplayTitle)) {
+              throw new Error("Current workflow run identity does not match the event source.");
+            }
+            let apiPullRequests = [];
+            if (isPullRequest) {
+              if (!Array.isArray(run.pull_requests) || run.pull_requests.length > 1) {
+                throw new Error("Current workflow pull-request association is unavailable or ambiguous.");
+              }
+              apiPullRequests = run.pull_requests.map(association => ({
+                number: association.number,
+                base_sha: association.base?.sha,
+                head_sha: association.head?.sha,
+              }));
+              if (apiPullRequests.length === 1 &&
+                  (apiPullRequests[0].number !== pullRequest.number ||
+                   apiPullRequests[0].base_sha !== pullRequest.base_sha ||
+                   apiPullRequests[0].head_sha !== pullRequest.head_sha)) {
+                throw new Error("Current workflow pull-request association does not match the event.");
+              }
             }
             async function listCompletePages(request, params, rowsKey, description) {
               const items = [];
               let totalCount;
               for (let page = 1; page <= 100; page += 1) {
-                const { data } = await request({ ...params, page, per_page: 100 });
+                const { data } = await request({ ...context.repo, ...params, page, per_page: 100 });
                 const count = data?.total_count;
                 const rows = data?.[rowsKey];
                 if (!Number.isSafeInteger(count) || count < 0 || !Array.isArray(rows) ||
@@ -1296,8 +1343,11 @@ jobs:
             fs.mkdirSync(require("node:path").dirname(process.env.CI_PROVENANCE_PATH), { recursive: true });
             fs.writeFileSync(process.env.CI_PROVENANCE_PATH, JSON.stringify({
               run: {
-                id: run.id, head_sha: run.head_sha, run_attempt: run.run_attempt,
-                path: run.path, name: run.name,
+                id: run.id, head_sha: run.head_sha, tested_source_sha: testedSourceSha,
+                event: run.event, event_name: eventName,
+                pull_request: pullRequest, api_pull_requests: apiPullRequests,
+                display_title: run.display_title, repository: run.repository?.full_name,
+                run_attempt: run.run_attempt, path: run.path, name: run.name,
               },
               attempts,
               artifacts: {
@@ -1396,24 +1446,71 @@ jobs:
         env:
           CI_RUN_ID: ${{ github.run_id }}
           CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CI_EVENT_NAME: ${{ github.event_name }}
           CI_SOURCE_SHA: ${{ github.sha }}
+          CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           CI_PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
         with:
           script: |
             const fs = require("node:fs");
             const runId = Number(process.env.CI_RUN_ID);
             const runAttempt = Number(process.env.CI_RUN_ATTEMPT);
-            const run = (await github.rest.actions.getWorkflowRun({ run_id: runId })).data;
-            if (run.id !== runId || run.head_sha !== process.env.CI_SOURCE_SHA ||
+            const eventName = process.env.CI_EVENT_NAME;
+            const testedSourceSha = process.env.CI_SOURCE_SHA;
+            const nativeHeadSha = process.env.CI_NATIVE_HEAD_SHA;
+            const shaPattern = /^[0-9a-f]{40}$/;
+            const isPullRequest = eventName === "pull_request";
+            if (context.eventName !== eventName || !shaPattern.test(testedSourceSha || "") ||
+                !shaPattern.test(nativeHeadSha || "")) {
+              throw new Error("Workflow event or tested/native source identity is malformed.");
+            }
+            let pullRequest = null;
+            let expectedDisplayTitle = null;
+            if (isPullRequest) {
+              const eventPullRequest = context.payload?.pull_request;
+              const number = eventPullRequest?.number;
+              const baseSha = eventPullRequest?.base?.sha;
+              const headSha = eventPullRequest?.head?.sha;
+              if (!Number.isSafeInteger(number) || number <= 0 || !shaPattern.test(baseSha || "") ||
+                  !shaPattern.test(headSha || "") || headSha !== nativeHeadSha) {
+                throw new Error("Trusted pull-request event identity does not match the native head.");
+              }
+              expectedDisplayTitle = `CI — Validation pr-${number} base-${baseSha} head-${headSha}`;
+              pullRequest = { number, base_sha: baseSha, head_sha: headSha };
+            } else if (!["push", "workflow_dispatch"].includes(eventName) || nativeHeadSha !== testedSourceSha) {
+              throw new Error("Non-pull-request runs must test their native workflow head.");
+            }
+            const run = (await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId })).data;
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            if (run.id !== runId || run.head_sha !== nativeHeadSha ||
                 run.run_attempt !== runAttempt || run.path !== ".github/workflows/ci.yml" ||
-                run.name !== "CI — Validation") {
-              throw new Error("Current workflow run identity does not match the aggregate source.");
+                run.name !== "CI — Validation" || run.event !== eventName ||
+                run.repository?.full_name !== repository ||
+                (isPullRequest && run.display_title !== expectedDisplayTitle)) {
+              throw new Error("Current workflow run identity does not match the event source.");
+            }
+            let apiPullRequests = [];
+            if (isPullRequest) {
+              if (!Array.isArray(run.pull_requests) || run.pull_requests.length > 1) {
+                throw new Error("Current workflow pull-request association is unavailable or ambiguous.");
+              }
+              apiPullRequests = run.pull_requests.map(association => ({
+                number: association.number,
+                base_sha: association.base?.sha,
+                head_sha: association.head?.sha,
+              }));
+              if (apiPullRequests.length === 1 &&
+                  (apiPullRequests[0].number !== pullRequest.number ||
+                   apiPullRequests[0].base_sha !== pullRequest.base_sha ||
+                   apiPullRequests[0].head_sha !== pullRequest.head_sha)) {
+                throw new Error("Current workflow pull-request association does not match the event.");
+              }
             }
             async function listCompletePages(request, params, rowsKey, description) {
               const items = [];
               let totalCount;
               for (let page = 1; page <= 100; page += 1) {
-                const { data } = await request({ ...params, page, per_page: 100 });
+                const { data } = await request({ ...context.repo, ...params, page, per_page: 100 });
                 const count = data?.total_count;
                 const rows = data?.[rowsKey];
                 if (!Number.isSafeInteger(count) || count < 0 || !Array.isArray(rows) ||
@@ -1457,8 +1554,11 @@ jobs:
             fs.mkdirSync(require("node:path").dirname(process.env.CI_PROVENANCE_PATH), { recursive: true });
             fs.writeFileSync(process.env.CI_PROVENANCE_PATH, JSON.stringify({
               run: {
-                id: run.id, head_sha: run.head_sha, run_attempt: run.run_attempt,
-                path: run.path, name: run.name,
+                id: run.id, head_sha: run.head_sha, tested_source_sha: testedSourceSha,
+                event: run.event, event_name: eventName,
+                pull_request: pullRequest, api_pull_requests: apiPullRequests,
+                display_title: run.display_title, repository: run.repository?.full_name,
+                run_attempt: run.run_attempt, path: run.path, name: run.name,
               },
               attempts,
               artifacts: {

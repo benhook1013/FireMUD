@@ -13,6 +13,8 @@ PARTITION = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PARTITION)
 
 SOURCE_SHA = "a" * 40
+PR_HEAD_SHA = "b" * 40
+PR_BASE_SHA = "c" * 40
 RUN_ID = "70"
 START = "2026-10-30T01:00:00Z"
 MIDDLE = "2026-10-30T02:00:00Z"
@@ -59,7 +61,16 @@ def job(module, partition, attempt, conclusion="success", start=START, finish=MI
     }
 
 
-def artifact(module, partition, attempt, artifact_id, created=MIDDLE, run_id=70, source=SOURCE_SHA):
+def artifact(
+    module,
+    partition,
+    attempt,
+    artifact_id,
+    created=MIDDLE,
+    run_id=70,
+    source=SOURCE_SHA,
+    native_head=None,
+):
     name = (
         f"slow-service-ci-partition-{run_id}-{source}-attempt-{attempt}-"
         f"{module}-partition-{partition}"
@@ -70,37 +81,73 @@ def artifact(module, partition, attempt, artifact_id, created=MIDDLE, run_id=70,
         "expired": False,
         "size_in_bytes": 1024,
         "created_at": created,
-        "workflow_run": {"id": run_id, "head_sha": source},
+        "workflow_run": {"id": run_id, "head_sha": native_head or source},
     }
 
 
-def make_provenance(module="account-service"):
+def make_provenance(
+    module="account-service",
+    *,
+    native_head=SOURCE_SHA,
+    tested_source=SOURCE_SHA,
+    event_name="pull_request",
+    api_pull_requests=None,
+):
+    if event_name == "pull_request":
+        pull_request = {
+            "number": 42,
+            "base_sha": PR_BASE_SHA,
+            "head_sha": native_head,
+        }
+        display_title = (
+            f"CI — Validation pr-42 base-{PR_BASE_SHA} head-{native_head}"
+        )
+        associations = [] if api_pull_requests is None else api_pull_requests
+    else:
+        pull_request = None
+        display_title = "CI — Validation develop"
+        associations = []
     return {
         "run": {
             "id": 70,
-            "head_sha": SOURCE_SHA,
+            "head_sha": native_head,
+            "tested_source_sha": tested_source,
             "run_attempt": 2,
             "path": ".github/workflows/ci.yml",
             "name": "CI — Validation",
+            "event": event_name,
+            "event_name": event_name,
+            "pull_request": pull_request,
+            "api_pull_requests": associations,
+            "display_title": display_title,
+            "repository": "example/firemud",
         },
         "attempts": [
             {
                 "attempt": 1,
                 "total_count": 2,
-                "jobs": [job(module, 1, 1), job(module, 2, 1)],
+                "jobs": [
+                    job(module, 1, 1, source=native_head),
+                    job(module, 2, 1, source=native_head),
+                ],
             },
             {
                 "attempt": 2,
                 "total_count": 1,
-                "jobs": [job(module, 2, 2, start=MIDDLE, finish=END)],
+                "jobs": [
+                    job(module, 2, 2, start=MIDDLE, finish=END, source=native_head)
+                ],
             },
         ],
         "artifacts": {
             "total_count": 3,
             "items": [
-                artifact(module, 1, 1, 701),
-                artifact(module, 2, 1, 702),
-                artifact(module, 2, 2, 703, created=END),
+                artifact(module, 1, 1, 701, source=tested_source, native_head=native_head),
+                artifact(module, 2, 1, 702, source=tested_source, native_head=native_head),
+                artifact(
+                    module, 2, 2, 703, created=END,
+                    source=tested_source, native_head=native_head,
+                ),
             ],
         },
     }
@@ -228,6 +275,85 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                 ),
                 2,
             )
+
+    def test_pull_request_merge_source_is_distinct_from_native_api_head(self):
+        module = "game-session-service"
+        matching_api_association = {
+            "number": 42,
+            "base_sha": PR_BASE_SHA,
+            "head_sha": PR_HEAD_SHA,
+        }
+        provenance = make_provenance(
+            module,
+            native_head=PR_HEAD_SHA,
+            tested_source=SOURCE_SHA,
+            api_pull_requests=[matching_api_association],
+        )
+        resolved = PARTITION.resolve_effective_artifacts(
+            provenance, module, RUN_ID, SOURCE_SHA, "2"
+        )
+        self.assertEqual(resolved["partitions"]["1"]["attempt"], 1)
+        self.assertEqual(
+            resolved["partitions"]["1"]["artifact_name"],
+            f"slow-service-ci-partition-{RUN_ID}-{SOURCE_SHA}-attempt-1-{module}-partition-1",
+        )
+
+        # Empty API associations remain valid when the trusted PR event and
+        # canonical run title bind the exact PR/base/head tuple.
+        empty_associations = make_provenance(
+            module, native_head=PR_HEAD_SHA, tested_source=SOURCE_SHA
+        )
+        self.assertEqual(
+            PARTITION.resolve_effective_artifacts(
+                empty_associations, module, RUN_ID, SOURCE_SHA, "2"
+            ),
+            resolved,
+        )
+
+        wrong_identity_cases = []
+        wrong_association = copy.deepcopy(provenance)
+        wrong_association["run"]["api_pull_requests"][0]["number"] = 43
+        wrong_identity_cases.append(wrong_association)
+        wrong_title = copy.deepcopy(provenance)
+        wrong_title["run"]["display_title"] = wrong_title["run"]["display_title"].replace(
+            "pr-42", "pr-43"
+        )
+        wrong_identity_cases.append(wrong_title)
+        wrong_job_head = copy.deepcopy(provenance)
+        wrong_job_head["attempts"][0]["jobs"][0]["head_sha"] = SOURCE_SHA
+        wrong_identity_cases.append(wrong_job_head)
+        wrong_artifact_head = copy.deepcopy(provenance)
+        wrong_artifact_head["artifacts"]["items"][0]["workflow_run"]["head_sha"] = SOURCE_SHA
+        wrong_identity_cases.append(wrong_artifact_head)
+        wrong_tested_source = copy.deepcopy(provenance)
+        wrong_tested_source["run"]["tested_source_sha"] = PR_HEAD_SHA
+        wrong_identity_cases.append(wrong_tested_source)
+        for invalid in wrong_identity_cases:
+            with self.subTest(provenance=invalid):
+                with self.assertRaises(ValueError):
+                    PARTITION.resolve_effective_artifacts(
+                        invalid, module, RUN_ID, SOURCE_SHA, "2"
+                    )
+
+    def test_push_and_dispatch_keep_one_native_tested_revision(self):
+        for event_name in ("push", "workflow_dispatch"):
+            with self.subTest(event_name=event_name):
+                provenance = make_provenance(event_name=event_name)
+                self.assertEqual(
+                    PARTITION.resolve_effective_artifacts(
+                        provenance, "account-service", RUN_ID, SOURCE_SHA, "2"
+                    )["source_revision"],
+                    SOURCE_SHA,
+                )
+                wrong_head = make_provenance(
+                    native_head=PR_HEAD_SHA,
+                    tested_source=SOURCE_SHA,
+                    event_name=event_name,
+                )
+                with self.assertRaisesRegex(ValueError, "non-pull-request"):
+                    PARTITION.resolve_effective_artifacts(
+                        wrong_head, "account-service", RUN_ID, SOURCE_SHA, "2"
+                    )
 
     def test_wrong_run_or_source_provenance_is_rejected(self):
         module = "game-session-service"
