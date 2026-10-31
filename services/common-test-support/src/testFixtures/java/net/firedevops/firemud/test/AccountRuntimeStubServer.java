@@ -159,6 +159,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     realmAccessGranted.set(true);
     profilesByAccountId.clear();
     accountIdsByUuid.clear();
+    accountIdsByEmail
+        .values()
+        .forEach(id -> accountIdsByUuid.put(accountUuidForTestFixture(id), id));
     connectScopesById.clear();
   }
 

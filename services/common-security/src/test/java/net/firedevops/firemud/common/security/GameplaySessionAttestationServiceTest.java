@@ -48,7 +48,7 @@ class GameplaySessionAttestationServiceTest {
           null
         }) {
       assertThrows(
-          GameplaySessionAttestationException.class,
+          IllegalArgumentException.class,
           () ->
               issuingService.issueGameplaySessionAttestation(
                   "22",

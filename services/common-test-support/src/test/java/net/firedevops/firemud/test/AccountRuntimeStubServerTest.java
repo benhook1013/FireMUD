@@ -19,6 +19,40 @@ import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerTest {
   @Test
+  void resetRetainsExplicitUuidRegistrationWithoutReauthentication() throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("mapped@example.com", 7L);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+        server.resetRuntimeState();
+
+        var profile =
+            stub.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(accountUuid).build());
+        assertThat(profile.hasError()).isFalse();
+        assertThat(
+                AccountProfileJson.parse(profile.getProfileJson(), "PRIVATE")
+                    .presenceVisibilityPolicy())
+            .isEqualTo("FRIENDS_ONLY");
+        assertThat(
+                stub.updateProfile(
+                        UpdateProfileRequest.newBuilder()
+                            .setTenantId("1")
+                            .setAccountId(accountUuid)
+                            .setProfileJson("{\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                            .build())
+                    .getSuccess())
+            .isTrue();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void runtimeEvidenceUsesTheExplicitTestClockInsteadOfAnExpiredCalendarFixture() throws Exception {
     var now = Instant.parse("2026-10-30T00:00:00Z");
     try (var server = new AccountRuntimeStubServer(0, Clock.fixed(now, ZoneOffset.UTC))) {

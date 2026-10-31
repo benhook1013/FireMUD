@@ -30,7 +30,7 @@ public class GameplaySessionAttestationService {
     String normalizedRoomInstanceId = requireOptionalCanonicalRuntimeRoomId(roomInstanceId);
     requireText(tenantId, "tenantId");
     requireText(sessionId, "sessionId");
-    String canonicalAccountId = requireCanonicalAccountUuid(accountId, "accountId");
+    String canonicalAccountId = JwtClaims.requireCanonicalAccountUuid(accountId, "accountId");
     requireText(characterId, "characterId");
     requireText(gameInstanceId, "gameInstanceId");
     requireText(worldSlug, "worldSlug");

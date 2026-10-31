@@ -18,6 +18,7 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -80,7 +81,14 @@ public class CharacterServiceImpl implements CharacterService {
   public CharacterDto getWithInventory(Long characterId) {
     Cache cache = cacheManager.getCache("characterGraph");
     if (cache != null) {
-      CharacterDto cached = cache.get(characterId, CharacterDto.class);
+      CharacterDto cached;
+      try {
+        cached = cache.get(characterId, CharacterDto.class);
+      } catch (SerializationException ex) {
+        // Derived cache bytes do not establish ownership; rebuild through the strict SQL mapper.
+        cache.evict(characterId);
+        cached = null;
+      }
       if (cached != null) {
         cacheHitCounter.increment();
         return cached;
