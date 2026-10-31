@@ -71,6 +71,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 class AccountGrpcServiceTest {
   private static final String WORKLOAD_NAMESPACE = "test";
@@ -154,7 +155,8 @@ class AccountGrpcServiceTest {
   private static Stream<RuntimeException> accountUuidReadbackFailures() {
     return Stream.of(
         new IllegalStateException(ACCOUNT_UUID_READBACK_FAILURE),
-        new DataAccessResourceFailureException(ACCOUNT_UUID_READBACK_FAILURE));
+        new DataAccessResourceFailureException(ACCOUNT_UUID_READBACK_FAILURE),
+        new CannotCreateTransactionException(ACCOUNT_UUID_READBACK_FAILURE));
   }
 
   private static AccountService accountServiceWithUnavailableAccountUuidReadback(
@@ -2040,6 +2042,55 @@ class AccountGrpcServiceTest {
                 observer));
 
     assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals("", observer.response().getAccountId());
+  }
+
+  private static Stream<RealmAccessGrantResult> mismatchedRealmGrantResults() {
+    String currentTime = Instant.now().toString();
+    return Stream.of(
+        new RealmAccessGrantResult(42L, 8L, "demo", "preview", true, 3L, currentTime),
+        new RealmAccessGrantResult(42L, 7L, "other-world", "preview", true, 3L, currentTime),
+        new RealmAccessGrantResult(42L, 7L, "demo", "other-realm", true, 3L, currentTime),
+        new RealmAccessGrantResult(42L, 7L, "demo", "preview", true, 0L, currentTime),
+        new RealmAccessGrantResult(42L, 7L, "demo", "preview", true, -1L, currentTime),
+        new RealmAccessGrantResult(42L, 7L, "demo", "preview", true, 3L, null),
+        new RealmAccessGrantResult(42L, 7L, "demo", "preview", true, 3L, "  "),
+        new RealmAccessGrantResult(42L, 7L, "demo", "preview", true, 3L, "not-an-instant"),
+        new RealmAccessGrantResult(
+            42L, 7L, "demo", "preview", true, 3L, Instant.now().plusSeconds(60).toString()));
+  }
+
+  @ParameterizedTest
+  @MethodSource("mismatchedRealmGrantResults")
+  void getRealmAccessGrantForRuntimeFailsUnavailableOnMismatchedAuthorityEvidence(
+      RealmAccessGrantResult result) {
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(42L);
+    Mockito.when(accountService.getRealmAccessGrantForRuntime(42L, 7L, "demo", "preview", "req-1"))
+        .thenReturn(result);
+    AccountGrpcService service =
+        new AccountGrpcService(
+            Mockito.mock(PingService.class), accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetRealmAccessGrantForRuntimeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getRealmAccessGrantForRuntime(
+                GetRealmAccessGrantForRuntimeRequest.newBuilder()
+                    .setAccountId(ACCOUNT_UUID)
+                    .setTenantId("7")
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setRequestId("req-1")
+                    .build(),
+                observer));
+
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+    assertEquals("", observer.response().getAccountId());
   }
 
   @Test

@@ -16,6 +16,8 @@ import net.firedevops.firemud.accountservice.jooq.tables.records.AccountsRecord;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountState;
 import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +25,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 @Repository
 public class AccountRepository {
+  private static final Logger logger = LoggerFactory.getLogger(AccountRepository.class);
   private final DSLContext dsl;
   private final AccountAuthoritySourceEvidenceRepository sourceEvidence;
 
@@ -133,7 +136,9 @@ public class AccountRepository {
           accounts.add(account);
         }
       } catch (IllegalArgumentException | IllegalStateException ex) {
-        // Scalar UUID resolution rejects this row; a batch omits only that subject.
+        logger.warn(
+            "Omitting Account UUID batch row rejected by scalar readback; exceptionClass={}",
+            ex.getClass().getSimpleName());
       }
     }
     return List.copyOf(accounts);

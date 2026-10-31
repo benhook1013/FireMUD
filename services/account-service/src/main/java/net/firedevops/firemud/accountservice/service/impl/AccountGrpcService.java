@@ -63,6 +63,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.transaction.TransactionException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -1280,13 +1281,19 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private long resolveAccountStorageIdForRpc(UUID accountUuid) {
     try {
       return accountService.resolveAccountStorageId(accountUuid);
-    } catch (IllegalStateException | DataAccessException ex) {
-      throw new AccountUuidReadbackUnavailableException();
+    } catch (IllegalStateException | DataAccessException | TransactionException ex) {
+      logger.warn(
+          "Account UUID readback unavailable; exceptionClass={}", ex.getClass().getSimpleName());
+      throw new AccountUuidReadbackUnavailableException(ex);
     }
   }
 
   private static final class AccountUuidReadbackUnavailableException extends RuntimeException {
     private static final long serialVersionUID = 1L;
+
+    private AccountUuidReadbackUnavailableException(Throwable cause) {
+      super(cause);
+    }
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(

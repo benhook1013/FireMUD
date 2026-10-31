@@ -8675,7 +8675,7 @@ Canonical gameplay roster discovery is a pre-admission, non-admitting boundary. 
 preseeded methods below remain restricted to PRESEEDED_ONLY; other policy values are
 non-authorizing and fail with FAILED_PRECONDITION. The PLAYER_CREATED methods are a separate
 source-bound read contract and do not authenticate their unsigned context or authorize the
-legacy numeric ListCharactersByAccount RPC for canonical gameplay. A valid ListPreseededRoster
+ordinary UUID-valued ListCharactersByAccount RPC for canonical gameplay. A valid ListPreseededRoster
 response may contain zero actors; that is a successful lookup. These RPCs use canonical non-OK gRPC statuses
 rather than in-response errors: malformed requests are INVALID_ARGUMENT, stale snapshots or
 selections not present in the bound snapshot are FAILED_PRECONDITION, unauthorized callers are

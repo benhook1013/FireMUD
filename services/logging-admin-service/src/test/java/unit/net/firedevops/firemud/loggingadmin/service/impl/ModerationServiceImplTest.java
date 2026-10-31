@@ -15,6 +15,7 @@ import net.firedevops.firemud.loggingadmin.mapper.ModerationActionMapper;
 import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -53,7 +54,11 @@ class ModerationServiceImplTest {
     ModerationActionDto result = service.applyAction(req);
 
     assertEquals(dto, result);
-    verify(repository).save(any(ModerationAction.class));
+    ArgumentCaptor<ModerationAction> captor = ArgumentCaptor.forClass(ModerationAction.class);
+    verify(repository).save(captor.capture());
+    assertEquals(
+        java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1"),
+        captor.getValue().getAccountId());
   }
 
   @Test

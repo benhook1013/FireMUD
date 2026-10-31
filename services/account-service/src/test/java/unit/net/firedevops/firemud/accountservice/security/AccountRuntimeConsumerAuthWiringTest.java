@@ -47,6 +47,7 @@ class AccountRuntimeConsumerAuthWiringTest {
   private static final String IDENTITY_METHOD =
       "account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity";
   private static final String NONPUBLIC_METHOD = "account.v1.AccountService/GetProfile";
+  private static final String UPDATE_PROFILE_METHOD = "account.v1.AccountService/UpdateProfile";
   private static final String REALM_GRANT_METHOD =
       "account.v1.AccountService/GetRealmAccessGrantForRuntime";
   private static final String PRESENCE_METHOD =
@@ -145,7 +146,7 @@ class AccountRuntimeConsumerAuthWiringTest {
   }
 
   @Test
-  void bearerOnlyPresenceRequestReachesHandlerButIsDeniedWithoutSocialPeerUnderBothYamlLayers() {
+  void nonSocialPresenceRequestsReachHandlerButAreDeniedUnderBothYamlLayers() {
     for (boolean productionLayer : List.of(false, true)) {
       withConfiguredInterceptor(
           productionLayer,
@@ -173,11 +174,19 @@ class AccountRuntimeConsumerAuthWiringTest {
 
             PresenceDispatchResult result =
                 dispatchPresenceMethod(interceptor, service, null, bearer);
+            PresenceDispatchResult wrongNamespace =
+                dispatchPresenceMethod(
+                    interceptor,
+                    service,
+                    "spiffe://firemud/ns/other/sa/social-groups-service",
+                    null);
 
-            assertThat(result.handlerDispatched()).isTrue();
-            assertThat(result.observer().completed).isTrue();
-            assertThat(result.observer().response.getError().getCode())
-                .isEqualTo("PERMISSION_DENIED");
+            for (PresenceDispatchResult denied : List.of(result, wrongNamespace)) {
+              assertThat(denied.handlerDispatched()).isTrue();
+              assertThat(denied.observer().completed).isTrue();
+              assertThat(denied.observer().response.getError().getCode())
+                  .isEqualTo("PERMISSION_DENIED");
+            }
             verifyNoInteractions(accountService);
           });
     }
@@ -341,6 +350,8 @@ class AccountRuntimeConsumerAuthWiringTest {
                   .contains(PRESENCE_METHOD)
                   .contains(REALM_GRANT_METHOD)
                   .doesNotContain(NONPUBLIC_METHOD);
+              assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
+                  .doesNotContain(UPDATE_PROFILE_METHOD);
               action.accept(
                   context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
             });
