@@ -1055,9 +1055,7 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
     return "Selection required. Use "
         + playUsage(selectedWorld, selectedRealm)
-        + " or browse "
-        + charsUsage(selectedWorld, selectedRealm)
-        + " first.";
+        + " with a known character name.";
   }
 
   private PlayCommandHandlingResult characterSelectionRequiredFailure(
@@ -1074,9 +1072,7 @@ public class PlayCommandHandler {
             "realmSlug",
             selectedRealm.slug(),
             "playUsage",
-            playUsage(selectedWorld, selectedRealm),
-            "charsUsage",
-            charsUsage(selectedWorld, selectedRealm)),
+            playUsage(selectedWorld, selectedRealm)),
         tenantTag,
         Long.toString(selectedRealm.gameInstanceId()),
         null,
@@ -1101,13 +1097,6 @@ public class PlayCommandHandler {
         + selectedWorld.slug()
         + (selectedRealm.publicProductionRealm() ? "" : " " + selectedRealm.slug())
         + " <character>";
-  }
-
-  private String charsUsage(
-      GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
-    return "CHARS "
-        + selectedWorld.slug()
-        + (selectedRealm.publicProductionRealm() ? "" : " " + selectedRealm.slug());
   }
 
   private record ResolvedPlaySelection(

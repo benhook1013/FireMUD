@@ -1108,7 +1108,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo(
-            "Selection required. Use PLAY sandbox preview <character> or browse CHARS sandbox preview first.");
+            "Selection required. Use PLAY sandbox preview <character> with a known character name.");
   }
 
   @Test
@@ -2039,7 +2039,7 @@ class PlayCommandHandlerTest {
 
   private void assertDemoCharacterSelectionRequired(PlayCommandHandlingResult result) {
     String expectedMessage =
-        "Selection required. Use PLAY demo <character> or browse CHARS demo first.";
+        "Selection required. Use PLAY demo <character> with a known character name.";
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
@@ -2052,8 +2052,7 @@ class PlayCommandHandlerTest {
     assertThat(error.arguments())
         .containsEntry("worldSlug", "demo")
         .containsEntry("realmSlug", "production")
-        .containsEntry("playUsage", "PLAY demo <character>")
-        .containsEntry("charsUsage", "CHARS demo");
+        .containsEntry("playUsage", "PLAY demo <character>");
   }
 
   private static GameplayCommand command(String commandId, String commandName, String commandText) {

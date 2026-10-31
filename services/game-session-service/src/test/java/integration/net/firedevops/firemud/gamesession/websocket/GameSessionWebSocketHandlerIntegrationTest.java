@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.argThat;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
@@ -644,7 +643,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void unexpectedDisconnectKeepsReplayEligibleForFreshReconnect() throws Exception {
+  void unexpectedDisconnectKeepsFreshReconnectLookButDoesNotReplayPrivateContext()
+      throws Exception {
     clearInvocations(screenBufferService);
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
@@ -666,16 +666,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
-      client.awaitContains("RECONNECT REPLAY APPEARS");
+      client.awaitContains("Room: Login Hall");
       secondPayloads = client.responses();
       GameplayAsyncAssertions.assertPresenceCountEventually(
           gameplayPresenceService, 22L, 1L, 1, java.time.Duration.ofSeconds(5));
       assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
           .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
     }
-    assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
+    assertThat(secondPayloads).noneMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
+    assertThat(secondPayloads).anyMatch(payload -> payload.contains("Room: Login Hall"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    verify(screenBufferService, atLeastOnce()).get(22L, 1L, 123L);
+    verify(screenBufferService, never()).get(22L, 1L, 123L);
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
   }
 
@@ -801,14 +802,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketLoginCanBrowseRealmsAndCharactersBeforePlay() throws Exception {
+  void websocketLoginCanBrowseRealmsButCharsStaysUnavailableBeforePlay() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
       client.login("demo@example.com", "swordfish");
       client.send("REALMS demo");
       client.awaitStartsWith("OK REALMS");
       client.send("CHARS demo");
-      client.awaitStartsWith("OK CHARS");
+      client.awaitStartsWith("ERROR CHARACTER_LIST_UNAVAILABLE");
       payloads = client.responses();
     }
 
@@ -821,16 +822,18 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads)
         .anyMatch(
             payload ->
+                payload.startsWith("ERROR CHARACTER_LIST_UNAVAILABLE")
+                    && payload.contains("known character name"));
+    assertThat(payloads)
+        .noneMatch(
+            payload ->
                 payload.startsWith("OK CHARS")
-                    && payload.contains("Emberline [lvl 12]")
-                    && payload.contains("Sora [lvl 7]")
-                    && payload.contains("Realm state: shared, creation: allow_new"));
+                    || payload.contains("Emberline [lvl")
+                    || payload.contains("Sora [lvl"));
     verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
-    verify(entityManagementClient)
-        .listCharactersByAccount(
-            "22", ACCOUNT_UUID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    verify(entityManagementClient, never()).listCharactersByAccount(any(), any(), any(), any());
   }
 
   @Test
@@ -936,16 +939,18 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOOK");
       client.awaitStartsWith("ERROR PLAY_REQUIRED");
       client.send("CHARS demo");
-      client.awaitStartsWith("OK CHARS");
+      client.awaitStartsWith("ERROR CHARACTER_LIST_UNAVAILABLE");
       payloads = client.responses();
     }
 
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR PLAY_REQUIRED"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK CHARS"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("CutoverArrival"));
-    org.mockito.Mockito.verify(entityManagementClient)
+    assertThat(payloads)
+        .anyMatch(payload -> payload.startsWith("ERROR CHARACTER_LIST_UNAVAILABLE"));
+    assertThat(payloads)
+        .noneMatch(payload -> payload.startsWith("OK CHARS") || payload.contains("CutoverArrival"));
+    org.mockito.Mockito.verify(entityManagementClient, never())
         .listCharactersByAccount(
             "22",
             ACCOUNT_UUID,

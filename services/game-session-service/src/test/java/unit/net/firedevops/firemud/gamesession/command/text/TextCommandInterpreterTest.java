@@ -416,8 +416,7 @@ class TextCommandInterpreterTest {
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
-    WorldsCommandHandler worldsHandler =
-        new WorldsCommandHandler(worldCatalog, entityManagementClient);
+    WorldsCommandHandler worldsHandler = new WorldsCommandHandler(worldCatalog);
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -536,17 +535,21 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void charsAreVisibleAfterLogin() {
+  void charsFailClosedAfterLoginWithoutReturningRoster() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "CHARS demo", false);
 
-    assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("CHARS demo", interpretation).contains("1) demo [lvl 12]"));
-    assertTrue(
-        renderedResponse("CHARS demo", interpretation)
-            .contains("Realm state: shared, creation: allow_new"));
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR CHARACTER_LIST_UNAVAILABLE Character browsing is unavailable. "
+            + "Use PLAY <world> [realm] <character> with a known character name.",
+        renderedResponse("CHARS demo", interpretation));
+    verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test

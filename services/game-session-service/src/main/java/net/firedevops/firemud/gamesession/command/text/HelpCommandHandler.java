@@ -78,21 +78,23 @@ public class HelpCommandHandler {
                   + "LOGIN <email>\n"
                   + "Request a one-time email login code when the account allows it.\n"
                   + "Use LOGON as an alias if your client expects it.\n"
-                  + "After login, use PLAY <world> [realm] [character].");
+                  + "After login, use PLAY <world> [realm] [character], naming a known "
+                  + "character when needed.");
       case "PLAY" ->
           success(
               "PLAY <world> [realm] [character]\n"
-                  + "Select the world to enter, optionally name a visible realm, and optionally choose a character.");
+                  + "Select the world to enter, optionally name a visible realm, and use a known "
+                  + "character name when selecting a character.");
       case "REALMS" ->
           success(
               "REALMS <world>\n"
                   + "List visible realms for the selected world.\n"
-                  + "Use this before CHARS or PLAY when a world exposes more than one realm.");
+                  + "Use this before PLAY when a world exposes more than one realm.");
       case "CHARS" ->
           success(
-              "CHARS <world> [realm]\n"
-                  + "List visible characters for the selected world and realm.\n"
-                  + "Use REALMS first when the world exposes more than one realm.");
+              "CHARS\n"
+                  + "Character browsing is unavailable. Use PLAY <world> [realm] <character> "
+                  + "with a known character name.");
       case "WHO" ->
           success(
               "WHO\n"
@@ -226,6 +228,8 @@ public class HelpCommandHandler {
           case "HELP" -> "HELP";
           case "LOGIN", "LOGON" -> "LOGIN";
           case "PLAY" -> "PLAY";
+          case "REALMS" -> "REALMS";
+          case "CHARS" -> "CHARS";
           case "WHO" -> "WHO";
           case "STATUS", "STAT" -> "STATUS";
           case "FRIENDS" -> "FRIENDS";

@@ -6,7 +6,7 @@ After actual edge loss, the Telnet transport carries the owner-defined `WORLDS` 
 
 ## Implementation Status
 
-Current proxy routing and receiving-service behavior support an abbreviated returning-member `LOGIN` -> `PLAY` path when current membership and character gates pass. Current proxy routing still bootstraps a hidden default and does not enforce `WORLDS` as a prerequisite; the live Account adapter does not expose lifecycle state, so missing and `INACTIVE` membership cannot be distinguished by the current implementation. `NotifyDisconnect` remains a best-effort, at-least-once advisory signal as described below.
+Current proxy routing and receiving-service behavior support an abbreviated returning-member `LOGIN` -> `PLAY` path when current membership and character gates pass. Current proxy routing still bootstraps a hidden default and does not enforce `WORLDS` as a prerequisite; the live Account adapter does not expose lifecycle state, so missing and `INACTIVE` membership cannot be distinguished by the current implementation. `NotifyDisconnect` remains a best-effort, at-least-once advisory signal as described below. Its current Game Session receiver returns bounded acknowledgements after read-only metadata checks without suspending shared state or invoking presence effects; [Game Session runtime status](../game-session-service/runtime-and-data.md#reconnection-and-disconnect-handling) records that containment and its remaining binding-fence limits.
 
 ## Service Interactions
 

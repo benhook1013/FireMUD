@@ -289,7 +289,7 @@ class SessionResumptionFlowTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
-    worldsHandler = new WorldsCommandHandler(worldCatalog, entityManagementClient);
+    worldsHandler = new WorldsCommandHandler(worldCatalog);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
@@ -537,7 +537,8 @@ class SessionResumptionFlowTest {
 
     TextCommandInterpretationResult charsAfterCutover =
         interpreter.interpret("1", "CHARS demo", false);
-    assertTrue(charsAfterCutover.commandResult().accepted());
+    assertFalse(charsAfterCutover.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", charsAfterCutover.commandResult().errorCode());
   }
 
   @Test

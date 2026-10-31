@@ -863,6 +863,55 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void localizedCharacterBrowseUnavailableErrorUsesConfiguredLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "CHARACTER_LIST_UNAVAILABLE",
+                "fallback",
+                "error.chars.unavailable",
+                java.util.Map.of()));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "ERROR CHARACTER_LIST_UNAVAILABLE La consultation des personnages n’est pas "
+                + "disponible. Utilisez PLAY <world> [realm] <character> avec le nom d’un "
+                + "personnage connu.");
+  }
+
+  @Test
+  void localizedPlayCharacterSelectionUsesKnownCharacterGuidance() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "PLAY_SELECTION_REQUIRED",
+                "fallback",
+                "error.play.character-selection-required",
+                java.util.Map.of("playUsage", "PLAY demo <character>")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "ERROR PLAY_SELECTION_REQUIRED Sélection requise. Utilisez PLAY demo <character> "
+                + "avec le nom d’un personnage connu.");
+  }
+
+  @Test
   void localizedUnknownHelpTopicUsesConfiguredLocaleTemplate() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
