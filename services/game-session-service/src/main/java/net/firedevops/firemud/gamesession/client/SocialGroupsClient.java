@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.socialgroups.v1.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
 import net.firedevops.firemud.socialgroups.v1.FriendRosterFilter;
@@ -67,107 +68,113 @@ public final class SocialGroupsClient
         SocialGroupsServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  public ListFriendPresenceResponse listFriendPresence(long tenantId, long accountId) {
+  public ListFriendPresenceResponse listFriendPresence(long tenantId, String accountId) {
     return callStub()
         .listFriendPresence(
             ListFriendPresenceRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
                 .build());
   }
 
-  public ListFriendsResponse listFriends(long tenantId, long accountId, FriendRosterFilter filter) {
+  public ListFriendsResponse listFriends(
+      long tenantId, String accountId, FriendRosterFilter filter) {
     return callStub()
         .listFriends(
             ListFriendsRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
                 .setFilter(filter)
                 .build());
   }
 
-  public ListFriendsResponse listFriends(long tenantId, long accountId) {
+  public ListFriendsResponse listFriends(long tenantId, String accountId) {
     return listFriends(tenantId, accountId, FriendRosterFilter.FRIEND_ROSTER_FILTER_ALL);
   }
 
-  public AddFriendResponse addFriend(long tenantId, long accountId, long friendAccountId) {
+  public AddFriendResponse addFriend(long tenantId, String accountId, String friendAccountId) {
     return callStub()
         .addFriend(
             AddFriendRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
-                .setFriendAccountId(Long.toString(friendAccountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
+                .setFriendAccountId(
+                    JwtClaims.requireCanonicalAccountUuid(friendAccountId, "friendAccountId"))
                 .build());
   }
 
-  public RemoveFriendResponse removeFriend(long tenantId, long accountId, long friendAccountId) {
+  public RemoveFriendResponse removeFriend(
+      long tenantId, String accountId, String friendAccountId) {
     return callStub()
         .removeFriend(
             RemoveFriendRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
-                .setFriendAccountId(Long.toString(friendAccountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
+                .setFriendAccountId(
+                    JwtClaims.requireCanonicalAccountUuid(friendAccountId, "friendAccountId"))
                 .build());
   }
 
   public RemoveFriendByOrdinalResponse removeFriendByOrdinal(
-      long tenantId, long accountId, int ordinal) {
+      long tenantId, String accountId, int ordinal) {
     return callStub()
         .removeFriendByOrdinal(
             RemoveFriendByOrdinalRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
                 .setOrdinal(ordinal)
                 .build());
   }
 
-  public GetFriendResponse getFriend(long tenantId, long accountId, long friendAccountId) {
+  public GetFriendResponse getFriend(long tenantId, String accountId, String friendAccountId) {
     return callStub()
         .getFriend(
             GetFriendRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
-                .setFriendAccountId(Long.toString(friendAccountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
+                .setFriendAccountId(
+                    JwtClaims.requireCanonicalAccountUuid(friendAccountId, "friendAccountId"))
                 .build());
   }
 
-  public GetFriendByOrdinalResponse getFriendByOrdinal(long tenantId, long accountId, int ordinal) {
+  public GetFriendByOrdinalResponse getFriendByOrdinal(
+      long tenantId, String accountId, int ordinal) {
     return callStub()
         .getFriendByOrdinal(
             GetFriendByOrdinalRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
                 .setOrdinal(ordinal)
                 .build());
   }
 
-  public GetFriendRosterSummaryResponse getFriendRosterSummary(long tenantId, long accountId) {
+  public GetFriendRosterSummaryResponse getFriendRosterSummary(long tenantId, String accountId) {
     return callStub()
         .getFriendRosterSummary(
             GetFriendRosterSummaryRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
                 .build());
   }
 
-  public GetFriendPresencePolicyResponse getFriendPresencePolicy(long tenantId, long accountId) {
+  public GetFriendPresencePolicyResponse getFriendPresencePolicy(long tenantId, String accountId) {
     return callStub()
         .getFriendPresencePolicy(
             GetFriendPresencePolicyRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
                 .build());
   }
 
   public UpdateFriendPresencePolicyResponse updateFriendPresencePolicy(
       long tenantId,
-      long accountId,
+      String accountId,
       net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy visibilityPolicy) {
     return callStub()
         .updateFriendPresencePolicy(
             UpdateFriendPresencePolicyRequest.newBuilder()
                 .setTenantId(Long.toString(tenantId))
-                .setAccountId(Long.toString(accountId))
+                .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
                 .setVisibilityPolicy(visibilityPolicy)
                 .build());
   }

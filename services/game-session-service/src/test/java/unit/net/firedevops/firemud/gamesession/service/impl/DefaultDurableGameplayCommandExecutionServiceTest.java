@@ -332,6 +332,76 @@ class DefaultDurableGameplayCommandExecutionServiceTest {
   }
 
   @Test
+  void executeStoresAndDeliversRejectedCommunicationAndReplaysItsErrorWithoutReexecution() {
+    SessionContext context = GameplayCommandTestFixtures.durableDemo();
+    GameplayCommand command = gameplayCommand("SAY", "SAY Hello there");
+    TickEffect effect = tickEffect("tfx-rejected-communication", "cmd-rejected-communication");
+    TextCommand parsed =
+        new TextCommand(TextCommandType.SAY, java.util.List.of("Hello there"), "SAY Hello there");
+    String code = "COMMUNICATION_NOT_DELIVERED";
+    String message = "Sender Account identity unavailable";
+    PlayerOutput output = PlayerOutput.error(code, message);
+    when(parser.parse("SAY Hello there")).thenReturn(parsed);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+        .thenReturn(Optional.of(context));
+    when(durableGameplayReplayService.find(22L, 42L, "tfx-rejected-communication"))
+        .thenReturn(Optional.empty())
+        .thenReturn(
+            Optional.of(
+                new DurableGameplayReplayService.ReplayRecord(
+                    false, code, message, java.util.List.of(output))));
+    when(communicationCommandHandler.handle(context, parsed, "tfx-rejected-communication"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandlingResult(
+                CommandEnqueueResult.failure(code, message), java.util.List.of(output)));
+
+    DurableGameplayCommandExecutionResult rejected = service.execute(effect, command).orElseThrow();
+
+    assertThat(rejected.effectStatus()).isEqualTo("REJECTED");
+    assertThat(rejected.commandExecutionOutcome()).isEqualTo("COMPLETED");
+    assertThat(rejected.gameplayResult()).isEqualTo("NOT_APPLIED");
+    assertThat(rejected.failureCode()).isEqualTo(code);
+    assertThat(rejected.failureMessage()).isEqualTo(message);
+    verify(durableGameplayReplayService)
+        .save(
+            22L,
+            42L,
+            "tfx-rejected-communication",
+            false,
+            code,
+            message,
+            java.util.List.of(output));
+    verify(playerOutputDeliveryService).deliver(context, java.util.List.of(output), true);
+
+    DurableGameplayCommandExecutionResult replayed = service.execute(effect, command).orElseThrow();
+
+    assertThat(replayed.effectStatus()).isEqualTo("REPLAY_NOOP");
+    assertThat(replayed.commandExecutionOutcome()).isEqualTo("COMPLETED");
+    assertThat(replayed.gameplayResult()).isEqualTo("NOT_APPLIED");
+    assertThat(replayed.failureCode()).isEqualTo(code);
+    assertThat(replayed.failureMessage()).isEqualTo(message);
+    verify(durableGameplayReplayService)
+        .save(
+            22L,
+            42L,
+            "tfx-rejected-communication",
+            false,
+            code,
+            message,
+            java.util.List.of(output));
+    verify(communicationCommandHandler).handle(context, parsed, "tfx-rejected-communication");
+    verify(playerOutputDeliveryService, Mockito.times(2))
+        .deliver(context, java.util.List.of(output), true);
+    verify(scriptEventPublisher).publishCommandEvent(context, command);
+    verifyNoInteractions(
+        itemCommandHandler,
+        moveCommandHandler,
+        afkCommandHandler,
+        actionStateCommandHandler,
+        movementEffectIdempotencyService);
+  }
+
+  @Test
   void executeNormalizesStaleSessionContextBeforeDurableGameplayHandling() {
     SessionContext cleared =
         new SessionContext(42L, 22L, "7", "demo@example.com", 0L, null, 0L, null, "jwt-token");

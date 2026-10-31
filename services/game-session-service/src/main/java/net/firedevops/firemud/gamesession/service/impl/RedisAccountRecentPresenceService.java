@@ -67,7 +67,11 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   @Override
   public void recordConnected(SessionContext context) {
-    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
+    if (context != null && !SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+      logger.debug("Recent presence write refused: noncanonical_account");
+      return;
+    }
+    if (context == null || context.tenantId() <= 0) {
       return;
     }
     GameplayPresence presence =
@@ -113,13 +117,16 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
     LinkedHashMap<String, AccountRecentPresenceState> results = new LinkedHashMap<>();
     for (String accountId : accountIds) {
-      if (accountId == null || accountId.isBlank() || valueOps == null) {
+      if (!SessionContext.isCanonicalAccountIdentity(accountId) || valueOps == null) {
         continue;
       }
       try {
         AccountRecentPresenceState state =
             (AccountRecentPresenceState) valueOps.get(key(tenantId, accountId));
-        if (state != null && state.tenantId() == tenantId && accountId.equals(state.accountId())) {
+        if (state != null
+            && state.tenantId() == tenantId
+            && accountId.equals(state.accountId())
+            && SessionContext.isCanonicalAccountIdentity(state.accountId())) {
           results.put(accountId, state);
         }
       } catch (SerializationException | ClassCastException ex) {
@@ -132,7 +139,10 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   private void write(
       RoutingSnapshot snapshot, AccountRecentPresenceDisposition disposition, long timestampMs) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    if (valueOps == null || snapshot == null) {
+    if (valueOps == null
+        || snapshot == null
+        || snapshot.tenantId() <= 0
+        || !SessionContext.isCanonicalAccountIdentity(snapshot.accountId())) {
       return;
     }
     String key = key(snapshot.tenantId(), snapshot.accountId());
@@ -168,7 +178,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
                   if (retained != null) {
                     if (!(retained instanceof AccountRecentPresenceState retainedState)
                         || retainedState.tenantId() != snapshot.tenantId()
-                        || !snapshot.accountId().equals(retainedState.accountId())) {
+                        || !snapshot.accountId().equals(retainedState.accountId())
+                        || !SessionContext.isCanonicalAccountIdentity(retainedState.accountId())) {
                       operations.unwatch();
                       return WriteAttemptResult.PRESERVED;
                     }
@@ -188,7 +199,9 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   private RoutingSnapshot routingSnapshot(SessionContext context, GameplayPresence presence) {
-    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
+    if (context == null
+        || context.tenantId() <= 0
+        || !SessionContext.isCanonicalAccountIdentity(context.accountId())) {
       return null;
     }
     GameplayPresence effectivePresence =

@@ -71,6 +71,10 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   @Override
   public void registerConnected(SessionContext context) {
+    if (context != null && !SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+      logger.debug("Gameplay presence write refused: noncanonical_account");
+      return;
+    }
     if (context == null || context.tenantId() <= 0 || context.gameInstanceId() <= 0) {
       return;
     }
@@ -221,6 +225,9 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
         setOps.remove(gameInstanceKey, sessionIdText);
         continue;
       }
+      if (!SessionContext.isCanonicalAccountIdentity(presence.accountId())) {
+        continue;
+      }
       if (presence.tenantId() == tenantId && presence.gameInstanceId() == gameInstanceId) {
         matches.add(presence);
       }
@@ -246,7 +253,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
     LinkedHashMap<String, List<GameplayPresence>> matches = new LinkedHashMap<>();
     for (String accountId : accountIds) {
-      if (accountId == null || accountId.isBlank()) {
+      if (!SessionContext.isCanonicalAccountIdentity(accountId)) {
         continue;
       }
       String accountKey = accountKey(tenantId, accountId);
@@ -274,7 +281,8 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
           setOps.remove(accountKey, sessionIdText);
           continue;
         }
-        if (presence.sessionId() != indexedSessionId) {
+        if (!SessionContext.isCanonicalAccountIdentity(presence.accountId())
+            || presence.sessionId() != indexedSessionId) {
           continue;
         }
         if (presence.tenantId() != tenantId
@@ -296,7 +304,8 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   public Optional<GameplayPresence> findConnectedBySessionId(long sessionId) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
     try {
-      return Optional.ofNullable((GameplayPresence) valueOps.get(presenceKey(sessionId)));
+      return Optional.ofNullable((GameplayPresence) valueOps.get(presenceKey(sessionId)))
+          .filter(presence -> SessionContext.isCanonicalAccountIdentity(presence.accountId()));
     } catch (SerializationException | ClassCastException ex) {
       return Optional.empty();
     }
@@ -309,7 +318,12 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   private GameplayPresence readRetainedPresenceForMutation(
       ValueOperations<String, Object> valueOps, String presenceKey) {
     try {
-      return (GameplayPresence) valueOps.get(presenceKey);
+      GameplayPresence presence = (GameplayPresence) valueOps.get(presenceKey);
+      if (presence != null && !SessionContext.isCanonicalAccountIdentity(presence.accountId())) {
+        throw new IllegalStateException(
+            "Retained gameplay presence has an invalid Account UUID; mutation aborted");
+      }
+      return presence;
     } catch (SerializationException | ClassCastException ex) {
       throw new IllegalStateException(
           "Retained gameplay presence is unreadable or incompatible; mutation aborted", ex);

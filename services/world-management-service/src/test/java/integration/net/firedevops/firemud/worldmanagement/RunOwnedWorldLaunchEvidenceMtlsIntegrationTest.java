@@ -112,6 +112,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
   private static final String GDS_URI = "spiffe://firemud/ns/dev/sa/game-design-service";
   private static final String WRONG_GS_URI = "spiffe://firemud/ns/other/sa/game-session-service";
   private static final String RELEASE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
+  private static final String PLAYER_ACCOUNT_UUID = "f22f310d-5464-45f0-9dc4-c37353004403";
   private static final String STORE_PASSWORD = "test-only-world-mtls-password";
   private static final String TEST_JWT_SECRET = "testsecretkeytestsecretkeytest1234";
   private static final JwtUtil WORLD_JWT_UTIL = new JwtUtil(TEST_JWT_SECRET, 3_600_000L);
@@ -307,7 +308,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       assertThat(storedWorld.get().getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
       int writesAfterPrepare = worldSaves.get();
       int readsAfterPrepare = descriptorReads.get();
-      SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+      SessionContext.setContext(PLAYER_ACCOUNT_UUID, List.of("tenantAdmin"), java.util.Map.of());
       var playerContextFailure =
           authenticatedPlayerGameSessionStub()
               .failPreparedWorldInstance(
@@ -392,7 +393,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
           .extracting(GrpcPeerIdentity::uri)
           .isEqualTo(GS_URI);
 
-      SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+      SessionContext.setContext(PLAYER_ACCOUNT_UUID, List.of("tenantAdmin"), java.util.Map.of());
       var ordinaryCaller =
           authenticatedPlayerGameSessionStub()
               .activatePreparedWorldInstance(
@@ -661,7 +662,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       int writesBeforeTermination = worldSaves.get();
       int readsBeforeDeniedTermination = descriptorReads.get();
 
-      SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+      SessionContext.setContext(PLAYER_ACCOUNT_UUID, List.of("tenantAdmin"), java.util.Map.of());
       var playerContextTermination =
           authenticatedPlayerGameSessionStub().terminateWorldInstance(terminationRequest);
       SessionContext.clear();

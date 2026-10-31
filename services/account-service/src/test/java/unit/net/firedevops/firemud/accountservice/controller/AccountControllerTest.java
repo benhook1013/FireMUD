@@ -57,6 +57,7 @@ class AccountControllerTest {
   private static final String ACCOUNT_UUID_TEXT = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
   private static final UUID ACCOUNT_UUID = UUID.fromString(ACCOUNT_UUID_TEXT);
   private static final long ACCOUNT_ROW_ID = 42L;
+  private static final String OTHER_ACCOUNT_UUID = "a2e1342e-a139-49c6-a460-c8e25f6697ae";
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -122,7 +123,10 @@ class AccountControllerTest {
   @Test
   void deleteAccountAllowsGlobalPlatformAdmin() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -138,7 +142,13 @@ class AccountControllerTest {
   void deleteAccountRejectsScopedTenantAdminBecauseFullDeletionIsAccountScoped() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of(
+                "accountId",
+                OTHER_ACCOUNT_UUID,
+                "scopedRoles",
+                Map.of("7", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -170,7 +180,8 @@ class AccountControllerTest {
                         null,
                         net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy
                             .FRIENDS_ONLY))));
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(42L);
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
 
     mockMvc
         .perform(
@@ -192,8 +203,12 @@ class AccountControllerTest {
             "4cae05e8-7a6b-4b14-9d44-665e3eec450b", "demo", "demo@example.com", "player", true);
     when(accountService.exportTenantData(7L, ACCOUNT_ROW_ID))
         .thenReturn(new TenantDataExportDto(7L, account, null));
+    when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(42L);
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("7", List.of("moderator"))));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of(
+                "accountId", OTHER_ACCOUNT_UUID, "scopedRoles", Map.of("7", List.of("moderator"))));
 
     mockMvc
         .perform(
@@ -210,7 +225,8 @@ class AccountControllerTest {
   @Test
   void accountSubjectCannotSelectAnotherAccountWithoutGlobalPrivilege() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(43L);
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("accountId", OTHER_ACCOUNT_UUID));
 
     mockMvc
         .perform(
@@ -234,12 +250,16 @@ class AccountControllerTest {
     verify(accountService, never()).getLoginAuthModes(43L);
     verify(accountService, never()).exportAccountData(43L);
     verify(accountService, never()).deleteAccount(43L);
+    verify(accountService, never()).resolveAccountStorageId(any());
   }
 
   @Test
   void allAccountSelectorRoutesRejectMalformedNumericNilAndNoncanonicalUuidsBeforeDispatch()
       throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
     List<String> invalidSelectors =
         List.of(
             "42",
@@ -266,7 +286,10 @@ class AccountControllerTest {
   @Test
   void exportTenantDataRejectsZeroTenantIdBeforeDispatch() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -283,7 +306,7 @@ class AccountControllerTest {
   @Test
   void deleteAccountAllowsCurrentAccountWithoutPrivilegedTenantRole() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
 
     mockMvc
         .perform(
@@ -299,7 +322,7 @@ class AccountControllerTest {
   @Test
   void deleteAccountRejectsNilUuidBeforeDispatch() throws Exception {
     String nilAccountUuid = "00000000-0000-0000-0000-000000000000";
-    String token = jwtUtil.generateToken("1", Map.of("accountId", "1"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
 
     mockMvc
         .perform(
@@ -316,7 +339,8 @@ class AccountControllerTest {
 
   @Test
   void linkExternalRouteIsUnavailableForAuthenticatedRequest() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("accountId", OTHER_ACCOUNT_UUID));
 
     mockMvc
         .perform(
@@ -336,7 +360,7 @@ class AccountControllerTest {
     AccountLoginAuthModesDto modes =
         new AccountLoginAuthModesDto(java.util.Set.of(AccountLoginAuthMode.EMAIL_OTP));
     when(accountService.getLoginAuthModes(ACCOUNT_ROW_ID)).thenReturn(modes);
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
 
     mockMvc
         .perform(
@@ -368,7 +392,9 @@ class AccountControllerTest {
   void updateLoginAuthModesRejectsPlatformAdminBeforeDispatch() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID)).thenReturn(ACCOUNT_ROW_ID);
     String token =
-        jwtUtil.generateToken("operator", Map.of("globalRoles", List.of("platformAdmin")));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID,
+            Map.of("accountId", OTHER_ACCOUNT_UUID, "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -385,7 +411,7 @@ class AccountControllerTest {
 
   @Test
   void updateLoginAuthModesRejectsEmptySetBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
 
     mockMvc
         .perform(
@@ -401,8 +427,10 @@ class AccountControllerTest {
 
   @Test
   void absentAndOtherAccountSelectorsHaveTheSameNonDisclosingDenial() throws Exception {
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
     for (boolean absent : List.of(true, false)) {
+      String callerAccountUuid = absent ? ACCOUNT_UUID_TEXT : OTHER_ACCOUNT_UUID;
+      String token =
+          jwtUtil.generateToken(callerAccountUuid, Map.of("accountId", callerAccountUuid));
       org.mockito.Mockito.reset(accountService);
       if (absent) {
         when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
@@ -421,6 +449,9 @@ class AccountControllerTest {
       verify(accountService, never()).exportAccountData(anyLong());
       verify(accountService, never()).exportTenantData(anyLong(), anyLong());
       verify(accountService, never()).deleteAccount(anyLong());
+      if (!absent) {
+        verify(accountService, never()).resolveAccountStorageId(any());
+      }
     }
   }
 
@@ -430,7 +461,7 @@ class AccountControllerTest {
         .thenThrow(
             new org.springframework.transaction.CannotCreateTransactionException(
                 "Database connection unavailable"));
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
     for (var request : accountSelectorRequests(ACCOUNT_UUID_TEXT)) {
       mockMvc
           .perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -447,7 +478,7 @@ class AccountControllerTest {
   void accountOwnerReadbackInconsistencyAndOutageReturnRetryableUnavailable() throws Exception {
     when(accountService.resolveAccountStorageId(ACCOUNT_UUID))
         .thenThrow(new IllegalStateException("Account UUID provenance is inconsistent"));
-    String token = jwtUtil.generateToken("42", Map.of("accountId", "42"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
 
     mockMvc
         .perform(

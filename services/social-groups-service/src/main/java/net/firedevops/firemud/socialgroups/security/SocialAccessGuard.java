@@ -42,8 +42,7 @@ public class SocialAccessGuard {
   private boolean isCurrentAccount(String accountId) {
     try {
       return JwtClaims.requireCanonicalAccountUuid(accountId, "accountId")
-          .equals(
-              JwtClaims.requireCanonicalAccountUuid(SessionContext.getAccountId(), "accountId"));
+          .equals(SessionContext.currentAccountUuidOrNull());
     } catch (IllegalArgumentException ex) {
       return false;
     }

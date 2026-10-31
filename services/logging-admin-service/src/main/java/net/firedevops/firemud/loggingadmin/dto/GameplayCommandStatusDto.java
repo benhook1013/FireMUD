@@ -9,7 +9,7 @@ public record GameplayCommandStatusDto(
     long tenantId,
     long gameInstanceId,
     long sessionId,
-    Long accountId,
+    String accountId,
     Long characterId,
     String commandName,
     String sanitizedCommandText,

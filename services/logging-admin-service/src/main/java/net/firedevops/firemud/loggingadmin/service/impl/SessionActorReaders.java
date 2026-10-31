@@ -8,13 +8,13 @@ final class SessionActorReaders {
   private SessionActorReaders() {}
 
   static String actorPrincipalOrInternalService() {
-    Long accountId = currentAccountIdOrNull();
-    return accountId == null ? "internal-service" : Long.toString(accountId);
+    String accountUuid = currentAccountUuidOrNull();
+    return accountUuid == null ? "internal-service" : accountUuid;
   }
 
-  static Long currentAccountIdOrNull() {
+  static String currentAccountUuidOrNull() {
     try {
-      return SessionContext.currentAccountIdOrNull();
+      return SessionContext.currentAccountUuidOrNull();
     } catch (IllegalArgumentException ex) {
       throw new ResponseStatusException(
           HttpStatus.BAD_REQUEST, "current account claim was invalid");

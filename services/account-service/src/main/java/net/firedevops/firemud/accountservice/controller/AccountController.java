@@ -46,10 +46,10 @@ public class AccountController {
   @GetMapping("/{accountId}/login-auth-modes")
   public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> getLoginAuthModes(
       @PathVariable String accountId) {
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
     long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(
-            accountService, AccountRequestReaders.requireAccountUuid(accountId));
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+        AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     return ResponseEntity.ok(
         ApiResponse.success(accountService.getLoginAuthModes(parsedAccountId)));
   }
@@ -59,10 +59,9 @@ public class AccountController {
   public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> updateLoginAuthModes(
       @PathVariable String accountId,
       @Valid @RequestBody UpdateAccountLoginAuthModesRequest request) {
-    long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(
-            accountService, AccountRequestReaders.requireAccountUuid(accountId));
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
+    AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     throw new org.springframework.web.server.ResponseStatusException(
         HttpStatus.NOT_IMPLEMENTED,
         "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism");
@@ -71,10 +70,10 @@ public class AccountController {
   @GetMapping("/{accountId}/export")
   public ResponseEntity<ApiResponse<AccountDataExportDto>> exportAccount(
       @PathVariable String accountId) {
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
     long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(
-            accountService, AccountRequestReaders.requireAccountUuid(accountId));
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+        AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     AccountDataExportDto data = accountService.exportAccountData(parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(data));
   }
@@ -82,30 +81,37 @@ public class AccountController {
   @GetMapping("/{accountId}/tenant-export")
   public ResponseEntity<ApiResponse<TenantDataExportDto>> exportTenantData(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    UUID accountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
+    if (!isCurrentAccount(parsedAccountUuid) && !SessionContext.hasTenantAccess(parsedTenantId)) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          HttpStatus.FORBIDDEN, "Account access required");
+    }
     long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(accountService, accountUuid);
-    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
+        AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     TenantDataExportDto data = accountService.exportTenantData(parsedTenantId, parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(data));
   }
 
   @DeleteMapping("/{accountId}")
   public ResponseEntity<ApiResponse<Void>> deleteAccount(@PathVariable String accountId) {
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
     long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(
-            accountService, AccountRequestReaders.requireAccountUuid(accountId));
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+        AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     accountService.deleteAccount(parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 
-  private void requireCurrentAccountOrGlobalPrivilegedRole(Long accountId) {
-    if (SessionContext.isCurrentAccount(accountId) || SessionContext.hasGlobalPrivilegedRole()) {
+  private void requireCurrentAccountOrGlobalPrivilegedRole(UUID accountUuid) {
+    if (isCurrentAccount(accountUuid) || SessionContext.hasGlobalPrivilegedRole()) {
       return;
     }
     throw new org.springframework.web.server.ResponseStatusException(
         org.springframework.http.HttpStatus.FORBIDDEN, "Account access required");
+  }
+
+  private static boolean isCurrentAccount(UUID accountUuid) {
+    return accountUuid.toString().equals(SessionContext.getAccountId());
   }
 }

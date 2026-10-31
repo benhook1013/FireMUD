@@ -35,27 +35,28 @@ public class ProfileController {
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    UUID accountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
+    requireProfileOwner(parsedAccountUuid);
     long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(accountService, accountUuid);
-    requireProfileOwner(parsedAccountId);
+        AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     ProfileDto dto = accountService.getProfile(parsedTenantId, parsedAccountId);
+    requireProfileResult(dto, parsedAccountUuid, parsedTenantId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
       @PathVariable String accountId, @Valid @RequestBody UpdateProfileRestRequest request) {
-    UUID accountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     UUID bodyAccountUuid = AccountRequestReaders.requireAccountUuid(request.accountId());
-    if (!accountUuid.equals(bodyAccountUuid)) {
+    if (!parsedAccountUuid.equals(bodyAccountUuid)) {
       throw new IllegalArgumentException("accountId must match the path selector");
     }
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
+    requireProfileOwner(parsedAccountUuid);
     long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(accountService, accountUuid);
-    requireProfileOwner(parsedAccountId);
+        AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     if (request.presenceVisibilityPolicy() == null) {
       throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
     }
@@ -68,11 +69,21 @@ public class ProfileController {
                 request.displayName(),
                 request.bio(),
                 request.presenceVisibilityPolicy()));
+    requireProfileResult(dto, parsedAccountUuid, parsedTenantId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
-  private static void requireProfileOwner(long accountId) {
-    if (!SessionContext.isCurrentAccount(accountId)) {
+  private static void requireProfileResult(ProfileDto dto, UUID accountUuid, long tenantId) {
+    if (dto == null
+        || !accountUuid.toString().equals(dto.accountId())
+        || !Long.valueOf(tenantId).equals(dto.tenantId())) {
+      throw new ResponseStatusException(
+          HttpStatus.SERVICE_UNAVAILABLE, "Profile authority unavailable");
+    }
+  }
+
+  private static void requireProfileOwner(UUID accountUuid) {
+    if (!accountUuid.toString().equals(SessionContext.getAccountId())) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account access required");
     }
   }

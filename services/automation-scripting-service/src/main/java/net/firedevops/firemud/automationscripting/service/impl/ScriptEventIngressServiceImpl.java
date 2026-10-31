@@ -798,7 +798,14 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
     if (!request.getIsDryRun()) {
       return null;
     }
-    String principalKey = dryRunPrincipalKey();
+    final String principalKey;
+    try {
+      principalKey = dryRunPrincipalKey();
+    } catch (IllegalArgumentException ex) {
+      // A malformed Account subject is a permanent principal-validation failure. Keep it in the
+      // claimed event's normal finalization path so retries converge on a bounded denial.
+      return new TriggerAdmission(false, OUTCOME_REGISTRY_REJECTED, "dry_run_principal_invalid", 0);
+    }
     if (principalKey.isBlank()) {
       return new TriggerAdmission(false, OUTCOME_QUOTA_DENIED, "dry_run_principal_missing", 0);
     }
@@ -1611,9 +1618,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String dryRunPrincipalKey() {
-    Long accountId = SessionContext.currentAccountIdOrNull();
-    if (accountId != null) {
-      return "account:" + accountId;
+    String accountUuid = SessionContext.currentAccountUuidOrNull();
+    if (accountUuid != null) {
+      return "account:" + accountUuid;
     }
     String serviceName = SessionContext.getServiceName();
     if (serviceName != null && !serviceName.isBlank()) {

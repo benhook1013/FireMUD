@@ -18,15 +18,20 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 class AuthTokenInterceptorTest {
+  private static final String ACCOUNT_ID = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
   private static final Metadata.Key<String> AUTH_HEADER =
       Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER);
   private static final MethodDescriptor<Empty, Empty> METHOD =
@@ -57,9 +62,9 @@ class AuthTokenInterceptorTest {
     Metadata headers = new Metadata();
     String token =
         jwtUtil.generateToken(
-            "account",
+            ACCOUNT_ID,
             Map.of(
-                "accountId", "account", "globalRoles", "platformAdmin", "scopedRoles", Map.of()));
+                "accountId", ACCOUNT_ID, "globalRoles", "platformAdmin", "scopedRoles", Map.of()));
     headers.put(AUTH_HEADER, "Bearer " + token);
 
     interceptor.interceptCall(call, headers, next);
@@ -71,6 +76,46 @@ class AuthTokenInterceptorTest {
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
     assertThat(SessionContext.getScopedRolesMap()).isEmpty();
+  }
+
+  @ParameterizedTest
+  @MethodSource("invalidSignedAccountIdentities")
+  void rejectsInvalidSignedAccountIdentityBeforeDispatch(String subject, Object accountId) {
+    AuthTokenInterceptor interceptor = new AuthTokenInterceptor(jwtUtil);
+    @SuppressWarnings("unchecked")
+    ServerCall<Empty, Empty> call = Mockito.mock(ServerCall.class);
+    @SuppressWarnings("unchecked")
+    ServerCallHandler<Empty, Empty> next = Mockito.mock(ServerCallHandler.class);
+    Mockito.when(call.getMethodDescriptor()).thenReturn(METHOD);
+    Metadata headers = new Metadata();
+    headers.put(
+        AUTH_HEADER,
+        "Bearer "
+            + jwtUtil.generateToken(
+                subject,
+                Map.of(
+                    "accountId", accountId,
+                    "globalRoles", List.of("platformAdmin"),
+                    "scopedRoles", Map.of())));
+
+    interceptor.interceptCall(call, headers, next);
+
+    ArgumentCaptor<Status> statusCaptor = ArgumentCaptor.forClass(Status.class);
+    Mockito.verify(call).close(statusCaptor.capture(), Mockito.any(Metadata.class));
+    assertThat(statusCaptor.getValue().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+    Mockito.verify(next, Mockito.never()).startCall(Mockito.any(), Mockito.any());
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+  }
+
+  private static Stream<Arguments> invalidSignedAccountIdentities() {
+    return Stream.of(
+        Arguments.of(ACCOUNT_ID, 42L),
+        Arguments.of(ACCOUNT_ID, List.of(ACCOUNT_ID)),
+        Arguments.of(ACCOUNT_ID, " " + ACCOUNT_ID),
+        Arguments.of(ACCOUNT_ID, "00000000-0000-0000-0000-000000000000"),
+        Arguments.of(ACCOUNT_ID, ACCOUNT_ID.toUpperCase(java.util.Locale.ROOT)),
+        Arguments.of("018f8f0a-2b7c-7a24-9c15-6a9b8c7d6e5f", ACCOUNT_ID),
+        Arguments.of("service:game-logic-service", ACCOUNT_ID));
   }
 
   @Test
@@ -266,9 +311,9 @@ class AuthTokenInterceptorTest {
     Metadata headers = new Metadata();
     String token =
         jwtUtil.generateToken(
-            "trusted-account",
+            ACCOUNT_ID,
             Map.of(
-                "accountId", "42",
+                "accountId", ACCOUNT_ID,
                 "globalRoles", List.of(),
                 "scopedRoles", Map.of()));
     headers.put(AUTH_HEADER, "Bearer " + token);
@@ -287,12 +332,12 @@ class AuthTokenInterceptorTest {
                         exemptInterceptor.interceptCall(
                             authenticatedCall, authenticatedHeaders, receiver)));
 
-    assertThat(accountObservedAtStart).hasValue("42");
+    assertThat(accountObservedAtStart).hasValue(ACCOUNT_ID);
     assertThat(callerContextObservedAtStart).isTrue();
     assertThat(peerObservedAtStart).hasValue(peerContextValue);
     listener.onHalfClose();
 
-    assertThat(accountObservedInCallback).hasValue("42");
+    assertThat(accountObservedInCallback).hasValue(ACCOUNT_ID);
     assertThat(callerContextObservedInCallback).isTrue();
     assertThat(peerObservedInCallback).hasValue(peerContextValue);
     assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
@@ -379,9 +424,9 @@ class AuthTokenInterceptorTest {
     Metadata headers = new Metadata();
     String token =
         jwtUtil.generateToken(
-            "account",
+            ACCOUNT_ID,
             Map.of(
-                "accountId", "42",
+                "accountId", ACCOUNT_ID,
                 "globalRoles", List.of("platformAdmin"),
                 "scopedRoles", Map.of()));
     headers.put(AUTH_HEADER, "Bearer " + token);
@@ -389,7 +434,7 @@ class AuthTokenInterceptorTest {
 
     jwtInterceptor.interceptCall(call, headers, next);
 
-    assertThat(accountIdSeenByHandler.get()).isEqualTo("42");
+    assertThat(accountIdSeenByHandler.get()).isEqualTo(ACCOUNT_ID);
     assertThat(rolesSeenByHandler.get()).containsExactly("platformAdmin");
     assertThat(SessionContext.getAccountId()).isNull();
   }
@@ -423,8 +468,6 @@ class AuthTokenInterceptorTest {
         jwtUtil.generateToken(
             "service:game-logic-service",
             Map.of(
-                "accountId",
-                "",
                 "globalRoles",
                 java.util.List.of(),
                 "scopedRoles",
@@ -549,8 +592,6 @@ class AuthTokenInterceptorTest {
         jwtUtil.generateToken(
             "service:game-logic-service",
             Map.of(
-                "accountId",
-                "",
                 "globalRoles",
                 java.util.List.of(),
                 "scopedRoles",

@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -64,6 +65,17 @@ public class CommunicationCommandHandler {
       meterRegistry.counter(COMMUNICATION_INVOCATIONS_METRIC, "type", typeTag).increment();
       meterRegistry.counter(metricPrefix(command.type()) + ".invocations").increment();
 
+      if (!SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+        logFailure(
+            "INVALID_ARGUMENT",
+            "Sender Account identity unavailable",
+            context,
+            tenantTag,
+            command.type(),
+            null);
+        return failure("COMMUNICATION_NOT_DELIVERED", "Sender Account identity unavailable");
+      }
+
       ParsedCommunication parsed;
       try {
         parsed = parseCommunication(context, command);
@@ -75,16 +87,12 @@ public class CommunicationCommandHandler {
             tenantTag,
             command.type(),
             unavailable);
-        return new CommunicationCommandHandlingResult(
-            CommandEnqueueResult.failure(
-                "COMMUNICATION_NOT_DELIVERED", "Recipient session unavailable"),
-            List.of());
+        return failure("COMMUNICATION_NOT_DELIVERED", "Recipient session unavailable");
       }
       if (!parsed.valid()) {
         logFailure(
             "INVALID_ARGUMENT", parsed.errorMessage(), context, tenantTag, command.type(), null);
-        return new CommunicationCommandHandlingResult(
-            CommandEnqueueResult.failure("INVALID_ARGUMENT", parsed.errorMessage()), List.of());
+        return failure("INVALID_ARGUMENT", parsed.errorMessage());
       }
 
       try {
@@ -113,8 +121,7 @@ public class CommunicationCommandHandler {
                   ? response.getError().getCode()
                   : "UNAVAILABLE";
           logFailure(errorTag, errorMessage, context, tenantTag, command.type(), null);
-          return new CommunicationCommandHandlingResult(
-              CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", errorMessage), List.of());
+          return failure("COMMUNICATION_NOT_DELIVERED", errorMessage);
         }
 
         recipientDeliveryService.deliver(context, response);
@@ -124,11 +131,14 @@ public class CommunicationCommandHandler {
             List.of(communicationOutputMapper.actorOutput(command, response)));
       } catch (RuntimeException ex) {
         logFailure("UNAVAILABLE", "Game Logic unavailable", context, tenantTag, command.type(), ex);
-        return new CommunicationCommandHandlingResult(
-            CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", "Game Logic unavailable"),
-            List.of());
+        return failure("COMMUNICATION_NOT_DELIVERED", "Game Logic unavailable");
       }
     }
+  }
+
+  private static CommunicationCommandHandlingResult failure(String code, String message) {
+    return new CommunicationCommandHandlingResult(
+        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }
 
   private ParsedCommunication parseCommunication(SessionContext context, TextCommand command) {

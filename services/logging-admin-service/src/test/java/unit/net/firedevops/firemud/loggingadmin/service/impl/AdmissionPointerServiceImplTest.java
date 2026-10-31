@@ -44,6 +44,8 @@ import org.mockito.MockitoAnnotations;
 import org.springframework.web.server.ResponseStatusException;
 
 class AdmissionPointerServiceImplTest {
+  private static final String ACCOUNT_UUID = "11111111-1111-1111-1111-111111111111";
+
   @Mock private GameSessionControlPlaneClient gameSessionControlPlaneClient;
 
   @InjectMocks private AdmissionPointerServiceImpl service;
@@ -271,7 +273,7 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void setPointerUsesSessionAccountIdAsActorPrincipal() {
-    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.setAdmissionPointer(any()))
         .thenReturn(
             SetAdmissionPointerResponse.newBuilder()
@@ -304,7 +306,7 @@ class AdmissionPointerServiceImplTest {
         .setAdmissionPointer(
             org.mockito.ArgumentMatchers.argThat(
                 request ->
-                    request.getActorPrincipal().equals("42")
+                    request.getActorPrincipal().equals(ACCOUNT_UUID)
                         && request.getExpectedPointerVersion() == 3L
                         && request.getExpectedCatalogRevision() == 4L
                         && request.getPreparedVersionUpgradeId().equals("pvu-1")));
@@ -312,7 +314,7 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void setPointerMapsVersionMismatchToConflict() {
-    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.setAdmissionPointer(any()))
         .thenReturn(
             SetAdmissionPointerResponse.newBuilder()
@@ -350,8 +352,8 @@ class AdmissionPointerServiceImplTest {
   }
 
   @Test
-  void setPointerRejectsMalformedCurrentAccountClaimBeforeMutation() {
-    SessionContext.setContext("not-a-long", List.of("platformAdmin"), Map.of());
+  void setPointerRejectsNonUuidCurrentAccountClaimBeforeMutation() {
+    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
 
     ResponseStatusException ex =
         assertThrows(
@@ -382,7 +384,7 @@ class AdmissionPointerServiceImplTest {
 
   @Test
   void executePreparedVersionCutoverUsesSessionAccountIdAsActorPrincipal() {
-    SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
+    SessionContext.setContext(ACCOUNT_UUID, List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.executePreparedVersionCutover(any()))
         .thenReturn(
             ExecutePreparedVersionCutoverResponse.newBuilder()
@@ -400,7 +402,7 @@ class AdmissionPointerServiceImplTest {
         .executePreparedVersionCutover(
             org.mockito.ArgumentMatchers.argThat(
                 request ->
-                    request.getActorPrincipal().equals("42")
+                    request.getActorPrincipal().equals(ACCOUNT_UUID)
                         && request.getPreparedVersionUpgradeId().equals("pvu-1")
                         && request.getExpectedPointerVersion() == 3L
                         && request.getExpectedCatalogRevision() == 4L));

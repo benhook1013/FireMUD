@@ -4,6 +4,7 @@ import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +83,16 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   public void setDefaultAccountId(long accountId) {
     defaultAccountId.set(accountId);
+  }
+
+  /** Returns the stable UUID used by this fake for a numeric test account key. */
+  public static String accountUuidForTestFixture(long accountId) {
+    if (accountId <= 0L) {
+      throw new IllegalArgumentException("accountId must be positive");
+    }
+    return UUID.nameUUIDFromBytes(
+            ("firemud-test-account:" + accountId).getBytes(StandardCharsets.UTF_8))
+        .toString();
   }
 
   public void mapAccountId(String email, long accountId) {

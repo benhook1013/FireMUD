@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.Test;
 
 class GameplayCommandTestFixturesTest {
@@ -133,7 +134,8 @@ class GameplayCommandTestFixturesTest {
     assertThat(dara.characterId()).isEqualTo(104L);
     assertThat(dara.jwt()).isEqualTo("moderator-jwt");
     assertThat(activity.sessionId()).isEqualTo(1L);
-    assertThat(activity.accountId()).isEqualTo("2");
+    assertThat(activity.accountId())
+        .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(2L));
     assertThat(activity.characterId()).isEqualTo(102L);
     assertThat(activity.connectedAtEpochMs()).isEqualTo(100L);
     assertThat(activity.explicitAfkSinceEpochMs()).isEqualTo(300L);

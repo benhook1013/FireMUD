@@ -44,7 +44,12 @@ class InternalRuntimeControllerTest {
   void grantRealmAccessRejectsZeroAccountIdBeforeDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            "f22f310d-5464-45f0-9dc4-c37353004403",
+            java.util.Map.of(
+                "accountId",
+                "f22f310d-5464-45f0-9dc4-c37353004403",
+                "globalRoles",
+                java.util.List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -74,7 +79,12 @@ class InternalRuntimeControllerTest {
   void revokeRealmAccessRejectsMalformedAccountIdBeforeDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "user", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            "f22f310d-5464-45f0-9dc4-c37353004403",
+            java.util.Map.of(
+                "accountId",
+                "f22f310d-5464-45f0-9dc4-c37353004403",
+                "globalRoles",
+                java.util.List.of("platformAdmin")));
 
     mockMvc
         .perform(

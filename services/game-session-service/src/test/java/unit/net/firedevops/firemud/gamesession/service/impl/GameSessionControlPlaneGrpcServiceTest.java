@@ -2819,7 +2819,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     command.setTenantId(1L);
     command.setGameInstanceId(7L);
     command.setSessionId(41L);
-    command.setAccountId(9L);
+    command.setAccountId(
+        9L); // Private retained evidence must never be projected as Account identity.
+    command.setAccountUuid(java.util.UUID.fromString("00000000-0000-4000-8000-000000000009"));
     command.setCharacterId(44L);
     command.setCommandName("LOOK");
     command.setSanitizedCommandText("LOOK");
@@ -3019,6 +3021,8 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
+    assertEquals(
+        "00000000-0000-4000-8000-000000000009", responseRef.get().getCommand().getAccountId());
     assertEquals("cmd-123", responseRef.get().getCommand().getCommandId());
     assertEquals("STAGED", responseRef.get().getCommand().getExecutionOutcome());
     assertEquals("LOOK", responseRef.get().getCommand().getSanitizedCommandText());
@@ -3105,6 +3109,23 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(
         Instant.parse("2026-04-15T00:00:01Z").toEpochMilli(),
         responseRef.get().getCommand().getStagedAtMs());
+    for (java.util.UUID absentOrNil : java.util.Arrays.asList(null, new java.util.UUID(0L, 0L))) {
+      command.setAccountUuid(absentOrNil);
+      service.getGameplayCommandStatus(
+          GetGameplayCommandStatusRequest.newBuilder()
+              .setTenantId("1")
+              .setGameInstanceId("7")
+              .setCommandId("cmd-123")
+              .build(),
+          new NoopObserver<>() {
+            @Override
+            public void onNext(GetGameplayCommandStatusResponse value) {
+              responseRef.set(value);
+            }
+          });
+      assertEquals("", responseRef.get().getCommand().getAccountId());
+      assertEquals(9L, command.getAccountId());
+    }
   }
 
   @Test

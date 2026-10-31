@@ -344,7 +344,8 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
-  void browserAndControlledDirectScopesRetainUuidClaimsAndPrivateJoinRows() throws Exception {
+  void browserAndControlledDirectScopesRetainUuidClaimsAndPrivateJoinRowsWithPreparedHttpCaller()
+      throws Exception {
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     String username = "scope-" + suffix;
     var account =
@@ -570,8 +571,15 @@ class AccountApplicationIntegrationTest {
     assertThat(httpAuthProperties.getRoleRequirement())
         .isEqualTo(HttpAuthRoleRequirement.AUTHENTICATED);
     assertThat(httpJwtAuthInterceptorProvider.getIfAvailable()).isNotNull();
-    String ordinary = accountService.authenticate(username, "password123").authToken();
+    String numericProducer = accountService.authenticate(username, "password123").authToken();
     String accountUuid = account.id();
+    String ordinary =
+        controlledUuidCallerAfterNumericProducerRefusal(
+            numericProducer,
+            accountUuid,
+            "/profiles/" + accountUuid + "?tenantId=" + tenant,
+            "/profiles/" + accountUuid,
+            profileUpdateBody(tenant, accountUuid, "refused numeric producer"));
     HttpResponse<String> profileResponse =
         HTTP_CLIENT.send(
             HttpRequest.newBuilder(
@@ -804,7 +812,12 @@ class AccountApplicationIntegrationTest {
   void exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "operator", java.util.Map.of("globalRoles", java.util.List.of("platformAdmin")));
+            "f22f310d-5464-45f0-9dc4-c37353004403",
+            java.util.Map.of(
+                "accountId",
+                "f22f310d-5464-45f0-9dc4-c37353004403",
+                "globalRoles",
+                java.util.List.of("platformAdmin")));
     HttpRequest request =
         HttpRequest.newBuilder(
                 URI.create("http://localhost:" + port + "/accounts/not-a-number/export"))
@@ -821,7 +834,7 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
-  void accountSelectorRoutesUsePersistedUuidAndPreserveCurrentAuthorizationAndDenials()
+  void preparedAccountSelectorsRejectNumericProducerAndPreserveAuthorizationAndDenials()
       throws Exception {
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     String username = "account-selector-" + suffix;
@@ -857,8 +870,15 @@ class AccountApplicationIntegrationTest {
         "Account selector profile",
         "retained during denied deletion");
 
-    String ordinary = accountService.authenticate(username, "password123").authToken();
+    String numericProducer = accountService.authenticate(username, "password123").authToken();
     String accountUuid = account.id();
+    String ordinary =
+        controlledUuidCallerAfterNumericProducerRefusal(
+            numericProducer,
+            accountUuid,
+            "/accounts/" + accountUuid + "/login-auth-modes",
+            "/accounts/" + accountUuid + "/login-auth-modes",
+            "{\"loginAuthModes\":[\"PASSWORD\"]}");
 
     HttpResponse<String> modesResponse =
         sendAccountRequest("GET", "/accounts/" + accountUuid + "/login-auth-modes", ordinary, null);
@@ -1014,6 +1034,53 @@ class AccountApplicationIntegrationTest {
         .isEqualTo(originalLoginModes);
   }
 
+  /** Test-owned caller proof for prepared HTTP readers; this does not qualify UUID issuance. */
+  private String controlledUuidCallerAfterNumericProducerRefusal(
+      String numericProducer,
+      String accountUuid,
+      String readPath,
+      String writePath,
+      String writeBody)
+      throws Exception {
+    var claims = jwtUtil.parseToken(numericProducer).getPayload();
+    Number privateAccountRow =
+        java.util.Objects.requireNonNull(
+            claims.get("accountId", Number.class), "Expected parent-issued numeric Account claim");
+    assertThat(claims.getSubject()).isEqualTo(privateAccountRow.toString());
+    assertThat(
+            dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", privateAccountRow)
+                .fetchOne(0, UUID.class))
+        .isEqualTo(UUID.fromString(accountUuid));
+    String accountBefore =
+        dsl.resultQuery(
+                "SELECT row_to_json(a)::text || ':' || a.xmin::text FROM accounts a WHERE id = ?",
+                privateAccountRow)
+            .fetchOne(0, String.class);
+    List<String> profilesBefore = preparationProfileRows(privateAccountRow);
+
+    assertThat(sendAccountRequest("GET", readPath, numericProducer, null).statusCode())
+        .isEqualTo(401);
+    assertThat(sendAccountRequest("PUT", writePath, numericProducer, writeBody).statusCode())
+        .isEqualTo(401);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT row_to_json(a)::text || ':' || a.xmin::text FROM accounts a WHERE id = ?",
+                    privateAccountRow)
+                .fetchOne(0, String.class))
+        .isEqualTo(accountBefore);
+    assertThat(preparationProfileRows(privateAccountRow)).isEqualTo(profilesBefore);
+
+    return jwtUtil.generateToken(accountUuid, java.util.Map.of("accountId", accountUuid));
+  }
+
+  private List<String> preparationProfileRows(Number privateAccountRow) {
+    return dsl.resultQuery(
+            "SELECT row_to_json(p)::text || ':' || p.xmin::text FROM profiles p "
+                + "WHERE account_id = ? ORDER BY id",
+            privateAccountRow)
+        .fetch(0, String.class);
+  }
+
   private HttpResponse<String> sendAccountRequest(
       String method, String path, String token, String body) throws Exception {
     HttpRequest.Builder request =
@@ -1033,7 +1100,10 @@ class AccountApplicationIntegrationTest {
 
   @Test
   void linkExternalRouteIsUnavailableWithAuthenticatedRequest() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String token =
+        jwtUtil.generateToken(
+            "d09f80cb-a46a-415e-8d35-c9e8068e49de",
+            java.util.Map.of("accountId", "d09f80cb-a46a-415e-8d35-c9e8068e49de"));
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts/2/external"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -1054,7 +1124,10 @@ class AccountApplicationIntegrationTest {
 
   @Test
   void updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope() throws Exception {
-    String token = jwtUtil.generateToken("2", java.util.Map.of("accountId", "2"));
+    String token =
+        jwtUtil.generateToken(
+            "d09f80cb-a46a-415e-8d35-c9e8068e49de",
+            java.util.Map.of("accountId", "d09f80cb-a46a-415e-8d35-c9e8068e49de"));
     String accountUuid = "d09f80cb-a46a-415e-8d35-c9e8068e49de";
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/profiles/" + accountUuid))
