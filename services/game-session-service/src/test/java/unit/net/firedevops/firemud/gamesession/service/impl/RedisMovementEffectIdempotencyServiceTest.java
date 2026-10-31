@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -51,7 +53,7 @@ class RedisMovementEffectIdempotencyServiceTest {
         new SessionContext(
                 41L,
                 22L,
-                "123",
+                "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -74,6 +76,9 @@ class RedisMovementEffectIdempotencyServiceTest {
     SessionContext updated = result.context();
     assertNotNull(updated);
     assertEquals("R-2045", updated.roomInstanceId());
+    assertNull(updated.jwt());
+    assertEquals("jwt-token", current.jwt());
+    assertFalse(SessionContextSerializationTestSupport.serialize(updated).contains(current.jwt()));
     assertEquals(retainedContext, updated.firstPartyConnectContext());
     assertEquals("demo", updated.worldSlug());
     assertEquals("production", updated.realmSlug());
@@ -94,7 +99,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", withAccountId(current, 999L), "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
-    assertEquals(current, result.context());
+    assertEquals(current.withoutJwt(), result.context());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
     verify(redisTemplate, never()).delete(anyString());
   }
@@ -109,9 +114,28 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", current, "R-2045");
 
     assertEquals(MoveEffectApplyStatus.REPLAYED, result.status());
-    assertEquals(replayed, result.context());
+    assertEquals(replayed.withoutJwt(), result.context());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
     verify(redisTemplate, never()).delete(anyString());
+  }
+
+  @Test
+  void replayProjectsSerializedLegacyJwtOutWithoutWritingOrRefreshingRedis() {
+    SessionContext current = baselineContext();
+    SessionContext legacyReplay =
+        SessionContextSerializationTestSupport.roundTrip(withRoom(current, "R-2045"));
+    when(valueOperations.get("sessionctx:22:41:context")).thenReturn(current);
+    when(valueOperations.get("sessionctx:22:41:movement-effect:tfx-1")).thenReturn(legacyReplay);
+
+    MoveEffectApplyResult result = service.apply("tfx-1", current, "R-2045");
+
+    assertEquals(MoveEffectApplyStatus.REPLAYED, result.status());
+    assertEquals(legacyReplay.withoutJwt(), result.context());
+    assertEquals("jwt-token", legacyReplay.jwt());
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+    verify(redisTemplate, never()).delete(anyString());
+    verify(redisTemplate, never()).expire(anyString(), any(Duration.class));
+    verify(redisTemplate, never()).multi();
   }
 
   @Test
@@ -133,7 +157,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", baselineContext(), "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
-    assertEquals(legacyCurrent, result.context());
+    assertEquals(legacyCurrent.withoutJwt(), result.context());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
   }
 
@@ -147,7 +171,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     MoveEffectApplyResult result = service.apply("tfx-1", current, "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
-    assertEquals(legacyReplay, result.context());
+    assertEquals(legacyReplay.withoutJwt(), result.context());
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
   }
 
@@ -155,7 +179,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     return new SessionContext(
         41L,
         22L,
-        "123",
+        "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1",
         "demo@example.com",
         7001L,
         "demo",

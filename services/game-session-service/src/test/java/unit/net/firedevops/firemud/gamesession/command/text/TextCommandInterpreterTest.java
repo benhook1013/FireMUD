@@ -26,7 +26,6 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
@@ -143,8 +142,7 @@ class TextCommandInterpreterTest {
               PresentationProperties.ColorMode.NONE,
               false,
               new PresentationProperties.Prompt(true, true, 150L)));
-  private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final GameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,

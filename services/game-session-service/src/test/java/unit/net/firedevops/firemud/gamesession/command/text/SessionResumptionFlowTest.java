@@ -57,6 +57,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -125,8 +126,9 @@ class SessionResumptionFlowTest {
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
-  private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final JwtUtil gameplayJwtUtil =
+      new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
+  private final GameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
@@ -640,6 +642,36 @@ class SessionResumptionFlowTest {
         "production",
         1L,
         null);
+  }
+
+  @Test
+  void freshScopedAndGlobalRoleClaimsDoNotElevatePresenceAcrossReconnect() {
+    String jwt =
+        gameplayJwtUtil.generateToken(
+            ACCOUNT_ID,
+            Map.of(
+                "accountId",
+                ACCOUNT_ID,
+                "globalRoles",
+                List.of("platformAdmin", "support", "billingAdmin"),
+                "scopedRoles",
+                Map.of("22", List.of("god", "tenantAdmin", "moderator"))));
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder().setAuthToken(jwt).setAccountId(ACCOUNT_ID).build());
+
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
+
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
+    assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

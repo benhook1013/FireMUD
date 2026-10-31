@@ -26,7 +26,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoShowsBoundedEmptyStateWhenNobodyIsConnected() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -49,8 +49,8 @@ class WhoCommandHandlerTest {
   }
 
   @Test
-  void whoGroupsElevatedPlayersFirstAndPlayersAfterward() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+  void whoPresentsJwtRoleClaimSessionsAsPlayersWithoutGrantEvidence() {
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String godJwt =
@@ -59,8 +59,6 @@ class WhoCommandHandlerTest {
             java.util.Map.of(
                 "accountId",
                 net.firedevops.firemud.test.AccountRuntimeStubServer.accountUuidForTestFixture(1L),
-                "globalRoles",
-                java.util.List.of("platformAdmin"),
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("god"))));
 
@@ -85,13 +83,13 @@ class WhoCommandHandlerTest {
             GameplayPresenceTestFixtures.whoBen("second@example.com"));
 
     assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(render(result)).isEqualTo("Gods [2]: Aster, Dara\nPlayers [2]: Ben, Cara");
+    assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [4]: Aster, Ben, Cara, Dara");
   }
 
   @Test
   void normallyJoinedGlobalStaffAppearsAsAnOrdinaryPlayer() {
     for (String role : java.util.List.of("platformAdmin", "support", "billingAdmin", "god")) {
-      FakeGameplayPresenceService presence = new FakeGameplayPresenceService(jwtUtil);
+      FakeGameplayPresenceService presence = new FakeGameplayPresenceService();
       String token =
           jwtUtil.generateToken(
               GameplayPresenceTestFixtures.whoAster("staff@example.com", null).accountId(),
@@ -113,7 +111,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoOmitsRemovedPresenceAfterLogoutLikeCleanup() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -134,7 +132,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoAnnotatesExplicitAndAutoAfkPlayers() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     GameplayPresenceActivityResolver resolver =
         Mockito.mock(GameplayPresenceActivityResolver.class);
     WhoCommandHandler handler =

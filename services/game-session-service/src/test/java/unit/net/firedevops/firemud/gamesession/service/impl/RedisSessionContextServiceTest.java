@@ -1,7 +1,11 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -89,8 +93,98 @@ class RedisSessionContextServiceTest {
 
     verify(redisTemplate).multi();
     verify(redisTemplate).exec();
-    verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
-    verify(valueOperations).set("sessionctx:10:identity:40:30:context", context, TTL);
+    verify(valueOperations).set("sessionctx:10:1:context", context.withoutJwt(), TTL);
+    verify(valueOperations).set("sessionctx:10:identity:40:30:context", context.withoutJwt(), TTL);
+  }
+
+  @Test
+  void saveSerializesOnlyTheNoJwtProjectionAcrossEveryIndex() {
+    var firstParty =
+        new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture().context();
+    SessionContext context =
+        new SessionContext(
+                1L,
+                10L,
+                ACCOUNT_UUID,
+                "player@example.com",
+                30L,
+                "Player",
+                40L,
+                "R-1",
+                "private-delegation-jwt-must-stay-process-local",
+                "fr",
+                40L,
+                "demo",
+                "production",
+                7L,
+                "SHARED",
+                "scope",
+                "request")
+            .withFirstPartyConnectContext(firstParty);
+
+    service.save(context);
+
+    var captured = org.mockito.ArgumentCaptor.forClass(SessionContext.class);
+    verify(valueOperations, times(4)).set(Mockito.anyString(), captured.capture(), Mockito.eq(TTL));
+    for (SessionContext stored : captured.getAllValues()) {
+      assertEquals(context.withoutJwt(), stored);
+      assertNull(stored.jwt());
+      assertFalse(SessionContextSerializationTestSupport.serialize(stored).contains(context.jwt()));
+    }
+    assertEquals("private-delegation-jwt-must-stay-process-local", context.jwt());
+    assertSame(firstParty, context.withoutJwt().firstPartyConnectContext());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"tenant", "session", "identity", "name"})
+  void legacyReadsScrubJwtWithoutMutatingOrRefreshingStoredEvidence(String lookup) {
+    SessionContext original =
+        new SessionContext(
+            1L,
+            10L,
+            ACCOUNT_UUID,
+            "player@example.com",
+            30L,
+            "Player",
+            40L,
+            "R-1",
+            "retained-private-delegation-jwt",
+            "fr",
+            40L,
+            "demo",
+            "production",
+            7L,
+            "SHARED",
+            "scope",
+            "request");
+    SessionContext legacy = SessionContextSerializationTestSupport.roundTrip(original);
+    String key =
+        switch (lookup) {
+          case "tenant" -> "sessionctx:10:1:context";
+          case "session" -> "sessionctx:session:1:context";
+          case "identity" -> "sessionctx:10:identity:40:30:context";
+          case "name" -> "sessionctx:10:identity:40:name:player:context";
+          default -> throw new IllegalArgumentException(lookup);
+        };
+    when(valueOperations.get(key)).thenReturn(legacy);
+
+    Optional<SessionContext> result =
+        switch (lookup) {
+          case "tenant" -> service.findByTenantAndSessionId(10L, 1L);
+          case "session" -> service.findBySessionId(1L);
+          case "identity" -> service.findByGameplayIdentity(10L, 40L, 30L);
+          case "name" -> service.findByGameplayName(10L, 40L, "Player");
+          default -> throw new IllegalArgumentException(lookup);
+        };
+
+    assertEquals(Optional.of(original.withoutJwt()), result);
+    assertEquals(original, legacy);
+    assertTrue(SessionContextSerializationTestSupport.serialize(legacy).contains(original.jwt()));
+    verify(valueOperations).get(key);
+    Mockito.verifyNoMoreInteractions(valueOperations);
+    verify(redisTemplate, never()).execute(Mockito.any(SessionCallback.class));
+    verify(redisTemplate, never()).delete(Mockito.anyString());
+    verify(redisTemplate, never()).expire(Mockito.anyString(), Mockito.any(Duration.class));
   }
 
   @Test
@@ -102,8 +196,9 @@ class RedisSessionContextServiceTest {
     service.save(replacement);
 
     verify(redisTemplate).delete("sessionctx:10:1:context");
-    verify(valueOperations).set("sessionctx:10:2:context", replacement, TTL);
-    verify(valueOperations).set("sessionctx:10:identity:40:30:context", replacement, TTL);
+    verify(valueOperations).set("sessionctx:10:2:context", replacement.withoutJwt(), TTL);
+    verify(valueOperations)
+        .set("sessionctx:10:identity:40:30:context", replacement.withoutJwt(), TTL);
   }
 
   @Test
@@ -125,8 +220,8 @@ class RedisSessionContextServiceTest {
     verify(redisTemplate, never())
         .watch(
             Mockito.argThat((Collection<String> keys) -> keys.contains("sessionctx:99:1:context")));
-    verify(valueOperations).set("sessionctx:10:1:context", incoming, TTL);
-    verify(valueOperations).set("sessionctx:session:1:context", incoming, TTL);
+    verify(valueOperations).set("sessionctx:10:1:context", incoming.withoutJwt(), TTL);
+    verify(valueOperations).set("sessionctx:session:1:context", incoming.withoutJwt(), TTL);
   }
 
   @Test
@@ -148,8 +243,8 @@ class RedisSessionContextServiceTest {
     verify(redisTemplate, never())
         .watch(
             Mockito.argThat((Collection<String> keys) -> keys.contains("sessionctx:10:2:context")));
-    verify(valueOperations).set("sessionctx:10:1:context", incoming, TTL);
-    verify(valueOperations).set("sessionctx:session:1:context", incoming, TTL);
+    verify(valueOperations).set("sessionctx:10:1:context", incoming.withoutJwt(), TTL);
+    verify(valueOperations).set("sessionctx:session:1:context", incoming.withoutJwt(), TTL);
   }
 
   @Test
@@ -175,8 +270,8 @@ class RedisSessionContextServiceTest {
             Mockito.argThat(
                 (Collection<String> keys) ->
                     keys.contains("sessionctx:10:identity:42:32:context")));
-    verify(valueOperations).set("sessionctx:10:1:context", incoming, TTL);
-    verify(valueOperations).set("sessionctx:session:1:context", incoming, TTL);
+    verify(valueOperations).set("sessionctx:10:1:context", incoming.withoutJwt(), TTL);
+    verify(valueOperations).set("sessionctx:session:1:context", incoming.withoutJwt(), TTL);
   }
 
   @Test
@@ -186,7 +281,7 @@ class RedisSessionContextServiceTest {
 
     Optional<SessionContext> result = service.findByTenantAndSessionId(10L, 1L);
 
-    assertEquals(Optional.of(context), result);
+    assertEquals(Optional.of(context.withoutJwt()), result);
   }
 
   @Test
@@ -196,7 +291,7 @@ class RedisSessionContextServiceTest {
 
     Optional<SessionContext> result = service.findByGameplayIdentity(10L, 40L, 30L);
 
-    assertEquals(Optional.of(context), result);
+    assertEquals(Optional.of(context.withoutJwt()), result);
   }
 
   @Test
@@ -217,8 +312,8 @@ class RedisSessionContextServiceTest {
             2L, 10L, ACCOUNT_UUID, "demo@example.com", 0L, null, 0L, null, "fresh-jwt");
     service.save(reauthenticated);
 
-    verify(valueOperations).set("sessionctx:10:2:context", reauthenticated, TTL);
-    verify(valueOperations).set("sessionctx:session:2:context", reauthenticated, TTL);
+    verify(valueOperations).set("sessionctx:10:2:context", reauthenticated.withoutJwt(), TTL);
+    verify(valueOperations).set("sessionctx:session:2:context", reauthenticated.withoutJwt(), TTL);
     verify(redisTemplate, never()).delete(retainedKey);
     verify(redisTemplate, never()).delete("sessionctx:1");
   }
@@ -309,7 +404,7 @@ class RedisSessionContextServiceTest {
 
     service.save(context);
 
-    verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
+    verify(valueOperations).set("sessionctx:10:1:context", context.withoutJwt(), TTL);
     assertEquals("fr", context.localeTag());
   }
 }

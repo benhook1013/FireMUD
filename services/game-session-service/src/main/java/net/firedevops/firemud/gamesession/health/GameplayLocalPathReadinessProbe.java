@@ -55,7 +55,7 @@ public final class GameplayLocalPathReadinessProbe {
           sessionContextService
               .findByTenantAndSessionId(PROBE_TENANT_ID, probeSessionId)
               .orElseThrow(() -> new IllegalStateException("session context was not persisted"));
-      if (!stored.equals(context)) {
+      if (!stored.equals(context.withoutJwt())) {
         return ProbeResult.down("stored session context did not round-trip");
       }
       return ProbeResult.up("ROUND_TRIP_OK");

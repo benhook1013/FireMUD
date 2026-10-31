@@ -319,6 +319,32 @@ public record SessionContext(
     return text.trim();
   }
 
+  /** Returns the non-secret Redis projection without changing this process-local context. */
+  public SessionContext withoutJwt() {
+    if (jwt == null) {
+      return this;
+    }
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        null,
+        localeTag,
+        bootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        playableStateScope,
+        connectScopeId,
+        connectRequestId,
+        firstPartyConnectContext);
+  }
+
   public boolean hasGameplayIdentity() {
     return gameInstanceId > 0 && characterId > 0;
   }

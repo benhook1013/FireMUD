@@ -221,7 +221,7 @@ public final class RedisSessionContextService implements SessionContextService {
       throw new SessionContextUnavailableException(
           "Retained session context has a non-canonical Account identity", null);
     }
-    return context;
+    return context == null ? null : context.withoutJwt();
   }
 
   private Optional<SessionContext> findContextForLookup(String key) {
@@ -231,7 +231,7 @@ public final class RedisSessionContextService implements SessionContextService {
         throw new SessionContextUnavailableException(
             "Retained session context has a non-canonical Account identity", null);
       }
-      return Optional.ofNullable(context);
+      return Optional.ofNullable(context).map(SessionContext::withoutJwt);
     } catch (SerializationException | ClassCastException ex) {
       throw new SessionContextUnavailableException("Retained session context is unreadable", ex);
     }
@@ -274,18 +274,28 @@ public final class RedisSessionContextService implements SessionContextService {
   private void writeContext(
       org.springframework.data.redis.core.RedisOperations<String, Object> operations,
       SessionContext context) {
+    SessionContext persistedContext = context.withoutJwt();
     var ops = operations.opsForValue();
-    ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
-    ops.set(sessionKey(context.sessionId()), context, sessionTtl);
-    if (context.hasGameplayIdentity()) {
+    ops.set(
+        contextKey(persistedContext.tenantId(), persistedContext.sessionId()),
+        persistedContext,
+        sessionTtl);
+    ops.set(sessionKey(persistedContext.sessionId()), persistedContext, sessionTtl);
+    if (persistedContext.hasGameplayIdentity()) {
       ops.set(
-          identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
-          context,
+          identityKey(
+              persistedContext.tenantId(),
+              persistedContext.gameInstanceId(),
+              persistedContext.characterId()),
+          persistedContext,
           sessionTtl);
-      if (StringUtils.hasText(context.characterName())) {
+      if (StringUtils.hasText(persistedContext.characterName())) {
         ops.set(
-            nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
-            context,
+            nameKey(
+                persistedContext.tenantId(),
+                persistedContext.gameInstanceId(),
+                persistedContext.characterName()),
+            persistedContext,
             sessionTtl);
       }
     }
