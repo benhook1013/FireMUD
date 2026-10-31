@@ -430,7 +430,15 @@ class DirectTextAuthenticatedLobbyTest {
                 f.scope.requireCurrent(
                     f.original,
                     f.result,
-                    new ObservedDirectTextTransport("42", UUID.randomUUID()),
+                    new ObservedDirectTextTransport("42", f.transport.proxyConnectionId()),
+                    CLOCK))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                f.scope.requireCurrent(
+                    f.original,
+                    f.result,
+                    new ObservedDirectTextTransport("00042", UUID.randomUUID()),
                     CLOCK))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(

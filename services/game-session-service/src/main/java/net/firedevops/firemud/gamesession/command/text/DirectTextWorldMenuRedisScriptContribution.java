@@ -40,7 +40,7 @@ public final class DirectTextWorldMenuRedisScriptContribution implements RedisSc
         throw unavailable();
       return List.of(descriptor);
     } catch (IOException | RuntimeException failure) {
-      throw unavailable();
+      throw new IllegalStateException("Public world menu Redis descriptor is unavailable", failure);
     }
   }
 

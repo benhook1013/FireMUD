@@ -250,7 +250,8 @@ public final class DirectTextWorldMenuRedisStore {
           || !digest("SHA-256", source).equals(descriptor.sha256())) throw unavailable();
       return source;
     } catch (IOException failure) {
-      throw unavailable();
+      throw new IllegalStateException(
+          "Public world menu Coordination store is unavailable", failure);
     }
   }
 
