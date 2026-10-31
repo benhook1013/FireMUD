@@ -251,8 +251,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           outputs,
           resolveLocaleTag(session, sessionId),
           effectivePresentation);
-      maybeRefreshReconnectLook(
-          session, sessionId, command, interpretation, maybeContext);
+      maybeRefreshReconnectLook(session, sessionId, command, interpretation, maybeContext);
       maybeCloseAfterSuccessfulLogout(session, command, interpretation);
     } catch (SessionContextUnavailableException unavailable) {
       logger.warn(
