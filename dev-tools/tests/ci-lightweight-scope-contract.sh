@@ -508,6 +508,7 @@ require_equal(
     "ci workflow",
 )
 for artifact_path in (
+    "services/${{ matrix.module }}/build/classes/java/main/",
     "services/${{ matrix.module }}/build/slow-service-ci-partition/${{ matrix.module }}/partition-${{ matrix.partition }}/",
     "services/${{ matrix.module }}/build/jacoco/*.exec",
     "services/${{ matrix.module }}/build/reports/jacoco/test/",
@@ -563,10 +564,15 @@ for module, job_id, display, prefix in (
     require_equal(download, ("with", "artifact-ids"), "${{ steps.selection.outputs.artifact_ids }}", "ci workflow")
     verify = find_step(ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
     require_contains(verify, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate", "ci workflow")
+    require_contains(
+        verify, ("run",),
+        f"--verified-classes-dir services/{module}/build/slow-service-ci-verified-classes",
+        "ci workflow",
+    )
     merge = find_step(ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
     require_contains(
         merge, ("run",),
-        f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module}",
+        f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module} -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes",
         "ci workflow",
     )
     require_list_item(ci, ("jobs", "validation-gate", "needs"), job_id, "ci workflow")
@@ -701,7 +707,13 @@ async function runFor(embedded, options = {}) {
       return {
         data: {
           total_count: jobRows.length,
-          jobs: rowsForPage(jobRows, request, options.incompleteJobsPage),
+          jobs: rowsForPage(jobRows, request, options.incompleteJobsPage).map(job => ({
+            ...job,
+            // GitHub clones a carried job with a new ID and the retry's raw
+            // run_attempt while retaining its original execution window.
+            id: job.id + (request.attempt_number - 1) * 10000,
+            run_attempt: request.attempt_number,
+          })),
         },
       };
     },
@@ -795,7 +807,15 @@ async function runFor(embedded, options = {}) {
       assert.equal(result.provenance.attempts.length, attempts);
       for (const attempt of result.provenance.attempts) {
         assert.equal(attempt.jobs.length, 101);
-        for (const job of attempt.jobs) assert.equal(job.head_sha, result.provenance.run.head_sha);
+        for (const job of attempt.jobs) {
+          assert.equal(job.head_sha, result.provenance.run.head_sha);
+          assert.equal(job.run_attempt, attempt.attempt, "raw API attempt is preserved per snapshot");
+        }
+        assert.equal(
+          attempt.jobs[0].id,
+          coreJobRows[0].id + (attempt.attempt - 1) * 10000,
+          "attempt snapshots retain cloned job IDs",
+        );
       }
       assert.equal(result.provenance.artifacts.items.length, 101);
       for (const artifact of result.provenance.artifacts.items) {
