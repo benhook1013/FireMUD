@@ -347,6 +347,13 @@ class DirectTextAuthenticatedLobbyTest {
                       call.getArgument(
                           0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class))
                   .isEqualTo(f.frozen.request().getPlayerContext());
+              var context =
+                  call.getArgument(
+                      0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class);
+              assertThat(context.getAccountId()).isEqualTo(ACCOUNT.toString());
+              assertThat(context.getSessionId()).isEqualTo(f.transport.transportSessionId());
+              assertThat(call.getArgument(1, String.class))
+                  .isEqualTo(f.scope.issued().connectScopeId());
               assertThat(call.getArgument(2, String.class))
                   .isEqualTo(f.frozen.request().getRequestId());
               return positive();

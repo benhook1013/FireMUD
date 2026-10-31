@@ -270,6 +270,10 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
                   .isEqualTo(
                       call.getArgument(
                           0, net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
+              assertThat(request.getPlayerContext().getAccountId()).isEqualTo(ACCOUNT.toString());
+              assertThat(request.getPlayerContext().getSessionId())
+                  .isEqualTo(custody.transport.transportSessionId());
+              assertThat(request.getConnectScopeId()).isEqualTo(scope.issued().connectScopeId());
               assertThat(request.getConnectScopeId()).isEqualTo(call.getArgument(1, String.class));
               assertThat(request.getRequestId()).isEqualTo(call.getArgument(2, String.class));
               assertThat(call.getArgument(3, Instant.class))
