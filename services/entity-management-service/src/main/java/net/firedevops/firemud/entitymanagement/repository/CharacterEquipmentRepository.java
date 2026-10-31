@@ -46,6 +46,7 @@ public class CharacterEquipmentRepository {
                 CHARACTERS.ID,
                 CHARACTERS.TENANT_ID,
                 CHARACTERS.ACCOUNT_ID,
+                CHARACTERS.ACCOUNT_UUID,
                 CHARACTERS.PLAYABLE_STATE_KEY,
                 CHARACTERS.NAME,
                 ITEMS.ID,
@@ -97,6 +98,7 @@ public class CharacterEquipmentRepository {
             record.get(CHARACTERS.ID),
             record.get(CHARACTERS.TENANT_ID),
             record.get(CHARACTERS.ACCOUNT_ID),
+            record.get(CHARACTERS.ACCOUNT_UUID),
             record.get(CHARACTERS.PLAYABLE_STATE_KEY),
             record.get(CHARACTERS.NAME)),
         JooqEntityManagementRepositorySupport.partialItem(

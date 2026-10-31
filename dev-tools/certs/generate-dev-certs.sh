@@ -27,7 +27,7 @@ if [[ "${1:-}" == "--workload" ]]; then
     exit 1
   }
   case "$workload" in
-    account-service|game-session-service|social-groups-service|game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)
+    account-service|spring-cloud-gateway|automation-scripting-service|entity-management-service|game-design-service|game-logic-service|game-session-service|logging-admin-service|social-groups-service|tcp-proxy-service|world-management-service)
       ;;
     *)
       echo "unsupported gRPC workload identity: $workload" >&2
@@ -65,6 +65,9 @@ DNS.2 = ${workload}.${runtime_namespace}
 DNS.3 = ${workload}.${runtime_namespace}.svc
 DNS.4 = ${workload}.${runtime_namespace}.svc.cluster.local
 EOF
+  if [[ "$workload" == "spring-cloud-gateway" ]]; then
+    printf 'DNS.5 = gateway\n' >>"$workload_config"
+  fi
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$output_key" \
     >/dev/null 2>&1
   openssl req -new -key "$output_key" -config "$workload_config" -out "$workload_request"

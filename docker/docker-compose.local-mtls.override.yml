@@ -1,0 +1,141 @@
+# Ordinary local-dev gRPC transport profile. These dev-namespace workload
+# leaves authenticate transport peers only; the run-owned smoke profile keeps
+# its separate receipt and capability mounts.
+x-local-mtls-environment: &local-mtls-environment
+  FIREMUD_GRPC_PLAINTEXT: "false"
+  GRPC_SERVER_TLS_ENABLED: "true"
+  GRPC_SERVER_CLIENT_AUTH: REQUIRE
+  FIREMUD_GRPC_CERT_CHAIN_PATH: /app/certs/client.crt
+  FIREMUD_GRPC_PRIVATE_KEY_PATH: /app/certs/client.key
+  FIREMUD_GRPC_CA_CERT_PATH: /app/certs/ca.crt
+  FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+
+services:
+  account-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/account-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  gateway:
+    environment:
+      <<: *local-mtls-environment
+    # Local startup may complete while the separate traffic-admission hold remains.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/liveness >/dev/null"]
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/spring-cloud-gateway
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  automation-scripting-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/automation-scripting-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  entity-management-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/entity-management-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      account-service:
+        condition: service_healthy
+
+  game-design-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/game-design-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  game-logic-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/game-logic-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  game-session-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/game-session-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  logging-admin-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/logging-admin-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  social-groups-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/social-groups-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  tcp-proxy-service:
+    environment:
+      <<: *local-mtls-environment
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/liveness >/dev/null"]
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/tcp-proxy-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  world-management-service:
+    environment:
+      <<: *local-mtls-environment
+    volumes:
+      - type: bind
+        source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/world-management-service
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false

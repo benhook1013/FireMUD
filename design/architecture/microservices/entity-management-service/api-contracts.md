@@ -4,6 +4,12 @@ This document defines the Entity Management REST and gRPC surfaces, design-time 
 
 The authoritative REST schema source lives in [../../../../services/entity-management-service/src/main/resources/openapi.yaml](../../../../services/entity-management-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
 
+## Ordinary Account ownership
+
+Ordinary character request/response Account identities use canonical lowercase non-nil Account UUIDs under [ADR 0020](../../decisions/adr-0020-scoped-domain-and-operational-identifiers.md) and the [Account identity contract](../account-service/api-contracts.md#account-uuid-response-and-rest-selector-identity). Entity retains actual Account ownership in `characters.account_uuid`; numeric `characters.account_id` remains private source-row evidence. Neither field derives or reconstructs the other.
+
+Account UUID ownership alone does not establish canonical tenant, namespace, actor assignment, `OWNER_RESOLVED`, created-origin, admission or activation authority. Existing provenance predicates and registration holds remain in force. Implementation and remaining wire/seed convergence belong to the [Entity tracker](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md#ordinary-account-uuid-ownership).
+
 ## Implementation Status
 
 The [protected preseeded assignment ingress](#protected-preseeded-actor-assignment) and its Game Session client are manually composed and unregistered. Their current proof and remaining execution gaps are recorded in the [assignment tracker](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md#protected-preseeded-assignment-ingress).

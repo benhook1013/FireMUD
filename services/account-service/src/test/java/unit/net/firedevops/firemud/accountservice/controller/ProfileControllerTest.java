@@ -83,7 +83,8 @@ class ProfileControllerTest {
   @Test
   void updateProfileResolvesMatchingCanonicalUuidSelectors() throws Exception {
     UpdateProfileRequest internalRequest =
-        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+        new UpdateProfileRequest(
+            1L, ACCOUNT_UUID_TEXT, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     when(accountService.updateProfile(internalRequest))
         .thenReturn(profileDto(ProfilePresenceVisibilityPolicy.PRIVATE));
 
@@ -207,7 +208,8 @@ class ProfileControllerTest {
   @Test
   void updateProfileAllowsCurrentUuidSessionOwner() throws Exception {
     UpdateProfileRequest internalRequest =
-        new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+        new UpdateProfileRequest(
+            1L, ACCOUNT_UUID_TEXT, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     when(accountService.updateProfile(internalRequest))
         .thenReturn(profileDto(ProfilePresenceVisibilityPolicy.PRIVATE));
 

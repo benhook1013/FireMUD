@@ -384,6 +384,60 @@ subprojects {
         if (file("src/test/java/integration").exists()) add("integrationTest")
         if (file("src/test/java/crossservice").exists()) add("crossServiceTest")
     }
+    val slowServiceCiModules = setOf("account-service", "game-session-service")
+    val slowServiceCiPartition = providers.gradleProperty("slowServiceCiPartition").orNull
+    val slowServiceCiCoverageAggregate =
+        providers.gradleProperty("slowServiceCiCoverageAggregate").orNull
+    val slowServiceCiCoverageClassesDirectory =
+        providers.gradleProperty("slowServiceCiCoverageClassesDirectory").orNull
+    if (
+        slowServiceCiCoverageAggregate != null &&
+        slowServiceCiCoverageAggregate !in slowServiceCiModules
+    ) {
+        throw GradleException("slowServiceCiCoverageAggregate must name an allowed slow service")
+    }
+    val verifiedSlowServiceCiClassesDirectory =
+        if (project.name == slowServiceCiCoverageAggregate) {
+            val configuredDirectory = slowServiceCiCoverageClassesDirectory
+                ?: throw GradleException(
+                    "slowServiceCiCoverageClassesDirectory is required for coverage aggregation"
+                )
+            val configuredFile = file(configuredDirectory).canonicalFile
+            val expectedFile = layout.buildDirectory.dir("slow-service-ci-verified-classes")
+                .get().asFile.canonicalFile
+            if (configuredFile != expectedFile) {
+                throw GradleException(
+                    "slowServiceCiCoverageClassesDirectory must use the verified build output"
+                )
+            }
+            configuredFile
+        } else {
+            null
+        }
+    if (project.name in slowServiceCiModules && slowServiceCiPartition != null) {
+        if (slowServiceCiPartition !in setOf("1", "2")) {
+            throw GradleException("slowServiceCiPartition must be 1 or 2")
+        }
+        tasks.withType<Test>().configureEach {
+            val selectorFile = layout.buildDirectory.file(
+                "slow-service-ci-partition/" + project.name +
+                    "/partition-$slowServiceCiPartition/$name.txt"
+            ).get().asFile
+            if (!selectorFile.isFile) {
+                throw GradleException("Slow-service test selector is missing for $name: $selectorFile")
+            }
+            val selectedClasses = selectorFile.readLines().filter(String::isNotBlank)
+            if (selectedClasses.isEmpty()) {
+                enabled = false
+            } else {
+                val includePatterns = selectedClasses.flatMap { className ->
+                    listOf(className, "$className${'$'}*")
+                }
+                filter.setIncludePatterns(*includePatterns.toTypedArray())
+                filter.setFailOnNoMatchingTests(false)
+            }
+        }
+    }
     tasks.named<JacocoReport>("jacocoTestReport") {
         enabled = fullCheck
         dependsOn(coverageTestTaskNames)
@@ -392,6 +446,26 @@ subprojects {
                 layout.buildDirectory.file("jacoco/$taskName.exec")
             }
         )
+        if (project.name == slowServiceCiCoverageAggregate) {
+            val measuredClassesDirectory = requireNotNull(verifiedSlowServiceCiClassesDirectory)
+            setDependsOn(emptyList<String>())
+            executionData.setFrom(
+                fileTree(layout.buildDirectory.dir("slow-service-ci-partition-inputs")) {
+                    include("**/jacoco/*.exec")
+                }
+            )
+            val measuredClassFiles = fileTree(measuredClassesDirectory) {
+                include("**/*.class")
+            }
+            classDirectories.setFrom(
+                measuredClassFiles
+            )
+            doFirst {
+                if (!measuredClassesDirectory.isDirectory || measuredClassFiles.isEmpty) {
+                    throw GradleException("verified slow-service production classes are missing")
+                }
+            }
+        }
         reports {
             xml.required.set(true)
             csv.required.set(false)
@@ -589,12 +663,29 @@ tasks.register<Exec>("generateDevCerts") {
     commandLine("bash", "dev-tools/certs/generate-dev-certs.sh")
 }
 
+val localComposeMtlsCertRoot = providers.provider {
+    System.getenv("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT")?.takeIf { it.isNotBlank() }
+        ?: run {
+            val dataHome = System.getenv("XDG_DATA_HOME")?.takeIf { it.isNotBlank() }
+                ?: "${System.getProperty("user.home")}/.local/share"
+            "$dataHome/firemud/local-compose-mtls"
+        }
+}
+
+tasks.register<Exec>("ensureLocalComposeMtlsCerts") {
+    val certificateRoot = localComposeMtlsCertRoot.get()
+    environment("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT", certificateRoot)
+    commandLine("bash", "dev-tools/certs/ensure-local-compose-mtls.sh", certificateRoot)
+}
+
 tasks.register<Exec>("ensureLocalComposeEnv") {
     commandLine("bash", "dev-tools/ensure-local-compose-env.sh")
 }
 
 tasks.register<Exec>("devUp") {
-    dependsOn("generateDevCerts", "buildDockerImages", "ensureLocalComposeEnv")
+    val certificateRoot = localComposeMtlsCertRoot.get()
+    dependsOn("ensureLocalComposeMtlsCerts", "buildDockerImages", "ensureLocalComposeEnv")
+    environment("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT", certificateRoot)
     commandLine(
         "docker",
         "compose",
@@ -604,6 +695,8 @@ tasks.register<Exec>("devUp") {
         "docker/docker-compose.override.yml",
         "-f",
         "docker/docker-compose.local-images.override.yml",
+        "-f",
+        "docker/docker-compose.local-mtls.override.yml",
         "up",
         "-d",
         "--wait",
@@ -631,6 +724,8 @@ tasks.register<Exec>("devUp") {
 }
 
 tasks.register<Exec>("devDown") {
+    val certificateRoot = localComposeMtlsCertRoot.get()
+    environment("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT", certificateRoot)
     commandLine(
         "docker",
         "compose",
@@ -640,6 +735,8 @@ tasks.register<Exec>("devDown") {
         "docker/docker-compose.override.yml",
         "-f",
         "docker/docker-compose.local-images.override.yml",
+        "-f",
+        "docker/docker-compose.local-mtls.override.yml",
         "down"
     )
 }

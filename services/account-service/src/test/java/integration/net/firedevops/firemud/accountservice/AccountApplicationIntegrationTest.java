@@ -556,7 +556,7 @@ class AccountApplicationIntegrationTest {
                 .updateProfile(
                     new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
                         tenant,
-                        row,
+                        account.id(),
                         "updated profile",
                         "updated",
                         net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy

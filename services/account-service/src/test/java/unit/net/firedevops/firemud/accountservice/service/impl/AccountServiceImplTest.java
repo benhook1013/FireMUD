@@ -5397,7 +5397,11 @@ class AccountServiceImplTest {
     var dto =
         service.updateProfile(
             new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-                1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
+                1L,
+                account.getAccountUuid().toString(),
+                "demo",
+                "bio",
+                ProfilePresenceVisibilityPolicy.PRIVATE));
 
     assertEquals("demo", dto.displayName());
     assertEquals(account.getAccountUuid().toString(), dto.accountId());
@@ -5406,7 +5410,30 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void updateProfileRejectsNumericRowSelectorBeforeReadingPrivateOwner() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.updateProfile(
+                new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                    1L, "2", "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE)));
+
+    verifyNoInteractions(
+        accountRepository,
+        accountTenantMembershipRepository,
+        profileRepository,
+        notificationService);
+  }
+
+  @Test
   void profileReadAndUpdateFailClosedWithoutCurrentTenantMembership() {
+    UUID accountUuid = UUID.randomUUID();
+    Account account = new Account();
+    account.setId(2L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(2L);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 1L)).thenReturn(false);
 
     assertEquals(
@@ -5420,7 +5447,11 @@ class AccountServiceImplTest {
                 () ->
                     service.updateProfile(
                         new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-                            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE)))
+                            1L,
+                            accountUuid.toString(),
+                            "demo",
+                            "bio",
+                            ProfilePresenceVisibilityPolicy.PRIVATE)))
             .getMessage());
 
     verifyNoInteractions(profileRepository, notificationService);
@@ -5430,7 +5461,11 @@ class AccountServiceImplTest {
   void updateProfileRejectsReservedHiddenStaffPolicyBeforePersistence() {
     var request =
         new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
-            1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
+            1L,
+            UUID.randomUUID().toString(),
+            "demo",
+            "bio",
+            ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
 
     IllegalArgumentException exception =
         assertThrows(IllegalArgumentException.class, () -> service.updateProfile(request));

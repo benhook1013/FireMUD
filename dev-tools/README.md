@@ -32,6 +32,7 @@ FireController is maintained outside this repository. Use the `firecontroller-us
 
 - `backups/` – local and operator backup helpers; see `backups/README.md` for the script map.
 - `certs/` – tracked certificate helper scripts plus ignored generated local TLS material.
+- `certs/ensure-local-compose-mtls.sh` – prepares ordinary local-development workload certificates for the `devUp` transport profile; [Docker resources](../docker/README.md#local-runtime-notes) owns its usage and limits. Run-owned smoke certificates retain their separate ownership and fixture boundary.
 - `deploy/` – deployment preflight and overlay validation; see `deploy/README.md` for the script map.
 - `hosted/` – hosted Kubernetes environment tooling; see `hosted/README.md` for the lane split.
 - `hosted/account-bootstrap/` – disposable fixture ownership and review-only factory inventory tooling; see the [manual qualification workflow](../.github/workflows/game-session-factory-qualification.yml) and [focused contract](tests/game-session-factory-qualification-contract.sh).
