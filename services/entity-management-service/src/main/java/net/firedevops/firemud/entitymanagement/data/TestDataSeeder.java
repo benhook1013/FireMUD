@@ -29,7 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
   private static final long DEMO_TENANT_ID = 1L;
-  private static final long DEMO_ACCOUNT_ID = 1L;
+  private final net.firedevops.firemud.entitymanagement.client.DemoAccountAuthenticationClient
+      demoAccountAuthenticationClient;
   private static final long VERSION_ID = 1L;
   private static final String SHARED_LIVE_PLAYABLE_STATE = "shared-live";
   private static final String DEMO_CHARACTER_NAME = "demo";
@@ -46,7 +47,8 @@ public class TestDataSeeder implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
-    Character demo = ensureDemoCharacter();
+    java.util.UUID accountUuid = demoAccountAuthenticationClient.authenticateDemoOwner();
+    Character demo = ensureDemoCharacter(accountUuid);
     ensureEquipmentSchema();
     Item torch = ensureItem("Torch", "A small torch", null);
     Item backpack = ensureItem("Backpack", "A weathered backpack", "BACK");
@@ -63,13 +65,16 @@ public class TestDataSeeder implements ApplicationRunner {
     ensureCarriedItem(demo, ironBoots, "boots", 1L, "boots#1");
   }
 
-  private Character ensureDemoCharacter() {
+  private Character ensureDemoCharacter(java.util.UUID accountUuid) {
     return characterRepository
         .findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
             DEMO_TENANT_ID, SHARED_LIVE_PLAYABLE_STATE, DEMO_CHARACTER_NAME)
         .map(
             character -> {
-              character.setAccountId(DEMO_ACCOUNT_ID);
+              if (!accountUuid.equals(character.getAccountUuid())) {
+                throw new IllegalStateException(
+                    "Retained demo character has unresolved or different Account ownership");
+              }
               character.setBodyLayoutKey("DEFAULT");
               return characterRepository.save(character);
             })
@@ -77,7 +82,7 @@ public class TestDataSeeder implements ApplicationRunner {
             () -> {
               Character character = new Character();
               character.setTenantId(DEMO_TENANT_ID);
-              character.setAccountId(DEMO_ACCOUNT_ID);
+              character.setAccountUuid(accountUuid);
               character.setPlayableStateKey(SHARED_LIVE_PLAYABLE_STATE);
               character.setName(DEMO_CHARACTER_NAME);
               character.setBodyLayoutKey("DEFAULT");

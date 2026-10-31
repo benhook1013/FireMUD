@@ -9,16 +9,17 @@ import java.time.Duration;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.cache.ScreenBufferService;
-import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
+import net.firedevops.firemud.gamesession.testsupport.GameplaySocialAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
+import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
+import net.firedevops.firemud.socialgroups.v1.FriendPresenceVisibilityPolicy;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterAll;
@@ -39,6 +40,10 @@ class CommunicationWebSocketCrossServiceTest {
   private static final long ACCOUNT_ID = ChatTestFixtures.EMBERLINE_ACCOUNT_ROW_ID;
   private static final long SORA_ACCOUNT_ID = ChatTestFixtures.SORA_ACCOUNT_ROW_ID;
   private static final long NYX_ACCOUNT_ID = ChatTestFixtures.NYX_ACCOUNT_ROW_ID;
+  private static final String ACCOUNT_UUID =
+      AccountRuntimeStubServer.accountUuidForTestFixture(ACCOUNT_ID);
+  private static final String SORA_ACCOUNT_UUID =
+      AccountRuntimeStubServer.accountUuidForTestFixture(SORA_ACCOUNT_ID);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
@@ -85,201 +90,211 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketNumericSayRefusesWithoutSocialWriteAndReportsMetrics() throws Exception {
+  void websocketSayFlowReportsCanonicalTranscriptAndMetrics() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
     List<String> responses =
         runCommunicationSequence(
-            sessionId, "SAY hello travelers", "ERROR COMMUNICATION_NOT_DELIVERED");
+            sessionId, "SAY hello travelers", ChatTestFixtures.canonicalSayText());
+
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses).anyMatch(response -> response.startsWith("OK LOGIN"));
     assertThat(responses).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains(
-                    "ERROR COMMUNICATION_NOT_DELIVERED Sender Account identity unavailable"));
-    assertThat(socialStub().messageRequests()).isEmpty();
+        .anyMatch(response -> response.contains(ChatTestFixtures.canonicalSayText()));
+    assertThat(socialStub().lastRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID);
+              assertThat(request.getContent()).isEqualTo("hello travelers");
+              assertThat(request.getType())
+                  .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+              assertThat(request.getEffectId()).isNotBlank();
+            });
+
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.say.invocations",
         1.0);
-    GameplayAsyncAssertions.assertMetricEventually(
-        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
-        COMMAND_WAIT,
-        "gamesession.command.say.failures",
-        1.0,
-        "error",
-        "INVALID_ARGUMENT");
   }
 
   @Test
-  void websocketNumericSayDoesNotWriteLiveRoomListenerView() throws Exception {
+  void websocketSayPushesRoomListenerViewToLiveRecipient() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketScenarios.TwoPlayerScenario scenario =
         GameplayWebSocketScenarios.openReadyPair(
             GameplayWebSocketScenarios.proxyGatewayDriverFactory(
                 gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
-            "numeric-actor-conn",
+            "actor-say-conn",
             GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
-            "numeric-target-conn",
+            "target-say-conn",
             GameplayWebSocketScenarios.demoAdmission(
                 "sora@example.com", "Sora", READY_LOOK_TEXT))) {
-      var target =
-          gameSession()
-              .bean(SessionContextService.class)
-              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
-              .orElseThrow();
-      ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
-      var before = buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
-      int cursor = scenario.actor().responseCount();
       scenario.actor().send("SAY hello travelers");
-      assertThat(
-              scenario
-                  .actor()
-                  .awaitTranscriptContainingAllAfter(
-                      cursor,
-                      "ERROR COMMUNICATION_NOT_DELIVERED",
-                      "Sender Account identity unavailable"))
-          .contains("ERROR COMMUNICATION_NOT_DELIVERED");
-      assertThat(socialStub().messageRequests()).isEmpty();
-      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
-          .isEqualTo(before);
+      scenario.actor().awaitContains(ChatTestFixtures.canonicalSayText());
+      scenario.target().awaitContains(ChatTestFixtures.canonicalSayListenerText());
     }
   }
 
   @Test
-  void websocketNumericWhisperRefusesWithoutSocialWriteAndReportsMetrics() throws Exception {
+  void websocketWhisperFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
     List<String> responses =
         runCommunicationSequence(
-            sessionId, "WHISPER Sora keep quiet", "ERROR COMMUNICATION_NOT_DELIVERED");
+            sessionId, "WHISPER Sora keep quiet", ChatTestFixtures.canonicalWhisperText());
+
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(responses).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains(
-                    "ERROR COMMUNICATION_NOT_DELIVERED Sender Account identity unavailable"));
-    assertThat(socialStub().messageRequests()).isEmpty();
+        .anyMatch(response -> response.contains(ChatTestFixtures.canonicalWhisperText()));
+    GameplayEntityAssertions.assertMessage(
+        socialStub().lastRequest(),
+        ChatType.CHAT_TYPE_WHISPER,
+        ChatTestFixtures.PLAYER_SORA,
+        "keep quiet",
+        true);
+    assertThat(socialStub().lastRequest())
+        .hasValueSatisfying(request -> assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID));
+
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.whisper.invocations",
         1.0);
-    GameplayAsyncAssertions.assertMetricEventually(
-        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
-        COMMAND_WAIT,
-        "gamesession.command.whisper.failures",
-        1.0,
-        "error",
-        "INVALID_ARGUMENT");
   }
 
   @Test
-  void websocketNumericTellRefusesWithoutSocialOrTargetWritesAndReportsMetrics() throws Exception {
+  void websocketTellFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
     seedLiveTargetSession();
-    var target =
-        gameSession()
-            .bean(SessionContextService.class)
-            .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
-            .orElseThrow();
-    ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
-    var targetBefore =
-        buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
     List<String> responses =
         runCommunicationSequence(
-            sessionId, "TELL Sora meet me at the forge", "ERROR COMMUNICATION_NOT_DELIVERED");
+            sessionId, "TELL Sora meet me at the forge", ChatTestFixtures.canonicalTellText());
+
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(responses).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains(
-                    "ERROR COMMUNICATION_NOT_DELIVERED Sender Account identity unavailable"));
-    assertThat(socialStub().messageRequests()).isEmpty();
-    assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
-        .isEqualTo(targetBefore);
+        .anyMatch(response -> response.contains(ChatTestFixtures.canonicalTellText()));
+    GameplayEntityAssertions.assertMessage(
+        socialStub().lastRequest(),
+        ChatType.CHAT_TYPE_TELL,
+        ChatTestFixtures.PLAYER_SORA,
+        "meet me at the forge",
+        true);
+    assertThat(socialStub().lastRequest())
+        .hasValueSatisfying(request -> assertThat(request.getSenderId()).isEqualTo(ACCOUNT_UUID));
+
     GameplayAsyncAssertions.assertMetricEventually(
         gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
         COMMAND_WAIT,
         "gamesession.command.tell.invocations",
         1.0);
-    GameplayAsyncAssertions.assertMetricEventually(
-        gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
-        COMMAND_WAIT,
-        "gamesession.command.tell.failures",
-        1.0,
-        "error",
-        "INVALID_ARGUMENT");
   }
 
   @Test
-  void websocketNumericFriendsReadRefusesBeforeSocial() throws Exception {
+  void websocketFriendsShowsCanonicalCrossGamePresence() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
-      client.send("FRIENDS");
-      client.awaitContains("ERROR FRIEND_PRESENCE_UNAVAILABLE");
-      assertNoFriendRequests();
-    }
-  }
 
-  @Test
-  void websocketNumericOnlineFriendsReadRefusesBeforeSocial() throws Exception {
-    ensureTestServicesStarted();
-    long sessionId = prepareGameInstance();
-    try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
-      client.send("FRIENDS ONLINE");
-      client.awaitContains("ERROR FRIEND_PRESENCE_UNAVAILABLE");
-      assertNoFriendRequests();
-    }
-  }
-
-  @Test
-  void websocketNumericSharedFriendsReadRefusesBeforeSocial() throws Exception {
-    ensureTestServicesStarted();
-    long sessionId = prepareGameInstance();
-    try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
-      client.send("FRIENDS SHARED");
-      client.awaitContains("ERROR FRIEND_PRESENCE_UNAVAILABLE");
-      assertNoFriendRequests();
-    }
-  }
-
-  @Test
-  void freshGameplayBaselineRestoresFixturePresenceWhileNumericPlayerReadRefuses()
-      throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-    var client =
-        gameSession().bean(net.firedevops.firemud.gamesession.client.SocialGroupsClient.class);
-    String fixtureAccount = AccountRuntimeStubServer.accountUuidForTestFixture(ACCOUNT_ID);
-    socialStub().setFriendPresenceEntries(List.of());
-    assertThat(client.listFriendPresence(TENANT_ID, fixtureAccount).getPresencesList()).isEmpty();
-    long sessionId = prepareGameInstance();
-    var restored = client.listFriendPresence(TENANT_ID, fixtureAccount);
-    assertThat(restored.getPresencesCount()).isEqualTo(1);
-    assertThat(restored.getPresences(0).getFriendAccountId())
-        .isEqualTo(Long.toString(SORA_ACCOUNT_ID));
-    assertThat(restored.getPresences(0).getCharacterName()).isEqualTo("Sora");
-    var priorPresenceRead = socialStub().lastPresenceRequest();
     List<String> responses =
-        runCommunicationSequence(sessionId, "FRIENDS", "ERROR FRIEND_PRESENCE_UNAVAILABLE");
+        runCommunicationSequence(
+            sessionId,
+            "FRIENDS",
+            "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online in Demo World / Live Realm (idle)");
+
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
-        .anyMatch(response -> response.contains("ERROR FRIEND_PRESENCE_UNAVAILABLE"));
-    assertThat(socialStub().lastPresenceRequest()).isEqualTo(priorPresenceRead);
-    assertNoFriendRequests();
+        .anyMatch(
+            response ->
+                response.contains(
+                    "Sora [acct #"
+                        + SORA_ACCOUNT_UUID
+                        + "] - online in Demo World / Live Realm (idle)"));
+    GameplaySocialAssertions.assertListFriendsRequest(
+        socialStub().lastFriendsRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
+  }
+
+  @Test
+  void websocketFriendsOnlineFiltersCanonicalRoster() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId,
+            "FRIENDS ONLINE",
+            "Friends ONLINE [1/1]:\n"
+                + "1) Sora [acct #"
+                + SORA_ACCOUNT_UUID
+                + "] - online in Demo World / Live Realm (idle)");
+
+    assertThat(responses)
+        .anyMatch(
+            response ->
+                response.contains("Friends ONLINE [1/1]:")
+                    && response.contains(
+                        "1) Sora [acct #"
+                            + SORA_ACCOUNT_UUID
+                            + "] - online in Demo World / Live Realm (idle)"));
+    GameplaySocialAssertions.assertListFriendsRequest(
+        socialStub().lastFriendsRequest(),
+        Long.toString(TENANT_ID),
+        ACCOUNT_UUID,
+        net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
+  }
+
+  @Test
+  void websocketFriendsSharedFiltersCanonicalRoster() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId,
+            "FRIENDS SHARED",
+            "Friends SHARED [1/1]:\n"
+                + "1) Sora [acct #"
+                + SORA_ACCOUNT_UUID
+                + "] - online in Demo World / Live Realm (idle)");
+
+    assertThat(responses)
+        .anyMatch(
+            response ->
+                response.contains("Friends SHARED [1/1]:")
+                    && response.contains(
+                        "1) Sora [acct #"
+                            + SORA_ACCOUNT_UUID
+                            + "] - online in Demo World / Live Realm (idle)"));
+    GameplaySocialAssertions.assertListFriendsRequest(
+        socialStub().lastFriendsRequest(),
+        Long.toString(TENANT_ID),
+        ACCOUNT_UUID,
+        net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED);
+  }
+
+  @Test
+  void freshGameplayBaselineReappliesConfiguredFriendPresenceBaseline() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    socialStub().setFriendPresenceEntries(List.of());
+
+    sessionId = prepareGameInstance();
+    List<String> responses =
+        runCommunicationSequence(
+            sessionId,
+            "FRIENDS",
+            "Sora [acct #" + SORA_ACCOUNT_UUID + "] - online in Demo World / Live Realm (idle)");
+
+    assertThat(responses)
+        .anyMatch(
+            response ->
+                response.contains(
+                    "Sora [acct #"
+                        + SORA_ACCOUNT_UUID
+                        + "] - online in Demo World / Live Realm (idle)"));
   }
 
   @Test
@@ -316,208 +331,258 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketNumericFriendMutationsRefuseBeforeSocial() throws Exception {
+  void websocketFriendsMutationFlowUsesCanonicalRosterSurface() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
-      client.send("FRIENDS ADD 77");
-      client.awaitContains("ERROR FRIEND_ADD_UNAVAILABLE");
-      assertNoFriendRequests();
-      client.send("FRIENDS REMOVE 77");
-      client.awaitContains("ERROR FRIEND_REMOVE_UNAVAILABLE");
-      assertNoFriendRequests();
+        openReadySessionClient(sessionId, "friends-mutate-conn")) {
+      client.send("FRIENDS ADD " + SORA_ACCOUNT_UUID);
+      client.awaitContains("Friend #" + SORA_ACCOUNT_UUID + " added.");
+      client.send("FRIENDS REMOVE " + SORA_ACCOUNT_UUID);
+      client.awaitContains("Friend #" + SORA_ACCOUNT_UUID + " removed.");
     }
+
+    GameplaySocialAssertions.assertAddFriendRequest(
+        socialStub().lastAddFriendRequest(),
+        Long.toString(TENANT_ID),
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
+    GameplaySocialAssertions.assertRemoveFriendRequest(
+        socialStub().lastRemoveFriendRequest(),
+        Long.toString(TENANT_ID),
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
   }
 
   @Test
-  void websocketNumericFriendNameMutationsRefuseBeforeSocial() throws Exception {
+  void websocketFriendsMutationByCharacterNameUsesCanonicalIdentityLookup() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
+        openReadySessionClient(sessionId, "friends-mutate-name-conn")) {
       client.send("FRIENDS ADD Sora");
-      client.awaitContains("ERROR FRIEND_ADD_UNAVAILABLE");
-      assertNoFriendRequests();
+      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_UUID + "] added.");
       client.send("FRIENDS REMOVE Sora");
-      client.awaitContains("ERROR FRIEND_REMOVE_UNAVAILABLE");
-      assertNoFriendRequests();
+      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_UUID + "] removed.");
     }
+
+    GameplaySocialAssertions.assertAddFriendRequest(
+        socialStub().lastAddFriendRequest(),
+        Long.toString(TENANT_ID),
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
+    GameplaySocialAssertions.assertRemoveFriendRequest(
+        socialStub().lastRemoveFriendRequest(),
+        Long.toString(TENANT_ID),
+        ACCOUNT_UUID,
+        SORA_ACCOUNT_UUID);
   }
 
   @Test
-  void websocketNumericFriendOrdinalRemovalRefusesBeforeSocial() throws Exception {
+  void websocketFriendsRemoveByRosterOrdinalUsesRenderedRosterIdentity() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
+        openReadySessionClient(sessionId, "friends-remove-ordinal-conn")) {
       client.send("FRIENDS REMOVE #1");
-      client.awaitContains("ERROR FRIEND_REMOVE_UNAVAILABLE");
-      assertNoFriendRequests();
+      client.awaitContains("Sora [acct #" + SORA_ACCOUNT_UUID + "] removed.");
     }
+
+    GameplaySocialAssertions.assertRemoveFriendByOrdinalRequest(
+        socialStub().lastRemoveFriendByOrdinalRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID, 1);
   }
 
   @Test
-  void websocketNumericFriendDetailRefusesBeforeSocial() throws Exception {
+  void websocketFriendsShowUsesCanonicalFriendDetailSurface() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
+        openReadySessionClient(sessionId, "friends-show-detail-conn")) {
       client.send("FRIENDS SHOW #1");
-      client.awaitContains("ERROR FRIEND_DETAIL_UNAVAILABLE");
-      assertNoFriendRequests();
+      client.awaitContains("Friend Sora [acct #" + SORA_ACCOUNT_UUID + "]");
+      client.awaitContains("Presence: online in Demo World / Live Realm (idle)");
+      client.awaitContains("Roster entry: #1");
     }
+
+    GameplaySocialAssertions.assertGetFriendByOrdinalRequest(
+        socialStub().lastGetFriendByOrdinalRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID, 1);
   }
 
   @Test
-  void websocketNumericFriendSummaryRefusesBeforeSocial() throws Exception {
+  void websocketFriendsSummaryUsesCanonicalRosterSummarySurface() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
+        openReadySessionClient(sessionId, "friends-summary-conn")) {
       client.send("FRIENDS SUMMARY");
-      client.awaitContains("ERROR FRIEND_SUMMARY_UNAVAILABLE");
-      assertNoFriendRequests();
+      client.awaitContains("Friend roster summary:");
+      client.awaitContains("Linked: 1");
+      client.awaitContains("Online: 1");
+      client.awaitContains("Offline: 0");
+      client.awaitContains("Recent offline: 0");
     }
+
+    GameplaySocialAssertions.assertFriendRosterSummaryRequest(
+        socialStub().lastSummaryRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
   }
 
   @Test
-  void websocketNumericVisibilityReadAndUpdateRefuseBeforeSocial() throws Exception {
+  void websocketFriendsVisibilityShowsCurrentPolicy() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketDriver client =
-        openReadySessionClient(sessionId, "numeric-friend-conn")) {
+        openReadySessionClient(sessionId, "friends-visibility-conn")) {
       client.send("FRIENDS VISIBILITY");
-      client.awaitContains("ERROR FRIEND_VISIBILITY_UNAVAILABLE");
-      assertNoFriendRequests();
+      client.awaitContains("Friend presence visibility: FRIENDS_ONLY");
       client.send("FRIENDS VISIBILITY PRIVATE");
-      client.awaitContains("ERROR FRIEND_VISIBILITY_UPDATE_UNAVAILABLE");
-      assertNoFriendRequests();
+      client.awaitContains("Friend presence visibility set to PRIVATE.");
+      client.awaitContains("Friend presence visibility: PRIVATE");
     }
+
+    GameplaySocialAssertions.assertGetVisibilityRequest(
+        socialStub().lastGetVisibilityRequest(), Long.toString(TENANT_ID), ACCOUNT_UUID);
+    GameplaySocialAssertions.assertUpdateVisibilityRequest(
+        socialStub().lastUpdateVisibilityRequest(),
+        Long.toString(TENANT_ID),
+        ACCOUNT_UUID,
+        FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE);
   }
 
   @Test
-  void websocketNumericWhisperDoesNotWriteLiveTargetOrObserverViews() throws Exception {
+  void websocketWhisperPushesTargetAndObserverViewsToLiveRecipients() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketScenarios.ThreePlayerScenario scenario =
         GameplayWebSocketScenarios.openReadyTrio(
             GameplayWebSocketScenarios.proxyGatewayDriverFactory(
                 gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
-            "numeric-actor-conn",
+            "actor-conn",
             GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
-            "numeric-target-conn",
+            "target-conn",
             GameplayWebSocketScenarios.demoAdmission("sora@example.com", "Sora", READY_LOOK_TEXT),
-            "numeric-observer-conn",
+            "observer-conn",
             GameplayWebSocketScenarios.demoAdmission("nyx@example.com", "Nyx", READY_LOOK_TEXT))) {
-      var contexts = gameSession().bean(SessionContextService.class);
-      var target =
-          contexts.findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora").orElseThrow();
-      var observer =
-          contexts.findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Nyx").orElseThrow();
-      ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
-      var targetBefore =
-          buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
-      var observerBefore =
-          buffers.get(observer.tenantId(), observer.gameInstanceId(), observer.characterId());
-      int cursor = scenario.actor().responseCount();
       scenario.actor().send("WHISPER Sora Keep quiet");
-      assertThat(
-              scenario
-                  .actor()
-                  .awaitTranscriptContainingAllAfter(
-                      cursor,
-                      "ERROR COMMUNICATION_NOT_DELIVERED",
-                      "Sender Account identity unavailable"))
-          .contains("ERROR COMMUNICATION_NOT_DELIVERED");
-      assertThat(socialStub().messageRequests()).isEmpty();
-      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
-          .isEqualTo(targetBefore);
-      assertThat(
-              buffers.get(observer.tenantId(), observer.gameInstanceId(), observer.characterId()))
-          .isEqualTo(observerBefore);
+      scenario.actor().awaitContains(ChatTestFixtures.canonicalWhisperText());
+      scenario.target().awaitContains(ChatTestFixtures.canonicalWhisperTargetText());
+      scenario.observer().awaitContains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
     }
   }
 
   @Test
-  void websocketNumericTellDoesNotWriteLiveTargetView() throws Exception {
+  void websocketTellPushesTargetViewToLiveRecipient() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
+
     try (GameplayWebSocketScenarios.TwoPlayerScenario scenario =
         GameplayWebSocketScenarios.openReadyPair(
             GameplayWebSocketScenarios.proxyGatewayDriverFactory(
                 gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
-            "numeric-actor-conn",
+            "actor-tell-conn",
             GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
-            "numeric-target-conn",
+            "target-tell-conn",
             GameplayWebSocketScenarios.demoAdmission(
                 "sora@example.com", "Sora", READY_LOOK_TEXT))) {
-      var target =
-          gameSession()
-              .bean(SessionContextService.class)
-              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
-              .orElseThrow();
-      ScreenBufferService buffers = gameSession().bean(ScreenBufferService.class);
-      var before = buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId());
-      int cursor = scenario.actor().responseCount();
       scenario.actor().send("TELL Sora Meet me at the forge");
-      assertThat(
-              scenario
-                  .actor()
-                  .awaitTranscriptContainingAllAfter(
-                      cursor,
-                      "ERROR COMMUNICATION_NOT_DELIVERED",
-                      "Sender Account identity unavailable"))
-          .contains("ERROR COMMUNICATION_NOT_DELIVERED");
-      assertThat(socialStub().messageRequests()).isEmpty();
-      assertThat(buffers.get(target.tenantId(), target.gameInstanceId(), target.characterId()))
-          .isEqualTo(before);
+      scenario.actor().awaitContains(ChatTestFixtures.canonicalTellText());
+      scenario.target().awaitContains(ChatTestFixtures.canonicalTellTargetText());
     }
   }
 
   @Test
-  void websocketNumericItemMutationsRefuseWithoutChangingInventoryOrContainers() throws Exception {
+  void websocketItemLoopMovesRoomItemThroughInventoryAndBack() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    try (GameplayWebSocketDriver client = openReadySessionClient(sessionId, "numeric-item-conn")) {
-      int cursor = client.responseCount();
+
+    try (GameplayWebSocketDriver client = openReadySessionClient(sessionId, "item-loop-conn")) {
+
       client.send("INV HERE");
+      client.awaitContains("Room Inventory:");
+      client.awaitContains("- Torch [torch#1] (A small torch)");
+      client.awaitContains("- Backpack [backpack#1] (A weathered backpack)");
+
+      int pickupResponseCount = client.responseCount();
+      client.send("GET Torch");
       assertThat(
               client.awaitTranscriptContainingAllAfter(
-                  cursor, "Room Inventory:", "Torch", "Backpack"))
-          .contains("Torch", "Backpack");
-      cursor = client.responseCount();
-      client.send("INV");
-      assertThat(
-              client.awaitTranscriptContainingAllAfter(
-                  cursor, "Inventory:", "Leather Cap", "Iron Boots"))
-          .doesNotContain("Torch");
-      for (String command : List.of("GET Torch", "DROP Leather Cap")) {
-        cursor = client.responseCount();
-        client.send(command);
-        assertThat(client.awaitTranscriptContainingAllAfter(cursor, "ERROR INVENTORY_UNAVAILABLE"))
-            .contains("ERROR INVENTORY_UNAVAILABLE");
-        assertThat(entityStub().lastPickupRequest()).isEmpty();
-        assertThat(entityStub().lastDropRequest()).isEmpty();
-        assertThat(entityStub().lastPutRequest()).isEmpty();
-        assertThat(entityStub().lastTakeRequest()).isEmpty();
-      }
-      cursor = client.responseCount();
-      client.send("INV HERE");
-      assertThat(
-              client.awaitTranscriptContainingAllAfter(
-                  cursor, "Room Inventory:", "Torch", "Backpack"))
-          .contains("Torch", "Backpack");
-      cursor = client.responseCount();
-      client.send("INV");
-      assertThat(
-              client.awaitTranscriptContainingAllAfter(
-                  cursor, "Inventory:", "Leather Cap", "Iron Boots"))
-          .doesNotContain("Torch");
-      cursor = client.responseCount();
+                  pickupResponseCount,
+                  "You pick up Torch.",
+                  "Inventory:",
+                  "- Torch [torch#1] (A small torch)",
+                  "Room Inventory:",
+                  "- Backpack [backpack#1] (A weathered backpack)"))
+          .contains("Room Inventory:");
+      GameplayEntityAssertions.assertPickup(
+          entityStub().lastPickupRequest(),
+          String.valueOf(TENANT_ID),
+          ChatTestFixtures.PLAYER_EMBERLINE,
+          String.valueOf(DEMO_WORLD_INSTANCE_ID),
+          ChatTestFixtures.ROOM_ID,
+          "torch");
+
+      int containerResponseCount = client.responseCount();
       client.send("CONTAINER Backpack");
-      assertThat(client.awaitTranscriptContainingAllAfter(cursor, "Container: Backpack", "Ration"))
-          .doesNotContain("Torch");
+      client.awaitTranscriptContainingAllAfter(
+          containerResponseCount,
+          "Container: Backpack [backpack#1]",
+          "- Ration [ration#1] (A dry trail ration)");
+
+      int putResponseCount = client.responseCount();
+      client.send("PUT Torch INTO Backpack");
+      client.awaitTranscriptContainingAllAfter(
+          putResponseCount, "You put Torch into Backpack.", "- Torch [torch#1] (A small torch)");
+      GameplayEntityAssertions.assertPut(
+          entityStub().lastPutRequest(),
+          String.valueOf(TENANT_ID),
+          ChatTestFixtures.PLAYER_EMBERLINE,
+          "container-backpack-1",
+          "torch",
+          "torch-ground-1");
+
+      int takeResponseCount = client.responseCount();
+      client.send("TAKE Torch FROM Backpack");
+      client.awaitTranscriptContainingAllAfter(
+          takeResponseCount,
+          "You take Torch from Backpack.",
+          "- Ration [ration#1] (A dry trail ration)");
+      GameplayEntityAssertions.assertTake(
+          entityStub().lastTakeRequest(),
+          String.valueOf(TENANT_ID),
+          ChatTestFixtures.PLAYER_EMBERLINE,
+          "container-backpack-1",
+          "torch",
+          "");
+
+      int dropResponseCount = client.responseCount();
+      client.send("DROP Torch");
+      assertThat(
+              client.awaitTranscriptContainingAllAfter(
+                  dropResponseCount,
+                  "You drop Torch.",
+                  "Inventory:",
+                  "- Leather Cap [cap#1] (A small cap)",
+                  "- Iron Boots [boots#1] (Heavy iron boots)",
+                  "Room Inventory:",
+                  "- Torch [torch#1] (A small torch)"))
+          .contains("Room Inventory:");
+      int finalInventoryCount = client.responseCount();
+      client.send("INV HERE");
+      client.awaitTranscriptContainingAllAfter(
+          finalInventoryCount, "Room Inventory:", "- Torch [torch#1] (A small torch)");
+      GameplayEntityAssertions.assertDrop(
+          entityStub().lastDropRequest(),
+          String.valueOf(TENANT_ID),
+          ChatTestFixtures.PLAYER_EMBERLINE,
+          String.valueOf(DEMO_WORLD_INSTANCE_ID),
+          ChatTestFixtures.ROOM_ID,
+          "torch");
     }
   }
 
@@ -567,18 +632,6 @@ class CommunicationWebSocketCrossServiceTest {
     }
   }
 
-  private static void assertNoFriendRequests() {
-    assertThat(socialStub().lastFriendsRequest()).isEmpty();
-    assertThat(socialStub().lastAddFriendRequest()).isEmpty();
-    assertThat(socialStub().lastRemoveFriendRequest()).isEmpty();
-    assertThat(socialStub().lastGetFriendRequest()).isEmpty();
-    assertThat(socialStub().lastGetFriendByOrdinalRequest()).isEmpty();
-    assertThat(socialStub().lastRemoveFriendByOrdinalRequest()).isEmpty();
-    assertThat(socialStub().lastSummaryRequest()).isEmpty();
-    assertThat(socialStub().lastGetVisibilityRequest()).isEmpty();
-    assertThat(socialStub().lastUpdateVisibilityRequest()).isEmpty();
-  }
-
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (STACK == null) {
       STACK =
@@ -591,7 +644,7 @@ class CommunicationWebSocketCrossServiceTest {
                   net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse.newBuilder()
                       .addPresences(
                           FriendPresenceEntry.newBuilder()
-                              .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+                              .setFriendAccountId(SORA_ACCOUNT_UUID)
                               .setOnline(true)
                               .setCharacterId(ChatTestFixtures.PLAYER_SORA)
                               .setCharacterName("Sora")

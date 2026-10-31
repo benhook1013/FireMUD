@@ -7,9 +7,11 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
@@ -189,7 +191,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     try {
       AdminRoleGuard.requireAdminRole();
       RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
-      RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
+      JwtClaims.requireCanonicalAccountUuid(request.getAccountId(), "accountId");
       RequestIdValidation.requirePositiveLong(request.getSessionId(), "sessionId");
       ApplyModerationActionResponse response =
           ApplyModerationActionResponse.newBuilder()
@@ -253,7 +255,8 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       var decision =
           moderationService.evaluatePolicy(
               RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-              RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId"),
+              UUID.fromString(
+                  JwtClaims.requireCanonicalAccountUuid(request.getAccountId(), "accountId")),
               request.getScope());
       EvaluateModerationPolicyResponse.Builder response =
           EvaluateModerationPolicyResponse.newBuilder()

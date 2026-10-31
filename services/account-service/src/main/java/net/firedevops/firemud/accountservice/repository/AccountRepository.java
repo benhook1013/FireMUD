@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import static net.firedevops.firemud.accountservice.jooq.Tables.ACCOUNTS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -15,6 +16,8 @@ import net.firedevops.firemud.accountservice.jooq.tables.records.AccountsRecord;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountState;
 import org.jooq.DSLContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +25,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 @Repository
 public class AccountRepository {
+  private static final Logger logger = LoggerFactory.getLogger(AccountRepository.class);
   private final DSLContext dsl;
   private final AccountAuthoritySourceEvidenceRepository sourceEvidence;
 
@@ -110,6 +114,34 @@ public class AccountRepository {
         dsl.selectFrom(ACCOUNTS)
             .where(ACCOUNTS.ACCOUNT_UUID.eq(accountUuid))
             .fetchOne(this::toEntity));
+  }
+
+  /** Reads the requested UUID rows with one query, omitting rows that fail scalar readback. */
+  public List<Account> findByAccountUuids(List<UUID> accountUuids) {
+    if (accountUuids == null || accountUuids.isEmpty()) {
+      return List.of();
+    }
+    for (UUID accountUuid : accountUuids) {
+      if (accountUuid == null || accountUuid.equals(new UUID(0L, 0L))) {
+        throw new IllegalArgumentException("A non-nil Account UUID is required");
+      }
+    }
+    List<AccountsRecord> records =
+        dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ACCOUNT_UUID.in(accountUuids)).fetch();
+    List<Account> accounts = new ArrayList<>(records.size());
+    for (AccountsRecord record : records) {
+      try {
+        Account account = toEntity(record);
+        if (account != null) {
+          accounts.add(account);
+        }
+      } catch (IllegalArgumentException | IllegalStateException ex) {
+        logger.warn(
+            "Omitting Account UUID batch row rejected by scalar readback; exceptionClass={}",
+            ex.getClass().getSimpleName());
+      }
+    }
+    return List.copyOf(accounts);
   }
 
   /** Locks one exact Account UUID inside a writable owner transaction. */

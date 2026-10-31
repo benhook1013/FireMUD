@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.client;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.util.List;
+import java.util.UUID;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
@@ -52,13 +53,16 @@ public class EntityManagementClient
   }
 
   public List<Character> listCharactersByAccount(
-      long tenantId, long accountId, long gameInstanceId, PlayableStateScope playableStateScope) {
+      long tenantId, UUID accountUuid, long gameInstanceId, PlayableStateScope playableStateScope) {
+    if (accountUuid == null || accountUuid.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("A non-nil Account UUID is required");
+    }
     ListCharactersByAccountResponse response =
         stub()
             .listCharactersByAccount(
                 ListCharactersByAccountRequest.newBuilder()
                     .setTenantId(Long.toString(tenantId))
-                    .setAccountId(Long.toString(accountId))
+                    .setAccountId(accountUuid.toString())
                     .setGameInstanceId(Long.toString(gameInstanceId))
                     .setPlayableStateScope(playableStateScope)
                     .build());

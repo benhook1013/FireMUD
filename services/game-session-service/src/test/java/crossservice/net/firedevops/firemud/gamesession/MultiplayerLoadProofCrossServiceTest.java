@@ -177,7 +177,7 @@ class MultiplayerLoadProofCrossServiceTest {
   }
 
   @Test
-  void tenConcurrentNumericPlayersRefuseSayWithoutDeliveryAfterConcurrentEntry() throws Exception {
+  void tenConcurrentPlayersCanBroadcastSayAfterConcurrentEntry() throws Exception {
     ensureTestServicesStarted();
     List<GameplayLoadScenarios.PlayerSeed> players =
         GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
@@ -196,55 +196,36 @@ class MultiplayerLoadProofCrossServiceTest {
                 return null;
               });
       assertCompletesWithin(
-          "concurrent numeric SAY refusal burst", followUp.duration(), FOLLOW_UP_PHASE_BUDGET);
+          "concurrent SAY broadcast burst", followUp.duration(), FOLLOW_UP_PHASE_BUDGET);
 
       connectedPlayers.forEach(
-          connectedPlayer -> {
-            assertThat(connectedPlayer.driver().responses())
-                .anyMatch(
-                    payload ->
-                        payload.contains(
-                            "ERROR COMMUNICATION_NOT_DELIVERED Sender Account identity unavailable"));
-            assertThat(connectedPlayer.driver().responses())
-                .noneMatch(
-                    payload ->
-                        payload.startsWith("ERROR ")
-                            && !payload.contains("ERROR COMMUNICATION_NOT_DELIVERED"));
-            assertThat(connectedPlayer.driver().responses())
-                .noneMatch(
-                    payload ->
-                        payload.contains(expectedSayTranscript(connectedPlayer.player()))
-                            || payload.contains("Multiplayer burst "));
-            var context =
-                gameSession()
-                    .bean(SessionContextService.class)
-                    .findBySessionId(connectedPlayer.player().sessionId())
-                    .orElseThrow();
-            String buffered =
-                gameSession()
-                    .bean(net.firedevops.firemud.cache.ScreenBufferService.class)
-                    .get(context.tenantId(), context.gameInstanceId(), context.characterId())
-                    .map(
-                        net.firedevops.firemud.cache.ScreenBufferService.BufferedScreen
-                            ::protocolText)
-                    .orElse("");
-            assertThat(buffered).doesNotContain("Multiplayer burst ");
-          });
+          connectedPlayer ->
+              assertThat(connectedPlayer.driver().responses())
+                  .noneMatch(payload -> payload.startsWith("ERROR ")));
+
       SocialGroupsStubServer socialStub = STACK.socialStub();
-      assertThat(socialStub.messageRequests()).isEmpty();
+      assertThat(socialStub.messageRequests()).hasSize(CLIENT_COUNT);
+      assertThat(socialStub.messageRequests())
+          .allSatisfy(
+              request -> {
+                assertThat(request.getTenantId()).isEqualTo(Long.toString(TENANT_ID));
+                assertThat(request.getType())
+                    .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
+              });
+      assertThat(
+              socialStub.messageRequests().stream()
+                  .map(request -> request.getContent())
+                  .collect(java.util.stream.Collectors.toSet()))
+          .isEqualTo(
+              connectedPlayers.stream()
+                  .map(connectedPlayer -> sayText(connectedPlayer.player()))
+                  .collect(java.util.stream.Collectors.toSet()));
 
       GameplayAsyncAssertions.assertMetricEventually(
           gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
           COMMAND_WAIT,
           "gamesession.command.say.invocations",
           CLIENT_COUNT);
-      GameplayAsyncAssertions.assertMetricEventually(
-          gameSession().bean(io.micrometer.core.instrument.MeterRegistry.class),
-          COMMAND_WAIT,
-          "gamesession.command.say.failures",
-          CLIENT_COUNT,
-          "error",
-          "INVALID_ARGUMENT");
     } finally {
       for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
         connectedPlayer.driver().close();
@@ -316,24 +297,14 @@ class MultiplayerLoadProofCrossServiceTest {
   }
 
   private void runConcurrentSayBurst(List<PlayerSessionDriver> connectedPlayers) throws Exception {
-    List<Integer> cursors =
-        connectedPlayers.stream().map(player -> player.driver().responseCount()).toList();
     runConcurrently(
         connectedPlayers,
         connectedPlayer -> {
           connectedPlayer.driver().send("SAY " + sayText(connectedPlayer.player()));
           return null;
         });
-    for (int i = 0; i < connectedPlayers.size(); i++) {
-      assertThat(
-              connectedPlayers
-                  .get(i)
-                  .driver()
-                  .awaitTranscriptContainingAllAfter(
-                      cursors.get(i),
-                      "ERROR COMMUNICATION_NOT_DELIVERED",
-                      "Sender Account identity unavailable"))
-          .contains("ERROR COMMUNICATION_NOT_DELIVERED");
+    for (PlayerSessionDriver connectedPlayer : connectedPlayers) {
+      connectedPlayer.driver().awaitContains(expectedSayTranscript(connectedPlayer.player()));
     }
   }
 

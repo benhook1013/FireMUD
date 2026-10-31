@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyRequest;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
@@ -50,11 +51,12 @@ public class ModerationPolicyClient
         LoggingAdminServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  public EvaluateModerationPolicyResponse evaluateGameplayAdmission(long tenantId, long accountId) {
+  public EvaluateModerationPolicyResponse evaluateGameplayAdmission(
+      long tenantId, String accountId) {
     EvaluateModerationPolicyRequest request =
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
-            .setAccountId(Long.toString(accountId))
+            .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
             .setScope(SCOPE_GAMEPLAY_ADMISSION)
             .build();
     return stub().evaluateModerationPolicy(request);

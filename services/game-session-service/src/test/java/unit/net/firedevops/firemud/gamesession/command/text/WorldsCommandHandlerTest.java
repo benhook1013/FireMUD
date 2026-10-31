@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -92,14 +93,17 @@ class WorldsCommandHandlerTest {
         List.of(world("demo", 22L, 1L, false), world("sandbox", 23L, 2L, true)));
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+                "22",
+                AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+                "1",
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(123L))
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -119,7 +123,11 @@ class WorldsCommandHandlerTest {
     assertThat(output.characters()).hasSize(1);
     assertThat(output.characters().get(0).characterName()).isEqualTo("Emberline");
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22",
+            AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+            "1",
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -140,14 +148,17 @@ class WorldsCommandHandlerTest {
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setGameInstanceId(41L);
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
+                "22",
+                AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+                "41",
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("8001")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(123L))
                         .setName("Forkline")
                         .setLevel(5)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
@@ -167,7 +178,10 @@ class WorldsCommandHandlerTest {
         .containsExactly("Forkline");
     Mockito.verify(entityManagementClient)
         .listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
+            "22",
+            AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+            "41",
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
   }
 
   @Test
@@ -176,7 +190,10 @@ class WorldsCommandHandlerTest {
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED))
+                "22",
+                AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+                "1",
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED))
         .thenReturn(ListCharactersByAccountResponse.newBuilder().build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
@@ -187,6 +204,43 @@ class WorldsCommandHandlerTest {
         localHandler.browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", null);
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Success.class);
+  }
+
+  @Test
+  void charsRejectsNumericOrMismatchedAccountOwnersWithoutReturningRoster() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    var actor = GameplayCommandTestFixtures.worldBrowseDemo();
+    for (String owner :
+        List.of(
+            "123",
+            "00000000-0000-0000-0000-000000000000",
+            AccountRuntimeStubServer.accountUuidForTestFixture(124L))) {
+      Mockito.when(
+              entityManagementClient.listCharactersByAccount(
+                  "22", actor.accountId(), "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+          .thenReturn(
+              ListCharactersByAccountResponse.newBuilder()
+                  .addCharacters(
+                      net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                          .setId("7001")
+                          .setTenantId("22")
+                          .setAccountId(owner)
+                          .setName("Other"))
+                  .build());
+      assertThat(handler.browseCharacters(actor, "demo", null))
+          .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    }
+  }
+
+  @Test
+  void charsRejectsNonCanonicalCallerBeforeEntityRead() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    var actor =
+        new net.firedevops.firemud.gamesession.service.SessionContext(
+            1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt");
+    assertThat(handler.browseCharacters(actor, "demo", null))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   private static GameplayCatalogProperties.World world(

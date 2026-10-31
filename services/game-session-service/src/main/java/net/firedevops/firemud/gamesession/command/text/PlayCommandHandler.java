@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.HashSet;
@@ -56,6 +57,8 @@ public class PlayCommandHandler {
   private static final String RESUME_DENIED_METRIC = "gamesession.session.resume_denied";
   private static final String FRESH_ENTRY_FALLBACK_METRIC =
       "gamesession.session.fresh_entry_fallback";
+  private static final Duration AUTHORITY_REPLY_MAX_FUTURE_SKEW = Duration.ofSeconds(5);
+  private static final Duration AUTHORITY_REPLY_MAX_AGE = Duration.ofMinutes(5);
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
@@ -381,11 +384,14 @@ public class PlayCommandHandler {
 
   private Optional<PlayCommandHandlingResult> validateModerationPolicy(
       SessionContext context, GameplayWorldCatalog.RealmView selectedRealm, String tenantTag) {
+    if (!SessionContext.isCanonicalAccountIdentity(context.accountId())) {
+      return Optional.of(
+          authorityUnavailableFailure(
+              tenantTag, Long.toString(selectedRealm.gameInstanceId()), context.characterId()));
+    }
     var decision =
         moderationPolicyClient.evaluateGameplayAdmission(
-            selectedRealm.tenantId(),
-            PositiveLongParsing.requireOptionalText(context.accountId(), "accountId")
-                .orElseThrow(() -> new IllegalArgumentException("accountId must be positive")));
+            selectedRealm.tenantId(), context.accountId());
     if (decision.hasError()
         && decision.getError().getCode() != null
         && !decision.getError().getCode().isBlank()) {
@@ -743,7 +749,17 @@ public class PlayCommandHandler {
             authorityUnavailableFailure(
                 tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
       }
-      if (grantError.isPresent() || !grantResponse.getGranted()) {
+      if (grantError.isPresent()) {
+        return Optional.of(
+            worldAccessDeniedFailure(
+                context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+      }
+      if (!isSafeRealmGrantResponse(grantResponse, context, selectedWorld, selectedRealm)) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
+      if (!grantResponse.getGranted()) {
         return Optional.of(
             worldAccessDeniedFailure(
                 context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
@@ -751,6 +767,36 @@ public class PlayCommandHandler {
       return Optional.empty();
     }
     return Optional.empty();
+  }
+
+  private boolean isSafeRealmGrantResponse(
+      GetRealmAccessGrantForRuntimeResponse response,
+      SessionContext context,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm) {
+    if (!SessionContext.isCanonicalAccountIdentity(response.getAccountId())
+        || !context.accountId().equals(response.getAccountId())
+        || !Long.toString(selectedRealm.tenantId()).equals(response.getTenantId())
+        || !selectedWorld.slug().equals(response.getWorldSlug())
+        || !selectedRealm.slug().equals(response.getRealmSlug())
+        || (response.getGranted() && response.getGrantVersion() <= 0L)
+        || !StringUtils.hasText(response.getEvaluatedAt())) {
+      return false;
+    }
+    return isSafeAuthorityReplyEvaluation(response.getEvaluatedAt());
+  }
+
+  private static boolean isSafeAuthorityReplyEvaluation(String evaluatedAt) {
+    try {
+      return isWithinAuthorityReplyWindow(Instant.parse(evaluatedAt), Instant.now());
+    } catch (DateTimeParseException ex) {
+      return false;
+    }
+  }
+
+  static boolean isWithinAuthorityReplyWindow(Instant evaluatedAt, Instant now) {
+    return !evaluatedAt.isAfter(now.plus(AUTHORITY_REPLY_MAX_FUTURE_SKEW))
+        && !evaluatedAt.isBefore(now.minus(AUTHORITY_REPLY_MAX_AGE));
   }
 
   private PlayCommandHandlingResult worldAccessDeniedFailure(
@@ -918,9 +964,12 @@ public class PlayCommandHandler {
       return false;
     }
     try {
-      Instant.parse(response.getEvaluatedAt());
-      if (!PositiveLongParsing.requireOptionalText(response.getAccountId(), "accountId")
-              .equals(PositiveLongParsing.requireOptionalText(context.accountId(), "accountId"))
+      if (!isSafeAuthorityReplyEvaluation(response.getEvaluatedAt())) {
+        return false;
+      }
+      if (!SessionContext.isCanonicalAccountIdentity(response.getAccountId())
+          || !SessionContext.isCanonicalAccountIdentity(context.accountId())
+          || !response.getAccountId().equals(context.accountId())
           || Long.parseLong(response.getTenantId()) != selectedRealm.tenantId()) {
         return false;
       }

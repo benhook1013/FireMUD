@@ -37,6 +37,10 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public void save(SessionContext context) {
+    if (context.accountId() != null && !context.hasAccountIdentity()) {
+      throw new IllegalArgumentException(
+          "Session context requires a canonical non-nil Account UUID");
+    }
     for (int attempt = 0; attempt < MAX_SAVE_RETRIES; attempt++) {
       Boolean committed =
           redisTemplate.execute(
@@ -212,12 +216,22 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private SessionContext readContext(
       org.springframework.data.redis.core.RedisOperations<String, Object> operations, String key) {
-    return (SessionContext) operations.opsForValue().get(key);
+    SessionContext context = (SessionContext) operations.opsForValue().get(key);
+    if (context != null && context.accountId() != null && !context.hasAccountIdentity()) {
+      throw new SessionContextUnavailableException(
+          "Retained session context has a non-canonical Account identity", null);
+    }
+    return context;
   }
 
   private Optional<SessionContext> findContextForLookup(String key) {
     try {
-      return Optional.ofNullable((SessionContext) redisTemplate.opsForValue().get(key));
+      SessionContext context = (SessionContext) redisTemplate.opsForValue().get(key);
+      if (context != null && context.accountId() != null && !context.hasAccountIdentity()) {
+        throw new SessionContextUnavailableException(
+            "Retained session context has a non-canonical Account identity", null);
+      }
+      return Optional.ofNullable(context);
     } catch (SerializationException | ClassCastException ex) {
       throw new SessionContextUnavailableException("Retained session context is unreadable", ex);
     }

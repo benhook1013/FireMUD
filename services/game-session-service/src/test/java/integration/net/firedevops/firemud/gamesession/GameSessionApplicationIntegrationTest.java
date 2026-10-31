@@ -74,6 +74,7 @@ class GameSessionApplicationIntegrationTest {
   private static final String OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF =
       "6bf9e6d0-7f6b-4c85-b75e-d65949694f13";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+  private static final String ACCOUNT_UUID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000L);
 
@@ -350,7 +351,7 @@ class GameSessionApplicationIntegrationTest {
         new SessionContext(
             999L,
             42L,
-            "100",
+            ACCOUNT_UUID,
             "player@example.com",
             55L,
             "Player",

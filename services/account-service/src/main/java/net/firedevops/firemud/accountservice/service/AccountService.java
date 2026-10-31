@@ -68,6 +68,9 @@ public interface AccountService {
   /** Resolves the public Account UUID to its private numeric storage key inside Account only. */
   Long resolveAccountStorageId(UUID accountUuid);
 
+  /** Resolves known, provenance-backed Account UUIDs to private storage keys in one local read. */
+  java.util.Map<UUID, Long> resolveAccountStorageIds(java.util.List<UUID> accountUuids);
+
   RealmAccessGrantResult getRealmAccessGrantForRuntime(
       Long accountId, Long tenantId, String worldSlug, String realmSlug, String requestId);
 

@@ -25,6 +25,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(CharacterController.class)
 class CharacterControllerTest {
+  private static final java.util.UUID OWNER =
+      java.util.UUID.fromString("11111111-1111-4111-8111-111111111111");
 
   @Autowired private MockMvc mockMvc;
 
@@ -32,7 +34,7 @@ class CharacterControllerTest {
 
   @BeforeEach
   void setUpSecurityContext() {
-    SessionContext.setContext("test-account", List.of("platformAdmin"), java.util.Map.of());
+    SessionContext.setContext(OWNER.toString(), List.of("platformAdmin"), java.util.Map.of());
   }
 
   @AfterEach
@@ -46,7 +48,7 @@ class CharacterControllerTest {
         new CharacterDto(
             1L,
             1L,
-            1L,
+            OWNER,
             "Hero",
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
             1,
@@ -59,7 +61,7 @@ class CharacterControllerTest {
             5);
     when(characterService.listForGameplayScope(
             eq(1L),
-            eq(1L),
+            eq(OWNER),
             eq("44"),
             eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
             any(Pageable.class)))
@@ -67,7 +69,7 @@ class CharacterControllerTest {
 
     mockMvc
         .perform(
-            get("/tenants/1/accounts/1/characters")
+            get("/tenants/1/accounts/" + OWNER + "/characters")
                 .param("gameInstanceId", "44")
                 .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
         .andExpect(status().isOk())
@@ -98,7 +100,7 @@ class CharacterControllerTest {
                 .param("playableStateScope", "PLAYABLE_STATE_SCOPE_SHARED"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("Malformed claim: accountId"));
 
     verifyNoInteractions(characterService);
   }

@@ -60,8 +60,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       DurableResumeTranscriptExpiryJob.class
     })
 class GameSessionLoginIntegrationTest {
-  private static final String DEMO_ACCOUNT_ID = "7";
-
+  private static final String ACCOUNT_UUID = "00000000-0000-4000-8000-000000000007";
   @LocalServerPort private int port;
 
   @MockitoBean private AccountClient accountClient;
@@ -113,7 +112,7 @@ class GameSessionLoginIntegrationTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("stub-token")
-                .setAccountId(DEMO_ACCOUNT_ID)
+                .setAccountId(ACCOUNT_UUID)
                 .build());
     when(sharedSettingsAuthorityReader.readOverrides(anyLong(), org.mockito.ArgumentMatchers.any()))
         .thenReturn(ScopedSettingsSnapshot.empty());
@@ -155,8 +154,12 @@ class GameSessionLoginIntegrationTest {
     }
 
     assertThat(payloads).anyMatch(s -> s.startsWith("OK LOGIN"));
-    assertThat(sessionContextService.findByTenantAndSessionId(42L, 1L)).isPresent();
-    assertThat(redisValueStore).doesNotContainKey("accountrecentpresence:42:" + DEMO_ACCOUNT_ID);
+    assertThat(sessionContextService.findByTenantAndSessionId(42L, 1L))
+        .hasValueSatisfying(context -> assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID));
+    net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions.assertEventually(
+        "account recent presence",
+        java.time.Duration.ofSeconds(5),
+        () -> redisValueStore.containsKey("accountrecentpresence:42:" + ACCOUNT_UUID));
 
     verify(accountClient).authenticate(eq("demo@example.com"), eq("swordfish"));
   }

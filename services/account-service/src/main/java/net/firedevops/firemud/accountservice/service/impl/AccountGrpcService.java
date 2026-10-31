@@ -5,6 +5,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -60,7 +61,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.transaction.TransactionException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -110,17 +113,19 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         IssueDirectTextConnectScopeResponse.newBuilder();
     try {
       requireGameSessionPeer();
-      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
+      var context = request.getPlayerContext();
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
       UUID realmId = requireCanonicalRealmId(request.getRealmId());
       long gameInstanceId = requirePositiveRequestId(request.getGameInstanceId(), "gameInstanceId");
-      if (caller.tenantId() != tenantId
-          || !caller.realmId().equals(realmId)
-          || caller.gameInstanceId() != gameInstanceId
-          || !caller.playableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
-          || !caller.playableStateScope().equals(request.getPlayableStateScope())) {
+      if (requirePositiveRequestId(context.getTenantId(), "tenantId") != tenantId
+          || !requireCanonicalRealmId(context.getRealmId()).equals(realmId)
+          || requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId")
+              != gameInstanceId
+          || !context.getPlayableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
+          || !context.getPlayableStateScope().equals(request.getPlayableStateScope())) {
         throw new InvalidRequestException("Player context and selected realm disagree", null);
       }
+      DirectTextCallerContext caller = directTextCaller(context);
       var scope =
           accountService.issueDirectTextConnectScope(
               caller,
@@ -163,19 +168,23 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         JoinPublicProductionMembershipResponse.newBuilder();
     try {
       requireGameSessionPeer();
-      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
       String requestId = requireText(request.getRequestId(), "requestId");
       if (requestId.length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
         throw new InvalidRequestException("JOIN requestId exceeds the maximum length", null);
       }
-      if (!requestId.equals(caller.requestId())) {
+      if (!requestId.equals(request.getPlayerContext().getRequestId())) {
         throw new InvalidRequestException("Player context and JOIN request ID disagree", null);
       }
+      DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
       var result =
           accountService.joinPublicProductionFromGameSession(
               caller,
               new JoinPublicProductionRequest(
                   requireText(request.getConnectScopeId(), "connectScopeId"), requestId));
+      if (!request.getPlayerContext().getAccountId().equals(result.accountId())
+          || result.tenantId() != caller.tenantId()) {
+        throw new IllegalStateException("Account JOIN result does not match the validated caller");
+      }
       response
           .setSuccess(result.success())
           .setOutcomeCode(result.outcomeCode())
@@ -252,15 +261,28 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
 
   private DirectTextCallerContext directTextCaller(
       net.firedevops.firemud.shared.v1.PlayerExecutionContext context) {
+    UUID accountUuid = requireCanonicalAccountUuid(context.getAccountId());
+    long tenantId = requirePositiveRequestId(context.getTenantId(), "tenantId");
+    UUID realmId = requireCanonicalRealmId(context.getRealmId());
+    String namespaceId =
+        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId());
+    String scope = requireText(context.getPlayableStateScope(), "playableStateScope");
+    long gameInstanceId = requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId");
+    String sessionId = requireText(context.getSessionId(), "sessionId");
+    String requestId = requireText(context.getRequestId(), "requestId");
+    long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
+    if (accountStorageId <= 0L) {
+      throw new IllegalStateException("Account UUID did not resolve to a persisted owner");
+    }
     return new DirectTextCallerContext(
-        requirePositiveRequestId(context.getAccountId(), "accountId"),
-        requirePositiveRequestId(context.getTenantId(), "tenantId"),
-        requireCanonicalRealmId(context.getRealmId()),
-        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId()),
-        requireText(context.getPlayableStateScope(), "playableStateScope"),
-        requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
-        requireText(context.getSessionId(), "sessionId"),
-        requireText(context.getRequestId(), "requestId"));
+        accountStorageId,
+        tenantId,
+        realmId,
+        namespaceId,
+        scope,
+        gameInstanceId,
+        sessionId,
+        requestId);
   }
 
   private UUID requireCanonicalRealmId(String value) {
@@ -359,7 +381,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -381,6 +403,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setError(appError("Authenticate", "UNAUTHENTICATED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      AuthenticateResponse response =
+          AuthenticateResponse.newBuilder()
+              .setError(appError("Authenticate", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -413,7 +442,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -442,6 +471,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                       AuthenticationErrorCodes.INVALID_CREDENTIALS,
                       "Invalid credentials"))
               .build());
+    } catch (IllegalStateException ex) {
+      responseObserver.onNext(
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  appError(
+                      "VerifyEmailLoginOtp", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
     }
     responseObserver.onCompleted();
   }
@@ -453,14 +489,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
     try {
       requireGameSessionPeer();
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
       var dto =
           accountService.getTenantMembershipForRuntime(
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getRequestId());
+              accountStorageId, tenantId, request.getRequestId());
+      if (dto == null
+          || !Long.valueOf(accountStorageId).equals(dto.accountId())
+          || !Long.valueOf(tenantId).equals(dto.tenantId())) {
+        throw new IllegalStateException(
+            "Account membership authority returned an inconsistent identity");
+      }
       GetTenantMembershipForRuntimeResponse response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
-              .setAccountId(String.valueOf(dto.accountId()))
+              .setAccountId(accountUuid.toString())
               .setTenantId(String.valueOf(dto.tenantId()))
               .setMembershipExists(dto.membershipExists())
               .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
@@ -472,12 +515,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
-      GetTenantMembershipForRuntimeResponse response =
+      responseObserver.onNext(
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setError(
                   appError("GetTenantMembershipForRuntime", "PERMISSION_DENIED", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetTenantMembershipForRuntimeResponse response =
@@ -494,6 +536,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (RuntimeException ex) {
+      responseObserver.onNext(
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  appError(
+                      "GetTenantMembershipForRuntime",
+                      "AUTH_UNAVAILABLE",
+                      AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -504,19 +556,34 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<GetRealmAccessGrantForRuntimeResponse> responseObserver) {
     try {
       requireGameSessionPeer();
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      String worldSlug = requireText(request.getWorldSlug(), "worldSlug");
+      String realmSlug = requireText(request.getRealmSlug(), "realmSlug");
+      long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
       var dto =
           accountService.getRealmAccessGrantForRuntime(
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getWorldSlug(),
-              request.getRealmSlug(),
-              request.getRequestId());
+              accountStorageId,
+              tenantId,
+              worldSlug,
+              realmSlug,
+              requireText(request.getRequestId(), "requestId"));
+      if (dto.accountId() != accountStorageId
+          || dto.tenantId() != tenantId
+          || !worldSlug.equals(dto.worldSlug())
+          || !realmSlug.equals(dto.realmSlug())
+          || (dto.granted() && dto.grantVersion() <= 0L)
+          || dto.evaluatedAt() == null
+          || dto.evaluatedAt().isBlank()
+          || Instant.parse(dto.evaluatedAt()).isAfter(Instant.now().plusSeconds(5))) {
+        throw new IllegalStateException("Account returned mismatched realm-grant authority");
+      }
       GetRealmAccessGrantForRuntimeResponse response =
           GetRealmAccessGrantForRuntimeResponse.newBuilder()
-              .setAccountId(String.valueOf(dto.accountId()))
-              .setTenantId(String.valueOf(dto.tenantId()))
-              .setWorldSlug(dto.worldSlug())
-              .setRealmSlug(dto.realmSlug())
+              .setAccountId(accountUuid.toString())
+              .setTenantId(Long.toString(tenantId))
+              .setWorldSlug(worldSlug)
+              .setRealmSlug(realmSlug)
               .setGranted(dto.granted())
               .setGrantVersion(dto.grantVersion())
               .setEvaluatedAt(dto.evaluatedAt())
@@ -524,12 +591,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
-      GetRealmAccessGrantForRuntimeResponse response =
+      responseObserver.onNext(
           GetRealmAccessGrantForRuntimeResponse.newBuilder()
               .setError(
                   appError("GetRealmAccessGrantForRuntime", "PERMISSION_DENIED", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
+              .build());
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
       GetRealmAccessGrantForRuntimeResponse response =
@@ -546,6 +612,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (RuntimeException ex) {
+      responseObserver.onNext(
+          GetRealmAccessGrantForRuntimeResponse.newBuilder()
+              .setError(
+                  appError(
+                      "GetRealmAccessGrantForRuntime",
+                      "AUTH_UNAVAILABLE",
+                      AUTHORITY_UNAVAILABLE_MESSAGE))
+              .build());
+      responseObserver.onCompleted();
     }
   }
 
@@ -556,9 +632,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
     try {
       requireRuntimeEntitlementsPeer();
-      var dto =
-          accountService.getTenantEntitlementsForRuntime(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"), request.getRequestId());
+      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      String requestId = requireText(request.getRequestId(), "requestId");
+      var dto = accountService.getTenantEntitlementsForRuntime(tenantId, requestId);
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setTenantId(String.valueOf(dto.tenantId()))
@@ -673,22 +749,60 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         throw new InvalidRequestException(
             "accountIds must contain at most " + MAX_ACCOUNT_IDS_PER_REQUEST + " entries", null);
       }
-      java.util.List<Long> accountIds =
+      java.util.List<UUID> accountUuids =
           request.getAccountIdsList().stream()
-              .map(accountId -> requirePositiveRequestId(accountId, "accountId"))
+              .map(AccountGrpcService::requireCanonicalAccountUuid)
               .distinct()
               .toList();
+      java.util.Map<UUID, Long> resolvedStorageIdsByAccountUuid =
+          accountService.resolveAccountStorageIds(accountUuids);
+      if (resolvedStorageIdsByAccountUuid == null) {
+        throw new IllegalStateException("Account UUID batch resolution returned no result");
+      }
+      java.util.Map<Long, UUID> accountUuidsByStorageId = new java.util.HashMap<>();
+      for (java.util.Map.Entry<UUID, Long> resolution :
+          resolvedStorageIdsByAccountUuid.entrySet()) {
+        UUID accountUuid = resolution.getKey();
+        Long storageId = resolution.getValue();
+        if (accountUuid == null || !accountUuids.contains(accountUuid)) {
+          throw new IllegalStateException("Account UUID batch resolution returned an invalid row");
+        }
+        if (storageId == null || storageId <= 0L) {
+          continue;
+        }
+        UUID previousAccountUuid = accountUuidsByStorageId.putIfAbsent(storageId, accountUuid);
+        if (previousAccountUuid != null && !previousAccountUuid.equals(accountUuid)) {
+          throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
+        }
+      }
+      java.util.Map<UUID, Long> storageIdsByAccountUuid = new java.util.LinkedHashMap<>();
+      for (UUID accountUuid : accountUuids) {
+        Long storageId = resolvedStorageIdsByAccountUuid.get(accountUuid);
+        if (storageId != null && storageId > 0L) {
+          storageIdsByAccountUuid.put(accountUuid, storageId);
+        }
+      }
+      java.util.List<Long> storageIds = java.util.List.copyOf(storageIdsByAccountUuid.values());
+      java.util.Map<Long, ProfilePresenceVisibilityPolicy> policies =
+          storageIds.isEmpty()
+              ? java.util.Map.of()
+              : accountService.listPresenceVisibilityPolicies(tenantId, storageIds);
+      for (java.util.Map.Entry<Long, ProfilePresenceVisibilityPolicy> policy :
+          policies.entrySet()) {
+        if (!accountUuidsByStorageId.containsKey(policy.getKey()) || policy.getValue() == null) {
+          throw new IllegalStateException(
+              "Presence visibility policy read returned an unexpected Account row");
+        }
+      }
       var builder =
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder();
-      accountService
-          .listPresenceVisibilityPolicies(tenantId, accountIds)
-          .forEach(
-              (accountId, policy) ->
-                  builder.addPolicies(
-                      net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
-                          .setAccountId(Long.toString(accountId))
-                          .setPolicy(policy.name())
-                          .build()));
+      policies.forEach(
+          (storageId, policy) ->
+              builder.addPolicies(
+                  net.firedevops.firemud.account.v1.PresenceVisibilityPolicyEntry.newBuilder()
+                      .setAccountId(accountUuidsByStorageId.get(storageId).toString())
+                      .setPolicy(policy.name())
+                      .build()));
       responseObserver.onNext(builder.build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -714,7 +828,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (RuntimeException ex) {
       responseObserver.onNext(
           net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse.newBuilder()
-              .setError(appError("ListPresenceVisibilityPolicies", "INTERNAL", ex.getMessage()))
+              .setError(
+                  appError(
+                      "ListPresenceVisibilityPolicies",
+                      "INTERNAL",
+                      "Presence visibility policy lookup failed"))
               .build());
       responseObserver.onCompleted();
     }
@@ -820,11 +938,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       var data =
           accountService.exportAccountData(
-              requirePositiveRequestId(request.getAccountId(), "accountId"));
+              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       ExportAccountResponse response =
           ExportAccountResponse.newBuilder()
               .setAccountJson(JsonMapper.builder().build().writeValueAsString(data.account()))
               .setProfilesJson(JsonMapper.builder().build().writeValueAsString(data.profiles()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      ExportAccountResponse response =
+          ExportAccountResponse.newBuilder()
+              .setError(accountUuidReadbackUnavailableError("ExportAccount"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -860,7 +985,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var data =
           accountService.exportTenantData(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"));
+              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       ExportTenantDataResponse response =
           ExportTenantDataResponse.newBuilder()
               .setTenantId(String.valueOf(data.tenantId()))
@@ -869,6 +994,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                   data.profile() != null
                       ? JsonMapper.builder().build().writeValueAsString(data.profile())
                       : "")
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      ExportTenantDataResponse response =
+          ExportTenantDataResponse.newBuilder()
+              .setError(accountUuidReadbackUnavailableError("ExportTenantData"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -902,8 +1034,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       DeleteAccountRequest request, StreamObserver<DeleteAccountResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      accountService.deleteAccount(requirePositiveRequestId(request.getAccountId(), "accountId"));
+      accountService.deleteAccount(
+          resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       DeleteAccountResponse response = DeleteAccountResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      DeleteAccountResponse response =
+          DeleteAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(accountUuidReadbackUnavailableError("DeleteAccount"))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (InvalidRequestException ex) {
@@ -1013,12 +1154,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       accountService.linkExternalAccount(
           new net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest(
               requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              requirePositiveRequestId(request.getAccountId(), "accountId"),
+              resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())),
               request.getProvider(),
               request.getExternalId()));
       var response =
           net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
               .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      var response =
+          net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(accountUuidReadbackUnavailableError("LinkExternalAccount"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1049,10 +1198,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           responseObserver) {
     try {
       accountService.requestEmailVerification(
-          requirePositiveRequestId(request.getAccountId(), "accountId"));
+          resolveAccountStorageIdForRpc(requireCanonicalAccountUuid(request.getAccountId())));
       var response =
           net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
               .setSuccess(true)
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AccountUuidReadbackUnavailableException ex) {
+      var response =
+          net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
+              .setSuccess(false)
+              .setError(accountUuidReadbackUnavailableError("RequestEmailVerification"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1114,6 +1271,29 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private net.firedevops.firemud.shared.v1.ErrorDetail sourceEvidenceUnavailableError(
       String operation) {
     return appError(operation, "AUTH_UNAVAILABLE", "Account authority is unavailable");
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail accountUuidReadbackUnavailableError(
+      String operation) {
+    return appError(operation, "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE);
+  }
+
+  private long resolveAccountStorageIdForRpc(UUID accountUuid) {
+    try {
+      return accountService.resolveAccountStorageId(accountUuid);
+    } catch (IllegalStateException | DataAccessException | TransactionException ex) {
+      logger.warn(
+          "Account UUID readback unavailable; exceptionClass={}", ex.getClass().getSimpleName());
+      throw new AccountUuidReadbackUnavailableException(ex);
+    }
+  }
+
+  private static final class AccountUuidReadbackUnavailableException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private AccountUuidReadbackUnavailableException(Throwable cause) {
+      super(cause);
+    }
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(

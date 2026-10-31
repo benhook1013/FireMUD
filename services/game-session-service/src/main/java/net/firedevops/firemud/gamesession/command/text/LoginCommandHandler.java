@@ -10,6 +10,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.common.EmailCanonicalization;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -21,7 +22,6 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
-import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -159,8 +159,8 @@ public final class LoginCommandHandler {
       return failure(errorCode, publicErrorMessage(error, errorCode));
     }
 
-    Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
-    if (authenticatedAccountId == null || authenticatedAccountId <= 0) {
+    String authenticatedAccountId = parseAccountId(authResponse.getAccountId());
+    if (authenticatedAccountId == null) {
       clearFailedLoginSessionState(
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
@@ -240,7 +240,7 @@ public final class LoginCommandHandler {
   private void persistSessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       String jwt,
       long bootstrapGameInstanceId) {
@@ -255,7 +255,7 @@ public final class LoginCommandHandler {
         projectedExisting != null && projectedExisting.tenantId() == tenantId
             ? projectedExisting
             : null;
-    String accountIdText = Long.toString(accountId);
+    String accountIdText = accountId;
     boolean sameAuthenticatedAccount =
         existing != null && Objects.equals(existing.accountId(), accountIdText);
     Optional<SessionContext> reusableBootstrapShell =
@@ -347,14 +347,14 @@ public final class LoginCommandHandler {
   private SessionContext authenticatedBootstrapContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       String jwt,
       SessionContext bootstrapShell) {
     return new SessionContext(
         sessionId,
         tenantId,
-        Long.toString(accountId),
+        accountId,
         loginName,
         0L,
         null,
@@ -532,13 +532,12 @@ public final class LoginCommandHandler {
     return SessionIdParsing.parse(sessionIdText);
   }
 
-  private Long parseAccountId(String accountIdText) {
-    PositiveLongParsing.ParsedPositiveLong parsed =
-        PositiveLongParsing.parseOptionalText(accountIdText, "accountId");
-    if (!parsed.valid()) {
+  private String parseAccountId(String accountIdText) {
+    try {
+      return JwtClaims.requireCanonicalAccountUuid(accountIdText, "accountId");
+    } catch (IllegalArgumentException ex) {
       return null;
     }
-    return parsed.value();
   }
 
   private LoginCommandHandlingResult invalidSessionFailure(String message) {

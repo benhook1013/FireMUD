@@ -7,6 +7,8 @@ import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextPropert
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.serializer.SerializationException;
@@ -15,6 +17,8 @@ import org.springframework.stereotype.Service;
 @Service
 public final class RedisFirstPartyConnectContextRegistry
     implements FirstPartyConnectContextRegistry {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(RedisFirstPartyConnectContextRegistry.class);
   private static final String KEY_TEMPLATE = "sessionctx:first-party:%d:connect-context";
 
   private final RedisTemplate<String, Object> redisTemplate;
@@ -81,11 +85,18 @@ public final class RedisFirstPartyConnectContextRegistry
   public void unregister(long sessionId) {
     String key = key(sessionId);
     try {
-      if (valueOperations().get(key) instanceof FirstPartyConnectContext) {
+      if (valueOperations().get(key) instanceof FirstPartyConnectContext context) {
+        // Delete only a verified, complete retained handoff; incompatible evidence is retained.
+        contextService.requireRetained(context);
         redisTemplate.delete(key);
       }
-    } catch (SerializationException | ClassCastException ex) {
-      // Retain unreadable evidence instead of treating it as an absent context.
+    } catch (SerializationException | ClassCastException | IllegalStateException ex) {
+      // Retain unreadable, incomplete or unverifiable evidence instead of treating it as an absent
+      // context.
+      LOG.warn(
+          "Retained first-party connect context kept for session {}: {}",
+          sessionId,
+          ex.getClass().getSimpleName());
     }
   }
 

@@ -16,7 +16,10 @@ final class EntityManagementRequestReaders {
 
   static AccountScope requireAccountScope(String tenantId, String accountId) {
     return new AccountScope(
-        requirePositivePathId(tenantId, "tenantId"), requirePositivePathId(accountId, "accountId"));
+        requirePositivePathId(tenantId, "tenantId"),
+        java.util.UUID.fromString(
+            net.firedevops.firemud.common.security.JwtClaims.requireCanonicalAccountUuid(
+                accountId, "accountId")));
   }
 
   static CharacterScope requireCharacterScope(String tenantId, String characterId) {
@@ -35,7 +38,7 @@ final class EntityManagementRequestReaders {
     }
   }
 
-  record AccountScope(long tenantId, long accountId) {}
+  record AccountScope(long tenantId, java.util.UUID accountId) {}
 
   record CharacterScope(long tenantId, long characterId) {}
 }
