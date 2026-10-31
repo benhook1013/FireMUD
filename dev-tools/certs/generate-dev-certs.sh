@@ -20,8 +20,9 @@ require_safe_directory_path() {
 
 require_safe_file_path() {
   local path="$1"
+  [[ "$path" == /* ]] || path="$PWD/$path"
   require_safe_directory_path "$(dirname -- "$path")" || return 1
-  if [[ -L "$path" || ( -e "$path" && ( ! -f "$path" || "$(stat -c %h -- "$path")" != 1 ) ) ]]; then
+  if [[ -L "$path" || ( -e "$path" && ( ! -f "$path" || -z "$(find "$path" -prune -type f -links 1 -print)" ) ) ]]; then
     echo "Certificate paths must be regular files without symlinks or hardlinks: $path" >&2
     return 1
   fi
@@ -171,6 +172,9 @@ if ((retained)); then
   done
   if (( ! valid )); then
     echo "Invalid retained development certificate bundle; refusing to replace material: $CERT_DIR" >&2
+    echo "Only for disposable generated local material (for example expired), explicitly clean and retry:" >&2
+    printf '  bash %q %q\n' "$SCRIPT_DIR/clean-dev-certs.sh" "$CERT_DIR" >&2
+    echo "Preserve externally managed material; select a fresh dedicated directory instead." >&2
     exit 1
   fi
   echo "Dev certificates already exist in $CERT_DIR"

@@ -1,7 +1,9 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import com.google.protobuf.Any;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -1002,30 +1004,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   @Timed(value = "accountGrpc.exportAccount")
   public void exportAccount(
       ExportAccountRequest request, StreamObserver<ExportAccountResponse> responseObserver) {
-    responseObserver.onNext(
-        ExportAccountResponse.newBuilder()
-            .setError(
-                appError(
-                    "ExportAccount",
-                    "FAILED_PRECONDITION",
-                    "No authorized internal caller is configured"))
-            .build());
-    responseObserver.onCompleted();
+    refuseUnconfiguredInternalCaller("ExportAccount", responseObserver);
   }
 
   @Override
   @Timed(value = "accountGrpc.exportTenantData")
   public void exportTenantData(
       ExportTenantDataRequest request, StreamObserver<ExportTenantDataResponse> responseObserver) {
-    responseObserver.onNext(
-        ExportTenantDataResponse.newBuilder()
-            .setError(
-                appError(
-                    "ExportTenantData",
-                    "FAILED_PRECONDITION",
-                    "No authorized internal caller is configured"))
-            .build());
-    responseObserver.onCompleted();
+    refuseUnconfiguredInternalCaller("ExportTenantData", responseObserver);
   }
 
   @Override
@@ -1150,16 +1136,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.account.v1.LinkExternalAccountRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse>
           responseObserver) {
-    responseObserver.onNext(
-        net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
-            .setSuccess(false)
-            .setError(
-                appError(
-                    "LinkExternalAccount",
-                    "FAILED_PRECONDITION",
-                    "No authorized internal caller is configured"))
-            .build());
-    responseObserver.onCompleted();
+    refuseUnconfiguredInternalCaller("LinkExternalAccount", responseObserver);
   }
 
   @Override
@@ -1168,16 +1145,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.account.v1.RequestEmailVerificationRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse>
           responseObserver) {
-    responseObserver.onNext(
-        net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
-            .setSuccess(false)
-            .setError(
-                appError(
-                    "RequestEmailVerification",
-                    "FAILED_PRECONDITION",
-                    "No authorized internal caller is configured"))
-            .build());
-    responseObserver.onCompleted();
+    refuseUnconfiguredInternalCaller("RequestEmailVerification", responseObserver);
   }
 
   @Override
@@ -1242,6 +1210,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     private AccountUuidReadbackUnavailableException(Throwable cause) {
       super(cause);
     }
+  }
+
+  private void refuseUnconfiguredInternalCaller(String operation, StreamObserver<?> observer) {
+    String message = "No authorized internal caller is configured";
+    var detail = appError(operation, "FAILED_PRECONDITION", message);
+    observer.onError(
+        StatusProto.toStatusRuntimeException(
+            com.google.rpc.Status.newBuilder()
+                .setCode(Status.Code.FAILED_PRECONDITION.value())
+                .setMessage(message)
+                .addDetails(Any.pack(detail))
+                .build()));
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.Context;
 import io.grpc.Status;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
@@ -2758,19 +2759,12 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<ExportAccountResponse> observer = new RecordingObserver<>();
+    FailureObserver<ExportAccountResponse> observer = new FailureObserver<>();
 
     service.exportAccount(
         ExportAccountRequest.newBuilder().setAccountId(ACCOUNT_UUID).build(), observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertTrue(observer.response().getAccountJson().isEmpty());
-    assertTrue(observer.response().getProfilesJson().isEmpty());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -2779,18 +2773,11 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<ExportAccountResponse> observer = new RecordingObserver<>();
+    FailureObserver<ExportAccountResponse> observer = new FailureObserver<>();
 
     service.exportAccount(ExportAccountRequest.getDefaultInstance(), observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertTrue(observer.response().getAccountJson().isEmpty());
-    assertTrue(observer.response().getProfilesJson().isEmpty());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -2800,21 +2787,13 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
-    RecordingObserver<ExportTenantDataResponse> observer = new RecordingObserver<>();
+    FailureObserver<ExportTenantDataResponse> observer = new FailureObserver<>();
 
     service.exportTenantData(
         ExportTenantDataRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
         observer);
 
-    assertEquals(1, observer.nextCalls);
-    assertEquals(0, observer.receivedTransportError() ? 1 : 0);
-    assertEquals(1, observer.completedCalls);
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertTrue(observer.response().getTenantId().isEmpty());
-    assertTrue(observer.response().getAccountJson().isEmpty());
-    assertTrue(observer.response().getProfileJson().isEmpty());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -2823,18 +2802,11 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<ExportAccountResponse> observer = new RecordingObserver<>();
+    FailureObserver<ExportAccountResponse> observer = new FailureObserver<>();
 
     service.exportAccount(ExportAccountRequest.newBuilder().setAccountId("0").build(), observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertTrue(observer.response().getAccountJson().isEmpty());
-    assertTrue(observer.response().getProfilesJson().isEmpty());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -2844,19 +2816,11 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
-    RecordingObserver<ExportTenantDataResponse> observer = new RecordingObserver<>();
+    FailureObserver<ExportTenantDataResponse> observer = new FailureObserver<>();
     service.exportTenantData(
         ExportTenantDataRequest.newBuilder().setTenantId("0").setAccountId("2").build(), observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertTrue(observer.response().getTenantId().isEmpty());
-    assertTrue(observer.response().getAccountJson().isEmpty());
-    assertTrue(observer.response().getProfileJson().isEmpty());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -2924,8 +2888,8 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> observer =
-        new RecordingObserver<>();
+    FailureObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> observer =
+        new FailureObserver<>();
 
     service.linkExternalAccount(
         net.firedevops.firemud.account.v1.LinkExternalAccountRequest.newBuilder()
@@ -2936,13 +2900,7 @@ class AccountGrpcServiceTest {
             .build(),
         observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertFalse(observer.response().getSuccess());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -2951,8 +2909,8 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> observer =
-        new RecordingObserver<>();
+    FailureObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> observer =
+        new FailureObserver<>();
 
     service.linkExternalAccount(
         net.firedevops.firemud.account.v1.LinkExternalAccountRequest.newBuilder()
@@ -2963,13 +2921,7 @@ class AccountGrpcServiceTest {
             .build(),
         observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertFalse(observer.response().getSuccess());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -2978,8 +2930,8 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> observer =
-        new RecordingObserver<>();
+    FailureObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> observer =
+        new FailureObserver<>();
 
     service.requestEmailVerification(
         net.firedevops.firemud.account.v1.RequestEmailVerificationRequest.newBuilder()
@@ -2987,13 +2939,7 @@ class AccountGrpcServiceTest {
             .build(),
         observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertFalse(observer.response().getSuccess());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -3002,18 +2948,11 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<ExportAccountResponse> observer = new RecordingObserver<>();
+    FailureObserver<ExportAccountResponse> observer = new FailureObserver<>();
 
     service.exportAccount(null, observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertTrue(observer.response().getAccountJson().isEmpty());
-    assertTrue(observer.response().getProfilesJson().isEmpty());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -3022,19 +2961,11 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service =
         new AccountGrpcService(Mockito.mock(PingService.class), accountService);
-    RecordingObserver<ExportTenantDataResponse> observer = new RecordingObserver<>();
+    FailureObserver<ExportTenantDataResponse> observer = new FailureObserver<>();
 
     service.exportTenantData(ExportTenantDataRequest.getDefaultInstance(), observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertTrue(observer.response().getTenantId().isEmpty());
-    assertTrue(observer.response().getAccountJson().isEmpty());
-    assertTrue(observer.response().getProfileJson().isEmpty());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService);
   }
 
@@ -3061,20 +2992,14 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> observer =
-        new RecordingObserver<>();
+    FailureObserver<net.firedevops.firemud.account.v1.LinkExternalAccountResponse> observer =
+        new FailureObserver<>();
 
     service.linkExternalAccount(
         net.firedevops.firemud.account.v1.LinkExternalAccountRequest.getDefaultInstance(),
         observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertFalse(observer.response().getSuccess());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -3083,8 +3008,8 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> observer =
-        new RecordingObserver<>();
+    FailureObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> observer =
+        new FailureObserver<>();
 
     service.requestEmailVerification(
         net.firedevops.firemud.account.v1.RequestEmailVerificationRequest.newBuilder()
@@ -3092,13 +3017,7 @@ class AccountGrpcServiceTest {
             .build(),
         observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertFalse(observer.response().getSuccess());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -3107,20 +3026,14 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
-    RecordingObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> observer =
-        new RecordingObserver<>();
+    FailureObserver<net.firedevops.firemud.account.v1.RequestEmailVerificationResponse> observer =
+        new FailureObserver<>();
 
     service.requestEmailVerification(
         net.firedevops.firemud.account.v1.RequestEmailVerificationRequest.getDefaultInstance(),
         observer);
 
-    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
-    assertEquals(
-        "No authorized internal caller is configured", observer.response().getError().getMessage());
-    assertFalse(observer.response().getSuccess());
-    assertEquals(1, observer.nextCalls);
-    assertEquals(1, observer.completedCalls);
-    assertFalse(observer.receivedTransportError());
+    observer.assertUnconfiguredCallerRefusal();
     Mockito.verifyNoInteractions(accountService, pingService);
   }
 
@@ -3150,6 +3063,50 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().getSuccess());
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+  }
+
+  private static final class FailureObserver<T> implements StreamObserver<T> {
+    private Status transportStatus;
+    private com.google.rpc.Status rpcStatus;
+    private int nextCalls;
+    private int errorCalls;
+    private int completedCalls;
+
+    @Override
+    public void onNext(T value) {
+      nextCalls++;
+    }
+
+    @Override
+    public void onError(Throwable throwable) {
+      transportStatus = Status.fromThrowable(throwable);
+      rpcStatus = StatusProto.fromThrowable(throwable);
+      errorCalls++;
+    }
+
+    @Override
+    public void onCompleted() {
+      completedCalls++;
+    }
+
+    private void assertUnconfiguredCallerRefusal() {
+      assertEquals(0, nextCalls);
+      assertEquals(0, completedCalls);
+      assertEquals(1, errorCalls);
+      assertNotNull(transportStatus);
+      assertEquals(Status.Code.FAILED_PRECONDITION, transportStatus.getCode());
+      assertNotNull(rpcStatus);
+      assertEquals(Status.Code.FAILED_PRECONDITION.value(), rpcStatus.getCode());
+      assertEquals("No authorized internal caller is configured", rpcStatus.getMessage());
+      assertEquals(1, rpcStatus.getDetailsCount());
+      assertEquals(
+          com.google.protobuf.Any.pack(
+              ErrorDetail.newBuilder()
+                  .setCode("FAILED_PRECONDITION")
+                  .setMessage("No authorized internal caller is configured")
+                  .build()),
+          rpcStatus.getDetails(0));
+    }
   }
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {
