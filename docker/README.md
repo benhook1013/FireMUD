@@ -28,13 +28,14 @@ Source-built local stack:
 
 ```bash
 dev-tools/ensure-local-compose-env.sh
-dev-tools/certs/ensure-dev-certs.sh
+export FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT="${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/firemud/local-compose-mtls}"
+dev-tools/certs/ensure-local-compose-mtls.sh "$FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT"
 dev-tools/build-compose-service-jars.sh
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml up --build -d
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml down
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml -f docker/docker-compose.local-mtls.override.yml up --build -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml -f docker/docker-compose.local-mtls.override.yml down
 ```
 
-For ordinary local development, prefer `./gradlew devUp` and `./gradlew devDown`. The Gradle task builds the base image, application images, and `pg-dump-cron` image, generates development certificates, synchronizes the local Compose environment, and waits for the requested services to become ready. The raw source-built commands above are useful when iterating directly on the Compose build path; the certificate helper prepares the mounted local material, while the local override still selects plaintext internal gRPC for this development stack.
+For ordinary local development, prefer `./gradlew devUp` and `./gradlew devDown`. The Gradle task builds the base image, application images, and `pg-dump-cron` image, prepares the local per-workload mTLS certificates, synchronizes the local Compose environment, and waits for the requested services to become ready. The raw source-built commands above use the same local mTLS profile while iterating directly on the Compose build path. Set `FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT` to use another absolute host directory; the default is `$XDG_DATA_HOME/firemud/local-compose-mtls` or `$HOME/.local/share/firemud/local-compose-mtls`.
 
 Canonical smoke/bootstrap proof:
 
@@ -111,7 +112,8 @@ Gradle-managed local prebuilt-image stack:
 ## Local Runtime Notes
 
 - Compose service discovery uses Docker DNS plus the defaults in service `application.yml` files and the local Compose env overrides; it does not depend on a separate Spring `dev` profile lane.
-- The local override files intentionally relax internal gRPC/TLS settings for the Docker development stack.
+- `docker-compose.override.yml` and `docker-compose.local-images.override.yml` provide the base plaintext local settings. Ordinary `devUp` appends `docker-compose.local-mtls.override.yml`, which enables internal gRPC mTLS for all application services and mounts only each service's read-only leaf directory and the public CA certificate. The private CA key stays in the owner-only host certificate root and is not mounted into containers. This local `dev`-namespace identity is transport evidence; it does not create or mount the run-owned smoke receipt/capability files or establish authored-source authority. See the canonical [Security Architecture](../design/architecture/system-architecture-security.md) and [mTLS workload identity decision](../design/architecture/decisions/adr-0038-explicit-jwt-profiles-and-mtls-workload-identity.md).
+- Entity Management waits for the healthy Account service before starting in this profile, so its ordinary UUID demo seed can use the existing Account-authenticated client. Account's persisted UUID/provenance checks and Entity's owner/provenance guards remain defined by the [Account API](../design/architecture/microservices/account-service/api-contracts.md#account-uuid-response-and-rest-selector-identity) and [Entity API](../design/architecture/microservices/entity-management-service/api-contracts.md#ordinary-account-ownership).
 - The Compose stack also runs `pg-dump-cron`, which writes rotated PostgreSQL dumps under `docker/backups/`.
 - The scripted smoke clients require Python 3 and the `websocket-client` package; see [Smoke Tests for Login + PLAY + LOOK](../design/developer-workflows/login-session-smoke-tests.md#requirements) for the client prerequisites and transport-specific controls.
 

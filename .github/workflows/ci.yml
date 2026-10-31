@@ -513,6 +513,8 @@ jobs:
           time bash ./dev-tools/tests/secret-compliance-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/ensure-local-compose-env-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/ensure-local-compose-env-contract.sh
+          TIMEFORMAT='bash ./dev-tools/tests/local-compose-mtls-contract.sh: real=%3R user=%3U sys=%3S'
+          time bash ./dev-tools/tests/local-compose-mtls-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/smoke-image-env-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/smoke-image-env-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh: real=%3R user=%3U sys=%3S'
