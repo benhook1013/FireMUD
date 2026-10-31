@@ -626,6 +626,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     "SELECT count(*) FROM game_session_canonical_roster_retirement_transfers WHERE target_purged_at IS NOT NULL")
                 .get(0, Long.class))
         .isEqualTo(2L);
+    // Each retirement attempt takes two owner-snapshot locks. Recovery can itself satisfy the
+    // retention horizon, in which case the optional third attempt above is unnecessary.
     org.mockito.Mockito.verify(admissions, org.mockito.Mockito.times(retiredDuringRecovery ? 4 : 6))
         .lockExactCurrentOpenSnapshot(any());
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(originalOwnerRows);
