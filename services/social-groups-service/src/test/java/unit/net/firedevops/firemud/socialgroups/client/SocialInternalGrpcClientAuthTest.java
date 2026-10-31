@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.client;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,7 +53,8 @@ class SocialInternalGrpcClientAuthTest {
 
   @Test
   void loggingAdminClientUsesInternalIdentityEvenWithEndUserContext() {
-    SessionContext.setContext("42", List.of("player"), Map.of("7", List.of("tenantAdmin")));
+    SessionContext.setContext(
+        accountUuid(42L), List.of("player"), Map.of("7", List.of("tenantAdmin")));
     CapturingChannel channel = new CapturingChannel();
     LoggingAdminClient client =
         new LoggingAdminClient(
@@ -69,7 +71,8 @@ class SocialInternalGrpcClientAuthTest {
 
   @Test
   void moderationPolicyClientUsesInternalIdentityEvenWithEndUserContext() {
-    SessionContext.setContext("42", List.of("player"), Map.of("7", List.of("tenantAdmin")));
+    SessionContext.setContext(
+        accountUuid(42L), List.of("player"), Map.of("7", List.of("tenantAdmin")));
     CapturingChannel channel = new CapturingChannel();
     ModerationPolicyClient client =
         new ModerationPolicyClient(
@@ -125,7 +128,7 @@ class SocialInternalGrpcClientAuthTest {
             runtimeIdentityProvider());
     client.init();
 
-    assertThatThrownBy(() -> client.reportChatViolation(7L, 42L, "Filtered profanity"))
+    assertThatThrownBy(() -> client.reportChatViolation(7L, accountUuid(42L), "Filtered profanity"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Chat violation report failed: UNAVAILABLE: Report creation unavailable")
         .hasMessageNotContaining("Filtered profanity");

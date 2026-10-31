@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -54,10 +55,15 @@ class GuildControllerTest {
 
   @Test
   void createGuildAllowsScopedTenantAdmin() throws Exception {
-    CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
+    CreateGuildRequest request = new CreateGuildRequest(1L, accountUuid(2L), "guild");
     when(guildService.createGuild(request))
-        .thenReturn(new GuildDto(1L, 1L, "guild", 2L, Instant.now()));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+        .thenReturn(new GuildDto(1L, 1L, "guild", accountUuid(2L), Instant.now()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L),
+            Map.of(
+                "accountId", accountUuid(2L),
+                "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -72,9 +78,13 @@ class GuildControllerTest {
 
   @Test
   void createGuildRejectsCrossTenantScopedAdmin() throws Exception {
-    CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
+    CreateGuildRequest request = new CreateGuildRequest(1L, accountUuid(2L), "guild");
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            accountUuid(2L),
+            Map.of(
+                "accountId", accountUuid(2L),
+                "scopedRoles", Map.of("8", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
@@ -87,8 +97,13 @@ class GuildControllerTest {
 
   @Test
   void createGuildRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    CreateGuildRequest request = new CreateGuildRequest(0L, 2L, "guild");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    CreateGuildRequest request = new CreateGuildRequest(0L, accountUuid(2L), "guild");
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L),
+            Map.of(
+                "accountId", accountUuid(2L),
+                "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
@@ -106,8 +121,13 @@ class GuildControllerTest {
 
   @Test
   void addMemberRejectsZeroGuildIdBeforeDispatch() throws Exception {
-    AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 0L, 2L, "member");
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    AddGuildMemberRequest request = new AddGuildMemberRequest(1L, 0L, accountUuid(2L), "member");
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L),
+            Map.of(
+                "accountId", accountUuid(2L),
+                "globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(

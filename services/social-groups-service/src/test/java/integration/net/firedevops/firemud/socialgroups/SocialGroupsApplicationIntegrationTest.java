@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.URI;
@@ -115,14 +116,14 @@ class SocialGroupsApplicationIntegrationTest {
         TEST_ACCOUNT_CLIENT,
         TEST_SOCIAL_ACCESS_GUARD);
     Mockito.when(
-            TEST_MODERATION_POLICY_CLIENT.evaluateChatSend(Mockito.anyLong(), Mockito.anyLong()))
+            TEST_MODERATION_POLICY_CLIENT.evaluateChatSend(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(EvaluateModerationPolicyResponse.newBuilder().setAllowed(true).build());
     Mockito.when(
             TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicies(
                 Mockito.anyLong(), Mockito.anyCollection()))
         .thenAnswer(
             invocation -> {
-              java.util.Collection<Long> accountIds = invocation.getArgument(1);
+              java.util.Collection<String> accountIds = invocation.getArgument(1);
               return accountIds.stream()
                   .collect(
                       java.util.stream.Collectors.toMap(
@@ -131,7 +132,7 @@ class SocialGroupsApplicationIntegrationTest {
                               net.firedevops.firemud.socialgroups.dto
                                   .FriendPresenceVisibilityPolicyValue.FRIENDS_ONLY));
             });
-    Mockito.when(TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicy(1L, 2L))
+    Mockito.when(TEST_ACCOUNT_CLIENT.getPresenceVisibilityPolicy(1L, accountUuid(2L)))
         .thenReturn(
             java.util.Optional.of(
                 net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue
@@ -156,10 +157,15 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterRejectsMalformedTenantIdAsInvalidArgument() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
 
     HttpResponse<String> response =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=bad&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=bad&accountId=10000000-0000-4000-8000-000000000002"));
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
@@ -168,7 +174,7 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendRosterRejectsMalformedFilterAsInvalidArgument() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
 
     HttpResponse<String> response =
         send(
@@ -176,7 +182,7 @@ class SocialGroupsApplicationIntegrationTest {
                 token,
                 "http://localhost:"
                     + port
-                    + "/friends?tenantId=1&accountId=2&filter=NOT_A_FILTER"));
+                    + "/friends?tenantId=1&accountId=10000000-0000-4000-8000-000000000002&filter=NOT_A_FILTER"));
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
@@ -187,7 +193,15 @@ class SocialGroupsApplicationIntegrationTest {
   void duplicateEffectIdReturnsExistingChatMessageWithoutRepublishing() {
     SendMessageRequestDto request =
         new SendMessageRequestDto(
-            1L, 2L, ChatType.SAY, null, 2L, null, null, "hello there", "fx-comm-42");
+            1L,
+            accountUuid(2L),
+            ChatType.SAY,
+            null,
+            accountUuid(2L),
+            null,
+            null,
+            "hello there",
+            "fx-comm-42");
 
     ChatMessageDto first = chatService.sendMessage(request);
     ChatMessageDto replay = chatService.sendMessage(request);
@@ -196,14 +210,15 @@ class SocialGroupsApplicationIntegrationTest {
     assertThat(chatMessageRepository.findByTenantIdAndEffectId(1L, "fx-comm-42"))
         .hasValueSatisfying(message -> assertThat(message.getId()).isEqualTo(first.id()));
 
-    List<Object> redisRange = redisTemplate.opsForList().range("chat:say:1:2", 0, -1);
+    List<Object> redisRange =
+        redisTemplate.opsForList().range("chat:say:1:" + accountUuid(2L), 0, -1);
     List<Object> cachedMessages = new ArrayList<>(redisRange == null ? List.of() : redisRange);
     assertThat(cachedMessages).containsExactly("hello there");
   }
 
   @Test
   void friendRosterAndPresenceEndpointsReturnCanonicalEmbeddedPresence() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     HttpResponse<String> addResponse =
         send(
             HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
@@ -212,18 +227,20 @@ class SocialGroupsApplicationIntegrationTest {
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
                         """
-                        {"tenantId":1,"accountId":2,"friendAccountId":3}
+                        {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
                         """))
                 .build());
     assertThat(addResponse.statusCode()).isEqualTo(200);
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(3L));
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, accountUuid(2L), List.of(accountUuid(3L))))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
+                        .setAccountId(accountUuid(3L))
                         .setOnline(true)
                         .setGameInstanceId("9")
                         .setPlayableStateScope(
@@ -245,9 +262,15 @@ class SocialGroupsApplicationIntegrationTest {
                 .build());
 
     HttpResponse<String> rosterResponse =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(rosterResponse.statusCode()).isEqualTo(200);
-    assertThat(rosterResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(rosterResponse.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
     assertThat(rosterResponse.body()).contains("\"status\":\"active\"");
     assertThat(rosterResponse.body()).contains("\"presence\"");
     assertThat(rosterResponse.body()).contains("\"characterName\":\"Sora\"");
@@ -256,32 +279,46 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> presenceResponse =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/presence?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(presenceResponse.statusCode()).isEqualTo(200);
-    assertThat(presenceResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(presenceResponse.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
     assertThat(presenceResponse.body()).contains("\"worldSlug\":\"demo\"");
     assertThat(presenceResponse.body()).contains("\"characterName\":\"Sora\"");
 
     HttpResponse<String> detailResponse =
-        send(authedGet(token, "http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/10000000-0000-4000-8000-000000000003?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(detailResponse.statusCode()).isEqualTo(200);
     assertThat(detailResponse.body()).contains("\"friendLinkId\"");
-    assertThat(detailResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(detailResponse.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
     assertThat(detailResponse.body()).contains("\"characterName\":\"Sora\"");
 
     HttpResponse<String> ordinalDetailResponse =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/entry/1?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/entry/1?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(ordinalDetailResponse.statusCode()).isEqualTo(200);
     assertThat(ordinalDetailResponse.body()).contains("\"ordinal\":1");
-    assertThat(ordinalDetailResponse.body()).contains("\"friendAccountId\":3");
+    assertThat(ordinalDetailResponse.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
   }
 
   @Test
   void authenticatedFriendPresenceRejectsDuplicateOwnerSubjectsWithoutPartialRoster()
       throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     for (long friendAccountId : List.of(3L, 4L)) {
       HttpResponse<String> addResponse =
           send(
@@ -290,107 +327,137 @@ class SocialGroupsApplicationIntegrationTest {
                   .header(HttpHeaders.CONTENT_TYPE, "application/json")
                   .POST(
                       HttpRequest.BodyPublishers.ofString(
-                          "{\"tenantId\":1,\"accountId\":2,\"friendAccountId\":%d}"
-                              .formatted(friendAccountId)))
+                          "{\"tenantId\":1,\"accountId\":\"%s\",\"friendAccountId\":\"%s\"}"
+                              .formatted(accountUuid(2L), accountUuid(friendAccountId))))
                   .build());
       assertThat(addResponse.statusCode()).isEqualTo(200);
-      acceptFriendLink(1L, 2L, friendAccountId);
+      acceptFriendLink(1L, accountUuid(2L), accountUuid(friendAccountId));
     }
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
-        .thenReturn(
-            QueryAccountPresenceResponse.newBuilder()
-                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true))
-                .addPresences(AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(false))
-                .build());
-
-    HttpResponse<String> response =
-        send(
-            authedGet(
-                token, "http://localhost:" + port + "/friends/presence?tenantId=1&accountId=2"));
-
-    assertThat(response.statusCode()).isGreaterThanOrEqualTo(500);
-    assertThat(response.body()).doesNotContain("\"friendAccountId\":3");
-    assertThat(response.body()).doesNotContain("\"friendAccountId\":4");
-  }
-
-  @Test
-  void friendRosterEndpointFallsBackToOfflineWhenPresenceIsUnavailable() throws Exception {
-    String token = privilegedAccountToken(2L);
-    send(
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
-            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-            .header(HttpHeaders.CONTENT_TYPE, "application/json")
-            .POST(
-                HttpRequest.BodyPublishers.ofString(
-                    """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
-                    """))
-            .build());
-    acceptFriendLink(1L, 2L, 3L);
-
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L)))
-        .thenReturn(QueryAccountPresenceResponse.newBuilder().build());
-
-    HttpResponse<String> rosterResponse =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=1&accountId=2"));
-
-    assertThat(rosterResponse.statusCode()).isEqualTo(200);
-    assertThat(rosterResponse.body()).contains("\"friendAccountId\":3");
-    assertThat(rosterResponse.body()).contains("\"online\":false");
-  }
-
-  @Test
-  void friendRosterEndpointSupportsCanonicalOnlineFilter() throws Exception {
-    String token = privilegedAccountToken(2L);
-    send(
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
-            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-            .header(HttpHeaders.CONTENT_TYPE, "application/json")
-            .POST(
-                HttpRequest.BodyPublishers.ofString(
-                    """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
-                    """))
-            .build());
-    acceptFriendLink(1L, 2L, 3L);
-    send(
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
-            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
-            .header(HttpHeaders.CONTENT_TYPE, "application/json")
-            .POST(
-                HttpRequest.BodyPublishers.ofString(
-                    """
-                    {"tenantId":1,"accountId":2,"friendAccountId":4}
-                    """))
-            .build());
-    acceptFriendLink(1L, 2L, 4L);
-
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, accountUuid(2L), List.of(accountUuid(3L), accountUuid(4L))))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
+                    AccountPresenceEntry.newBuilder().setAccountId(accountUuid(3L)).setOnline(true))
                 .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("4").setOnline(false).build())
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId(accountUuid(3L))
+                        .setOnline(false))
                 .build());
 
     HttpResponse<String> response =
         send(
             authedGet(
                 token,
-                "http://localhost:" + port + "/friends?tenantId=1&accountId=2&filter=ONLINE"));
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=1&accountId="
+                    + accountUuid(2L)));
+
+    assertThat(response.statusCode()).isGreaterThanOrEqualTo(500);
+    assertThat(response.body()).doesNotContain("\"friendAccountId\":\"" + accountUuid(3L) + "\"");
+    assertThat(response.body()).doesNotContain("\"friendAccountId\":\"" + accountUuid(4L) + "\"");
+  }
+
+  @Test
+  void friendRosterEndpointFallsBackToOfflineWhenPresenceIsUnavailable() throws Exception {
+    String token = privilegedAccountToken(accountUuid(2L));
+    send(
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
+                    """))
+            .build());
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(3L));
+
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, accountUuid(2L), List.of(accountUuid(3L))))
+        .thenReturn(QueryAccountPresenceResponse.newBuilder().build());
+
+    HttpResponse<String> rosterResponse =
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
+
+    assertThat(rosterResponse.statusCode()).isEqualTo(200);
+    assertThat(rosterResponse.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
+    assertThat(rosterResponse.body()).contains("\"online\":false");
+  }
+
+  @Test
+  void friendRosterEndpointSupportsCanonicalOnlineFilter() throws Exception {
+    String token = privilegedAccountToken(accountUuid(2L));
+    send(
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
+                    """))
+            .build());
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(3L));
+    send(
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000004"}
+                    """))
+            .build());
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(4L));
+
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, accountUuid(2L), List.of(accountUuid(3L), accountUuid(4L))))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId(accountUuid(3L))
+                        .setOnline(true)
+                        .build())
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId(accountUuid(4L))
+                        .setOnline(false)
+                        .build())
+                .build());
+
+    HttpResponse<String> response =
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=10000000-0000-4000-8000-000000000002&filter=ONLINE"));
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("\"filter\":\"ONLINE\"");
     assertThat(response.body()).contains("\"totalCount\":2");
     assertThat(response.body()).contains("\"matchCount\":1");
-    assertThat(response.body()).contains("\"friendAccountId\":3");
-    assertThat(response.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(response.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
+    assertThat(response.body())
+        .doesNotContain("\"friendAccountId\":\"10000000-0000-4000-8000-000000000004\"");
   }
 
   @Test
   void friendRosterEndpointSupportsCanonicalSharedScopeFilter() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -398,10 +465,10 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(3L));
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -409,17 +476,19 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":4}
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000004"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 4L);
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(4L));
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, accountUuid(2L), List.of(accountUuid(3L), accountUuid(4L))))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("3")
+                        .setAccountId(accountUuid(3L))
                         .setOnline(true)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
@@ -427,7 +496,7 @@ class SocialGroupsApplicationIntegrationTest {
                         .build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
+                        .setAccountId(accountUuid(4L))
                         .setOnline(true)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
@@ -439,19 +508,23 @@ class SocialGroupsApplicationIntegrationTest {
         send(
             authedGet(
                 token,
-                "http://localhost:" + port + "/friends?tenantId=1&accountId=2&filter=SHARED"));
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=10000000-0000-4000-8000-000000000002&filter=SHARED"));
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("\"filter\":\"SHARED\"");
     assertThat(response.body()).contains("\"totalCount\":2");
     assertThat(response.body()).contains("\"matchCount\":1");
-    assertThat(response.body()).contains("\"friendAccountId\":3");
-    assertThat(response.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(response.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
+    assertThat(response.body())
+        .doesNotContain("\"friendAccountId\":\"10000000-0000-4000-8000-000000000004\"");
   }
 
   @Test
   void friendRosterSummaryEndpointReturnsCanonicalCounts() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -459,10 +532,10 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(3L));
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -470,19 +543,24 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":4}
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000004"}
                     """))
             .build());
-    acceptFriendLink(1L, 2L, 4L);
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(4L));
 
-    Mockito.when(TEST_GAME_SESSION_CLIENT.queryAccountPresence(1L, 2L, List.of(3L, 4L)))
+    Mockito.when(
+            TEST_GAME_SESSION_CLIENT.queryAccountPresence(
+                1L, accountUuid(2L), List.of(accountUuid(3L), accountUuid(4L))))
         .thenReturn(
             QueryAccountPresenceResponse.newBuilder()
                 .addPresences(
-                    AccountPresenceEntry.newBuilder().setAccountId("3").setOnline(true).build())
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId(accountUuid(3L))
+                        .setOnline(true)
+                        .build())
                 .addPresences(
                     AccountPresenceEntry.newBuilder()
-                        .setAccountId("4")
+                        .setAccountId(accountUuid(4L))
                         .setOnline(false)
                         .setLastSeenAtMs(1_744_353_730_000L)
                         .build())
@@ -491,7 +569,10 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> response =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/summary?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/summary?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
 
     assertThat(response.statusCode()).isEqualTo(200);
     assertThat(response.body()).contains("\"totalCount\":2");
@@ -507,85 +588,142 @@ class SocialGroupsApplicationIntegrationTest {
 
   @Test
   void friendEndpointsRequireReciprocalActiveLinksWithinRequestedTenant() throws Exception {
-    String token = privilegedAccountToken(2L);
-    saveFriendLink(1L, 2L, 3L, "active");
-    saveFriendLink(1L, 2L, 4L, "active");
-    saveFriendLink(1L, 4L, 2L, "inactive");
-    saveFriendLink(1L, 2L, 5L, "active");
-    saveFriendLink(1L, 5L, 2L, "active");
+    String token = privilegedAccountToken(accountUuid(2L));
+    saveFriendLink(1L, accountUuid(2L), accountUuid(3L), "active");
+    saveFriendLink(1L, accountUuid(2L), accountUuid(4L), "active");
+    saveFriendLink(1L, accountUuid(4L), accountUuid(2L), "inactive");
+    saveFriendLink(1L, accountUuid(2L), accountUuid(5L), "active");
+    saveFriendLink(1L, accountUuid(5L), accountUuid(2L), "active");
 
     HttpResponse<String> tenantOneRoster =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(tenantOneRoster.statusCode()).isEqualTo(200);
     assertThat(tenantOneRoster.body()).contains("\"totalCount\":1");
-    assertThat(tenantOneRoster.body()).contains("\"friendAccountId\":5");
-    assertThat(tenantOneRoster.body()).doesNotContain("\"friendAccountId\":3");
-    assertThat(tenantOneRoster.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(tenantOneRoster.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000005\"");
+    assertThat(tenantOneRoster.body())
+        .doesNotContain("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
+    assertThat(tenantOneRoster.body())
+        .doesNotContain("\"friendAccountId\":\"10000000-0000-4000-8000-000000000004\"");
 
     HttpResponse<String> tenantOnePresence =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/presence?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(tenantOnePresence.statusCode()).isEqualTo(200);
-    assertThat(tenantOnePresence.body()).contains("\"friendAccountId\":5");
-    assertThat(tenantOnePresence.body()).doesNotContain("\"friendAccountId\":3");
-    assertThat(tenantOnePresence.body()).doesNotContain("\"friendAccountId\":4");
+    assertThat(tenantOnePresence.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000005\"");
+    assertThat(tenantOnePresence.body())
+        .doesNotContain("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
+    assertThat(tenantOnePresence.body())
+        .doesNotContain("\"friendAccountId\":\"10000000-0000-4000-8000-000000000004\"");
 
     HttpResponse<String> reciprocalDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/5?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/10000000-0000-4000-8000-000000000005?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(reciprocalDetail.statusCode()).isEqualTo(200);
-    assertThat(reciprocalDetail.body()).contains("\"friendAccountId\":5");
+    assertThat(reciprocalDetail.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000005\"");
 
     HttpResponse<String> reciprocalOrdinal =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/entry/1?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/entry/1?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(reciprocalOrdinal.statusCode()).isEqualTo(200);
-    assertThat(reciprocalOrdinal.body()).contains("\"friendAccountId\":5");
+    assertThat(reciprocalOrdinal.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000005\"");
 
     HttpResponse<String> tenantOneSummary =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/summary?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/summary?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(tenantOneSummary.statusCode()).isEqualTo(200);
     assertThat(tenantOneSummary.body()).contains("\"totalCount\":1");
 
     HttpResponse<String> oneWayDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/10000000-0000-4000-8000-000000000003?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(oneWayDetail.statusCode()).isEqualTo(404);
     HttpResponse<String> inactiveReciprocalDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/4?tenantId=1&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/10000000-0000-4000-8000-000000000004?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(inactiveReciprocalDetail.statusCode()).isEqualTo(404);
 
     HttpResponse<String> wrongTenantRoster =
-        send(authedGet(token, "http://localhost:" + port + "/friends?tenantId=2&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends?tenantId=2&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(wrongTenantRoster.statusCode()).isEqualTo(200);
     assertThat(wrongTenantRoster.body()).contains("\"totalCount\":0");
     HttpResponse<String> wrongTenantPresence =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/presence?tenantId=2&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/presence?tenantId=2&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(wrongTenantPresence.statusCode()).isEqualTo(200);
-    assertThat(wrongTenantPresence.body()).doesNotContain("\"friendAccountId\":5");
+    assertThat(wrongTenantPresence.body())
+        .doesNotContain("\"friendAccountId\":\"10000000-0000-4000-8000-000000000005\"");
     HttpResponse<String> wrongTenantDetail =
-        send(authedGet(token, "http://localhost:" + port + "/friends/5?tenantId=2&accountId=2"));
+        send(
+            authedGet(
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/10000000-0000-4000-8000-000000000005?tenantId=2&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(wrongTenantDetail.statusCode()).isEqualTo(404);
     HttpResponse<String> wrongTenantOrdinal =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/entry/1?tenantId=2&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/entry/1?tenantId=2&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(wrongTenantOrdinal.statusCode()).isEqualTo(404);
     HttpResponse<String> wrongTenantSummary =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/summary?tenantId=2&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/summary?tenantId=2&accountId=10000000-0000-4000-8000-000000000002"));
     assertThat(wrongTenantSummary.statusCode()).isEqualTo(200);
     assertThat(wrongTenantSummary.body()).contains("\"totalCount\":0");
   }
 
   @Test
   void addFriendIsIdempotentForExistingActiveAccountLink() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     HttpRequest request =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -593,7 +731,7 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
                     """))
             .build();
 
@@ -602,24 +740,26 @@ class SocialGroupsApplicationIntegrationTest {
 
     assertThat(firstResponse.statusCode()).isEqualTo(200);
     assertThat(secondResponse.statusCode()).isEqualTo(200);
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, accountUuid(2L), "active"))
         .hasSize(1);
     assertThat(
             accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
-                1L, 2L, "active"))
+                1L, accountUuid(2L), "active"))
         .isEmpty();
 
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(3L));
 
     assertThat(
             accountFriendLinkRepository.findMutuallyAcceptedByTenantIdAndAccountIdAndStatus(
-                1L, 2L, "active"))
+                1L, accountUuid(2L), "active"))
         .hasSize(1);
   }
 
   @Test
   void addFriendRejectsSelfLink() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     HttpResponse<String> response =
         send(
             HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
@@ -628,19 +768,21 @@ class SocialGroupsApplicationIntegrationTest {
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
                         """
-                        {"tenantId":1,"accountId":2,"friendAccountId":2}
+                        {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000002"}
                         """))
                 .build());
 
     assertThat(response.statusCode()).isEqualTo(400);
     assertThat(response.body()).contains("Cannot add or remove your own account as a friend");
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, accountUuid(2L), "active"))
         .isEmpty();
   }
 
   @Test
   void removeFriendDeletesExistingActiveAccountLinkAndIsIdempotent() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     HttpRequest addRequest =
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -648,7 +790,7 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
                     """))
             .build();
 
@@ -657,27 +799,35 @@ class SocialGroupsApplicationIntegrationTest {
     HttpResponse<String> firstDelete =
         send(
             HttpRequest.newBuilder(
-                    URI.create("http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"))
+                    URI.create(
+                        "http://localhost:"
+                            + port
+                            + "/friends/10000000-0000-4000-8000-000000000003?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .DELETE()
                 .build());
     HttpResponse<String> secondDelete =
         send(
             HttpRequest.newBuilder(
-                    URI.create("http://localhost:" + port + "/friends/3?tenantId=1&accountId=2"))
+                    URI.create(
+                        "http://localhost:"
+                            + port
+                            + "/friends/10000000-0000-4000-8000-000000000003?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .DELETE()
                 .build());
 
     assertThat(firstDelete.statusCode()).isEqualTo(200);
     assertThat(secondDelete.statusCode()).isEqualTo(200);
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, accountUuid(2L), "active"))
         .isEmpty();
   }
 
   @Test
   void removeFriendByOrdinalDeletesCanonicalRosterEntry() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
     send(
         HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/friends"))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
@@ -685,35 +835,43 @@ class SocialGroupsApplicationIntegrationTest {
             .POST(
                 HttpRequest.BodyPublishers.ofString(
                     """
-                    {"tenantId":1,"accountId":2,"friendAccountId":3}
+                    {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","friendAccountId":"10000000-0000-4000-8000-000000000003"}
                     """))
             .build());
 
-    acceptFriendLink(1L, 2L, 3L);
+    acceptFriendLink(1L, accountUuid(2L), accountUuid(3L));
 
     HttpResponse<String> deleteResponse =
         send(
             HttpRequest.newBuilder(
                     URI.create(
-                        "http://localhost:" + port + "/friends/entry/1?tenantId=1&accountId=2"))
+                        "http://localhost:"
+                            + port
+                            + "/friends/entry/1?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .DELETE()
                 .build());
 
     assertThat(deleteResponse.statusCode()).isEqualTo(200);
-    assertThat(deleteResponse.body()).contains("\"friendAccountId\":3");
-    assertThat(accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(1L, 2L, "active"))
+    assertThat(deleteResponse.body())
+        .contains("\"friendAccountId\":\"10000000-0000-4000-8000-000000000003\"");
+    assertThat(
+            accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+                1L, accountUuid(2L), "active"))
         .isEmpty();
   }
 
   @Test
   void friendVisibilityEndpointsExposeCanonicalPolicyReadAndWrite() throws Exception {
-    String token = privilegedAccountToken(2L);
+    String token = privilegedAccountToken(accountUuid(2L));
 
     HttpResponse<String> getResponse =
         send(
             authedGet(
-                token, "http://localhost:" + port + "/friends/visibility?tenantId=1&accountId=2"));
+                token,
+                "http://localhost:"
+                    + port
+                    + "/friends/visibility?tenantId=1&accountId=10000000-0000-4000-8000-000000000002"));
 
     assertThat(getResponse.statusCode()).isEqualTo(200);
     assertThat(getResponse.body()).contains("\"currentPolicy\":\"FRIENDS_ONLY\"");
@@ -721,7 +879,7 @@ class SocialGroupsApplicationIntegrationTest {
     Mockito.when(
             TEST_ACCOUNT_CLIENT.updatePresenceVisibilityPolicy(
                 1L,
-                2L,
+                accountUuid(2L),
                 net.firedevops.firemud.socialgroups.dto.FriendPresenceVisibilityPolicyValue
                     .PRIVATE))
         .thenReturn(true);
@@ -734,7 +892,7 @@ class SocialGroupsApplicationIntegrationTest {
                 .PUT(
                     HttpRequest.BodyPublishers.ofString(
                         """
-                        {"tenantId":1,"accountId":2,"visibilityPolicy":"PRIVATE"}
+                        {"tenantId":1,"accountId":"10000000-0000-4000-8000-000000000002","visibilityPolicy":"PRIVATE"}
                         """))
                 .build());
 
@@ -749,7 +907,7 @@ class SocialGroupsApplicationIntegrationTest {
         .build();
   }
 
-  private void acceptFriendLink(long tenantId, long accountId, long friendAccountId) {
+  private void acceptFriendLink(long tenantId, String accountId, String friendAccountId) {
     AccountFriendLink reciprocal = new AccountFriendLink();
     reciprocal.setTenantId(tenantId);
     reciprocal.setAccountId(friendAccountId);
@@ -759,7 +917,8 @@ class SocialGroupsApplicationIntegrationTest {
     accountFriendLinkRepository.save(reciprocal);
   }
 
-  private void saveFriendLink(long tenantId, long accountId, long friendAccountId, String status) {
+  private void saveFriendLink(
+      long tenantId, String accountId, String friendAccountId, String status) {
     AccountFriendLink link = new AccountFriendLink();
     link.setTenantId(tenantId);
     link.setAccountId(accountId);
@@ -769,11 +928,11 @@ class SocialGroupsApplicationIntegrationTest {
     accountFriendLinkRepository.save(link);
   }
 
-  private static String privilegedAccountToken(long accountId) {
+  private static String privilegedAccountToken(String accountId) {
     return JWT_UTIL.generateToken(
-        Long.toString(accountId),
+        accountId,
         Map.of(
-            "accountId", Long.toString(accountId),
+            "accountId", accountId,
             "globalRoles", List.of("platformAdmin"),
             "scopedRoles", Map.of("1", List.of("tenantAdmin"))));
   }

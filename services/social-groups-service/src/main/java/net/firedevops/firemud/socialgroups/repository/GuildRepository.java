@@ -33,7 +33,9 @@ public class GuildRepository {
         dsl.update(GUILDS)
             .set(GUILDS.TENANT_ID, entity.getTenantId())
             .set(GUILDS.NAME, entity.getName())
-            .set(GUILDS.OWNER_ACCOUNT_ID, entity.getOwnerAccountId())
+            .set(
+                GUILDS.OWNER_ACCOUNT_ID,
+                JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getOwnerAccountId()))
             .set(
                 GUILDS.CREATED_AT,
                 JooqSocialGroupsRepositorySupport.toLocalDateTime(entity.getCreatedAt()))
@@ -52,7 +54,8 @@ public class GuildRepository {
   private void populate(GuildsRecord record, Guild entity) {
     record.setTenantId(entity.getTenantId());
     record.setName(entity.getName());
-    record.setOwnerAccountId(entity.getOwnerAccountId());
+    record.setOwnerAccountId(
+        JooqSocialGroupsRepositorySupport.toAccountUuid(entity.getOwnerAccountId()));
     record.setCreatedAt(JooqSocialGroupsRepositorySupport.toLocalDateTime(entity.getCreatedAt()));
   }
 
@@ -61,7 +64,8 @@ public class GuildRepository {
     entity.setId(record.get(GUILDS.ID));
     entity.setTenantId(record.get(GUILDS.TENANT_ID));
     entity.setName(record.get(GUILDS.NAME));
-    entity.setOwnerAccountId(record.get(GUILDS.OWNER_ACCOUNT_ID));
+    entity.setOwnerAccountId(
+        JooqSocialGroupsRepositorySupport.fromAccountUuid(record.get(GUILDS.OWNER_ACCOUNT_ID)));
     entity.setCreatedAt(JooqSocialGroupsRepositorySupport.toInstant(record.get(GUILDS.CREATED_AT)));
     return entity;
   }

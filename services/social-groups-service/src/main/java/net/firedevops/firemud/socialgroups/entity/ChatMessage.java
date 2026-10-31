@@ -8,7 +8,7 @@ import net.firedevops.firemud.socialgroups.enums.ChatType;
 public class ChatMessage {
   private Long id;
   private Long tenantId;
-  private Long senderAccountId;
+  private String senderAccountId;
   private String content;
   private Instant timestamp;
 
@@ -16,7 +16,7 @@ public class ChatMessage {
 
   private Long cityId;
 
-  private Long recipientAccountId;
+  private String recipientAccountId;
   private String effectId;
   private ChatType type;
 }

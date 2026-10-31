@@ -1,0 +1,69 @@
+// Loaded only by the bounded offline post-failure diagnostic invocation.
+import groovy.json.JsonOutput
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.compile.AbstractCompile
+import org.gradle.api.tasks.testing.AbstractTestTask
+
+// --init-script propagates to buildSrc and included builds on Gradle 8+.
+// Configuration may need those builds before the main build's graph exists.
+// This separate diagnostic never compiles or tests: use existing build-logic
+// outputs, or report unavailable facts if those outputs cannot configure it.
+// Do not add task actions: that would invalidate warm buildSrc fingerprints.
+def prohibited = { candidate ->
+    candidate instanceof AbstractCompile || candidate instanceof AbstractTestTask ||
+        candidate.name ==~ /compile.*Kotlin.*/
+}
+def failedTaskPath = gradle.startParameter.projectProperties['firemudFailedCompile']
+def failedProjectPath = null
+def failedTaskName = null
+if (failedTaskPath != null) {
+    def failedTaskMatcher = failedTaskPath =~ /^(:[a-z0-9]+(?:-[a-z0-9]+)*):(compile[A-Za-z0-9]*Java)$/
+    if (!failedTaskMatcher.matches()) {
+        throw new GradleException('Failed compile task path is invalid')
+    }
+    failedProjectPath = failedTaskMatcher.group(1)
+    failedTaskName = failedTaskMatcher.group(2)
+}
+def diagnosticGradleVersion = gradle.gradleVersion
+
+gradle.beforeProject { project ->
+    project.tasks.configureEach { candidate ->
+        if (prohibited(candidate)) {
+            candidate.enabled = false
+        }
+    }
+    // Register and resolve the diagnostic in the failed task's owning project.
+    if (failedProjectPath != null && project.path == failedProjectPath) {
+        project.tasks.register('firemudCompileFailureFacts') {
+            doLast {
+                def target = project.tasks.getByName(failedTaskName)
+                if (!(target instanceof JavaCompile)) {
+                    throw new GradleException('Failed task is not JavaCompile')
+                }
+                def compiler = target.javaCompiler.get()
+                def metadata = compiler.metadata
+                def classpath = target.classpath.files
+                def entries = classpath.take(1024).collect { file ->
+                    // No JAR or cache bytes; retain ordered identity and length only.
+                    [name: file.name, path: file.absolutePath, bytes: file.isFile() ? file.length() : null]
+                }
+                def facts = [attribution: 'offline post-failure diagnostic selection; not original execution',
+                    task: failedTaskPath, gradleVersion: diagnosticGradleVersion,
+                    gradleJvm: [version: System.getProperty('java.runtime.version'),
+                                vendor: System.getProperty('java.vendor'), home: System.getProperty('java.home')],
+                    compiler: [path: compiler.executablePath.asFile.absolutePath,
+                               languageVersion: metadata.languageVersion.toString(),
+                               runtimeVersion: metadata.javaRuntimeVersion, vendor: metadata.vendor.toString()],
+                    release: target.options.release.orNull,
+                    sourceCompatibility: target.sourceCompatibility, targetCompatibility: target.targetCompatibility,
+                    classpath: entries, classpathTruncated: classpath.size() > 1024]
+                println('FIREMUD_COMPILE_FACTS=' + JsonOutput.toJson(facts))
+            }
+        }
+    }
+}
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { prohibited(it) && it.enabled }) {
+        throw new GradleException('Compile-failure diagnostic refuses compiler/test actions')
+    }
+}

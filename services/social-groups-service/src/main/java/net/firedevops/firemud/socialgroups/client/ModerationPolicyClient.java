@@ -61,11 +61,11 @@ public class ModerationPolicyClient
         runtimeIdentityProvider.getIfAvailable());
   }
 
-  public EvaluateModerationPolicyResponse evaluateChatSend(long tenantId, long accountId) {
+  public EvaluateModerationPolicyResponse evaluateChatSend(long tenantId, String accountId) {
     EvaluateModerationPolicyRequest request =
         EvaluateModerationPolicyRequest.newBuilder()
             .setTenantId(Long.toString(tenantId))
-            .setAccountId(Long.toString(accountId))
+            .setAccountId(accountId)
             .setScope(SCOPE_CHAT_SEND)
             .build();
     return stub().evaluateModerationPolicy(request);

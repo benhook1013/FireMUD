@@ -9,5 +9,5 @@ public record GuildDto(
     Long id,
     @NotNull Long tenantId,
     @NotBlank String name,
-    @NotNull Long ownerAccountId,
+    @NotNull String ownerAccountId,
     Instant createdAt) {}

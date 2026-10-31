@@ -3,7 +3,7 @@ package net.firedevops.firemud.socialgroups.dto;
 import java.time.Instant;
 
 public record FriendPresenceDto(
-    Long friendAccountId,
+    String friendAccountId,
     boolean online,
     Long gameInstanceId,
     String playableStateScope,
@@ -18,7 +18,7 @@ public record FriendPresenceDto(
     FriendPresenceActivityState activityState,
     Instant lastSeenAt) {
   public FriendPresenceDto(
-      Long friendAccountId,
+      String friendAccountId,
       boolean online,
       Long gameInstanceId,
       String worldSlug,
@@ -45,7 +45,7 @@ public record FriendPresenceDto(
   }
 
   public FriendPresenceDto(
-      Long friendAccountId,
+      String friendAccountId,
       boolean online,
       Long gameInstanceId,
       String worldSlug,
@@ -75,7 +75,7 @@ public record FriendPresenceDto(
   }
 
   public FriendPresenceDto(
-      Long friendAccountId,
+      String friendAccountId,
       boolean online,
       Long gameInstanceId,
       String playableStateScope,
@@ -106,7 +106,7 @@ public record FriendPresenceDto(
   }
 
   public FriendPresenceDto(
-      Long friendAccountId,
+      String friendAccountId,
       boolean online,
       Long gameInstanceId,
       String playableStateScope,

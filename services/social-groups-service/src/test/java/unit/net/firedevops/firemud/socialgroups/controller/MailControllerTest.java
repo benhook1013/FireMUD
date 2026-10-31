@@ -1,5 +1,8 @@
 package net.firedevops.firemud.socialgroups.controller;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -12,6 +15,7 @@ import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
 import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
@@ -25,6 +29,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(MailController.class)
@@ -44,11 +49,16 @@ class MailControllerTest {
 
   @Test
   void sendMailReturnsDto() throws Exception {
-    SendMailRequest request = new SendMailRequest(1L, 2L, 3L, "hello", "test body");
-    MailMessageDto response = new MailMessageDto(1L, 1L, 2L, 3L, "hello", "test body", null, null);
+    SendMailRequest request =
+        new SendMailRequest(1L, accountUuid(2L), accountUuid(3L), "hello", "test body");
+    MailMessageDto response =
+        new MailMessageDto(
+            1L, 1L, accountUuid(2L), accountUuid(3L), "hello", "test body", null, null);
     when(mailService.sendMail(request)).thenReturn(response);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
     mockMvc
         .perform(
             post("/mail")
@@ -62,7 +72,9 @@ class MailControllerTest {
 
   @Test
   void sendMailRejectsZeroSenderAccountIdBeforeAccessCheckAndDispatch() throws Exception {
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    String token =
+        jwtUtil.generateToken(
+            accountUuid(2L), Map.of("accountId", accountUuid(2L), "globalRoles", List.of()));
 
     mockMvc
         .perform(
@@ -71,12 +83,12 @@ class MailControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .content(
                     """
-                    {"tenantId":1,"senderAccountId":0,"recipientAccountId":3,"subject":"hello","content":"test body"}
+                    {"tenantId":1,"senderAccountId":0,"recipientAccountId":"10000000-0000-4000-8000-000000000003","subject":"hello","content":"test body"}
                     """))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("ERROR"))
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("senderAccountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("Request body is malformed"));
 
     verifyNoInteractions(mailService, socialAccessGuard);
   }
@@ -85,9 +97,9 @@ class MailControllerTest {
   void sendMailRejectsSenderImpersonationBeforeAccessCheckAndDispatch() throws Exception {
     String token =
         jwtUtil.generateToken(
-            "2",
+            accountUuid(2L),
             Map.of(
-                "accountId", "2",
+                "accountId", accountUuid(2L),
                 "globalRoles", List.of(),
                 "scopedRoles", Map.of("1", List.of("tenantAdmin"))));
 
@@ -98,10 +110,34 @@ class MailControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                 .content(
                     """
-                    {"tenantId":1,"senderAccountId":3,"recipientAccountId":4,"subject":"hello","content":"test body"}
+                    {"tenantId":1,"senderAccountId":"10000000-0000-4000-8000-000000000003","recipientAccountId":"10000000-0000-4000-8000-000000000004","subject":"hello","content":"test body"}
                     """))
         .andExpect(status().isForbidden());
 
     verifyNoInteractions(mailService, socialAccessGuard);
+  }
+
+  @Test
+  void malformedCallerIdentityIsForbiddenBeforeAccessChecksOrMailDispatch() {
+    SendMailRequest request =
+        new SendMailRequest(1L, accountUuid(2L), accountUuid(3L), "hello", "test body");
+    MailController controller = new MailController(mailService, socialAccessGuard);
+    for (String caller :
+        List.of(
+            "2",
+            "not-an-account",
+            "00000000-0000-0000-0000-000000000000",
+            "A0000000-0000-4000-8000-000000000002")) {
+      SessionContext.setContext(caller, List.of(), Map.of());
+      try {
+        assertThatThrownBy(() -> controller.sendMail(request))
+            .isInstanceOfSatisfying(
+                ResponseStatusException.class,
+                failure -> assertThat(failure.getStatusCode().value()).isEqualTo(403));
+        verifyNoInteractions(mailService, socialAccessGuard);
+      } finally {
+        SessionContext.clear();
+      }
+    }
   }
 }

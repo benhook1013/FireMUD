@@ -1,5 +1,6 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
+import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,7 +51,8 @@ class ChatServiceImplTest {
     listOps = mockListOperations();
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(profanityFilter.filter(any())).thenAnswer(i -> i.getArgument(0));
-    when(moderationPolicyClient.evaluateChatSend(anyLong(), anyLong()))
+    when(moderationPolicyClient.evaluateChatSend(
+            anyLong(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -80,15 +82,18 @@ class ChatServiceImplTest {
   @Test
   void sendMessageCachesMessageAndIncrementsMetrics() {
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", null);
+        new SendMessageRequestDto(
+            1L, accountUuid(2L), ChatType.SAY, null, accountUuid(1L), null, null, "hello", null);
 
     ChatMessageDto dto = service.sendMessage(req);
 
     assertEquals(1L, dto.id());
-    verify(listOps).leftPush("chat:say:1:2", "hello");
+    verify(listOps).leftPush("chat:say:1:" + accountUuid(2L), "hello");
     verify(redisTemplate)
-        .expire("chat:say:1:2", Duration.ofSeconds(props.getSays().historyTtlSeconds()));
-    verify(listOps).trim("chat:say:1:2", 0, props.getSays().maxMessages() - 1);
+        .expire(
+            "chat:say:1:" + accountUuid(2L),
+            Duration.ofSeconds(props.getSays().historyTtlSeconds()));
+    verify(listOps).trim("chat:say:1:" + accountUuid(2L), 0, props.getSays().maxMessages() - 1);
     assertEquals(1.0, meterRegistry.get("chat_messages_published_total").counter().count(), 0.001);
     assertEquals(0.0, meterRegistry.get("chat_redis_errors_total").counter().count(), 0.001);
   }
@@ -98,7 +103,8 @@ class ChatServiceImplTest {
     TransactionSynchronizationManager.initSynchronization();
     try {
       SendMessageRequestDto req =
-          new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", null);
+          new SendMessageRequestDto(
+              1L, accountUuid(2L), ChatType.SAY, null, accountUuid(1L), null, null, "hello", null);
 
       ChatMessageDto dto = service.sendMessage(req);
 
@@ -112,10 +118,12 @@ class ChatServiceImplTest {
         synchronization.afterCommit();
       }
 
-      verify(listOps).leftPush("chat:say:1:2", "hello");
+      verify(listOps).leftPush("chat:say:1:" + accountUuid(2L), "hello");
       verify(redisTemplate)
-          .expire("chat:say:1:2", Duration.ofSeconds(props.getSays().historyTtlSeconds()));
-      verify(listOps).trim("chat:say:1:2", 0, props.getSays().maxMessages() - 1);
+          .expire(
+              "chat:say:1:" + accountUuid(2L),
+              Duration.ofSeconds(props.getSays().historyTtlSeconds()));
+      verify(listOps).trim("chat:say:1:" + accountUuid(2L), 0, props.getSays().maxMessages() - 1);
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -126,7 +134,8 @@ class ChatServiceImplTest {
     doThrow(new RuntimeException("fail")).when(listOps).leftPush(any(), any());
 
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hi", null);
+        new SendMessageRequestDto(
+            1L, accountUuid(2L), ChatType.SAY, null, accountUuid(1L), null, null, "hi", null);
     service.sendMessage(req);
 
     assertEquals(1.0, meterRegistry.get("chat_redis_errors_total").counter().count(), 0.001);
@@ -136,23 +145,25 @@ class ChatServiceImplTest {
   void profanityReportsModerationAfterCommitPath() {
     when(profanityFilter.filter("badword")).thenReturn("cleaned");
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "badword", null);
+        new SendMessageRequestDto(
+            1L, accountUuid(2L), ChatType.SAY, null, accountUuid(1L), null, null, "badword", null);
 
     service.sendMessage(req);
 
-    verify(loggingAdminClient).reportChatViolation(1L, 2L, "Filtered profanity");
+    verify(loggingAdminClient).reportChatViolation(1L, accountUuid(2L), "Filtered profanity");
   }
 
   @Test
   void moderationPolicyDeniesChatBeforePersistence() {
-    when(moderationPolicyClient.evaluateChatSend(1L, 2L))
+    when(moderationPolicyClient.evaluateChatSend(1L, accountUuid(2L)))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(false)
                 .setAction("chat_mute")
                 .build());
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", null);
+        new SendMessageRequestDto(
+            1L, accountUuid(2L), ChatType.SAY, null, accountUuid(1L), null, null, "hello", null);
 
     IllegalStateException ex =
         assertThrows(IllegalStateException.class, () -> service.sendMessage(req));
@@ -164,13 +175,24 @@ class ChatServiceImplTest {
   @Test
   void whisperCachesSeparatelyFromTell() {
     SendMessageRequestDto req =
-        new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, null, 7L, null, null, "quiet", null);
+        new SendMessageRequestDto(
+            1L,
+            accountUuid(2L),
+            ChatType.WHISPER,
+            null,
+            accountUuid(7L),
+            null,
+            null,
+            "quiet",
+            null);
 
     service.sendMessage(req);
 
-    verify(listOps).leftPush("chat:whisper:1:7", "quiet");
+    verify(listOps).leftPush("chat:whisper:1:" + accountUuid(7L), "quiet");
     verify(redisTemplate)
-        .expire("chat:whisper:1:7", Duration.ofSeconds(props.getWhispers().historyTtlSeconds()));
+        .expire(
+            "chat:whisper:1:" + accountUuid(7L),
+            Duration.ofSeconds(props.getWhispers().historyTtlSeconds()));
   }
 
   @Test
@@ -178,7 +200,7 @@ class ChatServiceImplTest {
     ChatMessage existing = new ChatMessage();
     existing.setId(22L);
     existing.setTenantId(1L);
-    existing.setSenderAccountId(2L);
+    existing.setSenderAccountId(accountUuid(2L));
     existing.setType(ChatType.SAY);
     existing.setContent("hello");
     existing.setTimestamp(Instant.parse("2026-04-21T00:00:00Z"));
@@ -188,7 +210,15 @@ class ChatServiceImplTest {
     ChatMessageDto dto =
         service.sendMessage(
             new SendMessageRequestDto(
-                1L, 2L, ChatType.SAY, null, 1L, null, null, "hello", "fx-comm-1"));
+                1L,
+                accountUuid(2L),
+                ChatType.SAY,
+                null,
+                accountUuid(1L),
+                null,
+                null,
+                "hello",
+                "fx-comm-1"));
 
     assertEquals(22L, dto.id());
     assertEquals("fx-comm-1", dto.effectId());

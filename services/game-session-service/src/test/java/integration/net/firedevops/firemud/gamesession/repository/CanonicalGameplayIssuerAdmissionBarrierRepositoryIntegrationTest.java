@@ -1663,6 +1663,7 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
   }
 
   private FixtureState fixtureState() {
+    long fixtureStartedAt = System.nanoTime();
     Candidate candidate = candidate();
     DriverManagerDataSource accountDataSource = new DriverManagerDataSource();
     accountDataSource.setDriverClassName("org.postgresql.Driver");
@@ -1689,18 +1690,22 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
             new CanonicalGameplayTenantGameplayTagRepository(
                 fixture.dsl(), fixture.target().targetNamespace(), 1),
             sourceReader);
-    return new FixtureState(
-        fixture,
-        actualCandidate,
-        repository,
-        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
-            ownerClient,
-            RedisScriptCatalog.fromContributions(
-                List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution())),
+    FixtureState state =
+        new FixtureState(
+            fixture,
+            actualCandidate,
             repository,
-            sourceReader),
-        ownerClient,
-        currentState);
+            new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+                ownerClient,
+                RedisScriptCatalog.fromContributions(
+                    List.of(new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution())),
+                repository,
+                sourceReader),
+            ownerClient,
+            currentState);
+    CanonicalGameplayAdmissionAbortCompositionFixture.logElapsedPhase(
+        "fixture_state_total", fixtureStartedAt);
+    return state;
   }
 
   private CanonicalGameplayIssuerBindingLocalOperation prepareCurrentOperation(

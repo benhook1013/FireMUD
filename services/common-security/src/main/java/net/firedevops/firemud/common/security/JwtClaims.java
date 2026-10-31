@@ -34,6 +34,19 @@ public final class JwtClaims {
     return parsed;
   }
 
+  public static String requireCanonicalAccountUuid(Object value, String claimName) {
+    if (!(value instanceof String text)
+        || !StringUtils.hasText(text)
+        || !text.equals(text.trim())) {
+      throw new IllegalArgumentException("Malformed claim: " + claimName);
+    }
+    try {
+      return parseCanonicalAccountUuid(text, "Invalid claim: " + claimName);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("Malformed claim: " + claimName, ex);
+    }
+  }
+
   public static long requireSignedActorAccountId(Claims claims, String mismatchMessage) {
     long subjectAccountId = requireLong(claims.getSubject(), "sub", false);
     long claimedAccountId = requireLong(claims.get("accountId"), "accountId", false);
@@ -68,14 +81,18 @@ public final class JwtClaims {
       throw new IllegalArgumentException("Malformed claim: " + field);
     }
     try {
-      UUID uuid = UUID.fromString(text);
-      if (!uuid.toString().equals(text) || uuid.equals(new UUID(0L, 0L))) {
-        throw new IllegalArgumentException("Noncanonical Account UUID");
-      }
-      return text;
+      return parseCanonicalAccountUuid(text, "Noncanonical Account UUID");
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("Malformed claim: " + field, ex);
     }
+  }
+
+  private static String parseCanonicalAccountUuid(String text, String invalidMessage) {
+    UUID accountUuid = UUID.fromString(text);
+    if (!accountUuid.toString().equals(text) || accountUuid.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(invalidMessage);
+    }
+    return text;
   }
 
   public static String claimText(Object value) {

@@ -2,6 +2,7 @@ package net.firedevops.firemud.socialgroups.controller;
 
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
@@ -29,12 +30,25 @@ public class MailController {
   @PostMapping
   public ResponseEntity<ApiResponse<MailMessageDto>> sendMail(
       @Valid @RequestBody SendMailRequest request) {
-    if (!SessionContext.isCurrentAccount(request.senderAccountId())) {
+    String callerAccountUuid = currentAccountUuidOrNull();
+    if (!request.senderAccountId().equals(callerAccountUuid)) {
       throw new ResponseStatusException(
           HttpStatus.FORBIDDEN, "Sender must match authenticated account");
     }
     socialAccessGuard.requireAccountAccess(request.tenantId(), request.senderAccountId());
     MailMessageDto dto = mailService.sendMail(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
+  }
+
+  private static String currentAccountUuidOrNull() {
+    String callerAccountId = SessionContext.getAccountId();
+    if (callerAccountId == null || callerAccountId.isBlank()) {
+      return null;
+    }
+    try {
+      return JwtClaims.requireCanonicalAccountUuid(callerAccountId, "accountId");
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
   }
 }
