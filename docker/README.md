@@ -109,6 +109,18 @@ Gradle-managed local prebuilt-image stack:
 
 `./gradlew buildDockerImages` builds the shared base image, all application images through `bootBuildImage`, and `pg-dump-cron` through its separate `buildPgDumpCronImage` task. Local image names and the canonical project version are maintained in [`docker-compose.local-images.override.yml`](docker-compose.local-images.override.yml) and [`gradle.properties`](../gradle.properties).
 
+## Local Compose mTLS Certificate Recovery
+
+The local certificate helper preserves retained authority and workload files and refuses to replace expired, incomplete, or inconsistent material. To recover, stop the ordinary local stack, choose a new dedicated absolute certificate root, and start the stack with that root:
+
+```bash
+./gradlew devDown
+export FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT="$HOME/.local/share/firemud/local-compose-mtls-recovery-$(date +%Y%m%d%H%M%S)"
+./gradlew devUp
+```
+
+Keep the old certificate root and persistent application data. Do not delete retained certificates or reset volumes as part of this recovery. This profile supplies local development transport identity only; it does not establish production identity or run-owned smoke authority.
+
 ## Local Runtime Notes
 
 - Compose service discovery uses Docker DNS plus the defaults in service `application.yml` files and the local Compose env overrides; it does not depend on a separate Spring `dev` profile lane.

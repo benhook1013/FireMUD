@@ -1378,7 +1378,7 @@ class AccountGrpcServiceTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"", "{", "null", "[]", "{\"presenceVisibilityPolicy\":\"UNKNOWN\"}"})
+  @ValueSource(strings = {"", "{", "null", "[]", "{\"presenceVisibilityPolicy\":\"UNKNOWN\"}", "{}", "{\"presenceVisibilityPolicy\":null}", "{\"presenceVisibilityPolicy\":17}", "{\"presenceVisibilityPolicy\":\"HIDDEN_STAFF\"}"})
   void updateProfileRejectsMalformedJsonAndPolicyWithInvalidArgument(String profileJson) {
     AccountService accountService = Mockito.mock(AccountService.class);
     AccountGrpcService service =
@@ -2297,6 +2297,55 @@ class AccountGrpcServiceTest {
     Mockito.verifyNoInteractions(accountService);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"PRIVATE", "FRIENDS_ONLY"})
+  void updateProfileResolvesUuidOwnerAfterCallerCheck(String policyName) {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    UUID accountUuid = UUID.fromString(ACCOUNT_UUID);
+    Mockito.when(accountService.resolveAccountStorageId(accountUuid)).thenReturn(2L);
+    Mockito.when(accountService.updateProfile(Mockito.any()))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(
+                1L,
+                1L,
+                ACCOUNT_UUID,
+                "demo",
+                "bio",
+                ProfilePresenceVisibilityPolicy.valueOf(policyName)));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+    RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("1")
+                    .setAccountId(ACCOUNT_UUID)
+                    .setProfileJson(
+                        "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\""
+                            + policyName
+                            + "\"}")
+                    .build(),
+                observer));
+
+    assertTrue(observer.response().getSuccess());
+    org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.dto.UpdateProfileRequest>
+        requestCaptor =
+            org.mockito.ArgumentCaptor.forClass(
+                net.firedevops.firemud.accountservice.dto.UpdateProfileRequest.class);
+    Mockito.verify(accountService).resolveAccountStorageId(accountUuid);
+    Mockito.verify(accountService).updateProfile(requestCaptor.capture());
+    assertEquals(ACCOUNT_UUID, requestCaptor.getValue().accountId());
+    assertEquals(1L, requestCaptor.getValue().tenantId());
+    assertEquals(
+        ProfilePresenceVisibilityPolicy.valueOf(policyName),
+        requestCaptor.getValue().presenceVisibilityPolicy());
+  }
+
   @Test
   void updateProfileErrorReturnsDetail() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -2358,7 +2407,8 @@ class AccountGrpcServiceTest {
                 UpdateProfileRequest.newBuilder()
                     .setTenantId("1")
                     .setAccountId(ACCOUNT_UUID)
-                    .setProfileJson("{\"displayName\":\"demo\"}")
+                    .setProfileJson(
+                        "{\"displayName\":\"demo\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                     .build(),
                 observer));
 

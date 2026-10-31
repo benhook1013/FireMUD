@@ -865,12 +865,12 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         if (node == null || !node.isObject()) {
           throw new IllegalArgumentException("Profile update must be an object");
         }
-        String policyName = node.path("presenceVisibilityPolicy").asText(null);
-        policy =
-            ProfilePresenceVisibilityPolicy.valueOf(
-                policyName == null
-                    ? ProfilePresenceVisibilityPolicy.FRIENDS_ONLY.name()
-                    : policyName);
+        JsonNode policyNode = node.get("presenceVisibilityPolicy");
+        if (policyNode == null || !policyNode.isTextual()) {
+          throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
+        }
+        policy = ProfilePresenceVisibilityPolicy.valueOf(policyNode.textValue());
+        policy.requireSelectableByAccountHolder();
       } catch (JacksonException | IllegalArgumentException ex) {
         throw new InvalidRequestException("profileJson must contain a valid profile update", ex);
       }

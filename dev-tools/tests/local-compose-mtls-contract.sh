@@ -44,15 +44,60 @@ bash "$CERT_HELPER" "$cert_root" >/dev/null
 after="$(find "$cert_root" -type f -print0 | sort -z | xargs -0 sha256sum)"
 [[ "$before" == "$after" ]]
 
-compose_json="$tmp_root/compose.json"
-FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT="$cert_root" docker compose \
-  --env-file "$REPO_ROOT/.env.sample" \
-  -f "$REPO_ROOT/docker/docker-compose.yml" \
-  -f "$REPO_ROOT/docker/docker-compose.override.yml" \
-  -f "$REPO_ROOT/docker/docker-compose.local-images.override.yml" \
-  -f "$REPO_ROOT/docker/docker-compose.local-mtls.override.yml" \
-  config --format json >"$compose_json"
-python3 - "$compose_json" "$cert_root" <<'PY'
+corrupt_root="$tmp_root/corrupt"
+mkdir -m 700 -- "$corrupt_root"
+mkdir -m 700 -- "$corrupt_root/authority"
+printf 'retained-corrupt-certificate\n' >"$corrupt_root/authority/ca.crt"
+chmod 644 "$corrupt_root/authority/ca.crt"
+if bash "$CERT_HELPER" "$corrupt_root" >"$tmp_root/corrupt-output" 2>&1; then
+  echo "local Compose mTLS helper accepted incomplete retained authority material." >&2
+  exit 1
+fi
+rg -Fq "new dedicated FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT" "$tmp_root/corrupt-output"
+[[ "$(cat "$corrupt_root/authority/ca.crt")" == "retained-corrupt-certificate" ]]
+[[ ! -e "$corrupt_root/authority/ca.key" && ! -L "$corrupt_root/authority/ca.key" ]]
+
+symlink_root="$tmp_root/symlink"
+symlink_target="$tmp_root/retained-ca-key"
+mkdir -m 700 -- "$symlink_root"
+mkdir -m 700 -- "$symlink_root/authority"
+printf 'retained-target\n' >"$symlink_target"
+chmod 600 "$symlink_target"
+printf 'retained-certificate\n' >"$symlink_root/authority/ca.crt"
+chmod 644 "$symlink_root/authority/ca.crt"
+ln -s "$symlink_target" "$symlink_root/authority/ca.key"
+if bash "$CERT_HELPER" "$symlink_root" >/dev/null 2>&1; then
+  echo "local Compose mTLS helper accepted a symlinked retained output." >&2
+  exit 1
+fi
+[[ -L "$symlink_root/authority/ca.key" ]]
+[[ "$(cat "$symlink_target")" == "retained-target" ]]
+
+compose_fixture="$tmp_root/compose"
+mkdir -m 700 -- "$compose_fixture"
+mkdir -m 700 -- "$compose_fixture/docker"
+sed 's#\.\./\.env#./compose.env#g' "$REPO_ROOT/docker/docker-compose.yml" \
+  >"$compose_fixture/docker/docker-compose.yml"
+cp -- "$REPO_ROOT/docker/docker-compose.override.yml" "$compose_fixture/docker/docker-compose.override.yml"
+cp -- "$REPO_ROOT/docker/docker-compose.local-images.override.yml" \
+  "$compose_fixture/docker/docker-compose.local-images.override.yml"
+cp -- "$REPO_ROOT/docker/docker-compose.local-mtls.override.yml" \
+  "$compose_fixture/docker/docker-compose.local-mtls.override.yml"
+cp -- "$REPO_ROOT/.env.sample" "$compose_fixture/docker/compose.env"
+cp -- "$REPO_ROOT/.env.sample" "$compose_fixture/.env"
+
+compose_rendered="false"
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  compose_json="$tmp_root/compose.json"
+  FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT="$cert_root" docker compose \
+    --env-file "$compose_fixture/.env" \
+    -f "$compose_fixture/docker/docker-compose.yml" \
+    -f "$compose_fixture/docker/docker-compose.override.yml" \
+    -f "$compose_fixture/docker/docker-compose.local-images.override.yml" \
+    -f "$compose_fixture/docker/docker-compose.local-mtls.override.yml" \
+    config --format json >"$compose_json"
+  compose_rendered="true"
+  python3 - "$compose_json" "$cert_root" <<'PYTHON'
 import json
 import pathlib
 import sys
@@ -103,34 +148,12 @@ entity_dependencies = config["services"]["entity-management-service"]["depends_o
 assert entity_dependencies["account-service"]["condition"] == "service_healthy", entity_dependencies
 for dependency in ("postgres", "redis-coord", "redis-cache"):
     assert dependency in entity_dependencies, entity_dependencies
-PY
-
-corrupt_root="$tmp_root/corrupt"
-mkdir -m 700 -- "$corrupt_root"
-mkdir -m 700 -- "$corrupt_root/authority"
-printf 'retained-corrupt-certificate\n' >"$corrupt_root/authority/ca.crt"
-chmod 644 "$corrupt_root/authority/ca.crt"
-if bash "$CERT_HELPER" "$corrupt_root" >/dev/null 2>&1; then
-  echo "local Compose mTLS helper accepted incomplete retained authority material." >&2
-  exit 1
+PYTHON
+else
+  echo "UNRUN: local Compose profile rendering requires Docker Compose v2; certificate and retained-material checks ran." >&2
 fi
-[[ "$(cat "$corrupt_root/authority/ca.crt")" == "retained-corrupt-certificate" ]]
-[[ ! -e "$corrupt_root/authority/ca.key" && ! -L "$corrupt_root/authority/ca.key" ]]
-
-symlink_root="$tmp_root/symlink"
-symlink_target="$tmp_root/retained-ca-key"
-mkdir -m 700 -- "$symlink_root"
-mkdir -m 700 -- "$symlink_root/authority"
-printf 'retained-target\n' >"$symlink_target"
-chmod 600 "$symlink_target"
-printf 'retained-certificate\n' >"$symlink_root/authority/ca.crt"
-chmod 644 "$symlink_root/authority/ca.crt"
-ln -s "$symlink_target" "$symlink_root/authority/ca.key"
-if bash "$CERT_HELPER" "$symlink_root" >/dev/null 2>&1; then
-  echo "local Compose mTLS helper accepted a symlinked retained output." >&2
-  exit 1
+if [[ "$compose_rendered" == "true" ]]; then
+  echo "Local Compose mTLS certificate, profile rendering, and retained-material contract passed."
+else
+  echo "Local Compose mTLS certificate and retained-material checks passed; profile rendering was unrun."
 fi
-[[ -L "$symlink_root/authority/ca.key" ]]
-[[ "$(cat "$symlink_target")" == "retained-target" ]]
-
-echo "Local Compose mTLS certificate, Compose profile, and retained-material contract passed."
