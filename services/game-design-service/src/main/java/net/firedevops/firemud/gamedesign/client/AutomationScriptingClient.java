@@ -51,12 +51,12 @@ public class AutomationScriptingClient
         AutomationScriptingServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
-  /** Notify the Automation service that a new script patch version is active. */
+  /**
+   * Notify Automation of a published candidate; acceptance does not establish runtime activation.
+   */
   public void notifyScriptVersionUpdate(
       String tenantId, Long baseVersionId, String patchVersion, List<String> scripts) {
-    if (baseVersionId == null || baseVersionId <= 0) {
-      throw new IllegalArgumentException("baseVersionId must be positive");
-    }
+    validateNotificationRequest(tenantId, baseVersionId, patchVersion, scripts);
     NotifyScriptVersionUpdateRequest request =
         NotifyScriptVersionUpdateRequest.newBuilder()
             .setTenantId(tenantId)
@@ -64,7 +64,37 @@ public class AutomationScriptingClient
             .addAllAffectedScripts(scripts)
             .setBaseVersionId(baseVersionId)
             .build();
-    stub().notifyScriptVersionUpdate(request);
+    var response = stub().notifyScriptVersionUpdate(request);
+    if (!response.getSuccess() || response.hasError()) {
+      String detail = response.hasError() ? response.getError().getCode() : "NO_READINESS_STARTED";
+      throw new IllegalStateException(
+          "SCRIPT_PATCH_NOTIFICATION_REJECTED: Automation did not accept patch readiness: "
+              + detail);
+    }
+  }
+
+  private void validateNotificationRequest(
+      String tenantId, Long baseVersionId, String patchVersion, List<String> scripts) {
+    if (tenantId == null || tenantId.isBlank()) {
+      throw new IllegalArgumentException(
+          "SCRIPT_PATCH_NOTIFICATION_PRE_DISPATCH_INVALID: tenantId is required");
+    }
+    if (baseVersionId == null || baseVersionId <= 0) {
+      throw new IllegalArgumentException(
+          "SCRIPT_PATCH_NOTIFICATION_PRE_DISPATCH_INVALID: baseVersionId must be positive");
+    }
+    if (patchVersion == null || patchVersion.isBlank()) {
+      throw new IllegalArgumentException(
+          "SCRIPT_PATCH_NOTIFICATION_PRE_DISPATCH_INVALID: scriptPatchVersion is required");
+    }
+    if (scripts == null) {
+      throw new IllegalArgumentException(
+          "SCRIPT_PATCH_NOTIFICATION_PRE_DISPATCH_INVALID: affectedScripts must be provided");
+    }
+    if (scripts.stream().anyMatch(script -> script == null || script.isBlank())) {
+      throw new IllegalArgumentException(
+          "SCRIPT_PATCH_NOTIFICATION_PRE_DISPATCH_INVALID: affectedScripts contains a blank script");
+    }
   }
 
   public PublishParticipantDigestDto getDraftDesignDigestForScriptPatch(

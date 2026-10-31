@@ -146,7 +146,7 @@ class ScriptPatchVersionCommandServiceTest {
   }
 
   @Test
-  void emptyAffectedManifestDoesNotMaterializeReadiness() {
+  void emptyAffectedScriptsReturnsNotAcceptedWithoutCreatingReadinessOrWork() {
     assertThat(service.notifyUpdate("1", 1L, "v1-script.1", List.of())).isFalse();
 
     verifyNoInteractions(
