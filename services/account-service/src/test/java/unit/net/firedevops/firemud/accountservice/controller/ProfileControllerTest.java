@@ -480,8 +480,8 @@ class ProfileControllerTest {
 
   @Test
   void updateProfileRejectsChangedBodyAccountBeforeDispatch() throws Exception {
-    UpdateProfileRequest request =
-        new UpdateProfileRequest(
+    UpdateProfileRestRequest request =
+        new UpdateProfileRestRequest(
             1L, OTHER_ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     String token = jwtUtil.generateToken(ACCOUNT_UUID_TEXT, Map.of("accountId", ACCOUNT_UUID_TEXT));
 
