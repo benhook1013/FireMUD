@@ -701,7 +701,13 @@ async function runFor(embedded, options = {}) {
       return {
         data: {
           total_count: jobRows.length,
-          jobs: rowsForPage(jobRows, request, options.incompleteJobsPage),
+          jobs: rowsForPage(jobRows, request, options.incompleteJobsPage).map(job => ({
+            ...job,
+            // GitHub clones a carried job with a new ID and the retry's raw
+            // run_attempt while retaining its original execution window.
+            id: job.id + (request.attempt_number - 1) * 10000,
+            run_attempt: request.attempt_number,
+          })),
         },
       };
     },
@@ -795,7 +801,15 @@ async function runFor(embedded, options = {}) {
       assert.equal(result.provenance.attempts.length, attempts);
       for (const attempt of result.provenance.attempts) {
         assert.equal(attempt.jobs.length, 101);
-        for (const job of attempt.jobs) assert.equal(job.head_sha, result.provenance.run.head_sha);
+        for (const job of attempt.jobs) {
+          assert.equal(job.head_sha, result.provenance.run.head_sha);
+          assert.equal(job.run_attempt, attempt.attempt, "raw API attempt is preserved per snapshot");
+        }
+        assert.equal(
+          attempt.jobs[0].id,
+          coreJobRows[0].id + (attempt.attempt - 1) * 10000,
+          "attempt snapshots retain cloned job IDs",
+        );
       }
       assert.equal(result.provenance.artifacts.items.length, 101);
       for (const artifact of result.provenance.artifacts.items) {
