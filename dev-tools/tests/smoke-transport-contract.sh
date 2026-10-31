@@ -1108,6 +1108,109 @@ assert [result["label"] for result in discovery_results] == [
 ]
 
 
+for transient_error in (
+    "ERROR UPSTREAM_FAILURE WORLDS is temporarily unavailable.\n",
+    "ERROR UPSTREAM_UNAVAILABLE WORLDS is temporarily unavailable.\n",
+):
+    transient_discovery_sessions = []
+
+    def open_after_transient_discovery():
+        session = CommandResponseSession(
+            [
+                transient_error,
+                "OK WORLDS\n1) Demo World (demo)\n",
+                "OK LOGIN\n",
+                "OK PLAY Entered world: demo\n",
+            ]
+        )
+        transient_discovery_sessions.append(session)
+        return session
+
+    with patch("smoke_common.time.sleep") as discovery_sleep:
+        run_telnet_smoke_session(
+            "example.test",
+            2323,
+            [
+                ("WORLDS", ["OK WORLDS"], "WORLDS"),
+                ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+                ("PLAY demo", ["OK PLAY"], "PLAY"),
+            ],
+            1,
+            open_session=open_after_transient_discovery,
+            retry_window_seconds=1,
+            retry_interval_seconds=0,
+            tls_enabled=False,
+            discovery_selector="demo",
+        )
+    assert len(transient_discovery_sessions) == 1
+    assert transient_discovery_sessions[0].sent == [
+        "WORLDS\r\n",
+        "WORLDS\r\n",
+        "LOGIN demo swordfish\r\n",
+        "PLAY demo\r\n",
+    ]
+    discovery_sleep.assert_called_once_with(0.5)
+
+
+discovery_clock = [0.0]
+discovery_poll_calls = []
+discovery_poll_sleeps = []
+
+
+def discovery_clock_time():
+    return discovery_clock[0]
+
+
+def advance_discovery_clock(duration):
+    discovery_poll_sleeps.append(duration)
+    discovery_clock[0] += duration
+
+
+def fail_discovery_transiently(*_args):
+    discovery_poll_calls.append(True)
+    raise smoke_common.TransientUpstreamSmokeFailure("temporary WORLDS failure")
+
+
+with patch("smoke_common.time.time", side_effect=discovery_clock_time), patch(
+    "smoke_common.time.sleep", side_effect=advance_discovery_clock
+):
+    try:
+        smoke_common.wait_for_world_discovery(
+            "demo", ["OK WORLDS"], 0.2, fail_discovery_transiently
+        )
+    except smoke_common.ProbeOperationalFailure as exc:
+        assert "discovery deadline" in str(exc)
+    else:
+        raise AssertionError("transient discovery failures exceeded their deadline")
+assert len(discovery_poll_calls) == 1
+assert discovery_poll_sleeps == [0.2]
+
+
+nontransient_discovery_session = CommandResponseSession(
+    ["ERROR AUTH_FAILURE WORLDS is not available to this account.\n"]
+)
+try:
+    run_telnet_smoke_session(
+        "example.test",
+        2323,
+        [
+            ("WORLDS", ["OK WORLDS"], "WORLDS"),
+            ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+        ],
+        1,
+        open_session=lambda: nontransient_discovery_session,
+        retry_window_seconds=1,
+        retry_interval_seconds=0,
+        tls_enabled=False,
+        discovery_selector="demo",
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ERROR AUTH_FAILURE" in str(exc)
+else:
+    raise AssertionError("non-transient WORLDS failure unexpectedly retried or passed")
+assert nontransient_discovery_session.sent == ["WORLDS\r\n"]
+
+
 login_failure_attempts = []
 
 

@@ -90,6 +90,15 @@ class ProtectedPodUidProjectionTest {
   }
 
   @Test
+  void rejects0777AndStickyWritableRootsWithoutDedicatedReadOnlyMount() throws IOException {
+    Projection projection = createProjection(POD_UID);
+    for (int mode : new int[] {0777, 01777}) {
+      Files.setAttribute(projection.root(), "unix:mode", mode);
+      assertUnavailable(projection);
+    }
+  }
+
+  @Test
   void rejectsWritableAtomicWriterTargetDirectory() throws IOException {
     Projection projection = createProjection(POD_UID);
     Files.setPosixFilePermissions(

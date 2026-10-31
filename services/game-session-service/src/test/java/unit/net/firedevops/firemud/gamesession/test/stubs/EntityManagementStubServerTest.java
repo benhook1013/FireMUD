@@ -9,12 +9,33 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.PingRequest;
+import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementStubServerTest {
+
+  @Test
+  void returnsPongToPingOverLoopbackGrpc() throws Exception {
+    try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
+      try {
+        EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
+            EntityManagementServiceGrpc.newBlockingStub(channel);
+
+        PingResponse response = stub.ping(PingRequest.getDefaultInstance());
+
+        assertThat(response.getMessage()).isEqualTo("pong");
+        assertThat(response.hasError()).isFalse();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
 
   @Test
   void listsOnlyThePersistedSharedCharacterForTheRequestedTenantAndAccount() throws Exception {

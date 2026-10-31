@@ -28,6 +28,12 @@ RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
 INVALID_COMMAND_LINE_ERROR = "commands must not contain embedded CR or LF"
 PLAINTEXT_TELNET_HOST_ERROR = "tls_enabled=False requires a localhost-equivalent Telnet host"
 WORLD_DISCOVERY_ROW = re.compile(r"^\s*(\d+)\)\s+.+\s+\(([^()\r\n]+)\)\s*$")
+WORLD_DISCOVERY_POLL_INTERVAL_SECONDS = 0.5
+RETRYABLE_UPSTREAM_FAILURE_PREFIXES = ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
+DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES = (
+    *RETRYABLE_UPSTREAM_FAILURE_PREFIXES,
+    "ERROR UPSTREAM_UNAVAILABLE",
+)
 
 
 def is_localhost_equivalent(host):
@@ -236,6 +242,15 @@ def wait_for_world_discovery(selector, expected_substrings, timeout_seconds, exe
                 f"Configured smoke world selector {selector!r} was not listed in "
                 f"WORLDS before the {timeout_seconds}s discovery deadline"
             ) from expired
+        except TransientUpstreamSmokeFailure:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise ProbeOperationalFailure(
+                    f"Configured smoke world selector {selector!r} was not listed in "
+                    f"WORLDS before the {timeout_seconds}s discovery deadline"
+                )
+            time.sleep(min(WORLD_DISCOVERY_POLL_INTERVAL_SECONDS, remaining))
+            continue
         if time.time() >= deadline:
             raise ProbeOperationalFailure(
                 f"Configured smoke world selector {selector!r} was not listed in "
@@ -243,6 +258,13 @@ def wait_for_world_discovery(selector, expected_substrings, timeout_seconds, exe
             )
         if worlds_response_contains_selector(response, selector):
             return response
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise ProbeOperationalFailure(
+                f"Configured smoke world selector {selector!r} was not listed in "
+                f"WORLDS before the {timeout_seconds}s discovery deadline"
+            )
+        time.sleep(min(WORLD_DISCOVERY_POLL_INTERVAL_SECONDS, remaining))
 
 
 def run_transport_session(
@@ -423,12 +445,13 @@ def raise_for_explicit_failure(
     expected_substrings,
     retry_upstream_failure,
     sanitize_response,
+    retryable_upstream_prefixes=RETRYABLE_UPSTREAM_FAILURE_PREFIXES,
 ):
     failure_line = unexpected_explicit_failure_line(response, explicit_failure_prefixes, expected_substrings)
     if failure_line is None:
         return
     diagnostic_response = (sanitize_response(response) if sanitize_response else response).strip()
-    if retry_upstream_failure and failure_line.startswith(("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")):
+    if retry_upstream_failure and failure_line.startswith(retryable_upstream_prefixes):
         raise TransientUpstreamSmokeFailure(f"Command failed explicitly: {diagnostic_response}")
     raise ProbeOperationalFailure(f"Command failed explicitly: {diagnostic_response}")
 
@@ -446,6 +469,7 @@ def wait_for_incremental_response(
     retry_upstream_failure=False,
     sanitize_response=None,
     deadline=None,
+    retryable_upstream_prefixes=RETRYABLE_UPSTREAM_FAILURE_PREFIXES,
 ):
     if deadline is None:
         deadline = time.time() + timeout
@@ -461,6 +485,7 @@ def wait_for_incremental_response(
                 expected_substrings,
                 retry_upstream_failure,
                 sanitize_response,
+                retryable_upstream_prefixes,
             )
             if all(substring in response for substring in expected_substrings):
                 if drain_remaining is not None:
@@ -474,6 +499,7 @@ def wait_for_incremental_response(
                         expected_substrings,
                         retry_upstream_failure,
                         sanitize_response,
+                        retryable_upstream_prefixes,
                     )
                     response = drained_response
                 return response
@@ -597,6 +623,7 @@ def send_telnet_command_and_expect(
     drain_timeout=0.25,
     step_results=None,
     retry_upstream_failure=True,
+    retryable_upstream_prefixes=RETRYABLE_UPSTREAM_FAILURE_PREFIXES,
 ):
     line = _normalize_command_line(line)
     start_index = len(responses)
@@ -624,6 +651,7 @@ def send_telnet_command_and_expect(
         retry_upstream_failure=(retry_upstream_failure and label in RETRYABLE_STARTUP_COMMAND_LABELS),
         sanitize_response=lambda value: redact_login_credential(value, line),
         deadline=command_deadline,
+        retryable_upstream_prefixes=retryable_upstream_prefixes,
     )
     diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
@@ -674,7 +702,8 @@ def run_telnet_command_plan(
             remaining,
             default_drain_timeout,
             step_results,
-            retry_upstream_failure=False,
+            retry_upstream_failure=True,
+            retryable_upstream_prefixes=DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES,
         )
 
     def precondition(_line, expected_substrings, _label, _timeout):
@@ -824,6 +853,7 @@ def send_websocket_command_and_expect(
     timeout_seconds,
     step_results=None,
     retry_upstream_failure=True,
+    retryable_upstream_prefixes=RETRYABLE_UPSTREAM_FAILURE_PREFIXES,
 ):
     line = _normalize_command_line(line)
     start_index = len(responses)
@@ -846,6 +876,7 @@ def send_websocket_command_and_expect(
         retry_upstream_failure=(retry_upstream_failure and label in RETRYABLE_STARTUP_COMMAND_LABELS),
         sanitize_response=lambda value: redact_login_credential(value, line),
         deadline=command_deadline,
+        retryable_upstream_prefixes=retryable_upstream_prefixes,
     )
     diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
@@ -886,7 +917,8 @@ def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None, di
             label,
             remaining,
             step_results,
-            retry_upstream_failure=False,
+            retry_upstream_failure=True,
+            retryable_upstream_prefixes=DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES,
         )
 
     def precondition(_line, expected_substrings, _label, _timeout):

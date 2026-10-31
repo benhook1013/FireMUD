@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.TrustedPublicJwksSource;
+import net.firedevops.firemud.common.security.ProtectedProjectionMount;
 
 /**
  * Reads only Account's fixed projected public JWKS; it never discovers keys or uses classpath data.
@@ -120,7 +121,8 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
         || !dataVersion.toString().matches("\\.\\.[A-Za-z0-9._-]{1,128}")) {
       throw unavailable();
     }
-    verifyOwnedProjectionPath(trustedDirectory, true);
+    ProtectedProjectionMount.Snapshot mountBefore =
+        verifyOwnedProjectionPath(trustedDirectory, true, true);
     Path dataTarget = trustedDirectory.resolve(dataVersion).normalize();
     if (!trustedDirectory.equals(dataTarget.getParent())
         || !Files.isDirectory(dataTarget, LinkOption.NOFOLLOW_LINKS)) {
@@ -159,7 +161,12 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
       java.util.Arrays.fill(bytes, (byte) 0);
       throw unavailable();
     }
-    verifyOwnedProjectionPath(trustedDirectory, true);
+    ProtectedProjectionMount.Snapshot mountAfter =
+        verifyOwnedProjectionPath(trustedDirectory, true, true);
+    if (!Objects.equals(mountBefore, mountAfter)) {
+      java.util.Arrays.fill(bytes, (byte) 0);
+      throw unavailable();
+    }
     verifyOwnedProjectionPath(file, false);
     return bytes;
   }
@@ -213,6 +220,11 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
   }
 
   private void verifyOwnedProjectionPath(Path path, boolean directory) throws IOException {
+    verifyOwnedProjectionPath(path, directory, false);
+  }
+
+  private ProtectedProjectionMount.Snapshot verifyOwnedProjectionPath(
+      Path path, boolean directory, boolean projectionRoot) throws IOException {
     BasicFileAttributes attributes =
         Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
     if ((directory && !attributes.isDirectory()) || (!directory && !attributes.isRegularFile())) {
@@ -222,11 +234,19 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
     Set<PosixFilePermission> mode = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
     boolean unsafeWrite =
         mode.contains(PosixFilePermission.GROUP_WRITE)
-            || mode.contains(PosixFilePermission.OTHERS_WRITE)
-            || (!directory && mode.contains(PosixFilePermission.OWNER_WRITE));
-    if (!(owner instanceof Number uid) || uid.longValue() != expectedOwnerUid || unsafeWrite) {
+            || mode.contains(PosixFilePermission.OTHERS_WRITE);
+    if (!(owner instanceof Number uid)
+        || uid.longValue() != expectedOwnerUid
+        || (!directory && mode.contains(PosixFilePermission.OWNER_WRITE))) {
       throw unavailable();
     }
+    if (unsafeWrite) {
+      if (!projectionRoot) {
+        throw unavailable();
+      }
+      return ProtectedProjectionMount.read(path);
+    }
+    return null;
   }
 
   private static String sha256(byte[] bytes) {
