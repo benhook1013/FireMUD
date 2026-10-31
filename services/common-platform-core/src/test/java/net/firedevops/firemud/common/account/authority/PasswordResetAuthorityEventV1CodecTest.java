@@ -43,7 +43,10 @@ class PasswordResetAuthorityEventV1CodecTest {
     assertThat(vectors.path("schemaVersion").asText())
         .isEqualTo("account-auth-password-reset-event-vectors/v1");
 
-    for (JsonNode vector : vectors.path("validEvents")) {
+    JsonNode validEvents = vectors.path("validEvents");
+    assertThat(validEvents.isArray()).as("validEvents is an array").isTrue();
+    assertThat(validEvents.size()).as("validEvents is nonempty").isPositive();
+    for (JsonNode vector : validEvents) {
       JsonNode wireEvent = vector.path("event");
       var verified = PasswordResetAuthorityEventV1Codec.verify(wireEvent.toString());
       assertThat(verified.eventDigest()).isEqualTo(vector.path("expectedEventDigest").asText());
@@ -77,7 +80,10 @@ class PasswordResetAuthorityEventV1CodecTest {
     ObjectNode baseline = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
     String originalDigest = baseline.path("eventDigest").asText();
 
-    for (JsonNode mutation : vectors.path("changedDeclaredFieldMutations")) {
+    JsonNode mutations = vectors.path("changedDeclaredFieldMutations");
+    assertThat(mutations.isArray()).as("changedDeclaredFieldMutations is an array").isTrue();
+    assertThat(mutations.size()).as("changedDeclaredFieldMutations is nonempty").isPositive();
+    for (JsonNode mutation : mutations) {
       ObjectNode changedWire = (ObjectNode) baseline.deepCopy();
       JsonNode changes = mutation.path("changes");
       changes
@@ -104,7 +110,10 @@ class PasswordResetAuthorityEventV1CodecTest {
     JsonNode vector = vectors.path("validEvents").get(0);
     JsonNode event = vector.path("event");
     ObjectNode reordered = JSON.createObjectNode();
-    for (JsonNode field : vectors.path("canonicalReorderedPropertyOrder")) {
+    JsonNode propertyOrder = vectors.path("canonicalReorderedPropertyOrder");
+    assertThat(propertyOrder.isArray()).as("canonicalReorderedPropertyOrder is an array").isTrue();
+    assertThat(propertyOrder.size()).as("canonicalReorderedPropertyOrder is nonempty").isPositive();
+    for (JsonNode field : propertyOrder) {
       String fieldName = field.asText();
       reordered.set(fieldName, event.path(fieldName).deepCopy());
     }
@@ -117,12 +126,25 @@ class PasswordResetAuthorityEventV1CodecTest {
   @Test
   void invalidMutationVectorsAreRejected() {
     ObjectNode baseline = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
-    for (JsonNode mutation : vectors.path("invalidMutations")) {
+    JsonNode mutations = vectors.path("invalidMutations");
+    assertThat(mutations.isArray()).as("invalidMutations is an array").isTrue();
+    assertThat(mutations.size()).as("invalidMutations is nonempty").isPositive();
+    for (JsonNode mutation : mutations) {
       ObjectNode changed = (ObjectNode) baseline.deepCopy();
       applyMutation(changed, mutation);
       assertThatThrownBy(() -> PasswordResetAuthorityEventV1Codec.verify(changed.toString()))
           .as(mutation.path("name").asText())
           .isInstanceOf(IllegalArgumentException.class);
+
+      if (!"/eventDigest".equals(mutation.path("path").asText())) {
+        ObjectNode changedPreimage = (ObjectNode) changed.deepCopy();
+        changedPreimage.remove("eventDigest");
+        Map<String, Object> preimageMap =
+            JSON.convertValue(changedPreimage, new TypeReference<>() {});
+        assertThatThrownBy(() -> PasswordResetAuthorityEventV1Codec.seal(preimageMap))
+            .as(mutation.path("name").asText() + " invalid preimage")
+            .isInstanceOf(IllegalArgumentException.class);
+      }
     }
   }
 
