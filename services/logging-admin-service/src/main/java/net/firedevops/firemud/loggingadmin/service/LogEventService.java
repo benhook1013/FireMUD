@@ -1,8 +1,10 @@
 package net.firedevops.firemud.loggingadmin.service;
 
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptDto;
 import net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest;
-import net.firedevops.firemud.loggingadmin.dto.LogEventDto;
 
 public interface LogEventService {
-  LogEventDto createLogEvent(CreateLogEventRequest request);
+  AccountAuditReceiptDto createLogEvent(CreateLogEventRequest request);
+
+  AccountAuditReceiptDto readLogEventReceipt(CreateLogEventRequest request);
 }

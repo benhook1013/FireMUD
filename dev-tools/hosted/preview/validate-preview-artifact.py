@@ -68,6 +68,7 @@ SOCIAL_GROUPS_GRPC_WORKLOADS = {"social-groups-service"}
 DISTINCT_GRPC_WORKLOADS = (
     PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS | SOCIAL_GROUPS_GRPC_WORKLOADS
 )
+NAMESPACE_BOUND_GRPC_WORKLOADS = DISTINCT_GRPC_WORKLOADS | {"logging-admin-service"}
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
     "Service": SERVICE_IMAGES | {"spring-cloud-gateway-mtls", "postgres", "redis-coord", "redis-cache", "minio"},
@@ -1474,7 +1475,7 @@ def validate_service_consumers(
             fail(f"Deployment/{service} has an unexpected container layout")
 
         container = containers[0]
-        if service in DISTINCT_GRPC_WORKLOADS:
+        if service in NAMESPACE_BOUND_GRPC_WORKLOADS:
             workload_namespace_entries = [
                 entry
                 for entry in container.get("env", [])

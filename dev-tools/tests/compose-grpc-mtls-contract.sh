@@ -301,6 +301,7 @@ for service in (
     "world-management-service",
     "game-session-service",
     "game-design-service",
+    "logging-admin-service",
 ):
     headers = [index for index, line in enumerate(lines) if line == f"  {service}:"]
     assert len(headers) == 1, service
@@ -424,19 +425,34 @@ for service in "${services[@]}"; do
   rg -Fq "\${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/$service:/app/certs:ro" "$mtls_compose"
 done
 
-python3 - "$ROOT_DIR/dev-tools/verify-smoke-images.sh" <<'PY'
+python3 - "$ROOT_DIR/dev-tools/verify-smoke-images.sh" "$mtls_compose" \
+  "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-restart-state.sh" <<'PY'
 import pathlib
 import sys
 
-source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-profile = source.index('COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.grpc-mtls.override.yml" )')
+smoke_source_path, mtls_compose_path, *source_wrapper_paths = sys.argv[1:]
+smoke_source = pathlib.Path(smoke_source_path).read_text(encoding="utf-8")
+profile = smoke_source.index('COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.grpc-mtls.override.yml" )')
 for prior_overlay in (
     'docker-compose.smoke-images.override.yml',
     'docker-compose.pr-local-minio.override.yml',
 ):
-    assert source.index(prior_overlay) < profile, prior_overlay
-assert "COMPOSE_UP_ARGS=(up -d --remove-orphans)" in source
-assert "--build" not in source
+    assert smoke_source.index(prior_overlay) < profile, prior_overlay
+assert "COMPOSE_UP_ARGS=(up -d --remove-orphans)" in smoke_source
+assert "--build" not in smoke_source
+
+mtls_override = pathlib.Path(mtls_compose_path).read_text(encoding="utf-8")
+logging_block = mtls_override.split("\n  logging-admin-service:\n", 1)[1].split(
+    "\n  social-groups-service:\n", 1
+)[0]
+assert "FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev" in logging_block
+
+for wrapper_path in source_wrapper_paths:
+    wrapper = pathlib.Path(wrapper_path).read_text(encoding="utf-8")
+    base = wrapper.index('-f "$ROOT_DIR/docker/docker-compose.yml"')
+    local = wrapper.index('-f "$ROOT_DIR/docker/docker-compose.override.yml"')
+    mtls = wrapper.index('-f "$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"')
+    assert base < local < mtls, wrapper_path
 PY
 
 for wrapper in verify-smoke-images.sh verify-fresh-bootstrap.sh verify-restart-state.sh; do
@@ -460,6 +476,7 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
   cp "$ROOT_DIR/.env.sample" "$compose_fixture/.env"
 
   rendered_config="$TEST_ROOT/compose-config.json"
+  source_rendered_config="$TEST_ROOT/compose-source-config.json"
   FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$fixture_root" SMOKE_IMAGE_TAG=contract \
     FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH="$TEST_ROOT/config-probe-capability.json" \
     FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH="$source_receipt_fixture" \
@@ -471,14 +488,26 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
       -f "$compose_fixture/docker/docker-compose.smoke-images.override.yml" \
       -f "$compose_fixture/docker/docker-compose.grpc-mtls.override.yml" \
       config --format json >"$rendered_config"
-  python3 - "$rendered_config" "$fixture_root" "$TEST_ROOT/config-probe-capability.json" "$source_receipt_fixture" <<'PY'
+  FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$fixture_root" \
+    FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH="$TEST_ROOT/config-probe-capability.json" \
+    FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH="$source_receipt_fixture" \
+    FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false \
+    FIREMUD_SMOKE_RUN_ID='' FIREMUD_SMOKE_COMPOSE_PROJECT_NAME='' \
+    docker compose --env-file "$compose_fixture/.env" \
+      -f "$compose_fixture/docker/docker-compose.yml" \
+      -f "$compose_fixture/docker/docker-compose.override.yml" \
+      -f "$compose_fixture/docker/docker-compose.grpc-mtls.override.yml" \
+      config --format json >"$source_rendered_config"
+  python3 - "$rendered_config" "$source_rendered_config" "$fixture_root" "$TEST_ROOT/config-probe-capability.json" "$source_receipt_fixture" <<'PY'
 import json
 import pathlib
 import sys
 
-config_path, cert_root, capability_source, source_receipt_source = sys.argv[1:]
+config_path, source_config_path, cert_root, capability_source, source_receipt_source = sys.argv[1:]
 config = json.loads(pathlib.Path(config_path).read_text(encoding="utf-8"))
+source_config = json.loads(pathlib.Path(source_config_path).read_text(encoding="utf-8"))
 services = config["services"]
+source_services = source_config["services"]
 app_names = {
     "account-service", "gateway", "automation-scripting-service",
     "entity-management-service", "game-design-service", "game-logic-service",
@@ -501,10 +530,14 @@ for name in app_names:
     assert service.get("build") is None, f"image-only proof must not build {name}"
 for name in (
     "account-service", "game-session-service", "entity-management-service",
-    "world-management-service", "game-design-service",
+    "world-management-service", "game-design-service", "logging-admin-service",
 ):
     namespace = services[name]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
     assert namespace == "dev", (name, namespace)
+source_logging_namespace = source_services["logging-admin-service"]["environment"].get(
+    "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+)
+assert source_logging_namespace == "dev", ("source", "logging-admin-service", source_logging_namespace)
 game_session = services["game-session-service"]
 game_session_environment = game_session["environment"]
 assert game_session_environment.get("FIREMUD_SMOKE_RUN_ID") == ""
