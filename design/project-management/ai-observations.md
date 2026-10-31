@@ -13,3 +13,5 @@ A small inbox for unresolved agent, tooling, environment, and workflow issues; s
 
 - `2026-11-01` (Pacific/Auckland): Review selection held without naming its failed source.
   - Both initial #3365 channel selections returned only `source_unavailable`, without a linked review operation or actionable diagnostic, while an exact-head source refresh completed and verified the same open, ready comparison. Provider execution was not established. The original selection/source receipts were sent to FireController Worker; normal implementation continues while that owner explains the failed source and supported recovery. Next: retain the owner response and update this entry with the verified cause and outcome.
+
+  - `2026-11-01` follow-up: FireController Worker identified sequential source collection across the 33-entry predecessor prefix under one 15-second selection budget. Both selections were terminal holds without provider operations; its bounded-parallel selection and actionable-diagnostic fix is awaiting deployment. Fresh normal authorized requests follow that deployment; replaying the old keys cannot resume them.
