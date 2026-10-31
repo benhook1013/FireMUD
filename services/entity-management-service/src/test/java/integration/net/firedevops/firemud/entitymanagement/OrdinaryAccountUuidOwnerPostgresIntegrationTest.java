@@ -104,6 +104,7 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
     assertThat(after.getLast().get("version")).isEqualTo("1024");
     var repository = new CharacterRepository(DSL.using(source, SQLDialect.POSTGRES));
     UUID owner = UUID.randomUUID();
+    UUID attemptedOwner = UUID.randomUUID();
     Character ordinary = new Character();
     ordinary.setTenantId(1L);
     ordinary.setAccountUuid(owner);
@@ -121,19 +122,60 @@ class OrdinaryAccountUuidOwnerPostgresIntegrationTest {
     assertThat(saved.getActorIdentity().playableStateNamespaceId()).isNull();
     assertThat(
             repository
-                .findByTenantIdAndAccountIdAndPlayableStateKey(1L, owner, "shared-live", null)
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(1L, owner, "shared-live", null)
                 .getContent())
         .extracting(Character::getId)
         .containsExactly(saved.getId());
     assertThat(
             repository
-                .findByTenantIdAndAccountIdAndPlayableStateKey(2L, owner, "shared-live", null)
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(2L, owner, "shared-live", null)
                 .getContent())
         .isEmpty();
     assertThat(
             repository
-                .findByTenantIdAndAccountIdAndPlayableStateKey(
-                    1L, UUID.randomUUID(), "shared-live", null)
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(
+                    1L, attemptedOwner, "shared-live", null)
+                .getContent())
+        .isEmpty();
+    ordinary.setId(saved.getId());
+    ordinary.setName("owned after null UUID update");
+    ordinary.setAccountUuid(null);
+    Character afterNullUuidUpdate = repository.save(ordinary);
+    assertThat(afterNullUuidUpdate.getName()).isEqualTo("owned after null UUID update");
+    assertThat(afterNullUuidUpdate.getAccountUuid()).isEqualTo(owner);
+    assertThat(afterNullUuidUpdate.getAccountId()).isNull();
+    assertThat(
+            repository
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(1L, owner, "shared-live", null)
+                .getContent())
+        .extracting(Character::getId)
+        .containsExactly(saved.getId());
+    assertThat(
+            repository
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(
+                    1L, attemptedOwner, "shared-live", null)
+                .getContent())
+        .isEmpty();
+    ordinary.setName("owned after different UUID update");
+    ordinary.setAccountUuid(attemptedOwner);
+    Character afterDifferentUuidUpdate = repository.save(ordinary);
+    assertThat(afterDifferentUuidUpdate.getName()).isEqualTo("owned after different UUID update");
+    assertThat(afterDifferentUuidUpdate.getAccountUuid()).isEqualTo(owner);
+    assertThat(afterDifferentUuidUpdate.getAccountId()).isNull();
+    Character reloaded = repository.findById(saved.getId()).orElseThrow();
+    assertThat(reloaded.getAccountUuid()).isEqualTo(owner);
+    assertThat(reloaded.getActorIdentity().accountUuid()).isEqualTo(owner);
+    assertThat(reloaded.getActorIdentity().status()).isEqualTo(ActorIdentityStatus.QUARANTINED);
+    assertThat(
+            repository
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(1L, owner, "shared-live", null)
+                .getContent())
+        .extracting(Character::getId)
+        .containsExactly(saved.getId());
+    assertThat(
+            repository
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(
+                    1L, attemptedOwner, "shared-live", null)
                 .getContent())
         .isEmpty();
     assertThat(

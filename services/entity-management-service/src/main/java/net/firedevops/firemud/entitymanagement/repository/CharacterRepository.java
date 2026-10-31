@@ -234,13 +234,13 @@ public class CharacterRepository {
             .fetchOne(this::toEntity));
   }
 
-  public Page<Character> findByTenantIdAndAccountIdAndPlayableStateKey(
-      Long tenantId, UUID accountId, String playableStateKey, Pageable pageable) {
+  public Page<Character> findByTenantIdAndAccountUuidAndPlayableStateKey(
+      Long tenantId, UUID accountUuid, String playableStateKey, Pageable pageable) {
     var condition =
         CHARACTERS
             .TENANT_ID
             .eq(tenantId)
-            .and(CHARACTERS.ACCOUNT_UUID.eq(accountId))
+            .and(CHARACTERS.ACCOUNT_UUID.eq(accountUuid))
             .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
             .and(legacyCharacterRow());
     long total = dsl.fetchCount(CHARACTERS, condition);
@@ -1397,7 +1397,6 @@ public class CharacterRepository {
     dsl.update(CHARACTERS)
         .set(CHARACTERS.TENANT_ID, entity.getTenantId())
         .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
-        .set(CHARACTERS.ACCOUNT_UUID, entity.getAccountUuid())
         .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
         .set(CHARACTERS.NAME, entity.getName())
         .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
