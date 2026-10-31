@@ -283,6 +283,10 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(response.getVerifiedKeyId()).isEqualTo(KID);
     assertThat(response.getReceiverIdentity()).isEqualTo(localIdentity);
     assertThat(response.getAccountPodTarget()).isEqualTo(exactOwnerTarget);
+    assertThat(localIdentity.getSourceInventoryDigest())
+        .isEqualTo(exactOwnerTarget.getInventorySnapshotDigest());
+    assertThat(exactOwnerTarget.getInventorySnapshotDigest())
+        .isNotEqualTo(exactOwnerTarget.getInventoryBindingDigest());
     assertThat(response.getObservedAtEpochSeconds()).isEqualTo(NOW.getEpochSecond());
     assertThat(response.getOutcome())
         .isEqualTo(ReceiveReadinessProbeResponse.ObservationOutcome.VERIFIED);
@@ -412,7 +416,8 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
   }
 
   @Test
-  void mismatchedOwnerCoordinatesTokenHashAndPodTargetFailClosedBeforeReceipt() throws Exception {
+  void mismatchedOwnerCoordinatesTokenHashPodTargetAndInventoryPinsFailClosedBeforeReceipt()
+      throws Exception {
     ownerResponseMode.set(OwnerResponseMode.STALE_COORDINATES);
     assertUnavailable(validRequest);
     assertThat(ownerReadCalls).hasValue(1);
@@ -424,6 +429,16 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
 
     ownerReadCalls.set(0);
     ownerResponseMode.set(OwnerResponseMode.WRONG_POD_TARGET);
+    assertUnavailable(validRequest);
+    assertThat(ownerReadCalls).hasValue(1);
+
+    ownerReadCalls.set(0);
+    ownerResponseMode.set(OwnerResponseMode.WRONG_INVENTORY_SNAPSHOT_DIGEST);
+    assertUnavailable(validRequest);
+    assertThat(ownerReadCalls).hasValue(1);
+
+    ownerReadCalls.set(0);
+    ownerResponseMode.set(OwnerResponseMode.WRONG_INVENTORY_BINDING_REVISION);
     assertUnavailable(validRequest);
     assertThat(ownerReadCalls).hasValue(1);
   }
@@ -594,6 +609,16 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
                       .setPodIp("127.0.0.2")
                       .setDirectPodEndpoint("grpcs://127.0.0.2:" + endpointPort(ownerTarget.get())))
               .build();
+      case WRONG_INVENTORY_SNAPSHOT_DIGEST ->
+          builder
+              .setCurrentPodTarget(
+                  ownerTarget.get().toBuilder().setInventorySnapshotDigest("0".repeat(64)))
+              .build();
+      case WRONG_INVENTORY_BINDING_REVISION ->
+          builder
+              .setCurrentPodTarget(
+                  ownerTarget.get().toBuilder().setInventoryBindingRevision("inventory-r2"))
+              .build();
       case CHANGED_AFTER_FIRST_READ ->
           callNumber == 1
               ? builder.build()
@@ -742,7 +767,7 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
         .setVerifierConfigSha256("b".repeat(64))
         .setApplicabilityMatrixDigest("c".repeat(64))
         .setSourceInventoryRevision("inventory-r1")
-        .setSourceInventoryDigest("d".repeat(64))
+        .setSourceInventoryDigest("f".repeat(64))
         .setServerLeafSpkiSha256(spkiSha256(pki.gameSession().certificate()))
         .setAccountJwksSourceIdentity(sourceIdentityProto())
         .setAccountJwksTrustBindingRevision(jwksSourceIdentity.bindingRevision())
@@ -976,6 +1001,8 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     STALE_COORDINATES,
     STALE_TOKEN_HASH,
     WRONG_POD_TARGET,
+    WRONG_INVENTORY_SNAPSHOT_DIGEST,
+    WRONG_INVENTORY_BINDING_REVISION,
     CHANGED_AFTER_FIRST_READ
   }
 

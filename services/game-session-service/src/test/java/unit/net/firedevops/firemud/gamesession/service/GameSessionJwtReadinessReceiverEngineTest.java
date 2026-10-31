@@ -60,6 +60,10 @@ class GameSessionJwtReadinessReceiverEngineTest {
     assertThat(response.getVerifiedKeyId()).isEqualTo(KID);
     assertThat(response.getReceiverIdentity()).isEqualTo(fixture.local.wireIdentity());
     assertThat(response.getAccountPodTarget()).isEqualTo(fixture.target);
+    assertThat(fixture.local.wireIdentity().getSourceInventoryDigest())
+        .isEqualTo(fixture.target.getInventorySnapshotDigest());
+    assertThat(fixture.target.getInventorySnapshotDigest())
+        .isNotEqualTo(fixture.target.getInventoryBindingDigest());
     assertThat(response.getObservedAtEpochSeconds()).isEqualTo(NOW.getEpochSecond());
     assertThat(response.getOutcome())
         .isEqualTo(ReceiveReadinessProbeResponse.ObservationOutcome.VERIFIED);
@@ -83,6 +87,42 @@ class GameSessionJwtReadinessReceiverEngineTest {
       assertThat(captured.getProtectedLocalIdentity()).isEqualTo(fixture.local.wireIdentity());
       assertThat(captured.getUnknownFields().asMap()).isEmpty();
     }
+    verifyNoMoreInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
+  }
+
+  @Test
+  void mismatchedOwnerInventorySnapshotDeniesBeforeCryptoOrReceipt() {
+    Fixture fixture = new Fixture();
+    AccountPodTargetBinding changedTarget =
+        fixture.target.toBuilder().setInventorySnapshotDigest("0".repeat(64)).build();
+    when(fixture.ownerReadPort.readCurrent(any()))
+        .thenReturn(fixture.ownerResponse.toBuilder().setCurrentPodTarget(changedTarget).build());
+
+    assertThatThrownBy(
+            () -> withAccountPeer(() -> fixture.engine.receiveReadinessProbe(fixture.request)))
+        .isInstanceOf(
+            GameSessionJwtReadinessReceiverProtoMapper.OwnerEvidenceUnavailableException.class);
+
+    verify(fixture.ownerReadPort, times(1)).readCurrent(any());
+    verify(fixture.localIdentityProvider, times(1)).observe();
+    verifyNoMoreInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
+  }
+
+  @Test
+  void mismatchedOwnerInventoryRevisionDeniesBeforeCryptoOrReceipt() {
+    Fixture fixture = new Fixture();
+    AccountPodTargetBinding changedTarget =
+        fixture.target.toBuilder().setInventoryBindingRevision("inventory-r2").build();
+    when(fixture.ownerReadPort.readCurrent(any()))
+        .thenReturn(fixture.ownerResponse.toBuilder().setCurrentPodTarget(changedTarget).build());
+
+    assertThatThrownBy(
+            () -> withAccountPeer(() -> fixture.engine.receiveReadinessProbe(fixture.request)))
+        .isInstanceOf(
+            GameSessionJwtReadinessReceiverProtoMapper.OwnerEvidenceUnavailableException.class);
+
+    verify(fixture.ownerReadPort, times(1)).readCurrent(any());
+    verify(fixture.localIdentityProvider, times(1)).observe();
     verifyNoMoreInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
   }
 
@@ -241,7 +281,7 @@ class GameSessionJwtReadinessReceiverEngineTest {
           .setVerifierConfigSha256("b".repeat(64))
           .setApplicabilityMatrixDigest("c".repeat(64))
           .setSourceInventoryRevision("inventory-r1")
-          .setSourceInventoryDigest("d".repeat(64))
+          .setSourceInventoryDigest("f".repeat(64))
           .setServerLeafSpkiSha256("e".repeat(64))
           .setAccountJwksSourceIdentity(
               AccountSourceIdentity.newBuilder()

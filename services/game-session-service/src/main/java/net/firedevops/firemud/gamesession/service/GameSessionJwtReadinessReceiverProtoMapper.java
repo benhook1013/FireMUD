@@ -156,6 +156,8 @@ public final class GameSessionJwtReadinessReceiverProtoMapper {
             .getApplicabilityMatrixDigest()
             .equals(target.getApplicabilityMatrixDigest())
         || !localIdentity.getServerLeafSpkiSha256().equals(target.getServerLeafSpkiSha256())
+        || !localIdentity.getSourceInventoryRevision().equals(target.getInventoryBindingRevision())
+        || !localIdentity.getSourceInventoryDigest().equals(target.getInventorySnapshotDigest())
         || target.getExpectedOutcome() != request.expectedOutcome()
         || !sourceIdentityMatchesTarget(localIdentity, target)
         || !DIGEST.matcher(target.getInventorySnapshotDigest()).matches()

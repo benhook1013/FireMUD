@@ -494,6 +494,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
     Instant planTimestamp = Instant.ofEpochSecond(plannedAtEpochSecond);
     InventorySnapshot planningInventory =
         completeInventorySnapshot(planTimestamp, observationContext);
+    assertThat(planningInventory.digest()).isNotEqualTo(planningInventory.inventoryBindingDigest());
     ReadinessProbePlan plan =
         inTransaction(
             context,
@@ -739,6 +740,8 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
               assertThat(pod.jti()).isEqualTo(issuedEntry.jti());
               assertThat(pod.target().inventorySnapshotDigest())
                   .isEqualTo(planningInventory.digest());
+              assertThat(pod.target().inventoryBindingDigest())
+                  .isEqualTo(planningInventory.inventoryBindingDigest());
               assertThat(pod.target().applicabilityMatrixDigest())
                   .isEqualTo(plan.applicabilityMatrixDigest());
               assertThat(pod.target().namespaceUid()).isEqualTo(NAMESPACE_UID);
@@ -777,7 +780,7 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                                     expectedPods.getFirst(),
                                     issuedEntry.expectedActive(),
                                     "inventory-r2",
-                                    "d".repeat(64)),
+                                    expectedPods.getFirst().target().inventorySnapshotDigest()),
                                 refreshedInventory,
                                 BINDING.namespace())))
         .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
@@ -798,6 +801,26 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
                                     issuedEntry.expectedActive(),
                                     "inventory-r1",
                                     "e".repeat(64)),
+                                refreshedInventory,
+                                BINDING.namespace())))
+        .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context,
+                    () ->
+                        owner
+                            .readiness()
+                            .readCurrentProbeOwner(
+                                BINDING,
+                                owner.trust(),
+                                ownerSelector(
+                                    plan,
+                                    issuedEntry,
+                                    expectedPods.getFirst(),
+                                    issuedEntry.expectedActive(),
+                                    expectedPods.getFirst().target().inventoryBindingRevision(),
+                                    expectedPods.getFirst().target().inventoryBindingDigest()),
                                 refreshedInventory,
                                 BINDING.namespace())))
         .isInstanceOf(AccountJwtReadinessReceiverInvocationPort.ReceiverUnavailableException.class);
@@ -2339,7 +2362,14 @@ class AccountJwtReadinessStoragePostgresIntegrationTest {
       ProbeEntry entry,
       ExpectedPod expectedPod,
       Optional<AccountJwtSignerDesiredStateRepository.ActiveSigner> activeFence) {
-    return ownerSelector(plan, entry, expectedPod, activeFence, "inventory-r1", "d".repeat(64));
+    var target = expectedPod.target();
+    return ownerSelector(
+        plan,
+        entry,
+        expectedPod,
+        activeFence,
+        target.inventoryBindingRevision(),
+        target.inventorySnapshotDigest());
   }
 
   private static AccountJwtReadinessProbeOwnerSelector ownerSelector(
