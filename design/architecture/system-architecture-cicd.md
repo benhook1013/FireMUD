@@ -62,6 +62,8 @@ The fresh disposable [PR #3081](https://github.com/benhook1013/FireMUD/pull/3081
 
 The shipped [preservation contract](../../dev-tools/tests/pr-required-gate-context-contract.sh) asserts canonical assessment, ordinary listener scope, and the retained fail-closed identity, evidence, chronology, history, admission, and confirmation boundaries.
 
+Account Service module validation uses two independent matrix partitions. Each runner compiles the current Account test source sets, selects whole discovered classes with nested classes kept together, and runs the complete `:account-service:check -PfullCheck` task graph with the existing test fork settings. Known classes retain the checked-in partition assignment; newly discovered classes are assigned deterministically so the two selectors remain disjoint and cover the discovered class inventory. The runners publish uniquely named JUnit, JaCoCo execution-data, and partial-report artifacts. The read-only Account Coverage Aggregate job verifies both selector and JUnit report unions, merges execution data from both partitions, and publishes the complete Account JaCoCo report. The existing Validation Gate requires every module matrix entry and the Account Coverage Aggregate job when Account is affected. The ordinary local Account check remains unpartitioned.
+
 ## Workflow Structure
 
 Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and on pushes to the long-lived publication branches (`develop` today, and `main` for release-oriented publication paths).

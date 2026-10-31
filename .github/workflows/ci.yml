@@ -34,6 +34,7 @@ jobs:
       run_all: ${{ steps.compute.outputs.run_all }}
       affected_services: ${{ steps.compute.outputs.affected_services }}
       affected_modules: ${{ steps.compute.outputs.affected_modules }}
+      module_check_matrix: ${{ steps.compute.outputs.module_check_matrix }}
       bootable_modules: ${{ steps.compute.outputs.bootable_modules }}
       docs_changed: ${{ steps.compute.outputs.docs_changed }}
       frontend_changed: ${{ steps.compute.outputs.frontend_changed }}
@@ -145,6 +146,14 @@ jobs:
                 lightweight_only: false,
               };
             }
+            outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>
+              module === "account-service"
+                ? [
+                    { module, partition: "1" },
+                    { module, partition: "2" },
+                  ]
+                : [{ module, partition: "full" }]
+            );
             for (const [name, value] of Object.entries(outputs)) {
               core.setOutput(
                 name,
@@ -423,6 +432,8 @@ jobs:
           time bash ./dev-tools/tests/publisher-checksum-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/jacoco-combined-report-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/jacoco-combined-report-contract.sh
+          TIMEFORMAT="python3 -m unittest discover -s dev-tools/tests -p 'test_account_ci_partition.py': real=%3R user=%3U sys=%3S"
+          time python3 -m unittest discover -s dev-tools/tests -p 'test_account_ci_partition.py'
           TIMEFORMAT='bash ./dev-tools/tests/gradle-proof-tooling-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/testcontainers-disabled-contract.sh: real=%3R user=%3U sys=%3S'
@@ -1045,7 +1056,7 @@ jobs:
 
   # Gradle module validation matrix
   build-and-test:
-    name: Build and Test (${{ matrix.module }})
+    name: Build and Test (${{ matrix.module }} / ${{ matrix.partition }})
     needs: [changes]
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.affected_modules != '[]' }}
     runs-on: ubuntu-latest
@@ -1058,7 +1069,7 @@ jobs:
       fail-fast: false
       matrix:
         java-version: [21]
-        module: ${{ fromJSON(needs.changes.outputs.affected_modules) }}
+        include: ${{ fromJSON(needs.changes.outputs.module_check_matrix) }}
 
     steps:
       - name: Harden runner
@@ -1097,11 +1108,11 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}'
+          bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}' '${{ matrix.partition }}'
           echo "::endgroup::"
 
       - name: 📦 Build Runtime JAR
-        if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}
+        if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' || matrix.partition == '1') }}
         run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck
 
       - name: 📈 Parse Coverage %
@@ -1127,7 +1138,7 @@ jobs:
           echo "percent=$PERCENT" >> "$GITHUB_OUTPUT"
 
       - name: 🔎 Verify Combined Unit and Integration Coverage
-        if: ${{ matrix.module == 'common-saga' }}
+        if: ${{ matrix.module == 'common-saga' && matrix.partition == 'full' }}
         run: |
           python3 dev-tools/validation/validate-jacoco-combined-report.py \
             --report services/common-saga/build/reports/jacoco/test/jacocoTestReport.xml \
@@ -1138,7 +1149,7 @@ jobs:
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: jacoco-${{ matrix.module }}-report-${{ github.sha }}
+          name: jacoco-${{ matrix.module }}-${{ matrix.partition }}-report-${{ github.sha }}
           path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/' || format('services/{0}/build/reports/jacoco/test/', matrix.module) }}
 
       - name: ☂️ Upload Coverage to Codecov
@@ -1153,22 +1164,35 @@ jobs:
           disable_search: true
           files: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/jacocoTestReport.xml' || format('services/{0}/build/reports/jacoco/test/jacocoTestReport.xml', matrix.module) }}
           flags: ${{ matrix.module }}
-          name: ${{ matrix.module }}-jacoco
+          name: ${{ matrix.module }}-${{ matrix.partition }}-jacoco
           verbose: true
 
       - name: 📤 Upload Test Logs if Failed
         if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: test-logs-${{ matrix.module }}-${{ github.sha }}
+          name: test-logs-${{ matrix.module }}-${{ matrix.partition }}-${{ github.sha }}
           path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', matrix.module) }}
 
       - name: 📤 Upload JUnit Test Results
-        if: always()
+        if: ${{ always() && matrix.module != 'account-service' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: junit-${{ matrix.module }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          name: junit-${{ matrix.module }}-${{ matrix.partition }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', matrix.module) }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 📤 Upload Account Partition Reports and Execution Data
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: account-ci-partition-${{ github.sha }}-attempt-${{ github.run_attempt }}-partition-${{ matrix.partition }}
+          path: |
+            services/account-service/build/account-ci-partition/partition-${{ matrix.partition }}/
+            services/account-service/build/jacoco/*.exec
+            services/account-service/build/reports/jacoco/test/
+            services/account-service/build/test-results/**/*.xml
           if-no-files-found: warn
           retention-days: 14
 
@@ -1176,11 +1200,72 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: gradle-profile-${{ matrix.module }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          name: gradle-profile-${{ matrix.module }}-${{ matrix.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: |
             build/reports/profile/
             build/reports/compile-failure/${{ matrix.module }}/
           if-no-files-found: warn
+          retention-days: 14
+
+  account-coverage-aggregate:
+    name: Account Coverage Aggregate
+    needs: [changes, build-and-test]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service') && needs.build-and-test.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Check out Account source for complete coverage aggregation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Download both Account partition artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: account-ci-partition-${{ github.sha }}-attempt-${{ github.run_attempt }}-partition-*
+          path: services/account-service/build/account-ci-partition-inputs
+          merge-multiple: false
+
+      - name: Verify complete Account partition and report union
+        run: |
+          python3 dev-tools/validation/account_ci_test_partition.py verify-aggregate \
+            --input-dir services/account-service/build/account-ci-partition-inputs \
+            --source-revision "$GITHUB_SHA" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: ⚙️ Set Up Java for Account Coverage Aggregation
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version: 21
+
+      - name: ⚙️ Set Up Gradle for Account Coverage Aggregation
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
+          cache-read-only: false
+
+      - name: Merge complete Account JaCoCo coverage
+        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:jacocoTestReport -PfullCheck -PaccountCiCoverageAggregate
+
+      - name: 📤 Upload Complete Account Coverage Report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jacoco-account-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: services/account-service/build/reports/jacoco/test/
+          if-no-files-found: error
           retention-days: 14
 
   # Final gating and PR reporting
@@ -1194,7 +1279,10 @@ jobs:
       actions: read # Inspect the matching required-gate job's preservation step.
       statuses: write # Publish acknowledged supplementary metadata gate barriers.
       pull-requests: read # Re-read the current PR tuple before status publication.
-    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
+    env:
+      ACCOUNT_MODULE_AFFECTED: ${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service') }}
+      ACCOUNT_COVERAGE_AGGREGATE: ${{ needs.account-coverage-aggregate.result }}
+    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, account-coverage-aggregate]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -1258,6 +1346,8 @@ jobs:
           POSTGRES_RUNTIME_UPGRADE_PROOF: ${{ needs.postgres-runtime-upgrade-proof.result }}
           LIGHTWEIGHT_ONLY: ${{ needs.changes.outputs.lightweight_only }}
           AFFECTED_MODULES: ${{ needs.changes.outputs.affected_modules }}
+          ACCOUNT_MODULE_AFFECTED: ${{ env.ACCOUNT_MODULE_AFFECTED }}
+          ACCOUNT_COVERAGE_AGGREGATE: ${{ needs.account-coverage-aggregate.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BUF_CHECK: ${{ needs.buf-check.result }}
           DOCKER_LINT: ${{ needs.docker-lint.result }}
@@ -1385,6 +1475,15 @@ jobs:
             if ! is_acceptable_optional_result "$BUILD_AND_TEST"; then
               failed=1
             fi
+          fi
+
+          echo "Account Coverage Aggregate => $ACCOUNT_COVERAGE_AGGREGATE (account-affected=$ACCOUNT_MODULE_AFFECTED)"
+          if [ "$ACCOUNT_MODULE_AFFECTED" = "true" ]; then
+            if [ "$ACCOUNT_COVERAGE_AGGREGATE" != "success" ]; then
+              failed=1
+            fi
+          elif [ "$ACCOUNT_COVERAGE_AGGREGATE" != "skipped" ]; then
+            failed=1
           fi
 
           if [ "$failed" -ne 0 ]; then

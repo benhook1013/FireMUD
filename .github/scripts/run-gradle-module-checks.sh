@@ -4,9 +4,46 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ROOT_DIR
 readonly MODULE="${1:-}"
-if [[ $# -ne 1 || ! "$MODULE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
-  echo "usage: run-gradle-module-checks.sh <module-name>" >&2
+readonly PARTITION="${2:-full}"
+if [[ $# -lt 1 || $# -gt 2 || ! "$MODULE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || \
+  ( "$MODULE" == "account-service" && $# -eq 2 && "$PARTITION" != "1" && "$PARTITION" != "2" ) || \
+  ( "$MODULE" != "account-service" && $# -eq 2 && "$PARTITION" != "full" ) ]]; then
+  echo "usage: run-gradle-module-checks.sh <module-name> [full|1|2] (Account partitions only)" >&2
   exit 64
+fi
+
+declare -a CHECK_ARGS=(-PfullCheck)
+if [[ "$MODULE" == "account-service" && "$PARTITION" != "full" ]]; then
+  declare -a PREPARE_TASKS=(:account-service:testClasses)
+  declare -a CLASS_DIR_ARGS=(
+    --classes-dir "test=$ROOT_DIR/services/account-service/build/classes/java/test"
+  )
+  for task_name in integrationTest crossServiceTest; do
+    source_set="${task_name/integrationTest/integration}"
+    if [[ "$task_name" == "crossServiceTest" ]]; then
+      source_set="crossservice"
+    fi
+    if [[ -d "$ROOT_DIR/services/account-service/src/test/java/$source_set" ]]; then
+      PREPARE_TASKS+=(":account-service:${task_name}Classes")
+      CLASS_DIR_ARGS+=(
+        --classes-dir "$task_name=$ROOT_DIR/services/account-service/build/classes/java/$task_name"
+      )
+    fi
+  done
+
+  # Build every current Account test class first, then freeze one source-derived selector.
+  bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
+    --runner "$ROOT_DIR/gradlew" -- \
+    --max-workers=2 \
+    '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
+    "${PREPARE_TASKS[@]}" -PfullCheck
+  python3 "$ROOT_DIR/dev-tools/validation/account_ci_test_partition.py" plan \
+    --partition "$PARTITION" \
+    --source-revision "${GITHUB_SHA:-local}" \
+    --run-attempt "${GITHUB_RUN_ATTEMPT:-0}" \
+    --output-dir "$ROOT_DIR/services/account-service/build/account-ci-partition" \
+    "${CLASS_DIR_ARGS[@]}"
+  CHECK_ARGS+=("-PaccountCiPartition=$PARTITION")
 fi
 
 # Keep the original recovery policy and complete check; diagnostics never retry it.
@@ -19,7 +56,7 @@ if [[ -z "$CHECK_LOG" ]]; then
     --runner "$ROOT_DIR/gradlew" -- \
     --max-workers=2 \
     '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
-    ":${MODULE}:check" -PfullCheck --profile
+    ":${MODULE}:check" "${CHECK_ARGS[@]}" --profile
 fi
 set +e
 bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
@@ -27,7 +64,7 @@ bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
   --max-workers=2 \
   '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
   ":${MODULE}:check" \
-  -PfullCheck \
+  "${CHECK_ARGS[@]}" \
   --profile --info --console=plain 2>&1 | \
   python3 "$ROOT_DIR/dev-tools/validation/collect-gradle-compile-failure.py" --capture-log "$CHECK_LOG"
 check_status=${PIPESTATUS[0]}

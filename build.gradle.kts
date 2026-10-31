@@ -384,6 +384,32 @@ subprojects {
         if (file("src/test/java/integration").exists()) add("integrationTest")
         if (file("src/test/java/crossservice").exists()) add("crossServiceTest")
     }
+    val accountCiPartition = providers.gradleProperty("accountCiPartition").orNull
+    if (project.name == "account-service" && accountCiPartition != null) {
+        if (accountCiPartition !in setOf("1", "2")) {
+            throw GradleException("accountCiPartition must be 1 or 2")
+        }
+        tasks.withType<Test>().configureEach {
+            val selectorFile = layout.buildDirectory.file(
+                "account-ci-partition/partition-$accountCiPartition/$name.txt"
+            ).get().asFile
+            if (!selectorFile.isFile) {
+                throw GradleException(
+                    "Account test selector is missing for $name: $selectorFile"
+                )
+            }
+            val selectedClasses = selectorFile.readLines().filter(String::isNotBlank)
+            if (selectedClasses.isEmpty()) {
+                enabled = false
+            } else {
+                val includePatterns = selectedClasses.flatMap { className ->
+                    listOf(className, "$className${'$'}*")
+                }
+                filter.setIncludePatterns(*includePatterns.toTypedArray())
+                filter.setFailOnNoMatchingTests(false)
+            }
+        }
+    }
     tasks.named<JacocoReport>("jacocoTestReport") {
         enabled = fullCheck
         dependsOn(coverageTestTaskNames)
@@ -392,6 +418,17 @@ subprojects {
                 layout.buildDirectory.file("jacoco/$taskName.exec")
             }
         )
+        if (
+            project.name == "account-service" &&
+            providers.gradleProperty("accountCiCoverageAggregate").isPresent
+        ) {
+            setDependsOn(listOf("classes"))
+            executionData.setFrom(
+                fileTree(layout.buildDirectory.dir("account-ci-partition-inputs")) {
+                    include("**/jacoco/*.exec")
+                }
+            )
+        }
         reports {
             xml.required.set(true)
             csv.required.set(false)
