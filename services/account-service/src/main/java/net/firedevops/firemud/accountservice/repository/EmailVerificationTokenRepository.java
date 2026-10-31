@@ -10,6 +10,9 @@ import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 @SuppressFBWarnings(
@@ -65,6 +68,34 @@ public class EmailVerificationTokenRepository {
     dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
         .where(EMAIL_VERIFICATION_TOKEN.ACCOUNT_ID.eq(accountId))
         .execute();
+  }
+
+  /** Claims only the exact original, still-valid token in the Account owner's transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean consumeIfUnexpired(EmailVerificationToken token, LocalDateTime capturedNow) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Email verification requires an active writable owner transaction");
+    }
+    if (token == null
+        || token.getId() == null
+        || token.getAccount() == null
+        || token.getAccount().getId() == null
+        || capturedNow == null) {
+      return false;
+    }
+    return dsl.deleteFrom(EMAIL_VERIFICATION_TOKEN)
+            .where(
+                EMAIL_VERIFICATION_TOKEN
+                    .ID
+                    .eq(token.getId())
+                    .and(EMAIL_VERIFICATION_TOKEN.TOKEN.eq(token.getToken()))
+                    .and(EMAIL_VERIFICATION_TOKEN.ACCOUNT_ID.eq(token.getAccount().getId()))
+                    .and(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.eq(token.getExpiresAt()))
+                    .and(EMAIL_VERIFICATION_TOKEN.EXPIRES_AT.gt(capturedNow)))
+            .execute()
+        == 1;
   }
 
   /** Deletes at most {@code batchSize} expired rows in deterministic expiry/id order. */

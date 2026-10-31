@@ -1,17 +1,35 @@
 package net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
 import net.firedevops.firemud.common.security.HttpAuthRoleRequirement;
 import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
@@ -32,6 +50,7 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -80,6 +99,14 @@ class AccountApplicationIntegrationTest {
   @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
   private net.firedevops.firemud.accountservice.repository.AccountRepository accountRepository;
 
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository
+      emailVerificationTokenRepository;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository
+      joinOperationRepository;
+
   @Autowired private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
   @Autowired
@@ -97,6 +124,592 @@ class AccountApplicationIntegrationTest {
     String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
   }
+
+  @Test
+  void concurrentEmailVerificationClaimsTheExactTokenOnce() throws Exception {
+    var fixture = emailVerificationFixture();
+    var ready = new CountDownLatch(2);
+    var start = new CountDownLatch(1);
+    var located = new CountDownLatch(2);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var original = invocation.callRealMethod();
+              located.countDown();
+              if (!located.await(10, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Both verification attempts must read the token");
+              }
+              return original;
+            })
+        .when(emailVerificationTokenRepository)
+        .findByToken(fixture.token());
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      Callable<Boolean> attempt =
+          () -> {
+            ready.countDown();
+            if (!start.await(10, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Email verification start was not released");
+            }
+            try {
+              verifyEmail(fixture.token());
+              return true;
+            } catch (IllegalArgumentException consumed) {
+              return false;
+            }
+          };
+      var first = executor.submit(attempt);
+      var second = executor.submit(attempt);
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      assertThat(first.get(30, TimeUnit.SECONDS)).isNotEqualTo(second.get(30, TimeUnit.SECONDS));
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+    assertThat(
+            dsl.fetchValue("SELECT email_verified FROM accounts WHERE id = ?", fixture.accountId()))
+        .isEqualTo(true);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM email_verification_token WHERE token = ?", fixture.token()))
+        .isEqualTo(0L);
+  }
+
+  @Test
+  void expiredAndExactlyExpiringEmailVerificationTokensCannotMutateAccount() {
+    for (boolean equality : List.of(false, true)) {
+      var fixture = emailVerificationFixture();
+      var expiry = LocalDateTime.now().minusSeconds(1);
+      dsl.execute(
+          "UPDATE email_verification_token SET expires_at = ? WHERE token = ?",
+          expiry,
+          fixture.token());
+      var before = emailVerificationState(fixture);
+      if (equality) {
+        new TransactionTemplate(transactionManager)
+            .executeWithoutResult(
+                status -> {
+                  accountRepository.findByIdForUpdate(fixture.accountId()).orElseThrow();
+                  var token =
+                      emailVerificationTokenRepository.findByToken(fixture.token()).orElseThrow();
+                  assertThat(
+                          emailVerificationTokenRepository.consumeIfUnexpired(
+                              token, token.getExpiresAt()))
+                      .isFalse();
+                });
+      } else {
+        assertThatThrownBy(() -> verifyEmail(fixture.token()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Token expired");
+      }
+      assertThat(emailVerificationState(fixture)).isEqualTo(before);
+    }
+  }
+
+  @Test
+  void changedOriginalEmailVerificationTokenCannotMutateAccount() {
+    for (String field : List.of("token", "expires_at", "account_id")) {
+      var fixture = emailVerificationFixture();
+      var other = emailVerificationFixture();
+      var before = emailVerificationState(fixture);
+      var changed = new AtomicBoolean();
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                var original = invocation.callRealMethod();
+                if (changed.compareAndSet(false, true)) {
+                  switch (field) {
+                    case "token" ->
+                        dsl.execute(
+                            "UPDATE email_verification_token SET token = ? WHERE token = ?",
+                            fixture.token() + "-changed",
+                            fixture.token());
+                    case "expires_at" ->
+                        dsl.execute(
+                            "UPDATE email_verification_token SET expires_at = expires_at + INTERVAL '1 second' WHERE token = ?",
+                            fixture.token());
+                    case "account_id" ->
+                        dsl.execute(
+                            "UPDATE email_verification_token SET account_id = ? WHERE token = ?",
+                            other.accountId(),
+                            fixture.token());
+                    default -> throw new AssertionError(field);
+                  }
+                }
+                return original;
+              })
+          .when(emailVerificationTokenRepository)
+          .findByToken(fixture.token());
+
+      assertThatThrownBy(() -> verifyEmail(fixture.token()))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Invalid token");
+
+      // The injected change shares the owner transaction and rolls back with the rejected claim.
+      assertThat(emailVerificationState(fixture)).isEqualTo(before);
+      assertThat(
+              dsl.fetchValue("SELECT email_verified FROM accounts WHERE id = ?", other.accountId()))
+          .isEqualTo(false);
+    }
+  }
+
+  @Test
+  void emailVerificationRollbackRestoresTokenAccountAndSourceEvidence() {
+    var fixture = emailVerificationFixture();
+    var before = emailVerificationState(fixture);
+    var transaction = new TransactionTemplate(transactionManager);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    status -> {
+                      verifyEmail(fixture.token());
+                      throw new IllegalStateException("failure after verification source update");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("failure after verification source update");
+    assertThat(emailVerificationState(fixture)).isEqualTo(before);
+    verifyEmail(fixture.token());
+    assertThat(
+            dsl.fetchValue("SELECT email_verified FROM accounts WHERE id = ?", fixture.accountId()))
+        .isEqualTo(true);
+  }
+
+  @Test
+  void emailVerificationWithoutOwnerBaselineRollsBackClaimWithoutEnrollingRetainedAccount() {
+    String suffix = UUID.randomUUID().toString();
+    // A raw retained-style row deliberately lacks repository-owned V40 source initialization.
+    long accountId =
+        java.util.Objects.requireNonNull(
+            dsl.resultQuery(
+                    "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                    "retained-" + suffix.substring(0, 8),
+                    suffix + "@example.com",
+                    "retained-password")
+                .fetchOne(0, Long.class));
+    var fixture = insertEmailVerificationToken(accountId);
+    var before = emailVerificationState(fixture);
+    assertThatThrownBy(() -> verifyEmail(fixture.token()))
+        .isInstanceOf(SourceEvidenceUnavailableException.class);
+    assertThat(emailVerificationState(fixture)).isEqualTo(before);
+  }
+
+  @Test
+  void emailVerificationUsesFreshOwnerAfterConcurrentAccountUpdate() throws Exception {
+    var fixture = emailVerificationFixture();
+    var changed = new AtomicBoolean();
+    var executor = Executors.newSingleThreadExecutor();
+    try {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                var original = invocation.callRealMethod();
+                if (changed.compareAndSet(false, true)) {
+                  executor
+                      .submit(
+                          () ->
+                              new TransactionTemplate(transactionManager)
+                                  .executeWithoutResult(
+                                      status -> {
+                                        var current =
+                                            accountRepository
+                                                .findByIdForUpdate(fixture.accountId())
+                                                .orElseThrow();
+                                        current.setUsername("current-" + fixture.accountId());
+                                        current.setEmail(
+                                            "current-" + fixture.accountId() + "@example.com");
+                                        current.setPasswordHash("current-password-hash");
+                                        current.setRole("player");
+                                        current.setLoginAuthModes("EMAIL_OTP");
+                                        accountRepository.save(current);
+                                      }))
+                      .get(30, TimeUnit.SECONDS);
+                }
+                return original;
+              })
+          .when(emailVerificationTokenRepository)
+          .findByToken(fixture.token());
+      UUID originalUuid =
+          dsl.resultQuery("SELECT account_uuid FROM accounts WHERE id = ?", fixture.accountId())
+              .fetchOne(0, UUID.class);
+
+      verifyEmail(fixture.token());
+
+      var current = accountRepository.findById(fixture.accountId()).orElseThrow();
+      assertThat(current.isEmailVerified()).isTrue();
+      assertThat(current.getUsername()).isEqualTo("current-" + fixture.accountId());
+      assertThat(current.getEmail()).isEqualTo("current-" + fixture.accountId() + "@example.com");
+      assertThat(current.getPasswordHash()).isEqualTo("current-password-hash");
+      assertThat(current.getRole()).isEqualTo("player");
+      assertThat(current.getAccountUuid()).isEqualTo(originalUuid);
+      assertThat(current.getAccountUuidSourceNumericId()).isEqualTo(fixture.accountId());
+      assertThat(current.getAccountUuidProvenance())
+          .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+      assertThat(current.getLoginAuthModes()).isEqualTo("EMAIL_OTP");
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private EmailVerificationFixture emailVerificationFixture() {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    var account =
+        accountService.createAccount(
+            new CreateAccountRequest(
+                "verify-" + suffix, "verify-" + suffix + "@example.com", "password123"));
+    long accountId =
+        java.util.Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT id FROM accounts WHERE account_uuid = ?", UUID.fromString(account.id()))
+                .fetchOne(0, Long.class));
+    return insertEmailVerificationToken(accountId);
+  }
+
+  private EmailVerificationFixture insertEmailVerificationToken(long accountId) {
+    String token = UUID.randomUUID().toString();
+    dsl.execute(
+        "INSERT INTO email_verification_token (account_id, token, expires_at) VALUES (?, ?, ?)",
+        accountId,
+        token,
+        LocalDateTime.now().plusHours(1));
+    return new EmailVerificationFixture(accountId, token);
+  }
+
+  private void verifyEmail(String token) {
+    accountService.verifyEmail(new VerifyEmailRequest(token));
+  }
+
+  private List<String> emailVerificationState(EmailVerificationFixture fixture) {
+    return List.of(
+        dsl.resultQuery(
+                "SELECT row_to_json(a)::text FROM accounts a WHERE id = ?", fixture.accountId())
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT row_to_json(t)::text FROM email_verification_token t WHERE token = ?",
+                fixture.token())
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT COALESCE(json_agg(s ORDER BY outbox_stream_key)::text, '[]') "
+                    + "FROM account_authority_source_records s WHERE account_uuid = "
+                    + "(SELECT account_uuid FROM accounts WHERE id = ?)",
+                fixture.accountId())
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT COUNT(*)::text FROM account_authority_outbox_events "
+                    + "WHERE outbox_stream_key = 'account:auth-authority:v1:account/' || "
+                    + "(SELECT account_uuid::text FROM accounts WHERE id = ?)",
+                fixture.accountId())
+            .fetchOne(0, String.class));
+  }
+
+  private record EmailVerificationFixture(long accountId, String token) {}
+
+  @Test
+  void publicJoinLostCommitAcknowledgementAndReadbackReplayTheSameOriginalOnce() {
+    var fixture = publicJoinFixture();
+    var readbackDropped = losePublicJoinTerminalResponse(fixture);
+
+    assertPublicJoinUnavailable(fixture);
+
+    assertThat(readbackDropped).isTrue();
+    assertPublicJoinCommittedOnce(fixture);
+    var committed = publicJoinState(fixture);
+    var replay = publicJoin(fixture);
+
+    assertThat(replay.success()).isTrue();
+    assertThat(replay.replayed()).isTrue();
+    assertThat(replay.outcomeCode()).isEqualTo("JOINED");
+    assertThat(replay.accountId()).isEqualTo(fixture.accountUuid());
+    assertPublicJoinCommittedOnce(fixture);
+    assertThat(publicJoinState(fixture)).isEqualTo(committed);
+  }
+
+  @Test
+  void publicJoinFailureBeforeCommitRollsBackEffectsAndContinuesTheOriginalIntent() {
+    var fixture = publicJoinFixture();
+    var failOnce = new AtomicBoolean(true);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              invocation.callRealMethod();
+              if (failOnce.compareAndSet(true, false)) {
+                // The real terminal UPDATE ran, but its owner transaction has not committed.
+                throw new IllegalStateException("Injected failure before public JOIN commit");
+              }
+              return null;
+            })
+        .when(joinOperationRepository)
+        .finish(
+            org.mockito.ArgumentMatchers.eq(fixture.caller().requestId()),
+            org.mockito.ArgumentMatchers.eq("COMMITTED"),
+            org.mockito.ArgumentMatchers.eq("JOINED"),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+
+    assertPublicJoinUnavailable(fixture);
+
+    assertThat(failOnce).isFalse();
+    var pending =
+        dsl.fetchOne(
+            "SELECT status, outcome, intent_digest, request_digest, membership_id "
+                + "FROM account_join_operations WHERE request_id = ?",
+            fixture.caller().requestId());
+    assertThat(pending).isNotNull();
+    assertThat(pending.get("status", String.class)).isEqualTo("PENDING");
+    assertThat(pending.get("intent_digest", String.class)).startsWith("sha256:");
+    assertThat(pending.get("outcome")).isNull();
+    assertThat(pending.get("request_digest")).isNull();
+    assertThat(pending.get("membership_id")).isNull();
+    assertThat(publicJoinMembershipCount(fixture)).isZero();
+    assertThat(publicJoinAuditCount(fixture)).isZero();
+
+    var continued = publicJoin(fixture);
+
+    assertThat(continued.success()).isTrue();
+    assertThat(continued.replayed()).isFalse();
+    assertThat(continued.outcomeCode()).isEqualTo("JOINED");
+    assertPublicJoinCommittedOnce(fixture);
+    assertThat(publicJoin(fixture).replayed()).isTrue();
+    assertPublicJoinCommittedOnce(fixture);
+  }
+
+  @Test
+  void publicJoinLostResponseThenExpiredScopePreservesTheCompleteCommittedOriginal() {
+    var fixture = publicJoinFixture();
+    var readbackDropped = losePublicJoinTerminalResponse(fixture);
+    assertPublicJoinUnavailable(fixture);
+    assertThat(readbackDropped).isTrue();
+    assertPublicJoinCommittedOnce(fixture);
+    var committed = publicJoinState(fixture);
+    String retainedExpiry =
+        dsl.resultQuery(
+                "SELECT s.connect_scope_expires_at FROM account_connect_scope_records s "
+                    + "JOIN account_join_operations j ON j.scope_token_hash = s.scope_token_hash "
+                    + "WHERE j.request_id = ?",
+                fixture.caller().requestId())
+            .fetchOne(0, String.class);
+    assertThat(retainedExpiry).isNotBlank();
+    Instant expiredNow = Instant.parse(retainedExpiry).plusSeconds(1);
+
+    // Advance only the owner clock; never rewrite the original scope, intent or terminal row.
+    try (org.mockito.MockedStatic<Instant> clock =
+        org.mockito.Mockito.mockStatic(Instant.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+      clock.when(Instant::now).thenReturn(expiredNow);
+      var refused = publicJoin(fixture);
+      assertThat(refused.success()).isFalse();
+      assertThat(refused.replayed()).isFalse();
+      assertThat(refused.outcomeCode()).isEqualTo("CONNECT_SCOPE_INVALID");
+    }
+
+    assertThat(publicJoinState(fixture)).isEqualTo(committed);
+    assertPublicJoinCommittedOnce(fixture);
+  }
+
+  private AtomicBoolean losePublicJoinTerminalResponse(PublicJoinFixture fixture) {
+    var committed = new AtomicBoolean();
+    var readbackDropped = new AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              invocation.callRealMethod();
+              org.springframework.transaction.support.TransactionSynchronizationManager
+                  .registerSynchronization(
+                      new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                          committed.set(true);
+                          throw new IllegalStateException("Injected lost public JOIN commit ACK");
+                        }
+                      });
+              return null;
+            })
+        .when(joinOperationRepository)
+        .finish(
+            org.mockito.ArgumentMatchers.eq(fixture.caller().requestId()),
+            org.mockito.ArgumentMatchers.eq("COMMITTED"),
+            org.mockito.ArgumentMatchers.eq("JOINED"),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (committed.get() && readbackDropped.compareAndSet(false, true)) {
+                throw new org.springframework.dao.DataAccessResourceFailureException(
+                    "Injected unavailable first post-commit JOIN readback");
+              }
+              return invocation.callRealMethod();
+            })
+        .when(joinOperationRepository)
+        .find(fixture.caller().requestId());
+    return readbackDropped;
+  }
+
+  private void assertPublicJoinUnavailable(PublicJoinFixture fixture) {
+    var unavailable =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            AuthenticationException.class, () -> publicJoin(fixture));
+    assertThat(unavailable.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+  }
+
+  private JoinPublicProductionResult publicJoin(PublicJoinFixture fixture) {
+    return accountService.joinPublicProductionFromGameSession(
+        fixture.caller(),
+        new JoinPublicProductionRequest(fixture.connectScopeId(), fixture.caller().requestId()));
+  }
+
+  private PublicJoinFixture publicJoinFixture() {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    String world = "join-" + suffix;
+    var account =
+        accountService.createAccount(
+            new CreateAccountRequest(world, world + "@example.com", "password123"));
+    long accountId =
+        java.util.Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT id FROM accounts WHERE account_uuid = ?", UUID.fromString(account.id()))
+                .fetchOne(0, Long.class));
+    long tenantId = 6000000000L + accountId;
+    dsl.execute(
+        "INSERT INTO subscription(account_id,plan_id,status,tenant_id,entitlement_version) "
+            + "VALUES(?,'join-proof','active',?,1)",
+        accountId,
+        tenantId);
+    UUID realmId = UUID.randomUUID();
+    String namespace = UUID.randomUUID().toString();
+    var realm =
+        net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setRealmId(realmId.toString())
+            .setWorldSlug(world)
+            .setRealmSlug("production")
+            .setPlayableStateNamespaceId(namespace)
+            .setStateScope("SHARED")
+            .setGameInstanceId("44")
+            .setCatalogRevision(23L)
+            .setPointerVersion(17L)
+            .setVisible(true)
+            .setPublicProductionRealm(true)
+            .build();
+    var pointer =
+        net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+            .setTenantId(Long.toString(tenantId))
+            .setRealmId(realmId.toString())
+            .setWorldSlug(world)
+            .setRealmSlug("production")
+            .setPlayableStateNamespaceId(namespace)
+            .setStateScope("SHARED")
+            .setGameInstanceId("44")
+            .setCatalogRevision(23L)
+            .setPointerVersion(17L)
+            .setVisible(true)
+            .setPublicProductionRealm(true)
+            .build();
+    org.mockito.Mockito.when(gameSessionClient.listGameplayRealms(world))
+        .thenReturn(List.of(realm));
+    org.mockito.Mockito.when(gameSessionClient.getAdmissionPointer(tenantId, world, "production"))
+        .thenReturn(pointer);
+    var caller =
+        new DirectTextCallerContext(
+            accountId,
+            tenantId,
+            realmId,
+            namespace,
+            "SHARED",
+            44L,
+            "controlled-join-session-" + suffix,
+            "original-join-" + suffix);
+    var scope =
+        accountService.issueDirectTextConnectScope(
+            caller,
+            new DirectTextJoinTarget(
+                tenantId, realmId, world, "production", namespace, "SHARED", 44L, 23L, 17L));
+    return new PublicJoinFixture(accountId, account.id(), tenantId, caller, scope.connectScopeId());
+  }
+
+  private long publicJoinMembershipCount(PublicJoinFixture fixture) {
+    return java.util.Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne(0, Long.class));
+  }
+
+  private UUID publicJoinAuditId(PublicJoinFixture fixture) {
+    return UUID.nameUUIDFromBytes(
+        ("account-join-audit/v1:" + fixture.caller().requestId()).getBytes(StandardCharsets.UTF_8));
+  }
+
+  private long publicJoinAuditCount(PublicJoinFixture fixture) {
+    return java.util.Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_audit_outbox WHERE audit_event_id = ?",
+                publicJoinAuditId(fixture))
+            .fetchOne(0, Long.class));
+  }
+
+  private void assertPublicJoinCommittedOnce(PublicJoinFixture fixture) {
+    assertThat(publicJoinMembershipCount(fixture)).isEqualTo(1L);
+    assertThat(publicJoinAuditCount(fixture)).isEqualTo(1L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_join_operations j "
+                    + "JOIN account_tenant_membership m ON m.id = j.membership_id "
+                    + "WHERE j.request_id = ? AND j.status = 'COMMITTED' AND j.outcome = 'JOINED' "
+                    + "AND j.account_id = ? AND j.tenant_id = ? "
+                    + "AND m.account_id = j.account_id AND m.tenant_id = j.tenant_id "
+                    + "AND m.lifecycle_state = 'ACTIVE' AND m.authority_provenance = 'EXPLICIT_JOIN' "
+                    + "AND m.membership_version = 1 AND m.membership_authority_generation = 1 "
+                    + "AND j.outcome_membership_version = m.membership_version "
+                    + "AND j.outcome_membership_authority_generation = m.membership_authority_generation",
+                fixture.caller().requestId(),
+                fixture.accountId(),
+                fixture.tenantId()))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_audit_outbox "
+                    + "WHERE audit_event_id = ? AND scope = 'tenant' AND tenant_id = ? "
+                    + "AND producer_service = 'account-service' "
+                    + "AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION' "
+                    + "AND payload::jsonb ->> 'requestId' = ? "
+                    + "AND payload::jsonb ->> 'accountId' = ? "
+                    + "AND payload::jsonb ->> 'membershipVersion' = '1'",
+                publicJoinAuditId(fixture),
+                fixture.tenantId(),
+                fixture.caller().requestId(),
+                Long.toString(fixture.accountId())))
+        .isEqualTo(1L);
+  }
+
+  private List<String> publicJoinState(PublicJoinFixture fixture) {
+    return List.of(
+        dsl.resultQuery(
+                "SELECT row_to_json(j)::text FROM account_join_operations j WHERE request_id = ?",
+                fixture.caller().requestId())
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT row_to_json(m)::text FROM account_tenant_membership m "
+                    + "WHERE account_id = ? AND tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                // Delivery retry diagnostics may advance independently of original JOIN evidence.
+                "SELECT (to_jsonb(a) - ARRAY['attempt_count','last_attempt_at','next_attempt_at'])::text "
+                    + "FROM account_audit_outbox a WHERE audit_event_id = ?",
+                publicJoinAuditId(fixture))
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT row_to_json(s)::text FROM account_connect_scope_records s "
+                    + "JOIN account_join_operations j ON j.scope_token_hash = s.scope_token_hash "
+                    + "WHERE j.request_id = ?",
+                fixture.caller().requestId())
+            .fetchOne(0, String.class));
+  }
+
+  private record PublicJoinFixture(
+      long accountId,
+      String accountUuid,
+      long tenantId,
+      DirectTextCallerContext caller,
+      String connectScopeId) {}
 
   @Test
   void publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly() throws Exception {

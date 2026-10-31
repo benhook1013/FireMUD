@@ -25,12 +25,16 @@ service AccountService {
   rpc ListPresenceVisibilityPolicies(ListPresenceVisibilityPoliciesRequest)
       returns (ListPresenceVisibilityPoliciesResponse);
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
+  // Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response.
   rpc ExportAccount(ExportAccountRequest) returns (ExportAccountResponse);
+  // Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response.
   rpc ExportTenantData(ExportTenantDataRequest) returns (ExportTenantDataResponse);
   rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse);
   rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
   rpc CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse);
+  // Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response.
   rpc LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse);
+  // Deferred: non-OK FAILED_PRECONDITION with ErrorDetail status trailers; no response.
   rpc RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse);
   rpc VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse);
 }

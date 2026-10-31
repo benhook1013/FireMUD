@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CERT_DIR="${1:-$SCRIPT_DIR}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+CERT_DIR="${1:-${CERT_DIR:-$SCRIPT_DIR}}"
 GENERATOR="$SCRIPT_DIR/generate-dev-certs.sh"
 COMPOSE_MTLS_STAGE_ROOT=""
 COMPOSE_MTLS_STAGE_DIR=""
@@ -246,28 +246,5 @@ if [[ "${1:-}" == "--compose-mtls" ]]; then
   exit $?
 fi
 
-required_files=(
-  "$CERT_DIR/ca.crt"
-  "$CERT_DIR/client.crt"
-  "$CERT_DIR/client.key"
-  "$CERT_DIR/dev-ca.pem"
-  "$CERT_DIR/dev-cert.pem"
-  "$CERT_DIR/dev-key.pem"
-  "$CERT_DIR/server.crt"
-  "$CERT_DIR/server.key"
-)
-
-missing=0
-for file in "${required_files[@]}"; do
-  if [[ ! -f "$file" ]]; then
-    missing=1
-    break
-  fi
-done
-
-if [[ "$missing" == "0" ]]; then
-  echo "Development certificates already exist in $CERT_DIR"
-  exit 0
-fi
-
+# The generator owns complete-bundle validation and read-only retained reuse.
 "$GENERATOR" "$CERT_DIR"

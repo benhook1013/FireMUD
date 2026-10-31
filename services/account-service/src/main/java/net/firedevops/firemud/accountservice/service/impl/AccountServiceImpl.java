@@ -3184,13 +3184,33 @@ public class AccountServiceImpl implements AccountService {
         emailVerificationTokenRepository
             .findByToken(request.token())
             .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
-    if (token.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+    if (token.getId() == null
+        || token.getId() <= 0L
+        || token.getAccount() == null
+        || token.getAccount().getId() == null
+        || token.getAccount().getId() <= 0L
+        || token.getExpiresAt() == null
+        || !request.token().equals(token.getToken())) {
+      throw new IllegalArgumentException("Invalid token");
+    }
+    // The token join supplies a locator, not the current full Account to mutate.
+    Long accountId = token.getAccount().getId();
+    Account account =
+        accountRepository
+            .findByIdForUpdate(accountId)
+            .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
+    if (!accountId.equals(account.getId())) {
+      throw new IllegalArgumentException("Invalid token");
+    }
+    LocalDateTime capturedNow = LocalDateTime.now();
+    if (!token.getExpiresAt().isAfter(capturedNow)) {
       throw new IllegalArgumentException("Token expired");
     }
-    Account account = token.getAccount();
+    if (!emailVerificationTokenRepository.consumeIfUnexpired(token, capturedNow)) {
+      throw new IllegalArgumentException("Invalid token");
+    }
     account.setEmailVerified(true);
     accountRepository.save(account);
-    emailVerificationTokenRepository.delete(token);
   }
 
   @Override

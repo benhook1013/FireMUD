@@ -1,7 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# Check lexical ancestors before mkdir/OpenSSL can follow a retained link.
+require_safe_directory_path() {
+  local path="$1"
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  while [[ "$path" != / && "$path" == */ ]]; do path="${path%/}"; done
+  while :; do
+    if [[ -L "$path" || ( -e "$path" && ! -d "$path" ) ]]; then
+      echo "Certificate directory and ancestors must be real directories: $path" >&2
+      return 1
+    fi
+    [[ "$path" != / ]] || break
+    path="$(dirname -- "$path")"
+  done
+}
+
+require_safe_file_path() {
+  local path="$1"
+  require_safe_directory_path "$(dirname -- "$path")" || return 1
+  if [[ -L "$path" || ( -e "$path" && ( ! -f "$path" || "$(stat -c %h -- "$path")" != 1 ) ) ]]; then
+    echo "Certificate paths must be regular files without symlinks or hardlinks: $path" >&2
+    return 1
+  fi
+}
+
+certificate_matches_key() {
+  local cert_public key_public
+  cert_public="$(openssl x509 -in "$1" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum)" || return 1
+  key_public="$(openssl pkey -in "$2" -passin pass: -pubout -outform DER | sha256sum)" || return 1
+  [[ "$cert_public" == "$key_public" ]]
+}
 
 if [[ "${1:-}" == "--workload" ]]; then
   umask 077
@@ -16,6 +47,20 @@ if [[ "${1:-}" == "--workload" ]]; then
   output_key="$5"
   runtime_namespace="$6"
   workload="$7"
+  # Preflight every input/output before creating directories or writing a key.
+  for managed_file in "$ca_cert" "$ca_key" "$output_cert" "$output_key"; do
+    require_safe_file_path "$managed_file"
+  done
+  for output_file in "$output_cert" "$output_key"; do
+    if [[ -e "$output_file" ]]; then
+      echo "Refusing to overwrite retained workload output: $output_file" >&2
+      exit 1
+    fi
+  done
+  certificate_matches_key "$ca_cert" "$ca_key" || {
+    echo "Invalid workload certificate authority or mismatched key." >&2
+    exit 1
+  }
   for required_file in "$ca_cert" "$ca_key"; do
     [[ -f "$required_file" ]] || {
       echo "missing certificate authority file: $required_file" >&2
@@ -90,7 +135,44 @@ else
   CERT_DIR="${CERT_DIR:-$SCRIPT_DIR}"
 fi
 
-if [ -f "$CERT_DIR/dev-cert.pem" ] && [ -f "$CERT_DIR/dev-key.pem" ] && [ -f "$CERT_DIR/dev-ca.pem" ]; then
+required_files=(ca.crt ca.key server.crt server.key client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem)
+managed_files=("${required_files[@]}" ca.srl server.csr dev-cert.cnf)
+require_safe_directory_path "$CERT_DIR"
+retained=0
+for filename in "${managed_files[@]}"; do
+  require_safe_file_path "$CERT_DIR/$filename"
+  if [[ -e "$CERT_DIR/$filename" ]]; then
+    retained=1
+  fi
+done
+
+if ((retained)); then
+  for filename in "${required_files[@]}"; do
+    if [[ ! -f "$CERT_DIR/$filename" ]]; then
+      echo "Incomplete retained development certificate bundle; refusing to replace material: $CERT_DIR" >&2
+      exit 1
+    fi
+  done
+  # Validate without changing retained bytes, modes, or directory permissions.
+  valid=1
+  certificate_matches_key "$CERT_DIR/ca.crt" "$CERT_DIR/ca.key" || valid=0
+  openssl verify -check_ss_sig -CAfile "$CERT_DIR/ca.crt" "$CERT_DIR/ca.crt" >/dev/null 2>&1 || valid=0
+  cmp -s "$CERT_DIR/ca.crt" "$CERT_DIR/dev-ca.pem" || valid=0
+  for name in server client dev; do
+    if [[ "$name" == dev ]]; then
+      certificate="$CERT_DIR/dev-cert.pem"
+      private_key="$CERT_DIR/dev-key.pem"
+    else
+      certificate="$CERT_DIR/$name.crt"
+      private_key="$CERT_DIR/$name.key"
+    fi
+    certificate_matches_key "$certificate" "$private_key" || valid=0
+    openssl verify -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null 2>&1 || valid=0
+  done
+  if (( ! valid )); then
+    echo "Invalid retained development certificate bundle; refusing to replace material: $CERT_DIR" >&2
+    exit 1
+  fi
   echo "Dev certificates already exist in $CERT_DIR"
   exit 0
 fi
@@ -151,13 +233,15 @@ cp "$CERT_DIR/ca.crt" "$CERT_DIR/dev-ca.pem"
 cp "$CERT_DIR/client.crt" "$CERT_DIR/dev-cert.pem"
 cp "$CERT_DIR/client.key" "$CERT_DIR/dev-key.pem"
 
-rm -f "$CERT_DIR"/*.csr "$CERT_DIR"/*.srl
+rm -f -- "$CERT_DIR/server.csr" "$CERT_DIR/ca.srl"
 rm -f "$CERT_DIR/dev-cert.cnf"
 
 # Containers run as a non-root application user in CI and local Docker.
 # Make the generated development certificates world-readable so bind mounts
 # remain readable inside the container regardless of host UID/GID.
 chmod 755 "$CERT_DIR"
-chmod 644 "$CERT_DIR"/*.crt "$CERT_DIR"/*.key "$CERT_DIR"/*.pem
+for filename in "${required_files[@]}"; do
+  chmod 644 "$CERT_DIR/$filename"
+done
 
 echo "Certificates generated in $(cd "$CERT_DIR" && pwd)"
