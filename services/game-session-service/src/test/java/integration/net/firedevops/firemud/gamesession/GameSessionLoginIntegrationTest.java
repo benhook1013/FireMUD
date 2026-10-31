@@ -156,7 +156,10 @@ class GameSessionLoginIntegrationTest {
     assertThat(payloads).anyMatch(s -> s.startsWith("OK LOGIN"));
     assertThat(sessionContextService.findByTenantAndSessionId(42L, 1L))
         .hasValueSatisfying(context -> assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID));
-    assertThat(redisValueStore).containsKey("accountrecentpresence:42:" + ACCOUNT_UUID);
+    net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions.assertEventually(
+        "account recent presence",
+        java.time.Duration.ofSeconds(5),
+        () -> redisValueStore.containsKey("accountrecentpresence:42:" + ACCOUNT_UUID));
 
     verify(accountClient).authenticate(eq("demo@example.com"), eq("swordfish"));
   }
