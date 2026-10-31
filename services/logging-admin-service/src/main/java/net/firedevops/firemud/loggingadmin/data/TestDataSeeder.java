@@ -6,7 +6,6 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.loggingadmin.entity.LogEvent;
 import net.firedevops.firemud.loggingadmin.entity.PlayerReport;
 import net.firedevops.firemud.loggingadmin.repository.LogEventRepository;
-import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository;
 import net.firedevops.firemud.loggingadmin.repository.PlayerReportRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -31,7 +30,6 @@ public class TestDataSeeder implements ApplicationRunner {
 
   private final LogEventRepository logEventRepository;
   private final PlayerReportRepository playerReportRepository;
-  private final ModerationActionRepository moderationActionRepository;
 
   @Override
   @Transactional

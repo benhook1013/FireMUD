@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import net.firedevops.firemud.loggingadmin.repository.LogEventRepository;
-import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository;
 import net.firedevops.firemud.loggingadmin.repository.PlayerReportRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,15 +17,13 @@ import org.springframework.boot.DefaultApplicationArguments;
 class TestDataSeederTest {
   @Mock LogEventRepository logEventRepository;
   @Mock PlayerReportRepository playerReportRepository;
-  @Mock ModerationActionRepository moderationActionRepository;
 
   private TestDataSeeder seeder;
 
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
-    seeder =
-        new TestDataSeeder(logEventRepository, playerReportRepository, moderationActionRepository);
+    seeder = new TestDataSeeder(logEventRepository, playerReportRepository);
   }
 
   @Test
@@ -41,7 +38,6 @@ class TestDataSeederTest {
 
     verify(logEventRepository).save(any());
     verify(playerReportRepository).save(any());
-    org.mockito.Mockito.verifyNoInteractions(moderationActionRepository);
   }
 
   @Test
@@ -56,9 +52,7 @@ class TestDataSeederTest {
 
     verify(logEventRepository).save(any());
     verify(playerReportRepository).save(any());
-    org.mockito.Mockito.verifyNoInteractions(moderationActionRepository);
     verify(logEventRepository, never()).count();
     verify(playerReportRepository, never()).count();
-    verify(moderationActionRepository, never()).count();
   }
 }

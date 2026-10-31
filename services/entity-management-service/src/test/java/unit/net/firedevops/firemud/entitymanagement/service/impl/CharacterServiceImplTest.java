@@ -1,7 +1,11 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -19,6 +23,43 @@ import org.mockito.Mockito;
 import org.springframework.cache.concurrent.ConcurrentMapCacheManager;
 
 class CharacterServiceImplTest {
+
+  @Test
+  void retainedUnresolvedOwnerCannotBeProjectedOrCached() {
+    CharacterRepository repo = Mockito.mock(CharacterRepository.class);
+    var cacheManager = new ConcurrentMapCacheManager("characterGraph");
+    CharacterServiceImpl service =
+        new CharacterServiceImpl(
+            repo,
+            Mappers.getMapper(CharacterMapper.class),
+            cacheManager,
+            new SimpleMeterRegistry(),
+            new PlayableStateKeyResolver(),
+            new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
+    service.initMetrics();
+    Character retained = new Character();
+    retained.setId(1L);
+    retained.setTenantId(1L);
+    retained.setAccountId(42L);
+    retained.setAccountUuid(null);
+    retained.setPlayableStateKey("shared-live");
+    retained.setName("Retained");
+    when(repo.findWithInventoryById(1L)).thenReturn(Optional.of(retained));
+    when(repo.findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(1L, "shared-live", "Retained"))
+        .thenReturn(Optional.of(retained));
+
+    assertThrows(IllegalArgumentException.class, () -> service.getWithInventory(1L));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.findByGameplayScopeAndName(
+                1L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Retained"));
+
+    assertNull(cacheManager.getCache("characterGraph").get(1L));
+    assertEquals(42L, retained.getAccountId());
+    assertNull(retained.getAccountUuid());
+    verify(repo, never()).save(any());
+  }
 
   @Test
   void gainExperienceLevelsUp() {
