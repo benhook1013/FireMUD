@@ -466,8 +466,12 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
               entityPostgres.getJdbcUrl(),
               entityPostgres.getUsername(),
               entityPostgres.getPassword());
-      Path migrationDirectory =
-          Path.of(System.getProperty("firemud.entity-management.migration-directory", ""));
+      String migrationProperty =
+          System.getProperty("firemud.entity-management.migration-directory");
+      if (migrationProperty == null || migrationProperty.isBlank()) {
+        throw new IllegalStateException("Entity migration directory property is missing or blank");
+      }
+      Path migrationDirectory = Path.of(migrationProperty);
       if (!Files.isDirectory(migrationDirectory)) {
         throw new IllegalStateException(
             "Entity migration directory is unavailable: " + migrationDirectory);
