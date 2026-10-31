@@ -1323,25 +1323,36 @@ for selector, menu, expected_error in (
     ),
 ):
     missing_world_session = RepeatingWorldResponseSession(menu)
-    try:
-        run_telnet_smoke_session(
-            "example.test",
-            2323,
-            [
-                ("WORLDS", ["OK WORLDS"], "WORLDS"),
-                ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
-                ("PLAY demo", ["OK PLAY"], "PLAY"),
-                ("LOOK", ["OK LOOK"], "LOOK"),
-            ],
-            0.01,
-            open_session=lambda: missing_world_session,
-            tls_enabled=False,
-            discovery_selector=selector,
-        )
-    except smoke_common.ProbeOperationalFailure as exc:
-        assert expected_error in str(exc), str(exc)
-    else:
-        raise AssertionError(f"unavailable or ambiguous world {selector!r} was accepted")
+    # Selector diagnostics are tested inside a deterministic budget; runner load must not
+    # turn the ambiguity case into an unrelated response-deadline failure.
+    selector_fixture_clock = [0.0]
+
+    def advance_selector_fixture_clock(seconds):
+        selector_fixture_clock[0] += seconds
+
+    with patch("smoke_common.time.time", side_effect=lambda: selector_fixture_clock[0]), patch(
+        "smoke_common.time.sleep", side_effect=advance_selector_fixture_clock
+    ):
+        try:
+            run_telnet_smoke_session(
+                "example.test",
+                2323,
+                [
+                    ("WORLDS", ["OK WORLDS"], "WORLDS"),
+                    ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+                    ("PLAY demo", ["OK PLAY"], "PLAY"),
+                    ("LOOK", ["OK LOOK"], "LOOK"),
+                ],
+                1,
+                open_session=lambda: missing_world_session,
+                tls_enabled=False,
+                discovery_selector=selector,
+            )
+        except smoke_common.ProbeOperationalFailure as exc:
+            assert expected_error in str(exc), str(exc)
+        else:
+            raise AssertionError(f"unavailable or ambiguous world {selector!r} was accepted")
+    assert missing_world_session.sent
     assert all(command == "WORLDS\r\n" for command in missing_world_session.sent)
 
 
