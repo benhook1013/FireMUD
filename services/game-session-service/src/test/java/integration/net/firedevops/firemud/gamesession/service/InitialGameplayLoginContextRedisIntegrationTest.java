@@ -546,10 +546,19 @@ class InitialGameplayLoginContextRedisIntegrationTest {
               () -> client(delayed, new ControlledAuthority(), 1).install(original, result));
       try {
         assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+        var closing = new TracedProvider(writer);
+        // This positive closure proof allows replica fsync under shared-runner load.
+        // The separately tested insufficient-acknowledgement paths retain their short deadline.
         var closure =
             new InitialGameplayLoginRedisAttemptClosure(
-                client(new TracedProvider(writer), new ControlledAuthority(), 1));
+                client(
+                    closing,
+                    new ControlledAuthority(),
+                    new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000)));
         assertThat(closure.withAcknowledgedClosure(original, receipt -> receipt.coordinates()))
+            .as(
+                "physical closure observations before releasing delayed install: %s",
+                closing.traces)
             .contains(original);
       } finally {
         release.countDown();
