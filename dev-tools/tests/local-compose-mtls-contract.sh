@@ -89,6 +89,8 @@ for name in services:
     environment = service["environment"]
     for key, expected in expected_environment.items():
         assert environment[key] == expected, (name, key, environment.get(key))
+    probe = "liveness" if name in {"gateway", "tcp-proxy-service"} else "readiness"
+    assert f"/actuator/health/{probe}" in service["healthcheck"]["test"][-1], (name, service["healthcheck"])
     cert_mounts = [volume for volume in service.get("volumes", []) if volume.get("target") == "/app/certs"]
     assert len(cert_mounts) == 1, (name, cert_mounts)
     mount = cert_mounts[0]
