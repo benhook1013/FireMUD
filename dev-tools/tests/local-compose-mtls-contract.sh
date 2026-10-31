@@ -53,7 +53,7 @@ if bash "$CERT_HELPER" "$corrupt_root" >"$tmp_root/corrupt-output" 2>&1; then
   echo "local Compose mTLS helper accepted incomplete retained authority material." >&2
   exit 1
 fi
-rg -Fq "new dedicated FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT" "$tmp_root/corrupt-output"
+grep -Fq "new dedicated FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT" "$tmp_root/corrupt-output"
 [[ "$(cat "$corrupt_root/authority/ca.crt")" == "retained-corrupt-certificate" ]]
 [[ ! -e "$corrupt_root/authority/ca.key" && ! -L "$corrupt_root/authority/ca.key" ]]
 
