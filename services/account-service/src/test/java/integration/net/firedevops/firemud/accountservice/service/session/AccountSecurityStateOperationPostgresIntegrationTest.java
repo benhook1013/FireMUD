@@ -2,6 +2,7 @@ package integration.net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -41,6 +42,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -615,6 +617,17 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
       Pending first = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
       tx(fixture, () -> fixture.operations().claim(first.request(), first.capture()));
       Event event = producerFixture(fixture, first, false);
+      var committed =
+          tx(
+              fixture,
+              () ->
+                  fixture.operations().findByRequestId(first.request().requestId()).orElseThrow());
+      assertThat(committed.receipt()).isPresent();
+      assertThat(
+              tx(
+                  fixture,
+                  () -> fixture.fences().readSourceChange(first.capture().sourceChange()).status()))
+          .isEqualTo("SOURCE_COMMITTED");
       ScopeState current =
           tx(
               fixture,
@@ -634,10 +647,15 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
       fixture.dsl().execute("ALTER TABLE account_authority_outbox_events DISABLE TRIGGER USER");
       fixture.dsl().execute("UPDATE account_authority_outbox_events SET " + corruption);
       fixture.dsl().execute("ALTER TABLE account_authority_outbox_events ENABLE TRIGGER USER");
+      String expectedMessage =
+          corruption.startsWith("payload = ")
+              ? "Original checkpoint capture differs"
+              : "Account source event readback is inconsistent";
       assertThatThrownBy(
               () ->
                   tx(fixture, () -> fixture.operations().claim(second.request(), second.capture())))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage(expectedMessage);
       assertThat(fixture.dsl().fetchCount(DSL.table("account_security_state_operations")))
           .isEqualTo(1);
       assertThat(
@@ -660,6 +678,21 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
       Pending pending = pending(fixture, seed, state(false), state(true), 0L, new byte[0]);
       tx(fixture, () -> fixture.operations().claim(pending.request(), pending.capture()));
       producerFixture(fixture, pending, false);
+      var committed =
+          tx(
+              fixture,
+              () ->
+                  fixture
+                      .operations()
+                      .findByRequestId(pending.request().requestId())
+                      .orElseThrow());
+      assertThat(committed.receipt()).isPresent();
+      assertThat(
+              tx(
+                  fixture,
+                  () ->
+                      fixture.fences().readSourceChange(pending.capture().sourceChange()).status()))
+          .isEqualTo("SOURCE_COMMITTED");
       fixture.dsl().execute("ALTER TABLE " + table + " DISABLE TRIGGER USER");
       fixture
           .dsl()
@@ -668,12 +701,21 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
                   ? "UPDATE account_authority_generations SET generation = 1, source_version = 1"
                   : "UPDATE account_authority_outbox_streams SET last_sequence = 0");
       fixture.dsl().execute("ALTER TABLE " + table + " ENABLE TRIGGER USER");
+      String expectedMessage =
+          table.equals("account_authority_generations")
+              ? "Account source snapshot is inconsistent"
+              : "Account authority outbox zero checkpoint has event evidence";
+      Class<? extends RuntimeException> expectedException =
+          table.equals("account_authority_generations")
+              ? IllegalArgumentException.class
+              : IllegalStateException.class;
       assertThatThrownBy(
               () ->
                   tx(
                       fixture,
                       () -> fixture.operations().findByRequestId(pending.request().requestId())))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(expectedException)
+          .hasMessage(expectedMessage);
     }
   }
 
@@ -683,9 +725,50 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
     Seed seed = seed(missing);
     Pending pending = pending(missing, seed, state(false), state(true), 0L, new byte[0]);
     tx(missing, () -> missing.operations().claim(pending.request(), pending.capture()));
-    assertThatThrownBy(() -> producerFixture(missing, pending, false, false))
-        .isInstanceOf(RuntimeException.class);
-    assertThat(missing.dsl().fetchCount(DSL.table("account_authority_outbox_events"))).isZero();
+    Event event = producerFixture(missing, pending, false);
+    var committed =
+        tx(
+            missing,
+            () ->
+                missing.operations().findByRequestId(pending.request().requestId()).orElseThrow());
+    assertThat(committed.receipt()).isPresent();
+    assertThat(
+            tx(
+                missing,
+                () -> missing.fences().readSourceChange(pending.capture().sourceChange()).status()))
+        .isEqualTo("SOURCE_COMMITTED");
+    ScopeState current = tx(missing, () -> missing.generations().read(seed.source().scope()));
+    var checkpoint = tx(missing, () -> missing.outbox().readCheckpoint(event.outboxStreamKey()));
+    assertThat(sourceReader(missing).readCurrent(seed.account().getAccountUuid()).latestEvent())
+        .contains(event);
+
+    // Simulate a missing immutable receipt only after proving the original source mutation settled.
+    missing.dsl().execute("ALTER TABLE account_security_state_operations DISABLE TRIGGER USER");
+    try {
+      assertThat(
+              missing
+                  .dsl()
+                  .execute(
+                      "DELETE FROM account_security_state_operations WHERE request_id = ?",
+                      pending.request().requestId()))
+          .isEqualTo(1);
+    } finally {
+      missing.dsl().execute("ALTER TABLE account_security_state_operations ENABLE TRIGGER USER");
+    }
+    assertPostgresCheckViolation(
+        () ->
+            missing
+                .dsl()
+                .execute(
+                    "UPDATE accounts SET email_verified = false WHERE id = ?",
+                    seed.account().getId()),
+        "V79 security-state event has no exact committed Account operation receipt");
+    assertThat(missing.dsl().fetchCount(DSL.table("account_security_state_operations"))).isZero();
+    assertThat(missing.dsl().fetchCount(DSL.table("account_authority_outbox_events"))).isEqualTo(1);
+    assertThat(tx(missing, () -> missing.generations().read(seed.source().scope())))
+        .isEqualTo(current);
+    assertThat(tx(missing, () -> missing.outbox().readCheckpoint(event.outboxStreamKey())))
+        .isEqualTo(checkpoint);
     assertThat(
             Objects.requireNonNull(
                     missing
@@ -695,21 +778,21 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
                             seed.account().getId()),
                     "Expected persisted Account row after missing-receipt rejection")
                 .get(0, Boolean.class))
-        .isFalse();
+        .isTrue();
 
     Fixture changed = fixture(null);
     Seed other = seed(changed);
     Pending original = pending(changed, other, state(false), state(true), 0L, new byte[0]);
     tx(changed, () -> changed.operations().claim(original.request(), original.capture()));
     producerFixture(changed, original, false);
-    assertThatThrownBy(
-            () ->
-                changed
-                    .dsl()
-                    .execute(
-                        "UPDATE accounts SET email_verified = false WHERE id = ?",
-                        other.account().getId()))
-        .isInstanceOf(RuntimeException.class);
+    assertPostgresCheckViolation(
+        () ->
+            changed
+                .dsl()
+                .execute(
+                    "UPDATE accounts SET email_verified = false WHERE id = ?",
+                    other.account().getId()),
+        "V79 security-state receipt does not bind the exact original and current Account states");
     assertThat(
             Objects.requireNonNull(
                     changed
@@ -1338,6 +1421,17 @@ class AccountSecurityStateOperationPostgresIntegrationTest {
 
   private static <T> T tx(Fixture fixture, Supplier<T> work) {
     return fixture.transaction().execute(status -> work.get());
+  }
+
+  private static void assertPostgresCheckViolation(Runnable operation, String expectedMessage) {
+    Throwable failure = catchThrowable(operation::run);
+    assertThat(failure).isInstanceOf(org.jooq.exception.DataAccessException.class);
+    Throwable cause = failure;
+    while (cause.getCause() != null) cause = cause.getCause();
+    assertThat(cause)
+        .isExactlyInstanceOf(PSQLException.class)
+        .hasMessageContaining(expectedMessage);
+    assertThat(((PSQLException) cause).getSQLState()).isEqualTo("23514");
   }
 
   private static AccountState state(boolean verified) {

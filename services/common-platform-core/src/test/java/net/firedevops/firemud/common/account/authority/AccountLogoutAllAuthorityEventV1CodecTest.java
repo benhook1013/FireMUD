@@ -44,7 +44,10 @@ class AccountLogoutAllAuthorityEventV1CodecTest {
     assertThat(vectors.path("schemaVersion").asText())
         .isEqualTo("account-auth-logout-all-event-vectors/v1");
 
-    for (JsonNode vector : vectors.path("validEvents")) {
+    JsonNode validEvents = vectors.path("validEvents");
+    assertThat(validEvents.isArray()).as("validEvents is an array").isTrue();
+    assertThat(validEvents.size()).as("validEvents is nonempty").isPositive();
+    for (JsonNode vector : validEvents) {
       JsonNode wireEvent = vector.path("event");
       var verified = AccountLogoutAllAuthorityEventV1Codec.verify(wireEvent.toString());
       assertThat(verified.eventDigest()).isEqualTo(vector.path("expectedEventDigest").asText());
@@ -78,7 +81,10 @@ class AccountLogoutAllAuthorityEventV1CodecTest {
     ObjectNode baseline = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
     String originalDigest = baseline.path("eventDigest").asText();
 
-    for (JsonNode mutation : vectors.path("changedDeclaredFieldMutations")) {
+    JsonNode mutations = vectors.path("changedDeclaredFieldMutations");
+    assertThat(mutations.isArray()).as("changedDeclaredFieldMutations is an array").isTrue();
+    assertThat(mutations.size()).as("changedDeclaredFieldMutations is nonempty").isPositive();
+    for (JsonNode mutation : mutations) {
       ObjectNode changedWire = (ObjectNode) baseline.deepCopy();
       JsonNode changes = mutation.path("changes");
       changes
@@ -105,7 +111,10 @@ class AccountLogoutAllAuthorityEventV1CodecTest {
     JsonNode vector = vectors.path("validEvents").get(0);
     JsonNode event = vector.path("event");
     ObjectNode reordered = JSON.createObjectNode();
-    for (JsonNode field : vectors.path("canonicalReorderedPropertyOrder")) {
+    JsonNode propertyOrder = vectors.path("canonicalReorderedPropertyOrder");
+    assertThat(propertyOrder.isArray()).as("canonicalReorderedPropertyOrder is an array").isTrue();
+    assertThat(propertyOrder.size()).as("canonicalReorderedPropertyOrder is nonempty").isPositive();
+    for (JsonNode field : propertyOrder) {
       String fieldName = field.asText();
       reordered.set(fieldName, event.path(fieldName).deepCopy());
     }
@@ -118,13 +127,42 @@ class AccountLogoutAllAuthorityEventV1CodecTest {
   @Test
   void invalidMutationVectorsAreRejected() {
     ObjectNode baseline = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
-    for (JsonNode mutation : vectors.path("invalidMutations")) {
+    JsonNode mutations = vectors.path("invalidMutations");
+    assertThat(mutations.isArray()).as("invalidMutations is an array").isTrue();
+    assertThat(mutations.size()).as("invalidMutations is nonempty").isPositive();
+    for (JsonNode mutation : mutations) {
       ObjectNode changed = (ObjectNode) baseline.deepCopy();
       applyMutation(changed, mutation);
       assertThatThrownBy(() -> AccountLogoutAllAuthorityEventV1Codec.verify(changed.toString()))
           .as(mutation.path("name").asText())
           .isInstanceOf(IllegalArgumentException.class);
+
+      if (!"/eventDigest".equals(mutation.path("path").asText())) {
+        ObjectNode changedPreimage = (ObjectNode) changed.deepCopy();
+        changedPreimage.remove("eventDigest");
+        Map<String, Object> preimageMap =
+            JSON.convertValue(changedPreimage, new TypeReference<>() {});
+        assertThatThrownBy(() -> AccountLogoutAllAuthorityEventV1Codec.seal(preimageMap))
+            .as(mutation.path("name").asText() + " invalid preimage")
+            .isInstanceOf(IllegalArgumentException.class);
+      }
     }
+  }
+
+  @Test
+  void rejectsUppercaseRequestIdWhenEventIdentityBindingMatches() {
+    String uppercaseRequestId = "22222222-2222-4222-8222-22222222222A";
+    ObjectNode changed = (ObjectNode) vectors.path("validEvents").get(0).path("event").deepCopy();
+    changed.put("requestId", uppercaseRequestId);
+    changed.put(
+        "eventId", AccountLogoutAllAuthorityEventV1Codec.EVENT_ID_PREFIX + uppercaseRequestId);
+    changed.remove("eventDigest");
+    Map<String, Object> preimageMap = JSON.convertValue(changed, new TypeReference<>() {});
+
+    assertThatThrownBy(() -> AccountLogoutAllAuthorityEventV1Codec.seal(preimageMap))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("requestId")
+        .hasMessageContaining("canonical lowercase non-nil UUID");
   }
 
   private static void applyMutation(ObjectNode root, JsonNode mutation) {
