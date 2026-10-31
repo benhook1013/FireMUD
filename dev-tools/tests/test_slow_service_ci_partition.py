@@ -23,13 +23,13 @@ END = "2026-10-30T03:00:00Z"
 
 
 def make_plan(module="account-service", run_attempt="2"):
-    return {
+    plan = {
         "schema_version": 1,
         "module": module,
         "source_revision": SOURCE_SHA,
         "run_id": RUN_ID,
         "run_attempt": str(run_attempt),
-        "partition_count": 2,
+        "partition_count": PARTITION.PARTITION_COUNTS[module],
         "tasks": {
             "test": {
                 "class_universe": [
@@ -47,6 +47,14 @@ def make_plan(module="account-service", run_attempt="2"):
             }
         },
     }
+
+    if module == "game-session-service":
+        for partition in (3, 4):
+            name = f"net.example.Known{partition}Test"
+            plan["tasks"]["test"]["class_universe"].append(name)
+            plan["tasks"]["test"]["expected_test_classes"].append(name)
+            plan["tasks"]["test"]["assignments"][name] = partition
+    return plan
 
 
 def job(module, partition, attempt, conclusion="success", start=START, finish=MIDDLE, run_id=70, source=SOURCE_SHA):
@@ -147,7 +155,7 @@ def make_provenance(
         pull_request = None
         display_title = "CI — Validation develop"
         associations = []
-    return {
+    provenance = {
         "run": {
             "id": 70,
             "head_sha": native_head,
@@ -192,6 +200,16 @@ def make_provenance(
             ],
         },
     }
+
+    for partition in range(3, PARTITION.PARTITION_COUNTS[module] + 1):
+        for snapshot in provenance["attempts"]:
+            snapshot["jobs"].append(job(module, partition, snapshot["attempt"], source=native_head))
+            snapshot["total_count"] += 1
+        provenance["artifacts"]["items"].append(
+            artifact(module, partition, 1, 700 + partition + 10, source=tested_source, native_head=native_head)
+        )
+        provenance["artifacts"]["total_count"] += 1
+    return provenance
 
 
 def write_artifact(root, plan, partition, attempt):
@@ -238,18 +256,11 @@ def prepare_aggregate(root, module, provenance):
     input_dir.mkdir()
     plan = make_plan(module)
     artifacts = {
-        1: write_artifact(
-            input_dir,
-            plan,
-            1,
-            provenance["resolved"]["partitions"]["1"]["attempt"],
-        ),
-        2: write_artifact(
-            input_dir,
-            plan,
-            2,
-            provenance["resolved"]["partitions"]["2"]["attempt"],
-        ),
+        partition: write_artifact(
+            input_dir, plan, partition,
+            provenance["resolved"]["partitions"][str(partition)]["attempt"],
+        )
+        for partition in PARTITION.partitions_for(module)
     }
     selection_path = root / "selection.json"
     selection_path.write_text(json.dumps(provenance), encoding="utf-8")
@@ -321,22 +332,21 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     historical,
                     class_access_flags_by_task={task: access_flags},
                 )
-                first = PARTITION.partition_manifest(plan, 1)
-                second = PARTITION.partition_manifest(plan, 2)
-                PARTITION.validate_partition_pair(first, second)
+                manifests = [
+                    PARTITION.partition_manifest(plan, partition)
+                    for partition in PARTITION.partitions_for(module)
+                ]
+                PARTITION.validate_partitions(manifests)
                 self.assertEqual(
-                    first["tasks"][task]["assignments"][known_class],
+                    plan["tasks"][task]["assignments"][known_class],
                     known_entry["partition"],
                 )
-                self.assertEqual(
-                    set(first["tasks"][task]["selected_classes"])
-                    | set(second["tasks"][task]["selected_classes"]),
-                    discovered[task],
-                )
-                self.assertFalse(
-                    set(first["tasks"][task]["selected_classes"])
-                    & set(second["tasks"][task]["selected_classes"])
-                )
+                selected_groups = [
+                    set(manifest["tasks"][task]["selected_classes"])
+                    for manifest in manifests
+                ]
+                self.assertEqual(set().union(*selected_groups), discovered[task])
+                self.assertEqual(sum(map(len, selected_groups)), len(discovered[task]))
 
     def test_nested_compiled_classes_stay_with_their_outer_class(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -426,9 +436,10 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             self.assertEqual(
                 task_plan["expected_test_classes"], [abstract_test, real_test]
             )
-            first = PARTITION.partition_manifest(plan, 1)
-            second = PARTITION.partition_manifest(plan, 2)
-            PARTITION.validate_partition_pair(first, second)
+            PARTITION.validate_partitions([
+                PARTITION.partition_manifest(plan, partition)
+                for partition in PARTITION.partitions_for(plan["module"])
+            ])
 
             missing_metadata = dict(access_flags)
             missing_metadata.pop(marker)
@@ -864,7 +875,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     SOURCE_SHA,
                     "2",
                 ),
-                2,
+                4,
             )
             copied_paths = {
                 path.relative_to(verified_classes_dir).as_posix()
@@ -976,6 +987,56 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     "2",
                 )
 
+    def test_four_way_retry_requires_every_latest_effective_partition(self):
+        module = "game-session-service"
+        provenance = make_provenance(module, native_head=PR_HEAD_SHA)
+        resolved = PARTITION.resolve_effective_artifacts(
+            provenance, module, RUN_ID, SOURCE_SHA, "2"
+        )
+        self.assertEqual(set(resolved["partitions"]), {"1", "2", "3", "4"})
+        self.assertEqual(
+            [resolved["partitions"][str(partition)]["attempt"] for partition in range(1, 5)],
+            [1, 2, 1, 1],
+        )
+        for partition in (3, 4):
+            with self.subTest(partition=partition):
+                failed = copy.deepcopy(provenance)
+                failed["attempts"][1]["jobs"][partition - 1]["conclusion"] = "failure"
+                with self.assertRaisesRegex(ValueError, f"partition {partition} latest effective.*failure"):
+                    PARTITION.resolve_effective_artifacts(failed, module, RUN_ID, SOURCE_SHA, "2")
+                missing = copy.deepcopy(provenance)
+                missing["artifacts"]["items"] = [
+                    item for item in missing["artifacts"]["items"]
+                    if not item["name"].endswith(f"partition-{partition}")
+                ]
+                missing["artifacts"]["total_count"] -= 1
+                with self.assertRaisesRegex(ValueError, f"partition {partition} physical attempt 1 has missing"):
+                    PARTITION.resolve_effective_artifacts(missing, module, RUN_ID, SOURCE_SHA, "2")
+
+    def test_four_way_union_and_measured_classes_include_later_partitions(self):
+        module = "game-session-service"
+        plan = make_plan(module)
+        manifests = [PARTITION.partition_manifest(plan, partition) for partition in range(1, 5)]
+        PARTITION.validate_partitions(manifests)
+        with self.assertRaisesRegex(ValueError, "every module partition exactly once"):
+            PARTITION.validate_partitions(manifests[:2])
+        with self.assertRaisesRegex(ValueError, "every module partition exactly once"):
+            PARTITION.validate_partitions([*manifests[:3], manifests[2]])
+        overlap = copy.deepcopy(manifests)
+        overlap[3]["tasks"]["test"]["selected_classes"].append("net.example.KnownOneTest")
+        with self.assertRaisesRegex(ValueError, "overlap between partitions"):
+            PARTITION.validate_partitions(overlap)
+        for partition in (3, 4):
+            with self.subTest(partition=partition), tempfile.TemporaryDirectory() as temporary:
+                selection = PARTITION.selection_document(make_provenance(module), module, RUN_ID, SOURCE_SHA, "2")
+                input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(Path(temporary), module, selection)
+                (artifacts[partition] / "classes/java/main/net/example/MeasuredService.class").write_bytes(
+                    classfile_bytes("net/example/ChangedService")
+                )
+                with self.assertRaisesRegex(ValueError, "class bytes differ"):
+                    PARTITION.verify_aggregate(input_dir, selection_path, verified_classes_dir, module, RUN_ID, SOURCE_SHA, "2")
+                self.assertFalse(verified_classes_dir.exists())
+
     def test_partition_pair_rejects_incomplete_class_union(self):
         plan = make_plan()
         first = PARTITION.partition_manifest(plan, 1)
@@ -983,7 +1044,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
         broken = copy.deepcopy(second)
         broken["tasks"]["test"]["selected_classes"] = []
         with self.assertRaisesRegex(ValueError, "test class union is incomplete"):
-            PARTITION.validate_partition_pair(first, broken)
+            PARTITION.validate_partitions([first, broken])
 
 
 if __name__ == "__main__":

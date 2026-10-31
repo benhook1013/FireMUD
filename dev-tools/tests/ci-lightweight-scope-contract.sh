@@ -34,6 +34,7 @@ done
 for expected in \
   'declare -a PREPARE_TASKS=(":${MODULE}:testClasses")' \
   'PREPARE_TASKS+=(":${MODULE}:${task_name}Classes")' \
+  'CHECK_ARGS+=("-PslowServiceCiPartitionModule=$MODULE" "-PslowServiceCiPartition=$PARTITION")' \
   'bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"'; do
   require_contains "$MODULE_CHECK_WRAPPER" "$expected"
 done
@@ -86,7 +87,7 @@ def evaluate_module_check_matrix(step, modules):
     if match is None:
         raise SystemExit("ci workflow: module check matrix builder is missing")
     partition_set = re.search(
-        r'(?m)^[ \t]*const partitionedSlowServices = new Set\([^\n]+\);',
+        r'(?m)^[ \t]*const slowServicePartitionCounts = \{[^\n]+\};',
         script[:match.start()],
     )
     if partition_set is None:
@@ -398,12 +399,14 @@ expected_matrix_rows = [
     {"module": "account-service", "partition": "2", "java-version": 21},
     {"module": "game-session-service", "partition": "1", "java-version": 21},
     {"module": "game-session-service", "partition": "2", "java-version": 21},
+    {"module": "game-session-service", "partition": "3", "java-version": 21},
+    {"module": "game-session-service", "partition": "4", "java-version": 21},
     {"module": "common-security", "partition": "full", "java-version": 21},
 ]
 expanded_jobs = [dict(row) for row in matrix_rows]
 if expanded_jobs != expected_matrix_rows or len({
     (row["module"], row["partition"]) for row in expanded_jobs
-}) != 5:
+}) != 7:
     raise SystemExit(f"ci workflow: matrix expansion lost or duplicated a job: {expanded_jobs!r}")
 require_contains(
     ci_compute_step,
@@ -414,12 +417,12 @@ require_contains(
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    'const partitionedSlowServices = new Set(["account-service", "game-session-service"]);',
+    'const slowServicePartitionCounts = { "account-service": 2, "game-session-service": 4 };',
     "ci workflow",
 )
 for expected in (
-    '{ module, partition: "1", "java-version": 21 },',
-    '{ module, partition: "2", "java-version": 21 },',
+    'Array.from({ length: slowServicePartitionCounts[module] }',
+    'partition: String(index + 1)',
     'partition: "full"',
     '"java-version": 21',
 ):
@@ -559,7 +562,7 @@ for module, job_id, display, prefix in (
     select = find_step(ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
     require_contains(select, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts", "ci workflow")
     require_contains(select, ("run",), f"--module {module}", "ci workflow")
-    download = find_step(ci, job_id, f"Download both effective {display} partition artifacts", "ci workflow")
+    download = find_step(ci, job_id, f"Download all effective {display} partition artifacts", "ci workflow")
     require_equal(download, ("continue-on-error",), "true", "ci workflow")
     require_equal(download, ("with", "artifact-ids"), "${{ steps.selection.outputs.artifact_ids }}", "ci workflow")
     verify = find_step(ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
@@ -618,7 +621,7 @@ const testedMerge = "a".repeat(40), nativeHead = "b".repeat(40), baseSha = "c".r
 const wrongSha = "d".repeat(40);
 const repositoryFullName = `${owner}/${repository}`;
 const coreJobRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  [1, 2].map(partition => ({
+  Array.from({ length: module === "account-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
     id: 100 + index * 10 + partition, run_id: runId, head_sha: nativeHead,
     name: `Build and Test (${module} / ${partition})`, status: "completed",
     conclusion: "success", started_at: "2026-10-30T01:00:00Z",
@@ -631,7 +634,7 @@ const jobRows = coreJobRows.concat(Array.from({ length: 97 }, (_, index) => ({
   started_at: "2026-10-30T01:00:00Z", completed_at: "2026-10-30T02:00:00Z",
 })));
 const coreArtifactRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  [1, 2].map(partition => ({
+  Array.from({ length: module === "account-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
     id: 700 + index * 10 + partition,
     name: `slow-service-ci-partition-${runId}-${testedMerge}-attempt-1-${module}-partition-${partition}`,
     expired: false, size_in_bytes: 1024, created_at: "2026-10-30T02:00:00Z",
@@ -763,8 +766,8 @@ async function runFor(embedded, options = {}) {
 }
 
 (async () => {
-  assert.equal(jobRows.length, 101);
-  assert.equal(artifactRows.length, 101);
+  assert.equal(jobRows.length, 103);
+  assert.equal(artifactRows.length, 103);
   for (const embedded of input.scripts) {
     assert.ok(embedded.script.includes("capture-slow-service-provenance.cjs"));
     assert.ok(embedded.script.includes("module: process.env.CI_MODULE"));
@@ -806,7 +809,7 @@ async function runFor(embedded, options = {}) {
       assert.equal(result.provenance.run.run_attempt, attempts);
       assert.equal(result.provenance.attempts.length, attempts);
       for (const attempt of result.provenance.attempts) {
-        assert.equal(attempt.jobs.length, 101);
+        assert.equal(attempt.jobs.length, jobRows.length);
         for (const job of attempt.jobs) {
           assert.equal(job.head_sha, result.provenance.run.head_sha);
           assert.equal(job.run_attempt, attempt.attempt, "raw API attempt is preserved per snapshot");
@@ -817,7 +820,7 @@ async function runFor(embedded, options = {}) {
           "attempt snapshots retain cloned job IDs",
         );
       }
-      assert.equal(result.provenance.artifacts.items.length, 101);
+      assert.equal(result.provenance.artifacts.items.length, artifactRows.length);
       for (const artifact of result.provenance.artifacts.items) {
         assert.equal(artifact.workflow_run.head_sha, result.provenance.run.head_sha);
       }
@@ -911,6 +914,21 @@ require_equal(
 )
 
 gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
+root_configuration, subproject_configuration = gradle_build.split("subprojects {", 1)
+for expected in (
+    'val slowServiceCiPartitionCounts = mapOf("account-service" to 2, "game-session-service" to 4)',
+    'providers.gradleProperty("slowServiceCiPartitionModule").orNull',
+    'if ((slowServiceCiPartition == null) != (slowServiceCiPartitionModule == null))',
+    'slowServiceCiPartitionCounts[slowServiceCiPartitionModule]',
+    'slowServiceCiPartition !in (1..partitionCount).map { it.toString() }',
+):
+    if expected not in root_configuration:
+        raise SystemExit(f"build.gradle.kts: root partition/module binding is missing {expected!r}")
+if 'if (project.name == slowServiceCiPartitionModule) {' not in subproject_configuration:
+    raise SystemExit("build.gradle.kts: selectors must apply only to the explicitly selected module")
+if 'providers.gradleProperty("slowServiceCiPartition")' in subproject_configuration:
+    raise SystemExit("build.gradle.kts: partition arguments must be validated once before configuring subprojects")
+
 test_logging_match = re.search(
     (
         r"tasks\.withType<Test>\(\)\.configureEach\s*\{\s*"

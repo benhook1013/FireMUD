@@ -6,9 +6,10 @@ readonly ROOT_DIR
 readonly MODULE="${1:-}"
 readonly PARTITION="${2:-full}"
 if [[ $# -lt 1 || $# -gt 2 || ! "$MODULE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || \
-  ( ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" ) && $# -eq 2 && "$PARTITION" != "1" && "$PARTITION" != "2" ) || \
+  ( "$MODULE" == "account-service" && "$PARTITION" != "full" && "$PARTITION" != "1" && "$PARTITION" != "2" ) || \
+  ( "$MODULE" == "game-session-service" && "$PARTITION" != "full" && ! "$PARTITION" =~ ^[1-4]$ ) || \
   ( "$MODULE" != "account-service" && "$MODULE" != "game-session-service" && $# -eq 2 && "$PARTITION" != "full" ) ]]; then
-  echo "usage: run-gradle-module-checks.sh <module-name> [full|1|2] (Account and Game Session partitions only)" >&2
+  echo "usage: run-gradle-module-checks.sh <module-name> [full|partition] (Account: 1-2; Game Session: 1-4)" >&2
   exit 64
 fi
 
@@ -47,7 +48,7 @@ if [[ ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" ) 
     --run-attempt "${GITHUB_RUN_ATTEMPT:-0}" \
     --output-dir "$PARTITION_DIR" \
     "${CLASS_DIR_ARGS[@]}"
-  CHECK_ARGS+=("-PslowServiceCiPartition=$PARTITION")
+  CHECK_ARGS+=("-PslowServiceCiPartitionModule=$MODULE" "-PslowServiceCiPartition=$PARTITION")
 fi
 
 # Keep the original recovery policy and complete check; diagnostics never retry it.
