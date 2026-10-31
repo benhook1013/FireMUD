@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -14,6 +15,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -476,6 +478,68 @@ class WorldLifecycleCommandServiceImplTest {
     verify(roomInstanceRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
     verify(zoneInstanceRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
     verify(regionInstanceRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void terminatedWorldInstanceReturnsStoredSnapshotForExactRetryWithoutEffects() {
+    WorldInstance instance = activeWorldInstance();
+    instance.setStatus("TERMINATED");
+    instance.setTerminationRequestId("term-1");
+    instance.setLifecycleEpoch(4L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(instance));
+
+    var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
+
+    assertEquals("TERMINATED", snapshot.status());
+    assertEquals(4L, snapshot.lifecycleEpoch());
+    assertEquals("term-1", instance.getTerminationRequestId());
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verifyNoInteractions(
+        entityManagementClient,
+        worldEventRepository,
+        roomInstanceExitRepository,
+        roomInstanceRepository,
+        zoneInstanceRepository,
+        regionInstanceRepository);
+  }
+
+  @Test
+  void terminatedWorldInstanceRejectsDifferentOrMissingRetainedRequestIdWithoutEffects() {
+    WorldInstance instance = activeWorldInstance();
+    instance.setStatus("TERMINATED");
+    instance.setTerminationRequestId("term-1");
+    instance.setLifecycleEpoch(4L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(instance));
+
+    IllegalArgumentException differentRequest =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-2", "stop"));
+    assertTrue(differentRequest.getMessage().startsWith("IDEMPOTENCY_CONFLICT:"));
+    assertEquals("TERMINATED", instance.getStatus());
+    assertEquals(4L, instance.getLifecycleEpoch());
+    assertEquals("term-1", instance.getTerminationRequestId());
+
+    instance.setTerminationRequestId(null);
+    IllegalArgumentException missingRetainedRequest =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+    assertTrue(missingRetainedRequest.getMessage().startsWith("IDEMPOTENCY_CONFLICT:"));
+    assertEquals("TERMINATED", instance.getStatus());
+    assertEquals(4L, instance.getLifecycleEpoch());
+    assertNull(instance.getTerminationRequestId());
+
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verifyNoInteractions(
+        entityManagementClient,
+        worldEventRepository,
+        roomInstanceExitRepository,
+        roomInstanceRepository,
+        zoneInstanceRepository,
+        regionInstanceRepository);
   }
 
   @Test
