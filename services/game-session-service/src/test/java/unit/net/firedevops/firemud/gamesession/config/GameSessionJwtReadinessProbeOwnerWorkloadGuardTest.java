@@ -45,6 +45,21 @@ class GameSessionJwtReadinessProbeOwnerWorkloadGuardTest {
   }
 
   @Test
+  void rejectsPeerAndMethodDriftAfterCallerAcquisition() {
+    var guard = new GameSessionJwtReadinessProbeOwnerWorkloadGuard(NAMESPACE);
+    withPeer(
+        peer(NAMESPACE, "account-service"),
+        () -> {
+          var caller = guard.requireAccountReceiverCaller(METHOD);
+          withPeer(
+              peer("other", "account-service"),
+              () -> assertDenied(() -> guard.requireUnchanged(caller, METHOD)));
+          guard.requireUnchanged(caller, METHOD);
+          assertDenied(() -> guard.requireUnchanged(caller, METHOD + "Extra"));
+        });
+  }
+
+  @Test
   void rejectsApplicationSessionContextAndCallerDrift() {
     var guard = new GameSessionJwtReadinessProbeOwnerWorkloadGuard(NAMESPACE);
     withPeer(

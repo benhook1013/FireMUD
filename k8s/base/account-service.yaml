@@ -137,6 +137,7 @@ spec:
         - name: jwt-jwks
           secret:
             secretName: jwt-jwks
+            defaultMode: 0444
         - name: varlog
           hostPath:
             path: /var/log

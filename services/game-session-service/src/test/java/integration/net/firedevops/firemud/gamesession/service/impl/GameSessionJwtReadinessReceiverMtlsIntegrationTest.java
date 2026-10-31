@@ -44,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -140,6 +141,10 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
       new AtomicReference<>();
   private final AtomicReference<String> ownerSawPeerUri = new AtomicReference<>();
   private final AtomicReference<String> metadataSawPeerUri = new AtomicReference<>();
+  private final ConcurrentLinkedQueue<HandlerAuthContext> ownerHandlerAuthContexts =
+      new ConcurrentLinkedQueue<>();
+  private final ConcurrentLinkedQueue<HandlerAuthContext> metadataHandlerAuthContexts =
+      new ConcurrentLinkedQueue<>();
   private final AtomicReference<GetCurrentReadinessReceiverMetadataResponse> metadataResponse =
       new AtomicReference<>();
   private final AtomicReference<AccountPodTargetBinding> ownerTarget = new AtomicReference<>();
@@ -190,6 +195,8 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     lastMetadataRequest.set(null);
     ownerSawPeerUri.set(null);
     metadataSawPeerUri.set(null);
+    ownerHandlerAuthContexts.clear();
+    metadataHandlerAuthContexts.clear();
     metadataResponse.set(null);
     ownerTarget.set(null);
     localObservation.set(null);
@@ -306,6 +313,18 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(lastOwnerRequest.get().getProtectedLocalIdentity()).isEqualTo(localIdentity);
     assertThat(lastOwnerRequest.get().getUnknownFields().asMap()).isEmpty();
     assertThat(responseHadNoApplicationAuthContext).isTrue();
+    assertThat(ownerHandlerAuthContexts)
+        .hasSize(2)
+        .allSatisfy(
+            context -> {
+              assertThat(context.accountId()).isNull();
+              assertThat(context.globalRoles()).isEmpty();
+              assertThat(context.scopedRoles()).isEmpty();
+              assertThat(context.internalService()).isFalse();
+              assertThat(context.serviceName()).isNull();
+              assertThat(context.serviceInstanceId()).isNull();
+            });
+    // JUnit-thread cleanup checks only; server-context proof is captured above.
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
     assertThat(SessionContext.getScopedRolesMap()).isEmpty();
@@ -391,6 +410,7 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(lastOwnerRequest.get().getProtectedLocalIdentity())
         .isEqualTo(localObservation.get().wireIdentity());
     assertThat(responseHadNoApplicationAuthContext).isFalse();
+    // JUnit-thread cleanup only, not a Netty server-context observation.
     assertThat(SessionContext.getAccountId()).isNull();
   }
 
@@ -411,6 +431,18 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(lastMetadataRequest.get()).isEqualTo(request);
     assertThat(lastMetadataRequest.get().getUnknownFields().asMap()).isEmpty();
     assertThat(metadataSawPeerUri).hasValue(GAME_SESSION_URI);
+    assertThat(metadataHandlerAuthContexts)
+        .hasSize(1)
+        .allSatisfy(
+            context -> {
+              assertThat(context.accountId()).isNull();
+              assertThat(context.globalRoles()).isEmpty();
+              assertThat(context.scopedRoles()).isEmpty();
+              assertThat(context.internalService()).isFalse();
+              assertThat(context.serviceName()).isNull();
+              assertThat(context.serviceInstanceId()).isNull();
+            });
+    // JUnit-thread cleanup checks only; the Account handler values are captured above.
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
     assertThat(SessionContext.getScopedRolesMap()).isEmpty();
@@ -565,6 +597,7 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
     assertThat(response.getVerifiedKeyId()).isEqualTo(KID);
     assertThat(ownerReadCalls).hasValue(2);
     assertThat(responseHadNoApplicationAuthContext).isTrue();
+    // JUnit-thread cleanup only; the receiver callback supplies server-context proof.
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
     assertThat(SessionContext.getScopedRolesMap()).isEmpty();
@@ -646,6 +679,14 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
             lastOwnerRequest.set(request);
             GrpcPeerIdentity peer = GrpcPeerIdentity.current();
             ownerSawPeerUri.set(peer == null ? null : peer.uri());
+            ownerHandlerAuthContexts.add(
+                new HandlerAuthContext(
+                    SessionContext.getAccountId(),
+                    SessionContext.getGlobalRoles(),
+                    SessionContext.getScopedRolesMap(),
+                    SessionContext.isInternalService(),
+                    SessionContext.getServiceName(),
+                    SessionContext.getServiceInstanceId()));
             responseObserver.onNext(
                 ownerResponse(request, ownerResponseMode.get(), ownerReadCalls.get()));
             responseObserver.onCompleted();
@@ -659,6 +700,14 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
             lastMetadataRequest.set(request);
             GrpcPeerIdentity peer = GrpcPeerIdentity.current();
             metadataSawPeerUri.set(peer == null ? null : peer.uri());
+            metadataHandlerAuthContexts.add(
+                new HandlerAuthContext(
+                    SessionContext.getAccountId(),
+                    SessionContext.getGlobalRoles(),
+                    SessionContext.getScopedRolesMap(),
+                    SessionContext.isInternalService(),
+                    SessionContext.getServiceName(),
+                    SessionContext.getServiceInstanceId()));
             responseObserver.onNext(metadataResponse.get());
             responseObserver.onCompleted();
           }
@@ -1095,6 +1144,14 @@ class GameSessionJwtReadinessReceiverMtlsIntegrationTest {
   }
 
   private record TestCertificate(PrivateKey privateKey, X509Certificate certificate) {}
+
+  private record HandlerAuthContext(
+      String accountId,
+      List<String> globalRoles,
+      Map<String, List<String>> scopedRoles,
+      boolean internalService,
+      String serviceName,
+      String serviceInstanceId) {}
 
   private record TestIdentityFiles(
       Path certificateFile, Path privateKeyFile, X509Certificate certificate) {}

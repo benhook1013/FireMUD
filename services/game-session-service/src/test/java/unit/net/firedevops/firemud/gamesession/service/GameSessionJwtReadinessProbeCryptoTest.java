@@ -146,6 +146,52 @@ class GameSessionJwtReadinessProbeCryptoTest {
   }
 
   @Test
+  void rejectsOwnerCoordinateMismatchAfterValidProductionSignatureAndProfile() throws Exception {
+    UUID jti = UUID.randomUUID();
+    var parsed =
+        mapper.parse(
+            request(
+                    GameSessionAccountDelegationProfile.PROFILE,
+                    ReadinessProbeCoordinates.ExpectedOutcome.ACCEPT,
+                    signedToken(GameSessionAccountDelegationProfile.PROFILE, jti),
+                    jti)
+                .build());
+    assertThat(crypto.verify(parsed, sourceIdentity(), publicJwksSha256).keyId()).isEqualTo(KID);
+
+    var coordinates = parsed.coordinates();
+    // Copy only owner coordinates after a valid parse: the signed production token and the
+    // production policy stay unchanged, so these failures isolate validateOwnerBoundProbe.
+    // In particular, the wire mapper rejects a noncanonical profile/audience pair earlier.
+    // issuedAt binds both iat and nbf; those two claims have no independent owner coordinates.
+    for (ReadinessProbeCoordinates changed :
+        List.of(
+            coordinates.toBuilder().setJti(UUID.randomUUID().toString()).build(),
+            coordinates.toBuilder().setAudience("another-owner-audience").build(),
+            coordinates.toBuilder()
+                .setIssuedAtEpochSeconds(coordinates.getIssuedAtEpochSeconds() - 1L)
+                .build(),
+            coordinates.toBuilder()
+                .setExpiresAtEpochSeconds(coordinates.getExpiresAtEpochSeconds() + 1L)
+                .build())) {
+      var mismatched =
+          new GameSessionJwtReadinessReceiverProtoMapper.ParsedRequest(
+              changed,
+              parsed.operationId(),
+              UUID.fromString(changed.getJti()),
+              parsed.probeKind(),
+              parsed.expectedActive(),
+              parsed.expectedOutcome(),
+              parsed.compactJwt(),
+              parsed.compactTokenSha256());
+
+      assertThatThrownBy(() -> crypto.verify(mismatched, sourceIdentity(), publicJwksSha256))
+          .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+          .hasNoCause();
+    }
+    assertThat(crypto.verify(parsed, sourceIdentity(), publicJwksSha256).keyId()).isEqualTo(KID);
+  }
+
+  @Test
   void requiresProtectedSnapshotBindingEvenForWarmKnownKeyAndHonorsHardDenial() throws Exception {
     UUID jti = UUID.randomUUID();
     var parsed =

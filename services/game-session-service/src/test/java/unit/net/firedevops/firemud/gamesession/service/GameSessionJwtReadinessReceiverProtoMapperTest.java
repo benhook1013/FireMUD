@@ -34,7 +34,9 @@ class GameSessionJwtReadinessReceiverProtoMapperTest {
           var parsed = mapper.parse(request(profile, expectedOutcome).build());
           assertThat(parsed.coordinates().getExpectedOutcome()).isEqualTo(expectedOutcome);
           assertThat(parsed.expectedOutcome()).isEqualTo(expectedOutcome);
-          assertThat(parsed.compactTokenSha256()).matches("[0-9a-f]{64}");
+          // Independent SHA-256 vector for the literal ASCII compact token below.
+          assertThat(parsed.compactTokenSha256())
+              .isEqualTo("256d04db4e5e4ac308751ed0885b722b758630567c53a7125ed9fbd068e5c3f6");
         });
   }
 

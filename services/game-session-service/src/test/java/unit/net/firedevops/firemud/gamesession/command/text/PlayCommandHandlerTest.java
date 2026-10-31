@@ -41,6 +41,7 @@ import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -117,7 +118,7 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -126,7 +127,7 @@ class PlayCommandHandlerTest {
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1197,7 +1198,7 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1247,7 +1248,7 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
@@ -1278,7 +1279,7 @@ class PlayCommandHandlerTest {
                 .setTenantId("22")
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(true)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1508,7 +1509,7 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(0L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1538,7 +1539,7 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(4L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1576,7 +1577,7 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -1590,6 +1591,67 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
     Mockito.verify(moderationPolicyClient, never())
         .evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString());
+  }
+
+  @Test
+  void authorityReplyWindowIncludesExactBoundsAndRejectsOneNanosecondOutside() {
+    Instant now = Instant.parse("2026-10-31T00:00:00Z");
+    assertThat(PlayCommandHandler.isWithinAuthorityReplyWindow(now.minusSeconds(300), now))
+        .isTrue();
+    assertThat(PlayCommandHandler.isWithinAuthorityReplyWindow(now.plusSeconds(5), now)).isTrue();
+    assertThat(
+            PlayCommandHandler.isWithinAuthorityReplyWindow(
+                now.minusSeconds(300).minusNanos(1), now))
+        .isFalse();
+    assertThat(
+            PlayCommandHandler.isWithinAuthorityReplyWindow(now.plusSeconds(5).plusNanos(1), now))
+        .isFalse();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "membership,-301,false", "membership,-299,true", "membership,4,true", "membership,6,false",
+    "realm-grant,-301,false", "realm-grant,-299,true", "realm-grant,4,true", "realm-grant,6,false"
+  })
+  void membershipAndRealmGrantApplyTheSameTimestampWindow(
+      String replyKind, long secondsFromNow, boolean accepted) {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    String evaluatedAt = Instant.now().plusSeconds(secondsFromNow).toString();
+    if (replyKind.equals("membership")) {
+      when(accountClient.getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+          .thenReturn(
+              GetTenantMembershipForRuntimeResponse.newBuilder()
+                  .setAccountId(ACCOUNT_ID)
+                  .setTenantId("22")
+                  .setMembershipExists(true)
+                  .setGameplayAdmissionAllowed(true)
+                  .setMembershipVersion(1L)
+                  .setEvaluatedAt(evaluatedAt)
+                  .build());
+    } else {
+      when(accountClient.getRealmAccessGrantForRuntime(
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString()))
+          .thenReturn(realmGrantResponse(true).toBuilder().setEvaluatedAt(evaluatedAt).build());
+    }
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    if (accepted) {
+      assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    } else {
+      assertThat(result.commandResult().errorCode())
+          .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+      Mockito.verify(gameplayPresenceLifecycleService, never())
+          .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+      Mockito.verify(sessionContextService, never()).save(Mockito.any());
+      Mockito.verifyNoInteractions(entityManagementClient);
+    }
   }
 
   @Test
@@ -1673,7 +1735,7 @@ class PlayCommandHandlerTest {
                 .setGameplayAvailable(false)
                 .setEntitlementVersion(5L)
                 .setTenantBillingSequence(5L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result =

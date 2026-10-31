@@ -26,11 +26,30 @@ class AccountJwtReadinessProbeOwnerProtoMapperTest {
   }
 
   @Test
-  void rejectsUnknownActiveStateAndUnknownNestedFields() {
+  void parsesPresentActiveSignerFence() {
+    var present =
+        request()
+            .setExpectedCoordinates(
+                request().getExpectedCoordinates().toBuilder()
+                    .setExpectedActiveState(ReadinessProbeCoordinates.ExpectedActiveState.PRESENT)
+                    .setExpectedActiveGeneration("1")
+                    .setExpectedActiveKid("active-key"))
+            .build();
+
+    var parsed = mapper.parse(present);
+
+    assertThat(parsed.expectedActive()).isPresent();
+    assertThat(parsed.expectedActive().orElseThrow().generation()).isEqualTo("1");
+    assertThat(parsed.expectedActive().orElseThrow().kid()).isEqualTo("active-key");
+  }
+
+  @Test
+  void rejectsDeclaredUnknownActiveStateAndUnknownNestedFields() {
     var unknownState =
         request()
             .setExpectedCoordinates(
-                request().getExpectedCoordinates().toBuilder().setExpectedActiveStateValue(3))
+                request().getExpectedCoordinates().toBuilder()
+                    .setExpectedActiveState(ReadinessProbeCoordinates.ExpectedActiveState.UNKNOWN))
             .build();
     assertThatThrownBy(() -> mapper.parse(unknownState))
         .isInstanceOf(
@@ -47,6 +66,19 @@ class AccountJwtReadinessProbeOwnerProtoMapperTest {
             .build();
     assertThatThrownBy(() -> mapper.parse(unknownLocal))
         .isInstanceOf(
+            AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
+  }
+
+  @Test
+  void rejectsOutOfRangeActiveStateWireValue() {
+    var outOfRangeState =
+        request()
+            .setExpectedCoordinates(
+                request().getExpectedCoordinates().toBuilder().setExpectedActiveStateValue(4))
+            .build();
+
+    assertThatThrownBy(() -> mapper.parse(outOfRangeState))
+        .isExactlyInstanceOf(
             AccountJwtReadinessProbeOwnerProtoMapper.InvalidOwnerReadRequestException.class);
   }
 
