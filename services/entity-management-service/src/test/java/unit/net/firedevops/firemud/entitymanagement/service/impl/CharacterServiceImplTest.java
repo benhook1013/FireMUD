@@ -85,7 +85,7 @@ class CharacterServiceImplTest {
             new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
     service.initMetrics();
 
-    assertThrows(IllegalArgumentException.class, () -> service.getWithInventory(1L));
+    assertThrows(IllegalStateException.class, () -> service.getWithInventory(1L));
 
     verify(cache).evict(1L);
     verify(cache, never()).put(any(), any());
@@ -118,9 +118,9 @@ class CharacterServiceImplTest {
     when(repo.findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(1L, "shared-live", "Retained"))
         .thenReturn(Optional.of(retained));
 
-    assertThrows(IllegalArgumentException.class, () -> service.getWithInventory(1L));
+    assertThrows(IllegalStateException.class, () -> service.getWithInventory(1L));
     assertThrows(
-        IllegalArgumentException.class,
+        IllegalStateException.class,
         () ->
             service.findByGameplayScopeAndName(
                 1L, "live", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Retained"));
@@ -128,6 +128,39 @@ class CharacterServiceImplTest {
     assertNull(cacheManager.getCache("characterGraph").get(1L));
     assertEquals(42L, retained.getAccountId());
     assertNull(retained.getAccountUuid());
+    verify(repo, never()).save(any());
+  }
+
+  @Test
+  void retainedNilOwnerCannotBeProjectedOrCached() {
+    CharacterRepository repo = Mockito.mock(CharacterRepository.class);
+    CharacterMapper mapper = Mockito.mock(CharacterMapper.class);
+    var cacheManager = new ConcurrentMapCacheManager("characterGraph");
+    CharacterServiceImpl service =
+        new CharacterServiceImpl(
+            repo,
+            mapper,
+            cacheManager,
+            new SimpleMeterRegistry(),
+            new PlayableStateKeyResolver(),
+            new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
+    service.initMetrics();
+    Character retained = Mockito.spy(new Character());
+    retained.setId(1L);
+    retained.setTenantId(1L);
+    retained.setAccountId(42L);
+    var nilUuid = new java.util.UUID(0L, 0L);
+    // Simulate an invalid repository projection without weakening the entity setter guard.
+    Mockito.doReturn(nilUuid).when(retained).getAccountUuid();
+    retained.setPlayableStateKey("shared-live");
+    retained.setName("Retained");
+    when(repo.findWithInventoryById(1L)).thenReturn(Optional.of(retained));
+
+    assertThrows(IllegalStateException.class, () -> service.getWithInventory(1L));
+
+    assertNull(cacheManager.getCache("characterGraph").get(1L));
+    assertEquals(nilUuid, retained.getAccountUuid());
+    verify(mapper, never()).toDto(any());
     verify(repo, never()).save(any());
   }
 
