@@ -15,8 +15,8 @@ game_session_aggregate_graph="$TMP_DIR/game-session-aggregate-graph"
 bash "$LOCKED_GRADLE" :common-saga:test -PfullCheck --dry-run --no-configuration-cache >"$unit_graph"
 bash "$LOCKED_GRADLE" :common-saga:check -PfullCheck --dry-run --no-configuration-cache >"$check_graph"
 bash "$LOCKED_GRADLE" :common-saga:jacocoTestReport -PfullCheck --dry-run --no-configuration-cache >"$report_graph"
-bash "$LOCKED_GRADLE" :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service --dry-run --no-configuration-cache >"$account_aggregate_graph"
-bash "$LOCKED_GRADLE" :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service --dry-run --no-configuration-cache >"$game_session_aggregate_graph"
+bash "$LOCKED_GRADLE" :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --no-configuration-cache >"$account_aggregate_graph"
+bash "$LOCKED_GRADLE" :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --no-configuration-cache >"$game_session_aggregate_graph"
 
 if grep -Eq '^:common-saga:(integrationTest|crossServiceTest|jacocoTestReport)([[:space:]]|$)' "$unit_graph"; then
   echo "Focused :common-saga:test unexpectedly scheduled categorized tests or the combined report." >&2
@@ -44,10 +44,10 @@ if grep -Eq '^:account-service:(test|integrationTest|crossServiceTest)([[:space:
   echo "Account coverage aggregation unexpectedly reran a partitioned test task." >&2
   exit 1
 fi
-grep -Eq '^:account-service:classes([[:space:]]|$)' "$account_aggregate_graph" || {
-  echo "Account coverage aggregation did not compile the report class inputs." >&2
+if grep -Eq '^:account-service:classes([[:space:]]|$)' "$account_aggregate_graph"; then
+  echo "Account coverage aggregation recompiled classes instead of using measured partition classes." >&2
   exit 1
-}
+fi
 grep -Eq '^:account-service:jacocoTestReport([[:space:]]|$)' "$account_aggregate_graph" || {
   echo "Account coverage aggregation did not schedule jacocoTestReport." >&2
   exit 1
@@ -57,10 +57,10 @@ if grep -Eq '^:game-session-service:(test|integrationTest|crossServiceTest)([[:s
   echo "Game Session coverage aggregation unexpectedly reran a partitioned test task." >&2
   exit 1
 fi
-grep -Eq '^:game-session-service:classes([[:space:]]|$)' "$game_session_aggregate_graph" || {
-  echo "Game Session coverage aggregation did not compile the report class inputs." >&2
+if grep -Eq '^:game-session-service:classes([[:space:]]|$)' "$game_session_aggregate_graph"; then
+  echo "Game Session coverage aggregation recompiled classes instead of using measured partition classes." >&2
   exit 1
-}
+fi
 grep -Eq '^:game-session-service:jacocoTestReport([[:space:]]|$)' "$game_session_aggregate_graph" || {
   echo "Game Session coverage aggregation did not schedule jacocoTestReport." >&2
   exit 1

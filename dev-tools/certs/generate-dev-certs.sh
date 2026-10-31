@@ -65,6 +65,9 @@ DNS.2 = ${workload}.${runtime_namespace}
 DNS.3 = ${workload}.${runtime_namespace}.svc
 DNS.4 = ${workload}.${runtime_namespace}.svc.cluster.local
 EOF
+  if [[ "$workload" == "spring-cloud-gateway" ]]; then
+    printf 'DNS.5 = gateway\n' >>"$workload_config"
+  fi
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$output_key" \
     >/dev/null 2>&1
   openssl req -new -key "$output_key" -config "$workload_config" -out "$workload_request"

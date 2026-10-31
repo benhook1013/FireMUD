@@ -7,6 +7,7 @@ import argparse
 import copy
 import json
 import re
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -761,6 +762,7 @@ def selection_document(
 def verify_aggregate(
     input_dir: Path,
     selection_path: Path,
+    verified_classes_dir: Path,
     module: str,
     run_id: str,
     source_revision: str,
@@ -792,9 +794,11 @@ def verify_aggregate(
         )
 
     manifests = {}
+    artifact_directories = {}
     for partition in (1, 2):
         artifact_name = resolved["partitions"][str(partition)]["artifact_name"]
         artifact_dir = input_dir / artifact_name
+        artifact_directories[partition] = artifact_dir
         manifest_path = (
             artifact_dir / "slow-service-ci-partition" / module
             / f"partition-{partition}" / "manifest.json"
@@ -817,6 +821,9 @@ def verify_aggregate(
         manifests[partition] = manifest
 
     common = validate_partition_pair(manifests[1], manifests[2])
+    measured_classes = verify_identical_main_classes(
+        artifact_directories[1], artifact_directories[2]
+    )
     execution_data = []
     for partition in (1, 2):
         artifact_name = resolved["partitions"][str(partition)]["artifact_name"]
@@ -824,14 +831,98 @@ def verify_aggregate(
         execution_data.extend(verify_artifact_reports(artifact_dir, manifests[partition]))
     if not execution_data:
         raise ValueError("aggregate has no JaCoCo execution data from either partition")
+    copy_verified_main_classes(
+        artifact_directories[1] / "classes" / "java" / "main",
+        measured_classes,
+        input_dir,
+        verified_classes_dir,
+    )
     print(
         f"Verified complete {module} partition coverage input: "
         f"{len(common['tasks'])} test tasks, "
         f"{sum(len(task['class_universe']) for task in common['tasks'].values())} "
-        "discovered class groups, both partition reports, and latest effective "
-        "same-run/source job provenance."
+        "discovered class groups, identical measured production classes, both "
+        "partition reports, and latest effective same-run/source job provenance."
     )
     return len(execution_data)
+
+
+def main_class_inventory(artifact_dir: Path) -> dict[str, Path]:
+    if artifact_dir.is_symlink():
+        raise ValueError(f"measured partition artifact is symlinked: {artifact_dir}")
+    classes_dir = artifact_dir / "classes" / "java" / "main"
+    current = artifact_dir
+    for component in ("classes", "java", "main"):
+        current = current / component
+        if current.is_symlink():
+            raise ValueError(f"measured production classes contain a symlink: {current}")
+    if not classes_dir.is_dir():
+        raise ValueError(f"measured production classes are missing: {classes_dir}")
+
+    return class_file_inventory(classes_dir)
+
+
+def class_file_inventory(classes_dir: Path) -> dict[str, Path]:
+    if classes_dir.is_symlink() or not classes_dir.is_dir():
+        raise ValueError(f"measured production classes are missing or symlinked: {classes_dir}")
+    inventory = {}
+    for path in classes_dir.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"measured production classes contain a symlink: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file() or path.suffix != ".class":
+            raise ValueError(f"measured production output is not a class file: {path}")
+        inventory[path.relative_to(classes_dir).as_posix()] = path
+    if not inventory:
+        raise ValueError(f"measured production classes are empty: {classes_dir}")
+    return inventory
+
+
+def verify_identical_main_classes(first_artifact: Path, second_artifact: Path) -> dict[str, Path]:
+    first = main_class_inventory(first_artifact)
+    second = main_class_inventory(second_artifact)
+    if set(first) != set(second):
+        missing = sorted(set(first) - set(second))
+        extra = sorted(set(second) - set(first))
+        raise ValueError(
+            "partition measured production class inventories differ: "
+            f"partition 2 missing {missing}, extra {extra}"
+        )
+    for relative_path in sorted(first):
+        if first[relative_path].read_bytes() != second[relative_path].read_bytes():
+            raise ValueError(
+                f"partition measured production class bytes differ: {relative_path}"
+            )
+    return first
+
+
+def copy_verified_main_classes(
+    source_directory: Path,
+    source_inventory: dict[str, Path],
+    input_dir: Path,
+    verified_classes_dir: Path,
+) -> None:
+    if (
+        verified_classes_dir.name != "slow-service-ci-verified-classes"
+        or verified_classes_dir.parent.resolve() != input_dir.parent.resolve()
+    ):
+        raise ValueError("verified production classes must use the fixed sibling build path")
+    if verified_classes_dir.exists() or verified_classes_dir.is_symlink():
+        raise ValueError("verified production class output already exists; refusing to replace it")
+    if not verified_classes_dir.parent.is_dir():
+        raise ValueError("verified production class output parent is missing")
+
+    shutil.copytree(source_directory, verified_classes_dir)
+    copied_inventory = class_file_inventory(verified_classes_dir)
+    if set(copied_inventory) != set(source_inventory):
+        raise ValueError("verified production class copy changed the class inventory")
+    for relative_path, source_file in source_inventory.items():
+        copied_file = verified_classes_dir / relative_path
+        if copied_file.is_symlink() or not copied_file.is_file():
+            raise ValueError(f"verified production class copy is incomplete: {relative_path}")
+        if copied_file.read_bytes() != source_file.read_bytes():
+            raise ValueError(f"verified production class copy changed bytes: {relative_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -863,6 +954,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     aggregate_parser.add_argument("--module", choices=SERVICES, required=True)
     aggregate_parser.add_argument("--input-dir", type=Path, required=True)
+    aggregate_parser.add_argument("--verified-classes-dir", type=Path, required=True)
     aggregate_parser.add_argument("--selection-json", type=Path, required=True)
     aggregate_parser.add_argument("--run-id", required=True)
     aggregate_parser.add_argument("--source-revision", required=True)
@@ -923,6 +1015,7 @@ def main(argv: list[str] | None = None) -> int:
         verify_aggregate(
             args.input_dir,
             args.selection_json,
+            args.verified_classes_dir,
             args.module,
             args.run_id,
             args.source_revision,
