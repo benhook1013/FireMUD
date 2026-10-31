@@ -14,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 PLAN_PATH = Path(__file__).with_name("slow_service_ci_test_partition_plan.json")
 SERVICES = ("account-service", "game-session-service")
 PARTITION_COUNT = 2
@@ -329,6 +328,8 @@ def resolve_effective_artifacts(
     source_revision: str,
     current_attempt: str,
 ) -> dict[str, Any]:
+    if not isinstance(provenance, dict):
+        raise TypeError("workflow provenance must be an object")
     if module not in SERVICES:
         raise ValueError(f"unsupported slow-service module: {module}")
     if not SHA_PATTERN.fullmatch(source_revision):
@@ -340,10 +341,17 @@ def resolve_effective_artifacts(
 
     run = provenance.get("run")
     if not isinstance(run, dict):
-        raise ValueError("workflow run provenance is missing")
+        raise TypeError("workflow run provenance must be an object")
     native_head_sha = run.get("head_sha")
-    if not SHA_PATTERN.fullmatch(native_head_sha or ""):
+    if not isinstance(native_head_sha, str):
+        raise TypeError("workflow native head revision must be a string")
+    if not SHA_PATTERN.fullmatch(native_head_sha):
         raise ValueError("workflow native head revision is invalid")
+    repository = run.get("repository")
+    if not isinstance(repository, str):
+        raise TypeError("workflow repository identity must be a string")
+    if not repository:
+        raise ValueError("workflow repository identity is missing")
     if (
         run.get("id") != expected_run_id
         or run.get("tested_source_sha") != source_revision
@@ -351,25 +359,28 @@ def resolve_effective_artifacts(
         or run.get("path") != ".github/workflows/ci.yml"
         or run.get("name") != "CI — Validation"
         or run.get("event_name") != run.get("event")
-        or not isinstance(run.get("repository"), str)
-        or not run["repository"]
     ):
         raise ValueError("workflow run provenance does not match the current source")
     event_name = run.get("event_name")
     if event_name == "pull_request":
         pull_request = run.get("pull_request")
         api_pull_requests = run.get("api_pull_requests")
-        if not isinstance(pull_request, dict) or not isinstance(api_pull_requests, list):
-            raise ValueError("workflow pull-request identity is missing or ambiguous")
+        if not isinstance(pull_request, dict):
+            raise TypeError("workflow pull-request identity must be an object")
+        if not isinstance(api_pull_requests, list):
+            raise TypeError("workflow pull-request associations must be a list")
         number = pull_request.get("number")
         base_sha = pull_request.get("base_sha")
         head_sha = pull_request.get("head_sha")
+        if isinstance(number, bool) or not isinstance(number, int):
+            raise TypeError("workflow pull-request number must be an integer")
+        if not isinstance(base_sha, str) or not isinstance(head_sha, str):
+            raise TypeError("workflow pull-request base and head revisions must be strings")
         expected_title = f"CI — Validation pr-{number} base-{base_sha} head-{head_sha}"
         if (
-            isinstance(number, bool)
-            or not isinstance(number, int)
-            or number <= 0
-            or not SHA_PATTERN.fullmatch(base_sha or "")
+            number <= 0
+            or not SHA_PATTERN.fullmatch(base_sha)
+            or not SHA_PATTERN.fullmatch(head_sha)
             or head_sha != native_head_sha
             or run.get("display_title") != expected_title
             or len(api_pull_requests) > 1
@@ -387,7 +398,9 @@ def resolve_effective_artifacts(
         raise ValueError(f"unsupported workflow event identity: {event_name}")
 
     attempts = provenance.get("attempts")
-    if not isinstance(attempts, list) or len(attempts) != expected_attempt:
+    if not isinstance(attempts, list):
+        raise TypeError("workflow attempt provenance must be a list")
+    if len(attempts) != expected_attempt:
         raise ValueError("workflow attempt provenance is incomplete or ambiguous")
     attempt_map: dict[int, dict[str, Any]] = {}
     expected_names = {
@@ -398,22 +411,26 @@ def resolve_effective_artifacts(
 
     for snapshot in attempts:
         if not isinstance(snapshot, dict):
-            raise ValueError("workflow attempt provenance is malformed")
+            raise TypeError("workflow attempt provenance entries must be objects")
         attempt_number = positive_integer(snapshot.get("attempt"), "workflow attempt")
         if attempt_number in attempt_map or attempt_number > expected_attempt:
             raise ValueError("workflow attempt provenance is duplicate or out of range")
         attempt_map[attempt_number] = snapshot
         jobs = snapshot.get("jobs")
         total_count = snapshot.get("total_count")
-        if not isinstance(jobs, list) or total_count != len(jobs):
+        if not isinstance(jobs, list):
+            raise TypeError(f"workflow attempt {attempt_number} jobs must be a list")
+        if total_count != len(jobs):
             raise ValueError(f"workflow attempt {attempt_number} job pagination is incomplete")
-        if isinstance(total_count, bool) or not isinstance(total_count, int) or total_count < 0:
+        if isinstance(total_count, bool) or not isinstance(total_count, int):
+            raise TypeError(f"workflow attempt {attempt_number} job count must be an integer")
+        if total_count < 0:
             raise ValueError(f"workflow attempt {attempt_number} job count is invalid")
         ids: set[int] = set()
         matches: dict[int, list[dict[str, Any]]] = {1: [], 2: []}
         for job in jobs:
             if not isinstance(job, dict):
-                raise ValueError(f"workflow attempt {attempt_number} contains a malformed job")
+                raise TypeError(f"workflow attempt {attempt_number} jobs must be objects")
             job_id = positive_integer(job.get("id"), "workflow job id")
             if job_id in ids:
                 raise ValueError(f"workflow attempt {attempt_number} repeats a job id")
@@ -439,22 +456,26 @@ def resolve_effective_artifacts(
 
     artifact_collection = provenance.get("artifacts")
     if not isinstance(artifact_collection, dict):
-        raise ValueError("workflow artifact provenance is missing")
+        raise TypeError("workflow artifact provenance must be an object")
     artifacts = artifact_collection.get("items")
     artifact_total = artifact_collection.get("total_count")
-    if not isinstance(artifacts, list) or artifact_total != len(artifacts):
+    if not isinstance(artifacts, list):
+        raise TypeError("workflow artifact entries must be a list")
+    if artifact_total != len(artifacts):
         raise ValueError("workflow artifact pagination is incomplete or ambiguous")
-    if isinstance(artifact_total, bool) or not isinstance(artifact_total, int) or artifact_total < 0:
+    if isinstance(artifact_total, bool) or not isinstance(artifact_total, int):
+        raise TypeError("workflow artifact count must be an integer")
+    if artifact_total < 0:
         raise ValueError("workflow artifact count is invalid")
 
     matching_artifacts: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for artifact in artifacts:
         if not isinstance(artifact, dict):
-            raise ValueError("workflow artifact provenance is malformed")
+            raise TypeError("workflow artifact entries must be objects")
         artifact_id = positive_integer(artifact.get("id"), "workflow artifact id")
         name = artifact.get("name")
         if not isinstance(name, str):
-            raise ValueError("workflow artifact name is missing")
+            raise TypeError("workflow artifact name must be a string")
         if name.startswith("slow-service-ci-partition-"):
             match = ARTIFACT_PATTERN.fullmatch(name)
             if not match:
@@ -465,12 +486,14 @@ def resolve_effective_artifacts(
                 if int(match.group("attempt")) > expected_attempt:
                     raise ValueError(f"partition artifact {name} claims a future attempt")
                 matching_artifacts[name].append(artifact)
-        if artifact.get("expired") not in (True, False):
-            raise ValueError(f"workflow artifact {name} has an unknown expiration state")
+        expired = artifact.get("expired")
+        if not isinstance(expired, bool):
+            raise TypeError(f"workflow artifact {name} expiration must be a boolean")
         workflow_run = artifact.get("workflow_run")
+        if not isinstance(workflow_run, dict):
+            raise TypeError(f"workflow artifact {name} API provenance must be an object")
         if (
-            not isinstance(workflow_run, dict)
-            or workflow_run.get("id") != expected_run_id
+            workflow_run.get("id") != expected_run_id
             or workflow_run.get("head_sha") != native_head_sha
         ):
             raise ValueError(f"workflow artifact {name} has wrong-run or wrong-source API provenance")
@@ -564,9 +587,11 @@ def verify_aggregate(
     current_attempt: str,
 ) -> int:
     document = json.loads(selection_path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise TypeError("saved aggregate selection must be an object")
     provenance = document.get("provenance")
     if not isinstance(provenance, dict):
-        raise ValueError("saved Actions provenance is missing")
+        raise TypeError("saved Actions provenance must be an object")
     resolved = resolve_effective_artifacts(
         provenance, module, run_id, source_revision, current_attempt
     )
@@ -715,7 +740,7 @@ def main(argv: list[str] | None = None) -> int:
             args.run_attempt,
         )
         return 0
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
         print(f"Slow-service CI partition error: {error}", file=sys.stderr)
         return 1
 
