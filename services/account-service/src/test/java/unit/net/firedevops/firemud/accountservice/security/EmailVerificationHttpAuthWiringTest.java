@@ -11,6 +11,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.accountservice.controller.AuthController;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
@@ -31,6 +33,7 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.yaml.snakeyaml.Yaml;
 
 /** Actual Account YAML and servlet-auth composition with a mocked verification owner. */
 class EmailVerificationHttpAuthWiringTest {
@@ -39,6 +42,7 @@ class EmailVerificationHttpAuthWiringTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void publicPostReachesMappedVerificationOwnerWithoutBearer(boolean productionLayer) {
+    assertOpenApiDeclaresPublicPost();
     JwtUtil jwtUtil = mock(JwtUtil.class);
     configuredRunner(productionLayer, jwtUtil)
         .run(
@@ -150,5 +154,21 @@ class EmailVerificationHttpAuthWiringTest {
                 throw new IllegalStateException("Could not load Account HTTP auth YAML", exception);
               }
             });
+  }
+
+  private static void assertOpenApiDeclaresPublicPost() {
+    try (var input =
+        EmailVerificationHttpAuthWiringTest.class.getResourceAsStream("/openapi.yaml")) {
+      Map<?, ?> document = new Yaml().load(input);
+      Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+      Map<?, ?> verifyEmailPath = (Map<?, ?>) paths.get(PATH);
+      Map<?, ?> operation = (Map<?, ?>) verifyEmailPath.get("post");
+
+      assertThat(operation.get("operationId")).isEqualTo("verifyEmail");
+      assertThat(operation.containsKey("security")).isTrue();
+      assertThat(operation.get("security")).isEqualTo(List.of());
+    } catch (IOException exception) {
+      throw new IllegalStateException("Could not load Account OpenAPI YAML", exception);
+    }
   }
 }
