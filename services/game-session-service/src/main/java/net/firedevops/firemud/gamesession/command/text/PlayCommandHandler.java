@@ -57,6 +57,8 @@ public class PlayCommandHandler {
   private static final String RESUME_DENIED_METRIC = "gamesession.session.resume_denied";
   private static final String FRESH_ENTRY_FALLBACK_METRIC =
       "gamesession.session.fresh_entry_fallback";
+  private static final Duration AUTHORITY_REPLY_MAX_FUTURE_SKEW = Duration.ofSeconds(5);
+  private static final Duration AUTHORITY_REPLY_MAX_AGE = Duration.ofMinutes(5);
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
@@ -781,14 +783,20 @@ public class PlayCommandHandler {
         || !StringUtils.hasText(response.getEvaluatedAt())) {
       return false;
     }
+    return isSafeAuthorityReplyEvaluation(response.getEvaluatedAt());
+  }
+
+  private static boolean isSafeAuthorityReplyEvaluation(String evaluatedAt) {
     try {
-      Instant evaluatedAt = Instant.parse(response.getEvaluatedAt());
-      Instant now = Instant.now();
-      return !evaluatedAt.isAfter(now.plusSeconds(5))
-          && !evaluatedAt.isBefore(now.minus(Duration.ofMinutes(5)));
+      return isWithinAuthorityReplyWindow(Instant.parse(evaluatedAt), Instant.now());
     } catch (DateTimeParseException ex) {
       return false;
     }
+  }
+
+  static boolean isWithinAuthorityReplyWindow(Instant evaluatedAt, Instant now) {
+    return !evaluatedAt.isAfter(now.plus(AUTHORITY_REPLY_MAX_FUTURE_SKEW))
+        && !evaluatedAt.isBefore(now.minus(AUTHORITY_REPLY_MAX_AGE));
   }
 
   private PlayCommandHandlingResult worldAccessDeniedFailure(
@@ -956,7 +964,9 @@ public class PlayCommandHandler {
       return false;
     }
     try {
-      Instant.parse(response.getEvaluatedAt());
+      if (!isSafeAuthorityReplyEvaluation(response.getEvaluatedAt())) {
+        return false;
+      }
       if (!SessionContext.isCanonicalAccountIdentity(response.getAccountId())
           || !SessionContext.isCanonicalAccountIdentity(context.accountId())
           || !response.getAccountId().equals(context.accountId())
