@@ -72,7 +72,8 @@ components:
         sessionId:
           type: integer
         accountId:
-          type: integer
+          type: string
+          format: uuid
           nullable: true
         characterId:
           type: integer

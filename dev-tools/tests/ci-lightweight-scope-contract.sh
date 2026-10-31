@@ -30,6 +30,7 @@ for expected in \
   require_contains "$CLASSIFIER" "$expected"
 done
 
+# shellcheck disable=SC2016 # These expected strings intentionally match literal shell source.
 for expected in \
   'declare -a PREPARE_TASKS=(":${MODULE}:testClasses")' \
   'PREPARE_TASKS+=(":${MODULE}:${task_name}Classes")' \
