@@ -964,20 +964,22 @@ names = ["Detect CI-Relevant Changes", "GitHub Workflow Lint", "Buf Generation",
          "gRPC Transport Configuration Sanity Checks", "PostgreSQL Runtime Upgrade Proof", "Validate Documentation",
          "YAML Lint", "Dockerfile Lint", "Helm Render Validation", "Helm Chart Lint", "Python Script Validation",
          "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof",
-         "Account Coverage Aggregate", "Validation Gate"]
+         "Account Coverage Aggregate", "Game Session Coverage Aggregate", "Validation Gate"]
 def step(name, conclusion):
     return {"name": name, "status": "completed", "conclusion": conclusion}
 # Captured incident shape: 19 existing prerequisite jobs never reached a step;
-# the new Account aggregation prerequisite was skipped without running, while
-# the always() gate ran and failed only its enforcement step after cancellation.
-jobs = [{"id": 200 + index, "run_id": 100, "run_attempt": 1, "head_sha": head,
+# both slow-service aggregation prerequisites were skipped without running,
+# while the always() gate failed only its enforcement step after cancellation.
+jobs = [{"id": 500 + index, "run_id": 100, "run_attempt": 1, "head_sha": head,
          "name": name, "workflow_name": "CI — Validation", "status": "completed",
          "conclusion": "cancelled", "steps": [],
-         "html_url": f"https://github.com/{repo}/actions/runs/100/job/{200 + index}",
-         "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{300 + index}"}
+         "html_url": f"https://github.com/{repo}/actions/runs/100/job/{500 + index}",
+         "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{600 + index}"}
         for index, name in enumerate(names)]
 aggregate = next(job for job in jobs if job["name"] == "Account Coverage Aggregate")
 aggregate["conclusion"] = "skipped"
+game_session_aggregate = next(job for job in jobs if job["name"] == "Game Session Coverage Aggregate")
+game_session_aggregate["conclusion"] = "skipped"
 gate = jobs[-1]
 gate["conclusion"] = "failure"
 gate["steps"] = [step("Set up job", "success"), step("Pre Harden runner", "success"),
@@ -1009,6 +1011,11 @@ if scenario == "cancellation-aggregate-executed":
 if scenario == "cancellation-aggregate-failed":
     aggregate["conclusion"] = "failure"
     aggregate["steps"] = [step("Verify complete Account partition and report union", "failure")]
+if scenario == "cancellation-game-session-aggregate-executed":
+    game_session_aggregate["steps"] = [step("Verify complete Game Session partition and report union", "success")]
+if scenario == "cancellation-game-session-aggregate-failed":
+    game_session_aggregate["conclusion"] = "failure"
+    game_session_aggregate["steps"] = [step("Verify complete Game Session partition and report union", "failure")]
 run = {"id": 100, "workflow_id": 42, "run_attempt": 1, "name": "CI — Validation",
        "path": ".github/workflows/ci.yml", "head_sha": head, "display_title": title,
        "repository": {"full_name": repo}, "event": "pull_request", "pull_requests": [],
@@ -1039,6 +1046,9 @@ elif endpoint.endswith("/actions/jobs/221"):
     output = copy.deepcopy(gate)
     output.update(id=221, run_id=101, check_run_url=f"https://api.github.com/repos/{repo}/check-runs/420")
     output["steps"][4]["conclusion"] = "skipped"
+elif "/actions/jobs/" in endpoint:
+    job_id = int(endpoint.rsplit("/", 1)[1])
+    output = copy.deepcopy(next(job for job in jobs if job["id"] == job_id))
 elif "/attempts/1/jobs" in endpoint:
     snapshot = copy.deepcopy(jobs)
     if scenario == "cancellation-partial":
@@ -1830,7 +1840,7 @@ for scenario in cancellation-only cancellation-pending cancellation-metadata can
     echo "cancellation lost missing-proof behavior: $scenario" >&2; exit 1;
   }
 done
-for scenario in cancellation-later-attempt-failed-source cancellation-real-failure cancellation-hidden-step-failure cancellation-executed-check cancellation-aggregate-executed cancellation-aggregate-failed cancellation-gate-other-failure cancellation-unknown-assertion cancellation-timed-out cancellation-action-required cancellation-partial cancellation-wrong-attempt cancellation-wrong-head cancellation-duplicate cancellation-missing-steps cancellation-wrong-app cancellation-check-conflict cancellation-run-conflict; do
+for scenario in cancellation-later-attempt-failed-source cancellation-real-failure cancellation-hidden-step-failure cancellation-executed-check cancellation-aggregate-executed cancellation-aggregate-failed cancellation-game-session-aggregate-executed cancellation-game-session-aggregate-failed cancellation-gate-other-failure cancellation-unknown-assertion cancellation-timed-out cancellation-action-required cancellation-partial cancellation-wrong-attempt cancellation-wrong-head cancellation-duplicate cancellation-missing-steps cancellation-wrong-app cancellation-check-conflict cancellation-run-conflict; do
   output_file="$tmp_dir/$scenario-output"
   if run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file" >"$tmp_dir/$scenario-log" 2>&1; then
     echo "cancellation suppressed failed or incomplete proof: $scenario" >&2; exit 1

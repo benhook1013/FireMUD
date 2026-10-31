@@ -384,19 +384,27 @@ subprojects {
         if (file("src/test/java/integration").exists()) add("integrationTest")
         if (file("src/test/java/crossservice").exists()) add("crossServiceTest")
     }
-    val accountCiPartition = providers.gradleProperty("accountCiPartition").orNull
-    if (project.name == "account-service" && accountCiPartition != null) {
-        if (accountCiPartition !in setOf("1", "2")) {
-            throw GradleException("accountCiPartition must be 1 or 2")
+    val slowServiceCiModules = setOf("account-service", "game-session-service")
+    val slowServiceCiPartition = providers.gradleProperty("slowServiceCiPartition").orNull
+    val slowServiceCiCoverageAggregate =
+        providers.gradleProperty("slowServiceCiCoverageAggregate").orNull
+    if (
+        slowServiceCiCoverageAggregate != null &&
+        slowServiceCiCoverageAggregate !in slowServiceCiModules
+    ) {
+        throw GradleException("slowServiceCiCoverageAggregate must name an allowed slow service")
+    }
+    if (project.name in slowServiceCiModules && slowServiceCiPartition != null) {
+        if (slowServiceCiPartition !in setOf("1", "2")) {
+            throw GradleException("slowServiceCiPartition must be 1 or 2")
         }
         tasks.withType<Test>().configureEach {
             val selectorFile = layout.buildDirectory.file(
-                "account-ci-partition/partition-$accountCiPartition/$name.txt"
+                "slow-service-ci-partition/" + project.name +
+                    "/partition-$slowServiceCiPartition/$name.txt"
             ).get().asFile
             if (!selectorFile.isFile) {
-                throw GradleException(
-                    "Account test selector is missing for $name: $selectorFile"
-                )
+                throw GradleException("Slow-service test selector is missing for $name: $selectorFile")
             }
             val selectedClasses = selectorFile.readLines().filter(String::isNotBlank)
             if (selectedClasses.isEmpty()) {
@@ -418,13 +426,10 @@ subprojects {
                 layout.buildDirectory.file("jacoco/$taskName.exec")
             }
         )
-        if (
-            project.name == "account-service" &&
-            providers.gradleProperty("accountCiCoverageAggregate").isPresent
-        ) {
+        if (project.name == slowServiceCiCoverageAggregate) {
             setDependsOn(listOf("classes"))
             executionData.setFrom(
-                fileTree(layout.buildDirectory.dir("account-ci-partition-inputs")) {
+                fileTree(layout.buildDirectory.dir("slow-service-ci-partition-inputs")) {
                     include("**/jacoco/*.exec")
                 }
             )

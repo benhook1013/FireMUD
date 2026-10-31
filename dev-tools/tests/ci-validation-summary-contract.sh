@@ -62,6 +62,8 @@ const jobs = payload.names.filter(name => !name.includes('${{')).map((name, i) =
 jobs.push(
   row('Build and Test (account-service / 1)', 90),
   row('Build and Test (account-service / 2)', 92),
+  row('Build and Test (game-session-service / 1)', 93),
+  row('Build and Test (game-session-service / 2)', 94),
   row('Build and Test (common-security / full)', 91),
 );
 const botComment = (id, body, created_at) => ({ id, body, user: { login: 'github-actions[bot]' }, created_at });
@@ -224,29 +226,51 @@ async function noWrites(config, reject = false) {
   const accountPartitionFail = clone(jobs);
   accountPartitionFail.find(x => x.name === 'Build and Test (account-service / 2)').conclusion = 'failure';
   accountPartitionFail.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';
+  accountPartitionFail.find(x => x.name === 'Game Session Coverage Aggregate').conclusion = 'skipped';
   const failedAccountPartition = harness({ jobs: accountPartitionFail }); await failedAccountPartition.run();
   assert.match(failedAccountPartition.calls.creates[0].body, /Service build\/test matrix: `failure`/);
   assert.match(failedAccountPartition.calls.creates[0].body, /Account coverage aggregation: `skipped`/);
+  assert.match(failedAccountPartition.calls.creates[0].body, /Game Session coverage aggregation: `skipped`/);
+  const gameSessionPartitionFail = clone(jobs);
+  gameSessionPartitionFail.find(x => x.name === 'Build and Test (game-session-service / 1)').conclusion = 'failure';
+  gameSessionPartitionFail.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';
+  gameSessionPartitionFail.find(x => x.name === 'Game Session Coverage Aggregate').conclusion = 'skipped';
+  const failedGameSessionPartition = harness({ jobs: gameSessionPartitionFail }); await failedGameSessionPartition.run();
+  assert.match(failedGameSessionPartition.calls.creates[0].body, /Game Session coverage aggregation: `skipped`/);
   const failedAggregate = clone(jobs);
   failedAggregate.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'failure';
   const failedAggregateRun = harness({ jobs: failedAggregate }); await failedAggregateRun.run();
   assert.match(failedAggregateRun.calls.creates[0].body, /Account coverage aggregation: `failure`/);
+  const failedGameSessionAggregate = clone(jobs);
+  failedGameSessionAggregate.find(x => x.name === 'Game Session Coverage Aggregate').conclusion = 'failure';
+  const failedGameSessionAggregateRun = harness({ jobs: failedGameSessionAggregate }); await failedGameSessionAggregateRun.run();
+  assert.match(failedGameSessionAggregateRun.calls.creates[0].body, /Game Session coverage aggregation: `failure`/);
   await noWrites({ jobs: clone(jobs).filter(x => x.name !== 'Build and Test (account-service / 2)') }, true);
   await noWrites({ jobs: clone(jobs).filter(x => x.name !== 'Account Coverage Aggregate') }, true);
+  await noWrites({ jobs: clone(jobs).filter(x => x.name !== 'Build and Test (game-session-service / 2)') }, true);
+  await noWrites({ jobs: clone(jobs).filter(x => x.name !== 'Game Session Coverage Aggregate') }, true);
 
   const skipped = clone(jobs).filter(x => !x.name.startsWith('Build and Test ('));
   skipped.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';
+  skipped.find(x => x.name === 'Game Session Coverage Aggregate').conclusion = 'skipped';
   skipped.push({ ...row('Build and Test ($' + '{{ matrix.module }} / $' + '{{ matrix.partition }})', 201), conclusion: 'skipped' });
   const skippedRun = harness({ jobs: skipped }); await skippedRun.run();
   assert.match(skippedRun.calls.creates[0].body, /Service build\/test matrix: `skipped`/);
   assert.match(skippedRun.calls.creates[0].body, /Account coverage aggregation: `skipped`/);
+  assert.match(skippedRun.calls.creates[0].body, /Game Session coverage aggregation: `skipped`/);
 
   const legacy = clone(jobs).filter(x =>
     x.name !== 'Account Coverage Aggregate' &&
+    x.name !== 'Game Session Coverage Aggregate' &&
     !x.name.startsWith('Build and Test (account-service /') &&
+    !x.name.startsWith('Build and Test (game-session-service /') &&
     x.name !== 'Build and Test (common-security / full)'
   );
-  legacy.push(row('Build and Test (account-service)', 202), row('Build and Test (common-security)', 203));
+  legacy.push(
+    row('Build and Test (account-service)', 202),
+    row('Build and Test (game-session-service)', 204),
+    row('Build and Test (common-security)', 203),
+  );
   const legacyRun = harness({ jobs: legacy }); await legacyRun.run();
   assert.match(legacyRun.calls.creates[0].body, /Service build\/test matrix: `success`/);
   const neutral = clone(jobs); neutral.find(x => x.name.startsWith('Build and Test (')).conclusion = 'neutral';

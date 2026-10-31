@@ -146,8 +146,9 @@ jobs:
                 lightweight_only: false,
               };
             }
+            const partitionedSlowServices = new Set(["account-service", "game-session-service"]);
             outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>
-              module === "account-service"
+              partitionedSlowServices.has(module)
                 ? [
                     { module, partition: "1", "java-version": 21 },
                     { module, partition: "2", "java-version": 21 },
@@ -432,8 +433,8 @@ jobs:
           time bash ./dev-tools/tests/publisher-checksum-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/jacoco-combined-report-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/jacoco-combined-report-contract.sh
-          TIMEFORMAT="python3 -m unittest discover -s dev-tools/tests -p 'test_account_ci_partition.py': real=%3R user=%3U sys=%3S"
-          time python3 -m unittest discover -s dev-tools/tests -p 'test_account_ci_partition.py'
+          TIMEFORMAT="python3 -m unittest discover -s dev-tools/tests -p 'test_slow_service_ci_partition.py': real=%3R user=%3U sys=%3S"
+          time python3 -m unittest discover -s dev-tools/tests -p 'test_slow_service_ci_partition.py'
           TIMEFORMAT='bash ./dev-tools/tests/gradle-proof-tooling-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/testcontainers-disabled-contract.sh: real=%3R user=%3U sys=%3S'
@@ -1111,7 +1112,7 @@ jobs:
           echo "::endgroup::"
 
       - name: 📦 Build Runtime JAR
-        if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' || matrix.partition == '1') }}
+        if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' || matrix.partition == '1') }}
         run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck
 
       - name: 📈 Parse Coverage %
@@ -1174,7 +1175,7 @@ jobs:
           path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', matrix.module) }}
 
       - name: 📤 Upload JUnit Test Results
-        if: ${{ always() && matrix.module != 'account-service' }}
+        if: ${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: junit-${{ matrix.module }}-${{ matrix.partition }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}
@@ -1182,16 +1183,16 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: 📤 Upload Account Partition Reports and Execution Data
-        if: ${{ always() && matrix.module == 'account-service' }}
+      - name: 📤 Upload Slow-Service Partition Reports and Execution Data
+        if: ${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: account-ci-partition-${{ github.sha }}-attempt-${{ github.run_attempt }}-partition-${{ matrix.partition }}
+          name: slow-service-ci-partition-${{ github.run_id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}-${{ matrix.module }}-partition-${{ matrix.partition }}
           path: |
-            services/account-service/build/account-ci-partition/partition-${{ matrix.partition }}/
-            services/account-service/build/jacoco/*.exec
-            services/account-service/build/reports/jacoco/test/
-            services/account-service/build/test-results/**/*.xml
+            services/${{ matrix.module }}/build/slow-service-ci-partition/${{ matrix.module }}/partition-${{ matrix.partition }}/
+            services/${{ matrix.module }}/build/jacoco/*.exec
+            services/${{ matrix.module }}/build/reports/jacoco/test/
+            services/${{ matrix.module }}/build/test-results/**/*.xml
           if-no-files-found: warn
           retention-days: 14
 
@@ -1228,18 +1229,117 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: Download both Account partition artifacts
+      - name: Capture Account partition job and artifact provenance
+        id: provenance
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CI_SOURCE_SHA: ${{ github.sha }}
+          CI_PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
+        with:
+          script: |
+            const fs = require("node:fs");
+            const runId = Number(process.env.CI_RUN_ID);
+            const runAttempt = Number(process.env.CI_RUN_ATTEMPT);
+            const run = (await github.rest.actions.getWorkflowRun({ run_id: runId })).data;
+            if (run.id !== runId || run.head_sha !== process.env.CI_SOURCE_SHA ||
+                run.run_attempt !== runAttempt || run.path !== ".github/workflows/ci.yml" ||
+                run.name !== "CI — Validation") {
+              throw new Error("Current workflow run identity does not match the aggregate source.");
+            }
+            async function listCompletePages(request, params, rowsKey, description) {
+              const items = [];
+              let totalCount;
+              for (let page = 1; page <= 100; page += 1) {
+                const { data } = await request({ ...params, page, per_page: 100 });
+                const count = data?.total_count;
+                const rows = data?.[rowsKey];
+                if (!Number.isSafeInteger(count) || count < 0 || !Array.isArray(rows) ||
+                    (totalCount !== undefined && totalCount !== count) || items.length > count) {
+                  throw new Error(`Invalid ${description} pagination metadata.`);
+                }
+                totalCount = count;
+                const expected = Math.min(100, count - items.length);
+                if (rows.length !== expected) throw new Error(`Incomplete ${description} page ${page}.`);
+                items.push(...rows);
+                if (items.length === totalCount) return { total_count: totalCount, items };
+              }
+              throw new Error(`Exceeded the ${description} pagination bound.`);
+            }
+            const attempts = [];
+            for (let attempt = 1; attempt <= runAttempt; attempt += 1) {
+              const params = { run_id: runId, attempt_number: attempt };
+              const snapshot = await listCompletePages(
+                request => github.rest.actions.listJobsForWorkflowRunAttempt(request),
+                params,
+                "jobs",
+                `attempt ${attempt} job`,
+              );
+              attempts.push({
+                attempt,
+                total_count: snapshot.total_count,
+                jobs: snapshot.items.map(job => ({
+                  id: job.id, run_id: job.run_id, head_sha: job.head_sha, name: job.name,
+                  status: job.status, conclusion: job.conclusion,
+                  started_at: job.started_at, completed_at: job.completed_at,
+                })),
+              });
+            }
+            const artifactSnapshot = await listCompletePages(
+              request => github.rest.actions.listWorkflowRunArtifacts(request),
+              { run_id: runId },
+              "artifacts",
+              "workflow artifact",
+            );
+            const artifacts = artifactSnapshot.items;
+            fs.mkdirSync(require("node:path").dirname(process.env.CI_PROVENANCE_PATH), { recursive: true });
+            fs.writeFileSync(process.env.CI_PROVENANCE_PATH, JSON.stringify({
+              run: {
+                id: run.id, head_sha: run.head_sha, run_attempt: run.run_attempt,
+                path: run.path, name: run.name,
+              },
+              attempts,
+              artifacts: {
+                total_count: artifactSnapshot.total_count,
+                items: artifacts.map(artifact => ({
+                  id: artifact.id, name: artifact.name, expired: artifact.expired,
+                  size_in_bytes: artifact.size_in_bytes, created_at: artifact.created_at,
+                  workflow_run: artifact.workflow_run,
+                })),
+              },
+            }));
+
+      - name: Select Account artifacts from latest effective job outcomes
+        id: selection
+        env:
+          PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
+          SELECTION_PATH: services/account-service/build/slow-service-ci-partition-selection.json
+        run: |
+          python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
+            --module account-service \
+            --run-id "$GITHUB_RUN_ID" \
+            --source-revision "$GITHUB_SHA" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --provenance-json "$PROVENANCE_PATH" \
+            --selection-json "$SELECTION_PATH" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Download both effective Account partition artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         continue-on-error: true
         with:
-          pattern: account-ci-partition-${{ github.sha }}-attempt-${{ github.run_attempt }}-partition-*
-          path: services/account-service/build/account-ci-partition-inputs
+          artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
+          path: services/account-service/build/slow-service-ci-partition-inputs
           merge-multiple: false
 
       - name: Verify complete Account partition and report union
         run: |
-          python3 dev-tools/validation/account_ci_test_partition.py verify-aggregate \
-            --input-dir services/account-service/build/account-ci-partition-inputs \
+          python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
+            --module account-service \
+            --input-dir services/account-service/build/slow-service-ci-partition-inputs \
+            --selection-json services/account-service/build/slow-service-ci-partition-selection.json \
+            --run-id "$GITHUB_RUN_ID" \
             --source-revision "$GITHUB_SHA" \
             --run-attempt "$GITHUB_RUN_ATTEMPT"
 
@@ -1258,13 +1358,174 @@ jobs:
           cache-read-only: false
 
       - name: Merge complete Account JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:jacocoTestReport -PfullCheck -PaccountCiCoverageAggregate
+        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service
 
       - name: 📤 Upload Complete Account Coverage Report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: jacoco-account-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: services/account-service/build/reports/jacoco/test/
+          if-no-files-found: error
+          retention-days: 14
+
+  game-session-coverage-aggregate:
+    name: Game Session Coverage Aggregate
+    needs: [changes, build-and-test]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'game-session-service') && needs.build-and-test.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: Check out Game Session source for complete coverage aggregation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Capture Game Session partition job and artifact provenance
+        id: provenance
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CI_RUN_ID: ${{ github.run_id }}
+          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CI_SOURCE_SHA: ${{ github.sha }}
+          CI_PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
+        with:
+          script: |
+            const fs = require("node:fs");
+            const runId = Number(process.env.CI_RUN_ID);
+            const runAttempt = Number(process.env.CI_RUN_ATTEMPT);
+            const run = (await github.rest.actions.getWorkflowRun({ run_id: runId })).data;
+            if (run.id !== runId || run.head_sha !== process.env.CI_SOURCE_SHA ||
+                run.run_attempt !== runAttempt || run.path !== ".github/workflows/ci.yml" ||
+                run.name !== "CI — Validation") {
+              throw new Error("Current workflow run identity does not match the aggregate source.");
+            }
+            async function listCompletePages(request, params, rowsKey, description) {
+              const items = [];
+              let totalCount;
+              for (let page = 1; page <= 100; page += 1) {
+                const { data } = await request({ ...params, page, per_page: 100 });
+                const count = data?.total_count;
+                const rows = data?.[rowsKey];
+                if (!Number.isSafeInteger(count) || count < 0 || !Array.isArray(rows) ||
+                    (totalCount !== undefined && totalCount !== count) || items.length > count) {
+                  throw new Error(`Invalid ${description} pagination metadata.`);
+                }
+                totalCount = count;
+                const expected = Math.min(100, count - items.length);
+                if (rows.length !== expected) throw new Error(`Incomplete ${description} page ${page}.`);
+                items.push(...rows);
+                if (items.length === totalCount) return { total_count: totalCount, items };
+              }
+              throw new Error(`Exceeded the ${description} pagination bound.`);
+            }
+            const attempts = [];
+            for (let attempt = 1; attempt <= runAttempt; attempt += 1) {
+              const params = { run_id: runId, attempt_number: attempt };
+              const snapshot = await listCompletePages(
+                request => github.rest.actions.listJobsForWorkflowRunAttempt(request),
+                params,
+                "jobs",
+                `attempt ${attempt} job`,
+              );
+              attempts.push({
+                attempt,
+                total_count: snapshot.total_count,
+                jobs: snapshot.items.map(job => ({
+                  id: job.id, run_id: job.run_id, head_sha: job.head_sha, name: job.name,
+                  status: job.status, conclusion: job.conclusion,
+                  started_at: job.started_at, completed_at: job.completed_at,
+                })),
+              });
+            }
+            const artifactSnapshot = await listCompletePages(
+              request => github.rest.actions.listWorkflowRunArtifacts(request),
+              { run_id: runId },
+              "artifacts",
+              "workflow artifact",
+            );
+            const artifacts = artifactSnapshot.items;
+            fs.mkdirSync(require("node:path").dirname(process.env.CI_PROVENANCE_PATH), { recursive: true });
+            fs.writeFileSync(process.env.CI_PROVENANCE_PATH, JSON.stringify({
+              run: {
+                id: run.id, head_sha: run.head_sha, run_attempt: run.run_attempt,
+                path: run.path, name: run.name,
+              },
+              attempts,
+              artifacts: {
+                total_count: artifactSnapshot.total_count,
+                items: artifacts.map(artifact => ({
+                  id: artifact.id, name: artifact.name, expired: artifact.expired,
+                  size_in_bytes: artifact.size_in_bytes, created_at: artifact.created_at,
+                  workflow_run: artifact.workflow_run,
+                })),
+              },
+            }));
+
+      - name: Select Game Session artifacts from latest effective job outcomes
+        id: selection
+        env:
+          PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
+          SELECTION_PATH: services/game-session-service/build/slow-service-ci-partition-selection.json
+        run: |
+          python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
+            --module game-session-service \
+            --run-id "$GITHUB_RUN_ID" \
+            --source-revision "$GITHUB_SHA" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --provenance-json "$PROVENANCE_PATH" \
+            --selection-json "$SELECTION_PATH" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Download both effective Game Session partition artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
+          path: services/game-session-service/build/slow-service-ci-partition-inputs
+          merge-multiple: false
+
+      - name: Verify complete Game Session partition and report union
+        run: |
+          python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
+            --module game-session-service \
+            --input-dir services/game-session-service/build/slow-service-ci-partition-inputs \
+            --selection-json services/game-session-service/build/slow-service-ci-partition-selection.json \
+            --run-id "$GITHUB_RUN_ID" \
+            --source-revision "$GITHUB_SHA" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: ⚙️ Set Up Java for Game Session Coverage Aggregation
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version: 21
+
+      - name: ⚙️ Set Up Gradle for Game Session Coverage Aggregation
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
+          cache-read-only: false
+
+      - name: Merge complete Game Session JaCoCo coverage
+        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service
+
+      - name: 📤 Upload Complete Game Session Coverage Report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jacoco-game-session-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: services/game-session-service/build/reports/jacoco/test/
           if-no-files-found: error
           retention-days: 14
 
@@ -1282,7 +1543,9 @@ jobs:
     env:
       ACCOUNT_MODULE_AFFECTED: ${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service') }}
       ACCOUNT_COVERAGE_AGGREGATE: ${{ needs.account-coverage-aggregate.result }}
-    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, account-coverage-aggregate]
+      GAME_SESSION_MODULE_AFFECTED: ${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'game-session-service') }}
+      GAME_SESSION_COVERAGE_AGGREGATE: ${{ needs.game-session-coverage-aggregate.result }}
+    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, account-coverage-aggregate, game-session-coverage-aggregate]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -1348,6 +1611,8 @@ jobs:
           AFFECTED_MODULES: ${{ needs.changes.outputs.affected_modules }}
           ACCOUNT_MODULE_AFFECTED: ${{ env.ACCOUNT_MODULE_AFFECTED }}
           ACCOUNT_COVERAGE_AGGREGATE: ${{ needs.account-coverage-aggregate.result }}
+          GAME_SESSION_MODULE_AFFECTED: ${{ env.GAME_SESSION_MODULE_AFFECTED }}
+          GAME_SESSION_COVERAGE_AGGREGATE: ${{ needs.game-session-coverage-aggregate.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BUF_CHECK: ${{ needs.buf-check.result }}
           DOCKER_LINT: ${{ needs.docker-lint.result }}
@@ -1483,6 +1748,15 @@ jobs:
               failed=1
             fi
           elif [ "$ACCOUNT_COVERAGE_AGGREGATE" != "skipped" ]; then
+            failed=1
+          fi
+
+          echo "Game Session Coverage Aggregate => $GAME_SESSION_COVERAGE_AGGREGATE (game-session-affected=$GAME_SESSION_MODULE_AFFECTED)"
+          if [ "$GAME_SESSION_MODULE_AFFECTED" = "true" ]; then
+            if [ "$GAME_SESSION_COVERAGE_AGGREGATE" != "success" ]; then
+              failed=1
+            fi
+          elif [ "$GAME_SESSION_COVERAGE_AGGREGATE" != "skipped" ]; then
             failed=1
           fi
 

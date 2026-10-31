@@ -128,9 +128,10 @@ validation_cancelled_before_checks() {
      ("Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})"), "Metrics Cardinality Policy Check", "Flyway Migration Sanity Checks",
      "gRPC Transport Configuration Sanity Checks", "PostgreSQL Runtime Upgrade Proof", "Validate Documentation",
      "YAML Lint", "Dockerfile Lint", "Helm Render Validation", "Helm Chart Lint", "Python Script Validation",
-     "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof", "Account Coverage Aggregate", "Validation Gate"] as $names
-    | type == "array" and length == 1 and .[0].total_count == 21 and (.[0].jobs | type) == "array" and
-      (.[0].jobs | length) == 21 and ([.[0].jobs[].id] | unique | length) == 21 and
+     "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof", "Account Coverage Aggregate",
+     "Game Session Coverage Aggregate", "Validation Gate"] as $names
+    | type == "array" and length == 1 and .[0].total_count == 22 and (.[0].jobs | type) == "array" and
+      (.[0].jobs | length) == 22 and ([.[0].jobs[].id] | unique | length) == 22 and
       ([.[0].jobs[].name] | sort) == ($names | sort) and
       all(.[0].jobs[]; (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
         .run_id == $run and .run_attempt == $attempt and .head_sha == $head and .status == "completed" and
@@ -144,7 +145,7 @@ validation_cancelled_before_checks() {
           all(.steps[]; .status == "completed" and
             (if .name == "Enforce validation success" then .conclusion == "failure"
              else (.conclusion == "success" or .conclusion == "skipped") end))
-        elif .name == "Account Coverage Aggregate" then
+        elif (.name == "Account Coverage Aggregate" or .name == "Game Session Coverage Aggregate") then
           (.conclusion == "cancelled" or .conclusion == "skipped") and .steps == []
         else .conclusion == "cancelled" and .steps == [] end)
   ' <<<"${jobs_snapshot}" >/dev/null || return 1

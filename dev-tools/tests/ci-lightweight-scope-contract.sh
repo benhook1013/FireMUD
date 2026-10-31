@@ -31,8 +31,8 @@ for expected in \
 done
 
 for expected in \
-  'declare -a PREPARE_TASKS=(:account-service:testClasses)' \
-  'PREPARE_TASKS+=(":account-service:${task_name}Classes")' \
+  'declare -a PREPARE_TASKS=(":${MODULE}:testClasses")' \
+  'PREPARE_TASKS+=(":${MODULE}:${task_name}Classes")' \
   'bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"'; do
   require_contains "$MODULE_CHECK_WRAPPER" "$expected"
 done
@@ -84,11 +84,17 @@ def evaluate_module_check_matrix(step, modules):
     )
     if match is None:
         raise SystemExit("ci workflow: module check matrix builder is missing")
+    partition_set = re.search(
+        r'(?m)^[ \t]*const partitionedSlowServices = new Set\([^\n]+\);',
+        script[:match.start()],
+    )
+    if partition_set is None:
+        raise SystemExit("ci workflow: slow-service partition allowlist is missing")
     node_script = """
 const fs = require("node:fs");
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const outputs = { affected_modules: input.modules };
-const rows = new Function("outputs", `${input.assignment}\nreturn outputs.module_check_matrix;`)(outputs);
+const rows = new Function("outputs", `${input.partition_set}\n${input.assignment}\nreturn outputs.module_check_matrix;`)(outputs);
 process.stdout.write(JSON.stringify(rows));
 """
     try:
@@ -97,7 +103,11 @@ process.stdout.write(JSON.stringify(rows));
             check=True,
             capture_output=True,
             text=True,
-            input=json.dumps({"modules": modules, "assignment": match.group(0).strip()}),
+            input=json.dumps({
+                "modules": modules,
+                "assignment": match.group(0).strip(),
+                "partition_set": partition_set.group(0).strip(),
+            }),
         )
         rows = json.loads(result.stdout)
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
@@ -216,7 +226,7 @@ DEV_TOOL_CONTRACT_COMMANDS = (
     "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
     "bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh",
     "bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh",
-    "python3 -m unittest discover -s dev-tools/tests -p 'test_account_ci_partition.py'",
+    "python3 -m unittest discover -s dev-tools/tests -p 'test_slow_service_ci_partition.py'",
 )
 DISCOVERABLE_ARCHITECTURE_UNIT_TEST_MODULES = (
     "dev-tools/validation/test_design_capability_allocation.py",
@@ -379,17 +389,20 @@ require_equal(
 matrix_config = value_at(ci, ("jobs", "build-and-test", "strategy", "matrix"), "ci workflow")
 if set(matrix_config) != {"include"}:
     raise SystemExit("ci workflow: module check matrix must use independent include-only records")
-matrix_rows = evaluate_module_check_matrix(ci_compute_step, ["account-service", "common-security"])
+matrix_rows = evaluate_module_check_matrix(
+    ci_compute_step, ["account-service", "game-session-service", "common-security"]
+)
 expected_matrix_rows = [
     {"module": "account-service", "partition": "1", "java-version": 21},
     {"module": "account-service", "partition": "2", "java-version": 21},
+    {"module": "game-session-service", "partition": "1", "java-version": 21},
+    {"module": "game-session-service", "partition": "2", "java-version": 21},
     {"module": "common-security", "partition": "full", "java-version": 21},
 ]
-# With an include-only matrix each input record is one complete job combination.
 expanded_jobs = [dict(row) for row in matrix_rows]
 if expanded_jobs != expected_matrix_rows or len({
     (row["module"], row["partition"]) for row in expanded_jobs
-}) != 3:
+}) != 5:
     raise SystemExit(f"ci workflow: matrix expansion lost or duplicated a job: {expanded_jobs!r}")
 require_contains(
     ci_compute_step,
@@ -400,27 +413,16 @@ require_contains(
 require_contains(
     ci_compute_step,
     ("with", "script"),
+    'const partitionedSlowServices = new Set(["account-service", "game-session-service"]);',
+    "ci workflow",
+)
+for expected in (
     '{ module, partition: "1", "java-version": 21 },',
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
     '{ module, partition: "2", "java-version": 21 },',
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
     'partition: "full"',
-    "ci workflow",
-)
-require_contains(
-    ci_compute_step,
-    ("with", "script"),
     '"java-version": 21',
-    "ci workflow",
-)
+):
+    require_contains(ci_compute_step, ("with", "script"), expected, "ci workflow")
 java_setup_step = find_step(ci, "build-and-test", "Set Up Java", "ci workflow")
 require_equal(
     java_setup_step,
@@ -435,7 +437,7 @@ runtime_jar_step = find_step(
 require_equal(
     runtime_jar_step,
     ("if",),
-    "${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' || matrix.partition == '1') }}",
+    "${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' || matrix.partition == '1') }}",
     "ci workflow",
 )
 require_equal(
@@ -467,7 +469,7 @@ junit_results_step = find_step(
 require_equal(
     junit_results_step,
     ("if",),
-    "${{ always() && matrix.module != 'account-service' }}",
+    "${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' }}",
     "ci workflow",
 )
 require_equal(
@@ -489,169 +491,85 @@ require_equal(
     "ci workflow",
 )
 
-account_partition_artifact_step = find_step(
-    ci,
-    "build-and-test",
-    "Upload Account Partition Reports and Execution Data",
+slow_partition_artifact_step = find_step(
+    ci, "build-and-test",
+    "Upload Slow-Service Partition Reports and Execution Data",
     "ci workflow",
 )
 require_equal(
-    account_partition_artifact_step,
-    ("if",),
-    "${{ always() && matrix.module == 'account-service' }}",
+    slow_partition_artifact_step, ("if",),
+    "${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service') }}",
     "ci workflow",
 )
 require_equal(
-    account_partition_artifact_step,
-    ("with", "name"),
-    "account-ci-partition-${{ github.sha }}-attempt-${{ github.run_attempt }}-partition-${{ matrix.partition }}",
+    slow_partition_artifact_step, ("with", "name"),
+    "slow-service-ci-partition-${{ github.run_id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}-${{ matrix.module }}-partition-${{ matrix.partition }}",
     "ci workflow",
 )
 for artifact_path in (
-    "services/account-service/build/account-ci-partition/partition-${{ matrix.partition }}/",
-    "services/account-service/build/jacoco/*.exec",
-    "services/account-service/build/reports/jacoco/test/",
-    "services/account-service/build/test-results/**/*.xml",
+    "services/${{ matrix.module }}/build/slow-service-ci-partition/${{ matrix.module }}/partition-${{ matrix.partition }}/",
+    "services/${{ matrix.module }}/build/jacoco/*.exec",
+    "services/${{ matrix.module }}/build/reports/jacoco/test/",
+    "services/${{ matrix.module }}/build/test-results/**/*.xml",
 ):
+    require_contains(slow_partition_artifact_step, ("with", "path"), artifact_path, "ci workflow")
+
+for module, job_id, display, prefix in (
+    ("account-service", "account-coverage-aggregate", "Account", "ACCOUNT"),
+    ("game-session-service", "game-session-coverage-aggregate", "Game Session", "GAME_SESSION"),
+):
+    aggregate_job = value_at(ci, ("jobs", job_id), "ci workflow")
+    require_equal(aggregate_job, ("needs",), ["changes", "build-and-test"], "ci workflow")
+    require_contains(aggregate_job, ("if",), "needs.build-and-test.result == 'success'", "ci workflow")
     require_contains(
-        account_partition_artifact_step,
-        ("with", "path"),
-        artifact_path,
+        aggregate_job, ("if",),
+        f"contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), '{module}')",
+        "ci workflow",
+    )
+    require_equal(aggregate_job, ("permissions",), {"actions": "read", "contents": "read"}, "ci workflow")
+    capture = find_step(ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
+    for api_owner in (
+        "github.rest.actions.getWorkflowRun",
+        "listJobsForWorkflowRunAttempt",
+        "listWorkflowRunArtifacts",
+        "listCompletePages",
+        "data?.total_count",
+        "rows.length !== expected",
+    ):
+        require_contains(capture, ("with", "script"), api_owner, "ci workflow")
+    select = find_step(ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
+    require_contains(select, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts", "ci workflow")
+    require_contains(select, ("run",), f"--module {module}", "ci workflow")
+    download = find_step(ci, job_id, f"Download both effective {display} partition artifacts", "ci workflow")
+    require_equal(download, ("continue-on-error",), "true", "ci workflow")
+    require_equal(download, ("with", "artifact-ids"), "${{ steps.selection.outputs.artifact_ids }}", "ci workflow")
+    verify = find_step(ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
+    require_contains(verify, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate", "ci workflow")
+    merge = find_step(ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
+    require_contains(
+        merge, ("run",),
+        f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module}",
+        "ci workflow",
+    )
+    require_list_item(ci, ("jobs", "validation-gate", "needs"), job_id, "ci workflow")
+    result_expression = "${{ needs." + job_id + ".result }}"
+    require_equal(
+        ci, ("jobs", "validation-gate", "env", prefix + "_COVERAGE_AGGREGATE"),
+        result_expression, "ci workflow",
+    )
+    gate = find_step(ci, "validation-gate", "Enforce validation success", "ci workflow")
+    require_equal(gate, ("env", prefix + "_COVERAGE_AGGREGATE"), result_expression, "ci workflow")
+    require_contains(
+        gate, ("run",),
+        'if [ "$' + prefix + '_COVERAGE_AGGREGATE" != "success" ]; then',
+        "ci workflow",
+    )
+    require_contains(
+        gate, ("run",),
+        'if [ "$' + prefix + '_MODULE_AFFECTED" = "true" ]; then',
         "ci workflow",
     )
 
-account_coverage_job = value_at(
-    ci, ("jobs", "account-coverage-aggregate"), "ci workflow"
-)
-require_equal(
-    account_coverage_job,
-    ("needs",),
-    ["changes", "build-and-test"],
-    "ci workflow",
-)
-require_contains(
-    account_coverage_job,
-    ("if",),
-    "needs.build-and-test.result == 'success'",
-    "ci workflow",
-)
-require_contains(
-    account_coverage_job,
-    ("if",),
-    "contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service')",
-    "ci workflow",
-)
-require_equal(
-    account_coverage_job,
-    ("permissions",),
-    {"actions": "read", "contents": "read"},
-    "ci workflow",
-)
-for step_name, field, expected in (
-    (
-        "Check out Account source for complete coverage aggregation",
-        "uses",
-        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-    ),
-    (
-        "Download both Account partition artifacts",
-        "uses",
-        "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
-    ),
-    (
-        "Verify complete Account partition and report union",
-        "run",
-        "python3 dev-tools/validation/account_ci_test_partition.py verify-aggregate",
-    ),
-    (
-        "Merge complete Account JaCoCo coverage",
-        "run",
-        ":account-service:jacocoTestReport -PfullCheck -PaccountCiCoverageAggregate",
-    ),
-):
-    step = find_step(ci, "account-coverage-aggregate", step_name, "ci workflow")
-    require_contains(step, (field,), expected, "ci workflow")
-download_account_partitions = find_step(
-    ci,
-    "account-coverage-aggregate",
-    "Download both Account partition artifacts",
-    "ci workflow",
-)
-require_equal(
-    download_account_partitions,
-    ("continue-on-error",),
-    "true",
-    "ci workflow",
-)
-require_equal(
-    download_account_partitions,
-    ("with", "pattern"),
-    "account-ci-partition-${{ github.sha }}-attempt-${{ github.run_attempt }}-partition-*",
-    "ci workflow",
-)
-require_equal(
-    download_account_partitions,
-    ("with", "merge-multiple"),
-    "false",
-    "ci workflow",
-)
-complete_account_coverage = find_step(
-    ci,
-    "account-coverage-aggregate",
-    "Upload Complete Account Coverage Report",
-    "ci workflow",
-)
-require_equal(
-    complete_account_coverage,
-    ("with", "name"),
-    "jacoco-account-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}",
-    "ci workflow",
-)
-require_list_item(
-    ci,
-    ("jobs", "validation-gate", "needs"),
-    "account-coverage-aggregate",
-    "ci workflow",
-)
-require_equal(
-    ci,
-    ("jobs", "validation-gate", "env", "ACCOUNT_COVERAGE_AGGREGATE"),
-    "${{ needs.account-coverage-aggregate.result }}",
-    "ci workflow",
-)
-require_no_step(
-    ci,
-    "validation-gate",
-    "Merge complete Account JaCoCo coverage",
-    "ci workflow",
-)
-account_gate_enforcement = find_step(
-    ci, "validation-gate", "Enforce validation success", "ci workflow"
-)
-require_equal(
-    account_gate_enforcement,
-    ("env", "ACCOUNT_COVERAGE_AGGREGATE"),
-    "${{ needs.account-coverage-aggregate.result }}",
-    "ci workflow",
-)
-require_contains(
-    account_gate_enforcement,
-    ("run",),
-    'if [ "$ACCOUNT_MODULE_AFFECTED" = "true" ]; then',
-    "ci workflow",
-)
-require_contains(
-    account_gate_enforcement,
-    ("run",),
-    'if [ "$ACCOUNT_COVERAGE_AGGREGATE" != "success" ]; then',
-    "ci workflow",
-)
-require_equal(
-    complete_account_coverage,
-    ("with", "path"),
-    "services/account-service/build/reports/jacoco/test/",
-    "ci workflow",
-)
 require_equal(
     junit_results_step,
     ("with", "if-no-files-found"),
