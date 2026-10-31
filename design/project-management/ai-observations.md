@@ -13,3 +13,6 @@ A small inbox for unresolved agent, tooling, environment, and workflow issues; s
 
 - `2026-11-01` (Pacific/Auckland): API helper inputs and reply-file shape required local recovery.
   - A read-only helper correctly refused its supplied external proof directory. Root copied and hash-verified the authorized inputs inside the worktree, without changing permissions, then resumed it. The reply command help omitted the required JSON array-of-string-arrays shape, so Root read its validator to construct the response. Next: add a concise help example in the owning API wrapper; this was reported to Overseer and is not a repository runtime blocker.
+
+- `2026-11-01` (Pacific/Auckland): CI wait pending-status attribution requires separate provider reads.
+  - On #3365, the successful Validation CheckRun coexisted with a pending same-name status linked to a later metadata run, while the actual substantive Validation run was still active. Root incorrectly reported a barrier failure before locating that run and corrected Overseer immediately. CI wait named the conflicting status but omitted its description and target URL, requiring separate provider reads to establish attribution. Next: expose those bounded attribution fields in the owning controller diagnostic; reported to FireController Worker. Pending is not evidence that CI failed.

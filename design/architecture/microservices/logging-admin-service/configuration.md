@@ -23,11 +23,13 @@ The Logging & Admin Service does **not** connect to Redis at runtime. It consume
 | `FIREMUD_AUTH_JWT_SECRET` | Legacy HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Legacy file path for HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Canonical namespace for internal gRPC workload identity checks, including the exact Account identity on the StartSession reservation evidence RPC and enabled StartSession coordinator composition; blank configuration denies that method | *(none)* |
+| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Canonical namespace for internal gRPC workload identity checks, including Account audit methods, the StartSession reservation evidence RPC and enabled StartSession coordinator composition; blank configuration denies those methods | *(none)* |
 | `FIREMUD_GRPC_ACCOUNT_RESERVATION_EVIDENCE_APPROVED_LEAF_FILE` | Absolute path to the protected, method-scoped Account leaf-approval file for `ReadCurrentClaimEvidence`; blank, unreadable, or invalid policy denies the method | *(none)* |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
 | `FIREMUD_LOGGING_ADMIN_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED` | Explicitly enables the local StartSession authorization coordinator composition | `false` |
+
+Account audit receiving uses the configured namespace with the exact certificate-derived Account workload identity. The owned Compose mTLS profile supplies `dev`; Kubernetes base and Helm bind the value to `metadata.namespace`. This namespace binding does not upgrade Logging’s shared TLS transport to a distinct protected workload certificate or activate audit writes; the [audit contract](./api-contracts.md#account-audit-ingress-and-receipt) owns those boundaries.
 
 ## Conditional StartSession Coordinator Composition
 
