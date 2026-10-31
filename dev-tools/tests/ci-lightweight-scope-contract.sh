@@ -7,6 +7,7 @@ SECURITY_WORKFLOW="$ROOT_DIR/.github/workflows/security.yml"
 PREVIEW_WORKFLOW="$ROOT_DIR/.github/workflows/preview.yml"
 ZAP_WORKFLOW="$ROOT_DIR/.github/workflows/zap-baseline.yml"
 CLASSIFIER="$ROOT_DIR/.github/scripts/classify-change-scope.cjs"
+MODULE_CHECK_WRAPPER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
 
 node --test "$ROOT_DIR/.github/scripts/classify-change-scope.test.cjs"
 
@@ -27,6 +28,13 @@ for expected in \
   '.node-version' \
   '.python-version'; do
   require_contains "$CLASSIFIER" "$expected"
+done
+
+for expected in \
+  'declare -a PREPARE_TASKS=(":${MODULE}:testClasses")' \
+  'PREPARE_TASKS+=(":${MODULE}:${task_name}Classes")' \
+  'bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"'; do
+  require_contains "$MODULE_CHECK_WRAPPER" "$expected"
 done
 
 python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" "$ROOT_DIR/build.gradle.kts" <<'PY'
@@ -66,6 +74,47 @@ def require_equal(mapping, path, expected, label):
         raise SystemExit(
             f"{label}: {'/'.join(path)} must be {expected!r}, got {actual!r}"
         )
+
+
+def evaluate_module_check_matrix(step, modules):
+    script = value_at(step, ("with", "script"), "ci workflow")
+    match = re.search(
+        r"(?ms)^[ \t]*outputs\.module_check_matrix = .*?^[ \t]*\);",
+        script,
+    )
+    if match is None:
+        raise SystemExit("ci workflow: module check matrix builder is missing")
+    partition_set = re.search(
+        r'(?m)^[ \t]*const partitionedSlowServices = new Set\([^\n]+\);',
+        script[:match.start()],
+    )
+    if partition_set is None:
+        raise SystemExit("ci workflow: slow-service partition allowlist is missing")
+    node_script = """
+const fs = require("node:fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const outputs = { affected_modules: input.modules };
+const rows = new Function("outputs", `${input.partition_set}\n${input.assignment}\nreturn outputs.module_check_matrix;`)(outputs);
+process.stdout.write(JSON.stringify(rows));
+"""
+    try:
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            check=True,
+            capture_output=True,
+            text=True,
+            input=json.dumps({
+                "modules": modules,
+                "assignment": match.group(0).strip(),
+                "partition_set": partition_set.group(0).strip(),
+            }),
+        )
+        rows = json.loads(result.stdout)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"ci workflow: module check matrix fixture failed: {exc}") from exc
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise SystemExit("ci workflow: module check matrix builder must return job records")
+    return rows
 
 
 def require_contains(mapping, path, expected, label):
@@ -177,6 +226,7 @@ DEV_TOOL_CONTRACT_COMMANDS = (
     "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
     "bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh",
     "bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh",
+    "python3 -m unittest discover -s dev-tools/tests -p 'test_slow_service_ci_partition.py'",
 )
 DISCOVERABLE_ARCHITECTURE_UNIT_TEST_MODULES = (
     "dev-tools/validation/test_design_capability_allocation.py",
@@ -311,6 +361,7 @@ ci = load_workflow(sys.argv[1])
 security = load_workflow(sys.argv[2])
 preview = load_workflow(sys.argv[3])
 zap = load_workflow(sys.argv[4])
+ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
 
 module_checks_step = find_step(
     ci, "build-and-test", "Run Gradle Checks", "ci workflow"
@@ -319,13 +370,81 @@ require_equal(
     module_checks_step,
     ("run",),
     "echo \"::group::Run Module Validation\"\n"
-    "bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}'\n"
+    "bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}' '${{ matrix.partition }}'\n"
     "echo \"::endgroup::\"\n",
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "changes", "outputs", "module_check_matrix"),
+    "${{ steps.compute.outputs.module_check_matrix }}",
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "build-and-test", "strategy", "matrix", "include"),
+    "${{ fromJSON(needs.changes.outputs.module_check_matrix) }}",
+    "ci workflow",
+)
+matrix_config = value_at(ci, ("jobs", "build-and-test", "strategy", "matrix"), "ci workflow")
+if set(matrix_config) != {"include"}:
+    raise SystemExit("ci workflow: module check matrix must use independent include-only records")
+matrix_rows = evaluate_module_check_matrix(
+    ci_compute_step, ["account-service", "game-session-service", "common-security"]
+)
+expected_matrix_rows = [
+    {"module": "account-service", "partition": "1", "java-version": 21},
+    {"module": "account-service", "partition": "2", "java-version": 21},
+    {"module": "game-session-service", "partition": "1", "java-version": 21},
+    {"module": "game-session-service", "partition": "2", "java-version": 21},
+    {"module": "common-security", "partition": "full", "java-version": 21},
+]
+expanded_jobs = [dict(row) for row in matrix_rows]
+if expanded_jobs != expected_matrix_rows or len({
+    (row["module"], row["partition"]) for row in expanded_jobs
+}) != 5:
+    raise SystemExit(f"ci workflow: matrix expansion lost or duplicated a job: {expanded_jobs!r}")
+require_contains(
+    ci_compute_step,
+    ("with", "script"),
+    'outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>',
+    "ci workflow",
+)
+require_contains(
+    ci_compute_step,
+    ("with", "script"),
+    'const partitionedSlowServices = new Set(["account-service", "game-session-service"]);',
+    "ci workflow",
+)
+for expected in (
+    '{ module, partition: "1", "java-version": 21 },',
+    '{ module, partition: "2", "java-version": 21 },',
+    'partition: "full"',
+    '"java-version": 21',
+):
+    require_contains(ci_compute_step, ("with", "script"), expected, "ci workflow")
+java_setup_step = find_step(ci, "build-and-test", "Set Up Java", "ci workflow")
+require_equal(
+    java_setup_step,
+    ("with", "java-version"),
+    "${{ matrix.java-version }}",
     "ci workflow",
 )
 
 runtime_jar_step = find_step(
     ci, "build-and-test", "Build Runtime JAR", "ci workflow"
+)
+require_equal(
+    runtime_jar_step,
+    ("if",),
+    "${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' || matrix.partition == '1') }}",
+    "ci workflow",
+)
+require_equal(
+    ci,
+    ("jobs", "validation-gate", "env", "ACCOUNT_MODULE_AFFECTED"),
+    "${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service') }}",
+    "ci workflow",
 )
 require_equal(
     runtime_jar_step,
@@ -350,7 +469,7 @@ junit_results_step = find_step(
 require_equal(
     junit_results_step,
     ("if",),
-    "always()",
+    "${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' }}",
     "ci workflow",
 )
 require_equal(
@@ -362,7 +481,7 @@ require_equal(
 require_equal(
     junit_results_step,
     ("with", "name"),
-    "junit-${{ matrix.module }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+    "junit-${{ matrix.module }}-${{ matrix.partition }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}",
     "ci workflow",
 )
 require_equal(
@@ -371,6 +490,266 @@ require_equal(
     "${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', matrix.module) }}",
     "ci workflow",
 )
+
+slow_partition_artifact_step = find_step(
+    ci, "build-and-test",
+    "Upload Slow-Service Partition Reports and Execution Data",
+    "ci workflow",
+)
+require_equal(
+    slow_partition_artifact_step, ("if",),
+    "${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service') }}",
+    "ci workflow",
+)
+require_equal(
+    slow_partition_artifact_step, ("with", "name"),
+    "slow-service-ci-partition-${{ github.run_id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}-${{ matrix.module }}-partition-${{ matrix.partition }}",
+    "ci workflow",
+)
+for artifact_path in (
+    "services/${{ matrix.module }}/build/slow-service-ci-partition/${{ matrix.module }}/partition-${{ matrix.partition }}/",
+    "services/${{ matrix.module }}/build/jacoco/*.exec",
+    "services/${{ matrix.module }}/build/reports/jacoco/test/",
+    "services/${{ matrix.module }}/build/test-results/**/*.xml",
+):
+    require_contains(slow_partition_artifact_step, ("with", "path"), artifact_path, "ci workflow")
+
+for module, job_id, display, prefix in (
+    ("account-service", "account-coverage-aggregate", "Account", "ACCOUNT"),
+    ("game-session-service", "game-session-coverage-aggregate", "Game Session", "GAME_SESSION"),
+):
+    aggregate_job = value_at(ci, ("jobs", job_id), "ci workflow")
+    require_equal(aggregate_job, ("needs",), ["changes", "build-and-test"], "ci workflow")
+    require_contains(aggregate_job, ("if",), "needs.build-and-test.result == 'success'", "ci workflow")
+    require_contains(
+        aggregate_job, ("if",),
+        f"contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), '{module}')",
+        "ci workflow",
+    )
+    require_equal(aggregate_job, ("permissions",), {"actions": "read", "contents": "read"}, "ci workflow")
+    capture = find_step(ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
+    for api_owner in (
+        "github.rest.actions.getWorkflowRun",
+        "listJobsForWorkflowRunAttempt",
+        "listWorkflowRunArtifacts",
+        "listCompletePages",
+        "...context.repo",
+        "data?.total_count",
+        "rows.length !== expected",
+    ):
+        require_contains(capture, ("with", "script"), api_owner, "ci workflow")
+    for env_name, expected in (
+        ("CI_EVENT_NAME", "${{ github.event_name }}"),
+        ("CI_SOURCE_SHA", "${{ github.sha }}"),
+        ("CI_NATIVE_HEAD_SHA", "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"),
+    ):
+        require_equal(capture, ("env", env_name), expected, "ci workflow")
+    for identity_field in (
+        "tested_source_sha: testedSourceSha",
+        "head_sha: run.head_sha",
+        "run.event !== eventName",
+        "run.display_title !== expectedDisplayTitle",
+    ):
+        require_contains(capture, ("with", "script"), identity_field, "ci workflow")
+    select = find_step(ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
+    require_contains(select, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts", "ci workflow")
+    require_contains(select, ("run",), f"--module {module}", "ci workflow")
+    download = find_step(ci, job_id, f"Download both effective {display} partition artifacts", "ci workflow")
+    require_equal(download, ("continue-on-error",), "true", "ci workflow")
+    require_equal(download, ("with", "artifact-ids"), "${{ steps.selection.outputs.artifact_ids }}", "ci workflow")
+    verify = find_step(ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
+    require_contains(verify, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate", "ci workflow")
+    merge = find_step(ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
+    require_contains(
+        merge, ("run",),
+        f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module}",
+        "ci workflow",
+    )
+    require_list_item(ci, ("jobs", "validation-gate", "needs"), job_id, "ci workflow")
+    result_expression = "${{ needs." + job_id + ".result }}"
+    require_equal(
+        ci, ("jobs", "validation-gate", "env", prefix + "_COVERAGE_AGGREGATE"),
+        result_expression, "ci workflow",
+    )
+    gate = find_step(ci, "validation-gate", "Enforce validation success", "ci workflow")
+    require_equal(gate, ("env", prefix + "_COVERAGE_AGGREGATE"), result_expression, "ci workflow")
+    require_contains(
+        gate, ("run",),
+        'if [ "$' + prefix + '_COVERAGE_AGGREGATE" != "success" ]; then',
+        "ci workflow",
+    )
+    require_contains(
+        gate, ("run",),
+        'if [ "$' + prefix + '_MODULE_AFFECTED" = "true" ]; then',
+        "ci workflow",
+    )
+
+# Execute the actual embedded provenance programs with strict, offline GitHub
+# API mocks. This checks request repository binding and the PR merge/head split.
+capture_scripts = []
+for job_id, display in (
+    ("account-coverage-aggregate", "Account"),
+    ("game-session-coverage-aggregate", "Game Session"),
+):
+    capture = find_step(
+        ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow"
+    )
+    capture_scripts.append({"module": job_id, "script": capture["with"]["script"]})
+capture_node = r"""
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const owner = "example", repository = "firemud", runId = 70;
+const testedMerge = "a".repeat(40), nativeHead = "b".repeat(40), baseSha = "c".repeat(40);
+const wrongSha = "d".repeat(40);
+const repositoryFullName = `${owner}/${repository}`;
+const scripts = input.scripts;
+const jobRows = ["account-service", "game-session-service"].flatMap((module, index) =>
+  [1, 2].map(partition => ({
+    id: 100 + index * 10 + partition, run_id: runId, head_sha: nativeHead,
+    name: `Build and Test (${module} / ${partition})`, status: "completed",
+    conclusion: "success", started_at: "2026-10-30T01:00:00Z",
+    completed_at: "2026-10-30T02:00:00Z",
+  }))
+);
+const artifactRows = ["account-service", "game-session-service"].flatMap((module, index) =>
+  [1, 2].map(partition => ({
+    id: 700 + index * 10 + partition,
+    name: `slow-service-ci-partition-${runId}-${testedMerge}-attempt-1-${module}-partition-${partition}`,
+    expired: false, size_in_bytes: 1024, created_at: "2026-10-30T02:00:00Z",
+    workflow_run: { id: runId, head_sha: nativeHead },
+  }))
+);
+function runFor(options) {
+  const eventName = options.eventName;
+  const sourceSha = options.sourceSha || (eventName === "pull_request" ? testedMerge : nativeHead);
+  const eventHead = options.eventHead || nativeHead;
+  const eventBase = options.eventBase || baseSha;
+  const number = 42;
+  const displayTitle = `CI — Validation pr-${number} base-${eventBase} head-${eventHead}`;
+  const eventPullRequest = {
+    number,
+    base: { sha: eventBase, ref: "develop" },
+    head: { sha: eventHead, repo: { full_name: "contributor/firemud" } },
+  };
+  const context = {
+    repo: { owner, repo: repository }, eventName,
+    payload: eventName === "pull_request" ? { pull_request: eventPullRequest } : {},
+  };
+  const apiAssociations = options.apiPullRequests === undefined ? [] : options.apiPullRequests;
+  const run = {
+    id: runId, head_sha: options.runHead || (eventName === "pull_request" ? nativeHead : sourceSha),
+    run_attempt: 1, path: ".github/workflows/ci.yml", name: "CI — Validation",
+    event: options.runEvent || eventName, repository: { full_name: repositoryFullName },
+    display_title: options.displayTitle || displayTitle, pull_requests: apiAssociations,
+  };
+  const calls = [];
+  const assertRepo = request => {
+    assert.equal(request.owner, owner, "every Actions request must bind the owner");
+    assert.equal(request.repo, repository, "every Actions request must bind the repository");
+  };
+  const actions = {
+    getWorkflowRun: async request => {
+      assertRepo(request);
+      assert.deepEqual(Object.keys(request).sort(), ["owner", "repo", "run_id"]);
+      assert.equal(request.run_id, runId);
+      calls.push(["run", request]);
+      return { data: run };
+    },
+    listJobsForWorkflowRunAttempt: async request => {
+      assertRepo(request);
+      assert.deepEqual(Object.keys(request).sort(), ["attempt_number", "owner", "page", "per_page", "repo", "run_id"]);
+      assert.equal(request.run_id, runId);
+      assert.equal(request.per_page, 100);
+      assert.equal(request.attempt_number, 1);
+      calls.push(["jobs", request]);
+      return { data: { total_count: jobRows.length, jobs: jobRows } };
+    },
+    listWorkflowRunArtifacts: async request => {
+      assertRepo(request);
+      assert.deepEqual(Object.keys(request).sort(), ["owner", "page", "per_page", "repo", "run_id"]);
+      assert.equal(request.run_id, runId);
+      assert.equal(request.per_page, 100);
+      calls.push(["artifacts", request]);
+      return { data: { total_count: artifactRows.length, artifacts: artifactRows } };
+    },
+  };
+  const writes = [];
+  const fakeFs = { mkdirSync() {}, writeFileSync(path, contents) { writes.push([path, String(contents)]); } };
+  const fakePath = { dirname: value => value.slice(0, value.lastIndexOf("/")) };
+  const requireMock = name => name === "node:fs" ? fakeFs : name === "node:path" ? fakePath : assert.fail(`unexpected require ${name}`);
+  const env = {
+    CI_RUN_ID: String(runId), CI_RUN_ATTEMPT: "1", CI_EVENT_NAME: eventName,
+    CI_SOURCE_SHA: sourceSha,
+    CI_NATIVE_HEAD_SHA: options.nativeHead || (eventName === "pull_request" ? nativeHead : sourceSha),
+    CI_PROVENANCE_PATH: "services/test/build/provenance.json",
+  };
+  const github = { rest: { actions } };
+  return new Function("github", "context", "core", "process", "require", `return (async () => {\n${options.script}\n})()`)(
+    github, context, {}, { env }, requireMock,
+  ).then(() => ({ ok: true, calls, provenance: JSON.parse(writes[0][1]) }))
+   .catch(error => ({ ok: false, calls, error: error.message }));
+}
+(async () => {
+  for (const embedded of scripts) {
+    for (const options of [
+      { eventName: "pull_request", script: embedded.script },
+      { eventName: "pull_request", script: embedded.script,
+        apiPullRequests: [{ number: 42, base: { sha: baseSha }, head: { sha: nativeHead } }] },
+      { eventName: "push", script: embedded.script },
+      { eventName: "workflow_dispatch", script: embedded.script },
+    ]) {
+      const result = await runFor(options);
+      assert.equal(result.ok, true, `${embedded.module}/${options.eventName}: ${result.error}`);
+      assert.deepEqual(result.calls.map(([kind]) => kind), ["run", "jobs", "artifacts"]);
+      assert.equal(result.provenance.run.head_sha, nativeHead);
+      assert.equal(result.provenance.run.tested_source_sha,
+        options.eventName === "pull_request" ? testedMerge : nativeHead);
+      for (const attempt of result.provenance.attempts) {
+        for (const job of attempt.jobs) assert.equal(job.head_sha, result.provenance.run.head_sha);
+      }
+      for (const artifact of result.provenance.artifacts.items) {
+        assert.equal(artifact.workflow_run.head_sha, result.provenance.run.head_sha);
+      }
+      if (options.eventName === "pull_request") {
+        assert.equal(result.provenance.run.pull_request.head_sha, nativeHead);
+        assert.equal(result.provenance.run.tested_source_sha, testedMerge);
+      } else {
+        assert.equal(result.provenance.run.head_sha, result.provenance.run.tested_source_sha);
+      }
+    }
+    for (const options of [
+      { eventName: "pull_request", script: embedded.script, runHead: wrongSha },
+      { eventName: "pull_request", script: embedded.script,
+        apiPullRequests: [{ number: 43, base: { sha: baseSha }, head: { sha: nativeHead } }] },
+      { eventName: "pull_request", script: embedded.script, displayTitle: "unbound PR title" },
+      { eventName: "workflow_dispatch", script: embedded.script, nativeHead: wrongSha },
+    ]) {
+      const result = await runFor(options);
+      assert.equal(result.ok, false, `${embedded.module} accepted a wrong event/run identity`);
+      assert.ok(result.calls.length <= 1, "reject bad run identity before job/artifact lookup");
+    }
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+try:
+    fixture_result = subprocess.run(
+        ["node", "-e", capture_node],
+        input=json.dumps({"scripts": capture_scripts}),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+except (OSError, subprocess.CalledProcessError) as exc:
+    raise SystemExit(f"ci workflow: embedded provenance capture fixture failed: {exc}") from exc
+
+coverage_report_step = find_step(ci, "build-and-test", "Upload Coverage Report", "ci workflow")
+require_equal(
+    coverage_report_step, ("with", "name"),
+    "jacoco-${{ matrix.module }}-${{ matrix.partition }}-report-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+    "ci workflow",
+)
+
 require_equal(
     junit_results_step,
     ("with", "if-no-files-found"),

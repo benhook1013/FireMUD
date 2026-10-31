@@ -384,6 +384,40 @@ subprojects {
         if (file("src/test/java/integration").exists()) add("integrationTest")
         if (file("src/test/java/crossservice").exists()) add("crossServiceTest")
     }
+    val slowServiceCiModules = setOf("account-service", "game-session-service")
+    val slowServiceCiPartition = providers.gradleProperty("slowServiceCiPartition").orNull
+    val slowServiceCiCoverageAggregate =
+        providers.gradleProperty("slowServiceCiCoverageAggregate").orNull
+    if (
+        slowServiceCiCoverageAggregate != null &&
+        slowServiceCiCoverageAggregate !in slowServiceCiModules
+    ) {
+        throw GradleException("slowServiceCiCoverageAggregate must name an allowed slow service")
+    }
+    if (project.name in slowServiceCiModules && slowServiceCiPartition != null) {
+        if (slowServiceCiPartition !in setOf("1", "2")) {
+            throw GradleException("slowServiceCiPartition must be 1 or 2")
+        }
+        tasks.withType<Test>().configureEach {
+            val selectorFile = layout.buildDirectory.file(
+                "slow-service-ci-partition/" + project.name +
+                    "/partition-$slowServiceCiPartition/$name.txt"
+            ).get().asFile
+            if (!selectorFile.isFile) {
+                throw GradleException("Slow-service test selector is missing for $name: $selectorFile")
+            }
+            val selectedClasses = selectorFile.readLines().filter(String::isNotBlank)
+            if (selectedClasses.isEmpty()) {
+                enabled = false
+            } else {
+                val includePatterns = selectedClasses.flatMap { className ->
+                    listOf(className, "$className${'$'}*")
+                }
+                filter.setIncludePatterns(*includePatterns.toTypedArray())
+                filter.setFailOnNoMatchingTests(false)
+            }
+        }
+    }
     tasks.named<JacocoReport>("jacocoTestReport") {
         enabled = fullCheck
         dependsOn(coverageTestTaskNames)
@@ -392,6 +426,14 @@ subprojects {
                 layout.buildDirectory.file("jacoco/$taskName.exec")
             }
         )
+        if (project.name == slowServiceCiCoverageAggregate) {
+            setDependsOn(listOf("classes"))
+            executionData.setFrom(
+                fileTree(layout.buildDirectory.dir("slow-service-ci-partition-inputs")) {
+                    include("**/jacoco/*.exec")
+                }
+            )
+        }
         reports {
             xml.required.set(true)
             csv.required.set(false)
