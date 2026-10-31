@@ -210,6 +210,32 @@ class GameSessionJwtReadinessReceiverEngineTest {
   }
 
   @Test
+  void changedOwnerBindingDigestDeniesAsReadbackChangeAfterCrypto() {
+    Fixture fixture = new Fixture();
+    fixture.stubVerifiedOutcome(ReceiveReadinessProbeResponse.ObservationOutcome.VERIFIED);
+    AccountPodTargetBinding changedTarget =
+        fixture.target.toBuilder().setInventoryBindingDigest("1".repeat(64)).build();
+    when(fixture.ownerReadPort.readCurrent(any()))
+        .thenReturn(
+            fixture.ownerResponse,
+            fixture.ownerResponse.toBuilder().setCurrentPodTarget(changedTarget).build());
+
+    assertThatThrownBy(
+            () -> withAccountPeer(() -> fixture.engine.receiveReadinessProbe(fixture.request)))
+        .isExactlyInstanceOf(
+            GameSessionJwtReadinessReceiverEngine.OwnerReadbackChangedException.class);
+
+    verify(fixture.ownerReadPort, times(2)).readCurrent(any());
+    verify(fixture.localIdentityProvider, times(2)).observe();
+    verify(fixture.crypto)
+        .verify(
+            any(),
+            eq(fixture.sourceIdentity),
+            eq(fixture.local.wireIdentity().getAccountPublicJwksSha256()));
+    verifyNoMoreInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
+  }
+
+  @Test
   void changedLocalJwksIdentityDeniesAfterCryptoEvenWhenThePodTargetIsUnchanged() {
     Fixture fixture = new Fixture();
     fixture.stubVerifiedOutcome(ReceiveReadinessProbeResponse.ObservationOutcome.VERIFIED);
