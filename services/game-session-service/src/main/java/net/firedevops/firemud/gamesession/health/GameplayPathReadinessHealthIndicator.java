@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.common.health.HttpEndpointAvailabilityChecker;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbe.ProbeResult;
@@ -38,12 +39,14 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
       justification = "Injected gRPC clients are framework-managed singletons and only stored")
   private final GameLogicClient gameLogicClient;
 
+  private final EntityManagementClient entityManagementClient;
   private final GameplayLocalPathReadinessProbe gameplayLocalPathReadinessProbe;
   private final ReadinessTransitionTracker readinessTransitionTracker;
 
   public GameplayPathReadinessHealthIndicator(
       AccountClient accountClient,
       GameLogicClient gameLogicClient,
+      EntityManagementClient entityManagementClient,
       GameplayLocalPathReadinessProbe gameplayLocalPathReadinessProbe,
       ReadinessTransitionTracker readinessTransitionTracker,
       GameLogicProperties gameLogicProperties,
@@ -52,6 +55,7 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
     this.gameLogicProperties = gameLogicProperties;
     this.httpEndpointAvailabilityChecker = httpEndpointAvailabilityChecker;
     this.gameLogicClient = gameLogicClient;
+    this.entityManagementClient = entityManagementClient;
     this.gameplayLocalPathReadinessProbe = gameplayLocalPathReadinessProbe;
     this.readinessTransitionTracker = readinessTransitionTracker;
   }
@@ -142,6 +146,24 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
               DependencyReadinessSupport.message(ex)));
       return DependencyReadinessSupport.recordOutOfService(
           readinessTransitionTracker, COMPONENT, CONTRACT, "gameLogicService", dependencies);
+    }
+
+    try {
+      var ping = entityManagementClient.pingForReadiness();
+      if (ping == null || ping.hasError() || !"pong".equals(ping.getMessage())) {
+        throw new IllegalStateException("Entity Management authenticated Ping did not return pong");
+      }
+      dependencies.put(
+          "entityManagementService",
+          DependencyReadinessSupport.upDependency(
+              "ping", "grpc:EntityManagementService#Ping", "OK"));
+    } catch (RuntimeException ex) {
+      dependencies.put(
+          "entityManagementService",
+          DependencyReadinessSupport.downDependency(
+              "ping", "grpc:EntityManagementService#Ping", DependencyReadinessSupport.message(ex)));
+      return DependencyReadinessSupport.recordOutOfService(
+          readinessTransitionTracker, COMPONENT, CONTRACT, "entityManagementService", dependencies);
     }
 
     return DependencyReadinessSupport.recordUp(

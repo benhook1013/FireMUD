@@ -30,6 +30,106 @@ class AccountPublicJwksCacheTest {
           "a".repeat(64));
 
   @Test
+  void snapshotBoundKnownKeyRejectsNewEvidenceUntilOrdinaryRefreshMatchesIt() throws Exception {
+    KeyPair key = rsa3072();
+    String first = jwks(jwk("known", (RSAPublicKey) key.getPublic()));
+    String second = first + "\n";
+    AtomicReference<String> current = new AtomicReference<>(first);
+    AtomicInteger loads = new AtomicInteger();
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              loads.incrementAndGet();
+              return snapshot(current.get());
+            });
+
+    assertThat(cache.keyFor("known", PIN, sha256(first))).isEqualTo(key.getPublic());
+    current.set(second);
+    assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(second)))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThatThrownBy(() -> cache.keyFor("known", otherPin(), sha256(first)))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThat(cache.keyFor("known", PIN, sha256(first))).isEqualTo(key.getPublic());
+    assertThat(loads).hasValue(1);
+    for (String malformed : new String[] {null, "", "A".repeat(64), "a".repeat(63)}) {
+      assertThatThrownBy(() -> cache.keyFor("known", PIN, malformed))
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    }
+    assertThatThrownBy(() -> cache.keyFor("known", null, sha256(first)))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThat(loads).hasValue(1);
+
+    clock.advance(Duration.ofSeconds(11));
+    assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(first)))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThat(cache.keyFor("known", PIN, sha256(second))).isEqualTo(key.getPublic());
+    assertThat(loads).hasValue(2);
+    cache.invalidateKid("known");
+    assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(second)))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThat(loads).hasValue(2);
+  }
+
+  @Test
+  void concurrentRefreshCannotPairAKeyWithAnotherSnapshotsBinding() throws Exception {
+    KeyPair key = rsa3072();
+    String first = jwks(jwk("known", (RSAPublicKey) key.getPublic()));
+    String second = first + "\n";
+    var refreshEntered = new java.util.concurrent.CountDownLatch(1);
+    var releaseRefresh = new java.util.concurrent.CountDownLatch(1);
+    AtomicInteger loads = new AtomicInteger();
+    MutableClock clock = new MutableClock(INITIAL);
+    AccountPublicJwksCache cache =
+        cache(
+            clock,
+            () -> {
+              if (loads.incrementAndGet() == 1) {
+                return snapshot(first);
+              }
+              refreshEntered.countDown();
+              try {
+                if (!releaseRefresh.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                  throw new AssertionError("refresh release timed out");
+                }
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+              }
+              return snapshot(second);
+            });
+    cache.keyFor("known", PIN, sha256(first));
+    clock.advance(Duration.ofSeconds(11));
+    try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+      var oldBinding =
+          executor.submit(
+              () -> {
+                assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(first)))
+                    .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+              });
+      try {
+        assertThat(refreshEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        var newBinding = executor.submit(() -> cache.keyFor("known", PIN, sha256(second)));
+        releaseRefresh.countDown();
+        oldBinding.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(newBinding.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            .isEqualTo(key.getPublic());
+      } finally {
+        releaseRefresh.countDown();
+      }
+    }
+    assertThat(loads).hasValue(2);
+  }
+
+  private static String sha256(String value) throws Exception {
+    return java.util.HexFormat.of()
+        .formatHex(
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+  }
+
+  @Test
   void parsesStrongPublicOnlyKeysAndRetainsBothKeysPresentInOneSnapshot() throws Exception {
     KeyPair oldKey = rsa3072();
     KeyPair newKey = rsa3072();

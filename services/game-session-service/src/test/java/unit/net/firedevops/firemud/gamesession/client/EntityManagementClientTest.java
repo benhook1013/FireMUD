@@ -1,18 +1,38 @@
 package net.firedevops.firemud.gamesession.client;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
+import io.grpc.Deadline;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.Status;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.PingRequest;
+import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 
 class EntityManagementClientTest {
   private static final SessionContext SESSION_CONTEXT =
@@ -32,6 +52,77 @@ class EntityManagementClientTest {
           "realm",
           17L,
           "SHARED");
+
+  @Test
+  void readinessPingUsesCustomizedWorkloadChannelAndTwoSecondDeadlineWithoutPlayerIdentity()
+      throws Exception {
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setEntityManagementService("entity-workload:6565");
+    var channels = mock(GrpcChannelFactory.class);
+    var channel = mock(ManagedChannel.class);
+    when(channels.buildChannel(eq("entity-workload:6565"), eq(6565), any(), eq(true)))
+        .thenReturn(channel);
+    var credentials = mock(io.grpc.CallCredentials.class);
+    var customizer =
+        new BlockingGrpcStubCustomizer() {
+          @Override
+          public <T extends io.grpc.stub.AbstractStub<T>> T customize(T stub) {
+            return stub.withCallCredentials(credentials);
+          }
+        };
+    var attestationService = mock(GameplaySessionAttestationService.class);
+    @SuppressWarnings("unchecked")
+    ClientCall<PingRequest, PingResponse> call = mock(ClientCall.class);
+    var expected = PingResponse.newBuilder().setMessage("pong").build();
+    doAnswer(
+            invocation -> {
+              ClientCall.Listener<PingResponse> listener = invocation.getArgument(0);
+              listener.onMessage(expected);
+              listener.onClose(Status.OK, new Metadata());
+              return null;
+            })
+        .when(call)
+        .start(any(), any());
+    when(channel.<PingRequest, PingResponse>newCall(any(), any())).thenReturn(call);
+
+    try (var client =
+        new EntityManagementClient(
+            endpoints,
+            new CommonGrpcClientProperties(),
+            channels,
+            customizer,
+            attestationService)) {
+      client.init();
+      Deadline earliestReadiness = Deadline.after(2L, TimeUnit.SECONDS);
+      assertThat(client.pingForReadiness()).isEqualTo(expected);
+      Deadline latestReadiness = Deadline.after(2L, TimeUnit.SECONDS);
+      Deadline earliestOrdinary = Deadline.after(5L, TimeUnit.SECONDS);
+      assertThat(client.ping()).isEqualTo(expected);
+      Deadline latestOrdinary = Deadline.after(5L, TimeUnit.SECONDS);
+
+      var optionsCaptor = ArgumentCaptor.forClass(CallOptions.class);
+      verify(channel, times(2))
+          .newCall(eq(EntityManagementServiceGrpc.getPingMethod()), optionsCaptor.capture());
+      var readinessOptions = optionsCaptor.getAllValues().get(0);
+      var ordinaryOptions = optionsCaptor.getAllValues().get(1);
+      assertThat(readinessOptions.getDeadline()).isNotNull();
+      assertThat(readinessOptions.getDeadline().compareTo(earliestReadiness))
+          .isGreaterThanOrEqualTo(0);
+      assertThat(readinessOptions.getDeadline().compareTo(latestReadiness)).isLessThanOrEqualTo(0);
+      assertThat(ordinaryOptions.getDeadline()).isNotNull();
+      assertThat(ordinaryOptions.getDeadline().compareTo(earliestOrdinary))
+          .isGreaterThanOrEqualTo(0);
+      assertThat(ordinaryOptions.getDeadline().compareTo(latestOrdinary)).isLessThanOrEqualTo(0);
+      assertThat(readinessOptions.getCredentials()).isSameAs(credentials);
+      assertThat(ordinaryOptions.getCredentials()).isSameAs(credentials);
+      assertThat(readinessOptions.getCompressor()).isEqualTo("gzip");
+      verify(call, times(2)).sendMessage(PingRequest.getDefaultInstance());
+      verifyNoInteractions(attestationService);
+      verify(channels).buildChannel(eq("entity-workload:6565"), eq(6565), any(), eq(true));
+      verifyNoMoreInteractions(channels);
+    }
+    verify(channel).shutdown();
+  }
 
   @ParameterizedTest
   @ValueSource(

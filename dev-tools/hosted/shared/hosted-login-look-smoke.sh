@@ -71,6 +71,7 @@ run_telnet_smoke_session(
     tls_enabled=True,
     tls_server_hostname=host,
     tls_ca_file=ca_file,
+    discovery_selector=world,
 )
 
 label = os.environ.get("SMOKE_TARGET_LABEL", "hosted environment")

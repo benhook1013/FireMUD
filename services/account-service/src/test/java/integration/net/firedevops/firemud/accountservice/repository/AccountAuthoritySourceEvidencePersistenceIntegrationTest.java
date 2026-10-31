@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -341,6 +343,35 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     assertThat(rolledBackEvent).isEmpty();
     Account lifecycleUpdate = accounts.findByAccountUuid(account.getAccountUuid()).orElseThrow();
     lifecycleUpdate.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
+    var accountBeforeLifecycleRejection =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT *, xmin::TEXT AS row_version FROM accounts WHERE account_uuid = ?",
+                    account.getAccountUuid()),
+                "expected Account before lifecycle rejection")
+            .intoMap();
+    var generationsBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT *, xmin::TEXT AS row_version FROM account_authority_generations "
+                    + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                account.getAccountUuid())
+            .intoMaps();
+    var fencesBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT *, xmin::TEXT AS row_version FROM account_authority_issuance_fences WHERE account_uuid = ?",
+                account.getAccountUuid())
+            .intoMaps();
+    var sourceRowsBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT *, xmin::TEXT AS row_version FROM account_authority_source_records WHERE account_uuid = ?",
+                account.getAccountUuid())
+            .intoMaps();
+    var outboxRowsBeforeLifecycleRejection =
+        dsl.fetch(
+                "SELECT *, xmin::TEXT AS row_version FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
+                    + "ORDER BY outbox_sequence",
+                accountStream)
+            .intoMaps();
     assertThatThrownBy(
             () -> transaction.executeWithoutResult(status -> accounts.save(lifecycleUpdate)))
         .isInstanceOf(IllegalStateException.class)
@@ -359,6 +390,44 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
         .isEqualTo(account.getPasswordHash());
     assertThat(lifecycleUpdate.getLifecycleState())
         .isEqualTo(AccountLifecycleState.SECURITY_LOCKED);
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT *, xmin::TEXT AS row_version FROM accounts WHERE account_uuid = ?",
+                        account.getAccountUuid()),
+                    "expected Account after lifecycle rejection")
+                .intoMap())
+        .usingRecursiveComparison()
+        .isEqualTo(accountBeforeLifecycleRejection);
+    assertThat(
+            dsl.fetch(
+                    "SELECT *, xmin::TEXT AS row_version FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    account.getAccountUuid())
+                .intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(generationsBeforeLifecycleRejection);
+    assertThat(
+            dsl.fetch(
+                    "SELECT *, xmin::TEXT AS row_version FROM account_authority_issuance_fences WHERE account_uuid = ?",
+                    account.getAccountUuid())
+                .intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(fencesBeforeLifecycleRejection);
+    assertThat(
+            dsl.fetch(
+                    "SELECT *, xmin::TEXT AS row_version FROM account_authority_source_records WHERE account_uuid = ?",
+                    account.getAccountUuid())
+                .intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(sourceRowsBeforeLifecycleRejection);
+    assertOutboxRowsEqual(
+        outboxRowsBeforeLifecycleRejection,
+        dsl.fetch(
+                "SELECT *, xmin::TEXT AS row_version FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
+                    + "ORDER BY outbox_sequence",
+                accountStream)
+            .intoMaps());
     assertThat(afterLifecycleUpdate.generation()).isEqualTo(3L);
     assertThat(afterLifecycleUpdate.sourceVersion()).isEqualTo(3L);
     assertThat(afterLifecycleUpdate.issuanceFence().value()).isEqualTo(3L);
@@ -879,6 +948,26 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(failureMessage, interrupted);
+    }
+  }
+
+  private static void assertOutboxRowsEqual(
+      List<Map<String, Object>> expected, List<Map<String, Object>> actual) {
+    assertThat(actual).hasSize(expected.size());
+    for (int index = 0; index < expected.size(); index++) {
+      Map<String, Object> expectedRow = expected.get(index);
+      Map<String, Object> actualRow = actual.get(index);
+      assertThat(actualRow.keySet()).isEqualTo(expectedRow.keySet());
+      for (Map.Entry<String, Object> entry : expectedRow.entrySet()) {
+        String field = entry.getKey();
+        Object expectedValue = entry.getValue();
+        Object actualValue = actualRow.get(field);
+        if ("payload".equals(field)) {
+          assertThat((byte[]) actualValue).containsExactly((byte[]) expectedValue);
+        } else {
+          assertThat(actualValue).isEqualTo(expectedValue);
+        }
+      }
     }
   }
 

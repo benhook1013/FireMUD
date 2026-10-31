@@ -28,6 +28,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PingRequest;
+import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
@@ -85,6 +87,13 @@ public final class EntityManagementStubServer implements AutoCloseable {
         ServerBuilder.forPort(port)
             .addService(
                 new EntityManagementServiceGrpc.EntityManagementServiceImplBase() {
+                  @Override
+                  public void ping(
+                      PingRequest request, StreamObserver<PingResponse> responseObserver) {
+                    responseObserver.onNext(PingResponse.newBuilder().setMessage("pong").build());
+                    responseObserver.onCompleted();
+                  }
+
                   @Override
                   public void listRoomEntities(
                       ListRoomEntitiesRequest request,

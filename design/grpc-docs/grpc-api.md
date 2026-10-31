@@ -145,6 +145,23 @@ for conventions on schema evolution and error handling. See each service's
 
     - [AccountGameLogicIntakeSourceReadService](#account-v1-AccountGameLogicIntakeSourceReadService)
 
+- [account/v1/jwt_readiness_receiver.proto](#account_v1_jwt_readiness_receiver-proto)
+    - [AccountPodTargetBinding](#account-v1-AccountPodTargetBinding)
+    - [AccountSourceIdentity](#account-v1-AccountSourceIdentity)
+    - [GetCurrentReadinessProbeOwnerRequest](#account-v1-GetCurrentReadinessProbeOwnerRequest)
+    - [GetCurrentReadinessProbeOwnerResponse](#account-v1-GetCurrentReadinessProbeOwnerResponse)
+    - [GetCurrentReadinessReceiverMetadataRequest](#account-v1-GetCurrentReadinessReceiverMetadataRequest)
+    - [GetCurrentReadinessReceiverMetadataResponse](#account-v1-GetCurrentReadinessReceiverMetadataResponse)
+    - [ReadinessProbeCoordinates](#account-v1-ReadinessProbeCoordinates)
+    - [ReadinessReceiverLocalIdentity](#account-v1-ReadinessReceiverLocalIdentity)
+
+    - [GetCurrentReadinessProbeOwnerResponse.ProbeState](#account-v1-GetCurrentReadinessProbeOwnerResponse-ProbeState)
+    - [ReadinessProbeCoordinates.ExpectedActiveState](#account-v1-ReadinessProbeCoordinates-ExpectedActiveState)
+    - [ReadinessProbeCoordinates.ExpectedOutcome](#account-v1-ReadinessProbeCoordinates-ExpectedOutcome)
+    - [ReadinessProbeCoordinates.ProbeKind](#account-v1-ReadinessProbeCoordinates-ProbeKind)
+
+    - [AccountJwtReadinessProbeOwnerService](#account-v1-AccountJwtReadinessProbeOwnerService)
+
 - [account/v1/jwt_signer_materialization.proto](#account_v1_jwt_signer_materialization-proto)
     - [ActiveSigner](#account-v1-ActiveSigner)
     - [EnrollBootstrapRequest](#account-v1-EnrollBootstrapRequest)
@@ -965,6 +982,14 @@ for conventions on schema evolution and error handling. See each service's
     - [ReadHistoricalOriginalStartSessionOwnerEvidenceResponse](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceResponse)
 
     - [HistoricalOriginalStartSessionOwnerEvidenceReadService](#game_session-v1-HistoricalOriginalStartSessionOwnerEvidenceReadService)
+
+- [game-session/v1/jwt_readiness_receiver.proto](#game-session_v1_jwt_readiness_receiver-proto)
+    - [ReceiveReadinessProbeRequest](#game_session-v1-ReceiveReadinessProbeRequest)
+    - [ReceiveReadinessProbeResponse](#game_session-v1-ReceiveReadinessProbeResponse)
+
+    - [ReceiveReadinessProbeResponse.ObservationOutcome](#game_session-v1-ReceiveReadinessProbeResponse-ObservationOutcome)
+
+    - [GameSessionJwtReadinessReceiverService](#game_session-v1-GameSessionJwtReadinessReceiverService)
 
 - [game-session/v1/original_new_final_admission_read.proto](#game-session_v1_original_new_final_admission_read-proto)
     - [ReadOriginalNewFinalAdmissionRequest](#game_session-v1-ReadOriginalNewFinalAdmissionRequest)
@@ -3058,6 +3083,289 @@ Unregistered GD-only owner confirmation; canonical proof bytes are not permissio
 | ----------- | ------------ | ------------- | ------------|
 | ReadSourceScope | [GameLogicIntakeSourcePermissionRequest](#account-v1-GameLogicIntakeSourcePermissionRequest) | [GameLogicIntakeSourcePermissionResponse](#account-v1-GameLogicIntakeSourcePermissionResponse) |  |
 | ReadFinalizedIntake | [GameLogicIntakeSourcePermissionRequest](#account-v1-GameLogicIntakeSourcePermissionRequest) | [GameLogicIntakeSourcePermissionResponse](#account-v1-GameLogicIntakeSourcePermissionResponse) |  |
+
+
+
+
+
+<a name="account_v1_jwt_readiness_receiver-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/jwt_readiness_receiver.proto
+
+
+
+<a name="account-v1-AccountPodTargetBinding"></a>
+
+### AccountPodTargetBinding
+Account&#39;s current API/inventory source pins and Pod target. These are not Game Session&#39;s
+verifier-source inventory pins or its Account-JWKS trust-source identity.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| inventory_snapshot_digest | [string](#string) |  |  |
+| environment_id | [string](#string) |  |  |
+| cluster_id | [string](#string) |  |  |
+| cluster_incarnation_uid | [string](#string) |  |  |
+| namespace | [string](#string) |  |  |
+| namespace_uid | [string](#string) |  |  |
+| api_binding_revision | [string](#string) |  |  |
+| api_binding_digest | [string](#string) |  |  |
+| inventory_binding_revision | [string](#string) |  |  |
+| inventory_binding_digest | [string](#string) |  |  |
+| validator_id | [string](#string) |  |  |
+| deployment_uid | [string](#string) |  |  |
+| pod_uid | [string](#string) |  |  |
+| pod_ip | [string](#string) |  |  |
+| image | [string](#string) |  |  |
+| verifier_config_sha256 | [string](#string) |  |  |
+| applicability_matrix_digest | [string](#string) |  |  |
+| expected_outcome | [ReadinessProbeCoordinates.ExpectedOutcome](#account-v1-ReadinessProbeCoordinates-ExpectedOutcome) |  |  |
+| direct_pod_endpoint | [string](#string) |  |  |
+| canonical_service_uri | [string](#string) |  |  |
+| server_leaf_spki_sha256 | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-AccountSourceIdentity"></a>
+
+### AccountSourceIdentity
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| environment_id | [string](#string) |  |  |
+| cluster_id | [string](#string) |  |  |
+| cluster_incarnation_uid | [string](#string) |  |  |
+| namespace | [string](#string) |  |  |
+| namespace_uid | [string](#string) |  |  |
+| config_map_uid | [string](#string) |  |  |
+| binding_revision | [string](#string) |  |  |
+| api_server_origin | [string](#string) |  |  |
+| serving_ca_sha256 | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentReadinessProbeOwnerRequest"></a>
+
+### GetCurrentReadinessProbeOwnerRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| expected_coordinates | [ReadinessProbeCoordinates](#account-v1-ReadinessProbeCoordinates) |  |  |
+| compact_token_sha256 | [string](#string) |  |  |
+| protected_local_identity | [ReadinessReceiverLocalIdentity](#account-v1-ReadinessReceiverLocalIdentity) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentReadinessProbeOwnerResponse"></a>
+
+### GetCurrentReadinessProbeOwnerResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| owner_record_found | [bool](#bool) |  |  |
+| current_coordinates | [ReadinessProbeCoordinates](#account-v1-ReadinessProbeCoordinates) |  |  |
+| compact_token_sha256 | [string](#string) |  |  |
+| current_state | [GetCurrentReadinessProbeOwnerResponse.ProbeState](#account-v1-GetCurrentReadinessProbeOwnerResponse-ProbeState) |  |  |
+| current_pod_target | [AccountPodTargetBinding](#account-v1-AccountPodTargetBinding) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentReadinessReceiverMetadataRequest"></a>
+
+### GetCurrentReadinessReceiverMetadataRequest
+Neither the operation, plan nor source pins are caller-selectable. The UID must come from the
+protected kubelet projection; the leaf pin must describe the caller&#39;s actual local TLS leaf.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| projected_pod_uid | [string](#string) |  |  |
+| server_leaf_spki_sha256 | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentReadinessReceiverMetadataResponse"></a>
+
+### GetCurrentReadinessReceiverMetadataResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| rotation_operation_id | [string](#string) |  |  |
+| operation_digest | [string](#string) |  |  |
+| plan_digest | [string](#string) |  |  |
+| current_identity | [ReadinessReceiverLocalIdentity](#account-v1-ReadinessReceiverLocalIdentity) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ReadinessProbeCoordinates"></a>
+
+### ReadinessProbeCoordinates
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| rotation_operation_id | [string](#string) |  |  |
+| operation_digest | [string](#string) |  |  |
+| plan_digest | [string](#string) |  |  |
+| plan_version | [int32](#int32) |  |  |
+| registry_version | [int32](#int32) |  |  |
+| validator_id | [string](#string) |  |  |
+| token_profile | [string](#string) |  |  |
+| audience | [string](#string) |  |  |
+| probe_kind | [ReadinessProbeCoordinates.ProbeKind](#account-v1-ReadinessProbeCoordinates-ProbeKind) |  |  |
+| expected_outcome | [ReadinessProbeCoordinates.ExpectedOutcome](#account-v1-ReadinessProbeCoordinates-ExpectedOutcome) |  |  |
+| jti | [string](#string) |  |  |
+| entry_version | [int64](#int64) |  |  |
+| target_generation | [string](#string) |  |  |
+| target_kid | [string](#string) |  |  |
+| expected_active_state | [ReadinessProbeCoordinates.ExpectedActiveState](#account-v1-ReadinessProbeCoordinates-ExpectedActiveState) |  |  |
+| expected_active_generation | [string](#string) |  |  |
+| expected_active_kid | [string](#string) |  |  |
+| issued_at_epoch_seconds | [int64](#int64) |  |  |
+| expires_at_epoch_seconds | [int64](#int64) |  |  |
+| plan_expires_at_epoch_seconds | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ReadinessReceiverLocalIdentity"></a>
+
+### ReadinessReceiverLocalIdentity
+Caller-supplied protected local context. Account compares its target-relevant fields with its
+independent current inventory but must not echo this whole message as owner evidence.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| validator_id | [string](#string) |  |  |
+| deployment_uid | [string](#string) |  |  |
+| pod_uid | [string](#string) |  |  |
+| pod_ip | [string](#string) |  |  |
+| direct_pod_endpoint | [string](#string) |  |  |
+| canonical_service_uri | [string](#string) |  |  |
+| image | [string](#string) |  |  |
+| verifier_config_sha256 | [string](#string) |  |  |
+| applicability_matrix_digest | [string](#string) |  |  |
+| source_inventory_revision | [string](#string) |  |  |
+| source_inventory_digest | [string](#string) |  |  |
+| server_leaf_spki_sha256 | [string](#string) |  |  |
+| account_jwks_source_identity | [AccountSourceIdentity](#account-v1-AccountSourceIdentity) |  |  |
+| account_jwks_trust_binding_revision | [string](#string) |  |  |
+| account_public_jwks_sha256 | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+<a name="account-v1-GetCurrentReadinessProbeOwnerResponse-ProbeState"></a>
+
+### GetCurrentReadinessProbeOwnerResponse.ProbeState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PROBE_STATE_UNSPECIFIED | 0 |  |
+| ISSUED | 1 |  |
+| VERIFIED | 2 |  |
+| RETIRED | 3 |  |
+| CLEANED | 4 |  |
+| EXPIRED | 5 |  |
+| ABORTED | 6 |  |
+
+
+
+<a name="account-v1-ReadinessProbeCoordinates-ExpectedActiveState"></a>
+
+### ReadinessProbeCoordinates.ExpectedActiveState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| EXPECTED_ACTIVE_STATE_UNSPECIFIED | 0 |  |
+| PRESENT | 1 |  |
+| ABSENT | 2 |  |
+| UNKNOWN | 3 |  |
+
+
+
+<a name="account-v1-ReadinessProbeCoordinates-ExpectedOutcome"></a>
+
+### ReadinessProbeCoordinates.ExpectedOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| EXPECTED_OUTCOME_UNSPECIFIED | 0 |  |
+| ACCEPT | 1 |  |
+| INAPPLICABLE_REJECT | 2 |  |
+
+
+
+<a name="account-v1-ReadinessProbeCoordinates-ProbeKind"></a>
+
+### ReadinessProbeCoordinates.ProbeKind
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PROBE_KIND_UNSPECIFIED | 0 |  |
+| CANARY | 1 |  |
+| REPRESENTATIVE | 2 |  |
+
+
+
+
+
+
+
+<a name="account-v1-AccountJwtReadinessProbeOwnerService"></a>
+
+### AccountJwtReadinessProbeOwnerService
+Authenticated read-only owner lookup used by one isolated Game Session Pod receiver.
+The request contains a hash, never the transient compact JWT.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetCurrentReadinessProbeOwner | [GetCurrentReadinessProbeOwnerRequest](#account-v1-GetCurrentReadinessProbeOwnerRequest) | [GetCurrentReadinessProbeOwnerResponse](#account-v1-GetCurrentReadinessProbeOwnerResponse) |  |
+| GetCurrentReadinessReceiverMetadata | [GetCurrentReadinessReceiverMetadataRequest](#account-v1-GetCurrentReadinessReceiverMetadataRequest) | [GetCurrentReadinessReceiverMetadataResponse](#account-v1-GetCurrentReadinessReceiverMetadataResponse) | Non-authorizing protected local identity bootstrap; Account selects the current operation. |
 
 
 
@@ -16706,6 +17014,84 @@ continuation, mutation, current lease, or admission authority.
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | ReadHistoricalOriginalStartSessionOwnerEvidence | [ReadHistoricalOriginalStartSessionOwnerEvidenceRequest](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceRequest) | [ReadHistoricalOriginalStartSessionOwnerEvidenceResponse](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceResponse) |  |
+
+
+
+
+
+<a name="game-session_v1_jwt_readiness_receiver-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/jwt_readiness_receiver.proto
+
+
+
+<a name="game_session-v1-ReceiveReadinessProbeRequest"></a>
+
+### ReceiveReadinessProbeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| coordinates | [account.v1.ReadinessProbeCoordinates](#account-v1-ReadinessProbeCoordinates) |  |  |
+| compact_jwt | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReceiveReadinessProbeResponse"></a>
+
+### ReceiveReadinessProbeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| coordinates | [account.v1.ReadinessProbeCoordinates](#account-v1-ReadinessProbeCoordinates) |  |  |
+| compact_token_sha256 | [string](#string) |  |  |
+| verified_key_id | [string](#string) |  |  |
+| receiver_identity | [account.v1.ReadinessReceiverLocalIdentity](#account-v1-ReadinessReceiverLocalIdentity) |  |  |
+| account_pod_target | [account.v1.AccountPodTargetBinding](#account-v1-AccountPodTargetBinding) |  |  |
+| observed_at_epoch_seconds | [int64](#int64) |  |  |
+| outcome | [ReceiveReadinessProbeResponse.ObservationOutcome](#game_session-v1-ReceiveReadinessProbeResponse-ObservationOutcome) |  |  |
+
+
+
+
+
+
+
+
+<a name="game_session-v1-ReceiveReadinessProbeResponse-ObservationOutcome"></a>
+
+### ReceiveReadinessProbeResponse.ObservationOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| OBSERVATION_OUTCOME_UNSPECIFIED | 0 |  |
+| VERIFIED | 1 |  |
+| INAPPLICABLE_REJECT | 2 |  |
+
+
+
+
+
+
+
+<a name="game_session-v1-GameSessionJwtReadinessReceiverService"></a>
+
+### GameSessionJwtReadinessReceiverService
+Isolated non-authorizing JWT readiness verification on the exact Game Session Pod.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReceiveReadinessProbe | [ReceiveReadinessProbeRequest](#game_session-v1-ReceiveReadinessProbeRequest) | [ReceiveReadinessProbeResponse](#game_session-v1-ReceiveReadinessProbeResponse) |  |
 
 
 

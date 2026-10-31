@@ -91,6 +91,7 @@ dependencies {
     testFixturesCompileOnly(libs.spotbugs.annotations)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
+    add("integrationTestImplementation", libs.bouncycastle.pkix)
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")

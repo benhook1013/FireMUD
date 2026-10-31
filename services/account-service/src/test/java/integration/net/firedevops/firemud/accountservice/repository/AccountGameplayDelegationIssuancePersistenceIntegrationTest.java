@@ -78,6 +78,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.CallerIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.SealedCandidateObservation;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepository.TokenRevokedException;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository.Capture;
@@ -949,6 +950,196 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                     "token identity fence count query must return a row")
                 .get(0, Long.class))
         .isEqualTo(1L);
+  }
+
+  @Test
+  void durableExactRevocationIntentDeniesAdmissionAndCommitRecoveryWithoutRecreation()
+      throws Exception {
+    CommitHarness harness = newCommitHarness(CommitHook.NONE, false);
+    assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
+        .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
+    TokenIdentity identity = tokenFenceIdentity(harness);
+    AccountGameplayTokenIdentityFenceRepository fences =
+        new AccountGameplayTokenIdentityFenceRepository(harness.dsl());
+    UUID requestId = UUID.randomUUID();
+    String digest =
+        AccountGameplayTokenIdentityFenceRepository.revocationDigest(identity, requestId);
+
+    var pending =
+        inTransaction(
+            harness.context(), () -> fences.beginRevocationIntent(identity, requestId, digest));
+    assertThat(pending.state()).isEqualTo(State.PENDING);
+    assertThat(pending.tokenIdentityFence()).isEqualTo(2L);
+    assertThat(
+            inTransaction(
+                harness.context(), () -> fences.beginRevocationIntent(identity, requestId, digest)))
+        .isEqualTo(pending);
+    Record pendingFence =
+        Objects.requireNonNull(
+            harness
+                .dsl()
+                .fetchOne(
+                    "SELECT * FROM account_gameplay_token_identity_fences WHERE operation_id = ?",
+                    identity.operationId()),
+            "pending token identity fence must be retained");
+    Map<String, Object> pendingFenceImage = pendingFence.intoMap();
+
+    assertThatThrownBy(
+            () -> inTransaction(harness.context(), () -> fences.requireActiveForUpdate(identity)))
+        .isInstanceOf(TokenRevokedException.class);
+    assertThatThrownBy(() -> harness.issuance().readCommittedProof(identity.issuanceRequestId()))
+        .isInstanceOf(TokenRevokedException.class);
+    assertThatThrownBy(() -> harness.service().commitPendingCandidate(identity.issuanceRequestId()))
+        .isInstanceOf(
+            AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException.class)
+        .hasNoCause();
+
+    UUID conflictingRequest = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    harness.context(),
+                    () ->
+                        fences.beginRevocationIntent(
+                            identity,
+                            conflictingRequest,
+                            AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                                identity, conflictingRequest))))
+        .isInstanceOf(
+            AccountGameplayTokenIdentityFenceRepository.RevocationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    harness.context(),
+                    () ->
+                        harness
+                            .dsl()
+                            .execute(
+                                "UPDATE account_gameplay_token_identity_fences SET state = 'ACTIVE', "
+                                    + "token_identity_fence = 1, revocation_request_id = NULL, "
+                                    + "revocation_digest = NULL WHERE operation_id = ?",
+                                identity.operationId())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    harness.context(),
+                    () ->
+                        harness
+                            .dsl()
+                            .execute(
+                                "DELETE FROM account_gameplay_token_identity_fences "
+                                    + "WHERE operation_id = ?",
+                                identity.operationId())))
+        .isInstanceOf(DataAccessException.class);
+
+    assertThat(
+            Objects.requireNonNull(
+                    harness
+                        .dsl()
+                        .fetchOne(
+                            "SELECT * FROM account_gameplay_token_identity_fences "
+                                + "WHERE operation_id = ?",
+                            identity.operationId()),
+                    "the exact pending token identity fence must not be deleted or recreated")
+                .intoMap())
+        .isEqualTo(pendingFenceImage);
+    assertThat(
+            inTransaction(
+                harness.context(), () -> fences.beginRevocationIntent(identity, requestId, digest)))
+        .isEqualTo(pending);
+  }
+
+  @Test
+  void racingAdmissionWaitsForAccountRevocationTransactionThenObservesPendingFence()
+      throws Exception {
+    CommitHarness harness = newCommitHarness(CommitHook.NONE, false);
+    harness.service().commitPendingCandidate(harness.pending().requestId());
+    TokenIdentity identity = tokenFenceIdentity(harness);
+    AccountGameplayTokenIdentityFenceRepository fences =
+        new AccountGameplayTokenIdentityFenceRepository(harness.dsl());
+    CountDownLatch pendingWritten = new CountDownLatch(1);
+    CountDownLatch releaseRevocation = new CountDownLatch(1);
+    CountDownLatch readerPidCaptured = new CountDownLatch(1);
+    AtomicInteger revocationPid = new AtomicInteger();
+    AtomicInteger readerPid = new AtomicInteger();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var revocation =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      harness.context(),
+                      () -> {
+                        revocationPid.set(
+                            Objects.requireNonNull(
+                                    harness.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                    "revocation transaction must have a PostgreSQL backend")
+                                .get(0, Integer.class));
+                        UUID requestId = UUID.randomUUID();
+                        var pending =
+                            fences.beginRevocationIntent(
+                                identity,
+                                requestId,
+                                AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                                    identity, requestId));
+                        pendingWritten.countDown();
+                        try {
+                          if (!releaseRevocation.await(30, TimeUnit.SECONDS)) {
+                            throw new IllegalStateException(
+                                "Timed out waiting to release Account revocation transaction");
+                          }
+                        } catch (InterruptedException interrupted) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(
+                              "Interrupted waiting to release Account revocation transaction",
+                              interrupted);
+                        }
+                        return pending;
+                      }));
+      assertThat(pendingWritten.await(10, TimeUnit.SECONDS)).isTrue();
+
+      var admission =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      harness.context(),
+                      () -> {
+                        readerPid.set(
+                            Objects.requireNonNull(
+                                    harness.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                    "admission transaction must have a PostgreSQL backend")
+                                .get(0, Integer.class));
+                        readerPidCaptured.countDown();
+                        return fences.requireActiveForUpdate(identity);
+                      }));
+      assertThat(readerPidCaptured.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(revocationPid.get()).isPositive();
+      assertThat(readerPid.get()).isPositive().isNotEqualTo(revocationPid.get());
+      assertThat(
+              waitUntilBlockedBy(
+                  harness.dsl(),
+                  readerPid.get(),
+                  revocationPid.get(),
+                  TimeUnit.SECONDS.toNanos(10)))
+          .as("admission must block on the Account row held by the uncommitted revocation")
+          .isTrue();
+      assertThat(admission.isDone()).isFalse();
+      assertThat(revocation.isDone()).isFalse();
+
+      releaseRevocation.countDown();
+      assertThat(revocation.get(10, TimeUnit.SECONDS).state()).isEqualTo(State.PENDING);
+      assertThatThrownBy(() -> admission.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class)
+          .hasCauseInstanceOf(TokenRevokedException.class);
+    } finally {
+      releaseRevocation.countDown();
+      executor.shutdown();
+      if (!executor.awaitTermination(15, TimeUnit.SECONDS)) {
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+    }
   }
 
   @Test
@@ -2328,6 +2519,27 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException("Interrupted waiting to " + description, interrupted);
     }
+  }
+
+  private static boolean waitUntilBlockedBy(
+      DSLContext dsl, int waitingPid, int blockingPid, long timeoutNanos)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + timeoutNanos;
+    while (System.nanoTime() < deadline) {
+      Boolean blocked =
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                          + "WHERE pid = ? AND wait_event_type = 'Lock' "
+                          + "AND ? = ANY(pg_blocking_pids(pid)))",
+                      waitingPid,
+                      blockingPid),
+                  "PostgreSQL lock-wait readback must return a row")
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(blocked)) return true;
+      Thread.sleep(10L);
+    }
+    return false;
   }
 
   private record TestContext(
