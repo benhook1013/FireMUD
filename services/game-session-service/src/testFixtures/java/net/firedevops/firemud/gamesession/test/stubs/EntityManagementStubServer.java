@@ -264,20 +264,7 @@ public final class EntityManagementStubServer implements AutoCloseable {
 
   private static List<Character> defaultCharacters() {
     return List.of("Emberline", "Sora", "Nyx").stream()
-        .map(
-            name -> {
-              long owner =
-                  switch (name) {
-                    case "Emberline" -> ChatTestFixtures.EMBERLINE_ACCOUNT_ROW_ID;
-                    case "Sora" -> ChatTestFixtures.SORA_ACCOUNT_ROW_ID;
-                    case "Nyx" -> ChatTestFixtures.NYX_ACCOUNT_ROW_ID;
-                    default -> throw new AssertionError(name);
-                  };
-              // Parent-phase Account authentication still uses its declared numeric fake owner.
-              return ChatTestFixtures.characterByName(name).toBuilder()
-                  .setAccountId(Long.toString(owner))
-                  .build();
-            })
+        .map(ChatTestFixtures::characterByName)
         .toList();
   }
 

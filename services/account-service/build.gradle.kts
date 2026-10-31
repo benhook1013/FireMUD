@@ -88,6 +88,9 @@ dependencies {
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
     integrationTestImplementation(project(path = ":game-session-service", configuration = "gameSessionClassesProof"))
+    integrationTestImplementation(project(path = ":entity-management-service", configuration = "entityClassesProof"))
+    integrationTestImplementation(testFixtures(project(":common-test-support")))
+    integrationTestImplementation(project(":social-groups-service"))
     integrationTestImplementation(testFixtures(project(":account-service")))
     integrationTestImplementation(testFixtures(project(":logging-admin-service")))
 }
@@ -108,6 +111,22 @@ val loggingAdminProjectArtifacts = { configurationName: String ->
 val loggingAdminTestArtifacts = loggingAdminProjectArtifacts("testRuntimeClasspath")
 val loggingAdminIntegrationTestArtifacts =
     loggingAdminProjectArtifacts("integrationTestRuntimeClasspath")
+
+// Exercise the actual Social guard/handler while retaining Account's application and Flyway resources.
+val socialIntegrationTestArtifacts = configurations
+    .getByName("integrationTestRuntimeClasspath")
+    .incoming.artifactView {
+        componentFilter { componentId ->
+            componentId is ProjectComponentIdentifier
+                && componentId.projectPath == ":social-groups-service"
+        }
+    }.artifacts
+
+val extractSocialIntegrationTestClasses = tasks.register<ExtractClassFilesFromArchives>("extractSocialIntegrationTestClasses") {
+    dependsOn(socialIntegrationTestArtifacts.artifactFiles)
+    archives.from(socialIntegrationTestArtifacts.artifactFiles)
+    destinationDirectory.set(layout.buildDirectory.dir("account-test-classpath/social-integration"))
+}
 
 val extractLoggingAdminTestClasses =
     tasks.register<ExtractClassFilesFromArchives>("extractLoggingAdminTestClasses") {
@@ -146,10 +165,16 @@ tasks.named<Test>("integrationTest") {
     // Composition fixtures load Game Session and Common Saga migrations directly from the filesystem.
     inputs.dir(project(":game-session-service").file("src/main/resources/db/migration"))
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    val entityMigrationDirectory =
+        project(":entity-management-service").file("src/main/resources/db/migration")
+    inputs.dir(entityMigrationDirectory).withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("firemud.entity-management.migration-directory", entityMigrationDirectory.absolutePath)
     inputs.dir(project(":common-saga").file("src/main/resources/db/migration/saga"))
         .withPathSensitivity(PathSensitivity.RELATIVE)
     val loggingArtifacts = loggingAdminIntegrationTestArtifacts.artifactFiles
     classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminIntegrationTestClasses)
+    val socialArtifacts = socialIntegrationTestArtifacts.artifactFiles
+    classpath = classpath.filter { it !in socialArtifacts } + files(extractSocialIntegrationTestClasses)
 }
 
 // Owner proof exports classes and its required registry script without Account application or

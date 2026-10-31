@@ -18,6 +18,7 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,13 +52,14 @@ public class CharacterServiceImpl implements CharacterService {
   @Timed(value = "character.create")
   public CharacterDto create(
       Long tenantId,
-      Long accountId,
+      java.util.UUID accountId,
       String name,
       String gameInstanceId,
       PlayableStateScope playableStateScope) {
+    requireAccountOwner(accountId);
     Character entity = new Character();
     entity.setTenantId(tenantId);
-    entity.setAccountId(accountId);
+    entity.setAccountUuid(accountId);
     entity.setName(name);
     entity.setPlayableStateKey(
         playableStateKeyResolver.resolve(gameInstanceId, playableStateScope));
@@ -79,7 +81,14 @@ public class CharacterServiceImpl implements CharacterService {
   public CharacterDto getWithInventory(Long characterId) {
     Cache cache = cacheManager.getCache("characterGraph");
     if (cache != null) {
-      CharacterDto cached = cache.get(characterId, CharacterDto.class);
+      CharacterDto cached;
+      try {
+        cached = cache.get(characterId, CharacterDto.class);
+      } catch (SerializationException ex) {
+        // Derived cache bytes do not establish ownership; rebuild through the strict SQL mapper.
+        cache.evict(characterId);
+        cached = null;
+      }
       if (cached != null) {
         cacheHitCounter.increment();
         return cached;
@@ -136,12 +145,13 @@ public class CharacterServiceImpl implements CharacterService {
   @Timed(value = "character.listForAccount")
   public Page<CharacterDto> listForGameplayScope(
       Long tenantId,
-      Long accountId,
+      java.util.UUID accountId,
       String gameInstanceId,
       PlayableStateScope playableStateScope,
       Pageable pageable) {
+    requireAccountOwner(accountId);
     return characterRepository
-        .findByTenantIdAndAccountIdAndPlayableStateKey(
+        .findByTenantIdAndAccountUuidAndPlayableStateKey(
             tenantId,
             accountId,
             playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),
@@ -165,7 +175,17 @@ public class CharacterServiceImpl implements CharacterService {
         .map(this::toDto);
   }
 
+  private static void requireAccountOwner(java.util.UUID accountId) {
+    if (accountId == null || accountId.equals(new java.util.UUID(0L, 0L))) {
+      throw new IllegalArgumentException("A non-nil Account UUID is required");
+    }
+  }
+
   private CharacterDto toDto(Character character) {
+    java.util.UUID accountUuid = character.getAccountUuid();
+    if (accountUuid == null || accountUuid.equals(new java.util.UUID(0L, 0L))) {
+      throw new IllegalStateException("Persisted character has no valid Account UUID");
+    }
     CharacterDto dto = characterMapper.toDto(character);
     return new CharacterDto(
         dto.id(),

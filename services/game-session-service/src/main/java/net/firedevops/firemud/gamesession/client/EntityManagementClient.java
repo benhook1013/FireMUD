@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
@@ -139,7 +140,7 @@ public final class EntityManagementClient
     ListCharactersByAccountRequest request =
         ListCharactersByAccountRequest.newBuilder()
             .setTenantId(tenantId)
-            .setAccountId(accountId)
+            .setAccountId(JwtClaims.requireCanonicalAccountUuid(accountId, "accountId"))
             .setGameInstanceId(gameInstanceId)
             .setPlayableStateScope(playableStateScope)
             .build();

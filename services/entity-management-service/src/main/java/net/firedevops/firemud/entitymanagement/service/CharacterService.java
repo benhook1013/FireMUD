@@ -12,7 +12,7 @@ public interface CharacterService {
   /** Creates a new character with default stats. */
   CharacterDto create(
       Long tenantId,
-      Long accountId,
+      java.util.UUID accountId,
       String name,
       String gameInstanceId,
       PlayableStateScope playableStateScope);
@@ -34,7 +34,7 @@ public interface CharacterService {
   /** Lists all characters visible for one resolved gameplay target. */
   Page<CharacterDto> listForGameplayScope(
       Long tenantId,
-      Long accountId,
+      java.util.UUID accountId,
       String gameInstanceId,
       PlayableStateScope playableStateScope,
       Pageable pageable);

@@ -5,7 +5,6 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.common.security.JwtClaims;
-import org.springframework.util.StringUtils;
 
 /** Represents persisted login context stored in Redis for a session. */
 public record SessionContext(
@@ -337,7 +336,7 @@ public record SessionContext(
   }
 
   public boolean hasAccountIdentity() {
-    return StringUtils.hasText(accountId);
+    return isCanonicalAccountIdentity(accountId);
   }
 
   public boolean hasGameplayBinding() {

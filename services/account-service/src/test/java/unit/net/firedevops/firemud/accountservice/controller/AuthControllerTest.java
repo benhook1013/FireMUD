@@ -80,10 +80,18 @@ class AuthControllerTest {
       Map<String, Object> paths = (Map<String, Object>) document.get("paths");
       Map<String, Object> components = (Map<String, Object>) document.get("components");
       Map<String, Object> schemas = (Map<String, Object>) components.get("schemas");
+      Map<String, Object> playerBootstrapResult =
+          (Map<String, Object>) schemas.get("PlayerBootstrapResult");
+      Map<String, Object> playerBootstrapProperties =
+          (Map<String, Object>) playerBootstrapResult.get("properties");
+      Map<String, Object> playerBootstrapAccountId =
+          (Map<String, Object>) playerBootstrapProperties.get("accountId");
 
       assertFalse(paths.containsKey("/auth/bootstrap/join"));
       assertTrue(((Map<String, Object>) paths.get("/auth/player-bootstrap")).containsKey("post"));
       assertTrue(((Map<String, Object>) paths.get("/auth/connect-token")).containsKey("post"));
+      assertEquals("string", playerBootstrapAccountId.get("type"));
+      assertEquals("uuid", playerBootstrapAccountId.get("format"));
       assertFalse(schemas.containsKey("JoinPublicProductionRequest"));
       assertFalse(schemas.containsKey("JoinPublicProductionResult"));
     }
@@ -109,7 +117,7 @@ class AuthControllerTest {
   void loginReturnsTokenAndAccountId() throws Exception {
     LoginRequest request = new LoginRequest("demo", "password");
     when(accountService.authenticate("demo", "password"))
-        .thenReturn(new AuthenticationResult(1L, "tok123"));
+        .thenReturn(new AuthenticationResult("4cae05e8-7a6b-4b14-9d44-665e3eec450b", "tok123"));
 
     mockMvc
         .perform(
@@ -118,7 +126,7 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.accountId").value("4cae05e8-7a6b-4b14-9d44-665e3eec450b"))
         .andExpect(jsonPath("$.data.authToken").value("tok123"));
   }
 
@@ -126,7 +134,7 @@ class AuthControllerTest {
   void loginAcceptsExistingOneCharacterPassword() throws Exception {
     LoginRequest request = new LoginRequest("demo", "x");
     when(accountService.authenticate("demo", "x"))
-        .thenReturn(new AuthenticationResult(1L, "tok123"));
+        .thenReturn(new AuthenticationResult("4cae05e8-7a6b-4b14-9d44-665e3eec450b", "tok123"));
 
     mockMvc
         .perform(
@@ -144,7 +152,7 @@ class AuthControllerTest {
     when(accountService.issuePlayerBootstrap("demo", "password"))
         .thenReturn(
             new PlayerBootstrapResult(
-                "10000000-0000-4000-8000-000000000001",
+                "4cae05e8-7a6b-4b14-9d44-665e3eec450b",
                 "boot123",
                 "2026-03-30T00:00:00Z",
                 "2026-03-30T00:05:00Z"));
@@ -156,7 +164,7 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.accountId").value("10000000-0000-4000-8000-000000000001"))
+        .andExpect(jsonPath("$.data.accountId").value("4cae05e8-7a6b-4b14-9d44-665e3eec450b"))
         .andExpect(jsonPath("$.data.bootstrapToken").value("boot123"));
   }
 

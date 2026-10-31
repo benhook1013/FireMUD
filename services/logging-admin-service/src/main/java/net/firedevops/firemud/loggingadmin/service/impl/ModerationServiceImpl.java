@@ -5,7 +5,9 @@ import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest;
 import net.firedevops.firemud.loggingadmin.dto.ModerationActionDto;
 import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
@@ -45,7 +47,7 @@ public class ModerationServiceImpl implements ModerationService {
         "Applying moderation action {} to account {}", request.action(), request.accountId());
     ModerationAction entity = new ModerationAction();
     entity.setTenantId(request.tenantId());
-    entity.setAccountId(request.accountId());
+    entity.setAccountId(UUID.fromString(request.accountId()));
     entity.setAction(request.action());
     entity.setReason(request.reason());
     entity.setCreatedAt(Instant.now());
@@ -54,7 +56,9 @@ public class ModerationServiceImpl implements ModerationService {
 
   @Override
   @Timed(value = "moderation.evaluatePolicy")
-  public ModerationPolicyDecisionDto evaluatePolicy(long tenantId, long accountId, String scope) {
+  public ModerationPolicyDecisionDto evaluatePolicy(long tenantId, UUID accountId, String scope) {
+    JwtClaims.requireCanonicalAccountUuid(
+        accountId == null ? null : accountId.toString(), "accountId");
     List<String> blockingActions = blockingActionsFor(scope);
     if (blockingActions.isEmpty()) {
       throw new IllegalArgumentException("Unknown moderation policy scope: " + scope);

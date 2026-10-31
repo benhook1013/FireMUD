@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
+import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -92,14 +93,17 @@ class WorldsTextCommandDispatchHandlerTest {
   void publishesCommandEventForGameplayScopedCharsBrowse() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+            "22",
+            AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+            "41",
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(123L))
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -121,7 +125,11 @@ class WorldsTextCommandDispatchHandlerTest {
         .extracting(output -> output.payload())
         .isInstanceOf(CharacterBrowseViewOutput.class);
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22",
+            AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+            "41",
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),

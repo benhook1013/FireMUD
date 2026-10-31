@@ -41,6 +41,7 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
@@ -118,9 +119,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles("test")
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
+  private static final String ACCOUNT_UUID = "5e1340f8-99c8-49fa-a4fe-5fc9d2075621";
 
   // Runtime target 2 belongs to the sandbox route in this fixture.
-  private static final String DEMO_ACCOUNT_ID = "123";
   private static final long CUTOVER_GAME_INSTANCE_ID = 3L;
 
   @Container
@@ -245,7 +246,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               return members == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(members);
             });
     when(moderationPolicyClient.evaluateGameplayAdmission(
-            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -262,16 +263,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("stub-token")
-                .setAccountId(DEMO_ACCOUNT_ID)
+                .setAccountId(ACCOUNT_UUID)
                 .build());
     org.mockito.Mockito.doReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId(DEMO_ACCOUNT_ID)
+                .setAccountId(ACCOUNT_UUID)
                 .setTenantId("22")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(java.time.Instant.now().toString())
                 .build())
         .when(accountClient)
         .getTenantMembershipForRuntime(
@@ -284,7 +285,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(java.time.Instant.now().toString())
                 .build())
         .when(accountClient)
         .getTenantEntitlementsForRuntime(
@@ -296,7 +297,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("123")
                         .setTenantId("22")
-                        .setAccountId(DEMO_ACCOUNT_ID)
+                        .setAccountId(ACCOUNT_UUID)
                         .setName("Emberline")
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setLevel(12)
@@ -305,7 +306,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("456")
                         .setTenantId("22")
-                        .setAccountId(DEMO_ACCOUNT_ID)
+                        .setAccountId(ACCOUNT_UUID)
                         .setName("Sora")
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setLevel(7)
@@ -314,7 +315,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .when(entityManagementClient)
         .listCharactersByAccount(
             eq("22"),
-            eq(DEMO_ACCOUNT_ID),
+            eq(ACCOUNT_UUID),
             eq("1"),
             eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(commandService.enqueue(
@@ -462,13 +463,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                           .build())
                   .build();
             });
-  }
-
-  private void assertNoAccountPresenceWritten() {
-    assertThat(firstPartyConnectStore.keySet())
-        .noneMatch(
-            key -> key.startsWith("gameplaypresence:") || key.startsWith("accountrecentpresence:"));
-    assertThat(redisSetStore.keySet()).noneMatch(key -> key.startsWith("gameplaypresence:"));
   }
 
   @Test
@@ -663,23 +657,21 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     System.currentTimeMillis())));
 
     GameplayWebSocketDriver firstClient = openAdmittedGameplayDriver("41");
-    assertThat(firstClient.responses()).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
-    assertNoAccountPresenceWritten();
     firstClient.abort();
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
-    assertNoAccountPresenceWritten();
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(ACCOUNT_UUID)))
+        .containsKey(ACCOUNT_UUID);
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
       client.awaitContains("RECONNECT REPLAY APPEARS");
       secondPayloads = client.responses();
       GameplayAsyncAssertions.assertPresenceCountEventually(
-          gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
-      assertThat(gameplayPresenceService.findConnectedBySessionId(42L)).isEmpty();
-      assertNoAccountPresenceWritten();
+          gameplayPresenceService, 22L, 1L, 1, java.time.Duration.ofSeconds(5));
+      assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
+          .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
     }
     assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
@@ -688,12 +680,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketAfkCommandIsAcceptedWithoutNumericOwnerPresence() throws Exception {
+  void websocketAfkCommandUpdatesLiveGameplayPresence() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
-      assertThat(client.responses()).anyMatch(payload -> payload.startsWith("OK PLAY"));
-      assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
-      assertNoAccountPresenceWritten();
       client.send("AFK");
       GameplayAsyncAssertions.assertEventually(
           "AFK command enqueue",
@@ -708,8 +697,21 @@ class GameSessionWebSocketHandlerIntegrationTest {
                             && "AFK".equals(invocation.getArguments()[1])
                             && Boolean.FALSE.equals(invocation.getArguments()[2]));
           });
-      assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
-      assertNoAccountPresenceWritten();
+      GameplayAsyncAssertions.assertEventually(
+          "AFK presence state",
+          java.time.Duration.ofSeconds(5),
+          () ->
+              gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                  .anyMatch(entry -> entry.sessionId() == 41L));
+      GameplayAsyncAssertions.assertEventually(
+          "AFK explicit timestamp",
+          java.time.Duration.ofSeconds(5),
+          () ->
+              gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+                  .filter(entry -> entry.sessionId() == 41L)
+                  .findFirst()
+                  .map(GameplayPresence::explicitAfkSinceEpochMs)
+                  .isPresent());
       payloads = client.responses();
     }
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
@@ -828,7 +830,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
     verify(entityManagementClient)
         .listCharactersByAccount(
-            "22", DEMO_ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+            "22", ACCOUNT_UUID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -903,7 +905,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                     .setId("789")
                     .setTenantId("22")
-                    .setAccountId(DEMO_ACCOUNT_ID)
+                    .setAccountId(ACCOUNT_UUID)
                     .setName("CutoverArrival")
                     .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                     .setLevel(1)
@@ -913,7 +915,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .when(entityManagementClient)
         .listCharactersByAccount(
             "22",
-            DEMO_ACCOUNT_ID,
+            ACCOUNT_UUID,
             Long.toString(CUTOVER_GAME_INSTANCE_ID),
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
 
@@ -946,7 +948,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     org.mockito.Mockito.verify(entityManagementClient)
         .listCharactersByAccount(
             "22",
-            DEMO_ACCOUNT_ID,
+            ACCOUNT_UUID,
             Long.toString(CUTOVER_GAME_INSTANCE_ID),
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
@@ -1005,7 +1007,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(DEMO_ACCOUNT_ID);
+              assertThat(context.accountId()).isEqualTo(ACCOUNT_UUID);
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
@@ -1014,7 +1016,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.pointerVersion()).isEqualTo(1L);
             });
     assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
-    assertNoAccountPresenceWritten();
   }
 
   private GameplayWebSocketDriver openGameplayDriver(String sessionId) {
@@ -1194,11 +1195,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void unqualifiedFirstPartyReconnectDoesNotReplaceRetainedOrdinaryGameplayContext()
       throws Exception {
     try (GameplayWebSocketDriver ordinary = openAdmittedGameplayDriver("2")) {
-      assertThat(ordinary.responses()).anyMatch(payload -> payload.startsWith("OK PLAY"));
       var retained = sessionContextService.findByTenantAndSessionId(22L, 2L).orElseThrow();
       var retainedPresence = gameplayPresenceService.findConnectedBySessionId(2L);
-      assertThat(retainedPresence).isEmpty();
-      assertNoAccountPresenceWritten();
+      assertThat(retainedPresence).isPresent();
       try (GameplayWebSocketDriver reconnecting =
           openUnqualifiedFirstPartyDriver("2", "unqualified-context")) {
         var close = reconnecting.awaitClosed();
@@ -1209,7 +1208,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
       assertThat(firstPartyConnectStore)
           .doesNotContainKey("sessionctx:first-party:2:connect-context");
       assertThat(gameplayPresenceService.findConnectedBySessionId(2L)).isEqualTo(retainedPresence);
-      assertNoAccountPresenceWritten();
       int responseBaseline = ordinary.responses().size();
       ordinary.send("LOOK");
       ordinary.awaitTranscriptContainingAllAfter(responseBaseline, "Room: Login Hall (ID: R-1021)");

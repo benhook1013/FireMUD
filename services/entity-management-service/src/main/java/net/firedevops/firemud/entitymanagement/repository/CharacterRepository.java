@@ -256,28 +256,6 @@ public class CharacterRepository {
         : new PageImpl<>(content, pageable, total);
   }
 
-  public Page<Character> findByTenantIdAndAccountIdAndPlayableStateKey(
-      Long tenantId, Long accountId, String playableStateKey, Pageable pageable) {
-    var condition =
-        CHARACTERS
-            .TENANT_ID
-            .eq(tenantId)
-            .and(CHARACTERS.ACCOUNT_ID.eq(accountId))
-            .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
-            .and(legacyCharacterRow());
-    long total = dsl.fetchCount(CHARACTERS, condition);
-    var content =
-        dsl.selectFrom(CHARACTERS)
-            .where(condition)
-            .orderBy(CHARACTERS.ID.asc())
-            .limit(limitOrDefault(pageable, Integer.MAX_VALUE))
-            .offset(offsetOrZero(pageable))
-            .fetch(this::toEntity);
-    return pageable == null || pageable.isUnpaged()
-        ? new PageImpl<>(content)
-        : new PageImpl<>(content, pageable, total);
-  }
-
   public Optional<Character> findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
       Long tenantId, String playableStateKey, String name) {
     return Optional.ofNullable(

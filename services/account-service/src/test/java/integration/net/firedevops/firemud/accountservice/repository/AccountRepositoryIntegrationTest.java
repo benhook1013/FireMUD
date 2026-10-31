@@ -1293,6 +1293,35 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
+  void batchAccountUuidReadReturnsOnlyRequestedRowsWithPersistedIdentityEvidence() {
+    Account first =
+        saveInTransaction(
+            account(
+                "batch-owner-one", "batch-owner-one@example.com", AccountLifecycleState.ACTIVE));
+    Account second =
+        saveInTransaction(
+            account(
+                "batch-owner-two", "batch-owner-two@example.com", AccountLifecycleState.ACTIVE));
+
+    List<Account> owners =
+        repository.findByAccountUuids(
+            List.of(first.getAccountUuid(), UUID.randomUUID(), second.getAccountUuid()));
+
+    assertThat(owners)
+        .extracting(Account::getAccountUuid)
+        .containsExactlyInAnyOrder(first.getAccountUuid(), second.getAccountUuid());
+    assertThat(owners)
+        .allSatisfy(
+            owner -> {
+              assertThat(owner.getId()).isPositive();
+              assertThat(owner.getAccountUuidProvenance())
+                  .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              assertThat(owner.getAccountUuidSourceNumericId()).isEqualTo(owner.getId());
+            });
+    assertThat(repository.findByAccountUuids(List.of())).isEmpty();
+  }
+
+  @Test
   void rejectedHardDeleteRetainsAccountRowAndSourceIdentityEvidence() {
     Account saved =
         saveInTransaction(

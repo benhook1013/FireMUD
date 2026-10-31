@@ -127,11 +127,10 @@ class RetainedActorIdentityIntegrationTest {
         .isPresent();
     assertThat(
             characterRepository
-                .findByTenantIdAndAccountIdAndPlayableStateKey(
-                    tenantId, accountId, actor.getPlayableStateKey(), null)
+                .findByTenantIdAndAccountUuidAndPlayableStateKey(
+                    tenantId, accountUuid, actor.getPlayableStateKey(), null)
                 .getContent())
-        .extracting(Character::getId)
-        .containsExactly(actorId);
+        .isEmpty();
     assertThat(
             characterRepository.findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
                 tenantId, actor.getPlayableStateKey(), "retained ACTOR"))

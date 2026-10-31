@@ -17,12 +17,8 @@ import org.junit.jupiter.api.Test;
 class EntityManagementStubServerTest {
 
   @Test
-  void explicitUuidRosterRetainsExactTenantAndAccountOwnership() throws Exception {
+  void listsOnlyThePersistedSharedCharacterForTheRequestedTenantAndAccount() throws Exception {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
-      server.setCharacters(
-          List.of("Emberline", "Sora", "Nyx").stream()
-              .map(ChatTestFixtures::characterByName)
-              .toList());
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
       try {
@@ -48,55 +44,28 @@ class EntityManagementStubServerTest {
   }
 
   @Test
-  void parentPhaseDefaultsAndResetRetainDeclaredNumericFakeOwners() throws Exception {
+  void resetCharactersRestoresDefaultSharedCharactersAfterAnEmptyOverride() throws Exception {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
+      server.setCharacters(List.of());
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
       try {
-        var stub = EntityManagementServiceGrpc.newBlockingStub(channel);
-        for (boolean reset : List.of(false, true)) {
-          if (reset) {
-            server.setCharacters(List.of());
-            assertThat(
-                    listCharacters(stub, "1", "7", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                        .getCharactersList())
-                .isEmpty();
-            server.resetCharacters();
-          }
-          for (FixtureCharacter fixture :
-              List.of(
-                  new FixtureCharacter("7", "Emberline"),
-                  new FixtureCharacter("8", "Sora"),
-                  new FixtureCharacter("9", "Nyx"))) {
-            assertThat(
-                    listCharacters(
-                            stub,
-                            "1",
-                            fixture.accountId(),
-                            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                        .getCharactersList())
-                .containsExactly(
-                    sharedCharacter(fixture.name()).toBuilder()
-                        .setAccountId(fixture.accountId())
-                        .build());
-            assertThat(
-                    listCharacters(
-                            stub,
-                            "2",
-                            fixture.accountId(),
-                            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                        .getCharactersList())
-                .isEmpty();
-          }
-          assertThat(
-                  listCharacters(
-                          stub,
-                          "1",
-                          accountUuid(7L),
-                          PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                      .getCharactersList())
-              .isEmpty();
-        }
+        EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
+            EntityManagementServiceGrpc.newBlockingStub(channel);
+
+        ListCharactersByAccountResponse emptyResponse =
+            listCharacters(
+                stub, "1", accountUuid(7L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        assertThat(emptyResponse.hasError()).isFalse();
+        assertThat(emptyResponse.getCharactersList()).isEmpty();
+
+        server.resetCharacters();
+
+        ListCharactersByAccountResponse resetResponse =
+            listCharacters(
+                stub, "1", accountUuid(7L), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        assertThat(resetResponse.hasError()).isFalse();
+        assertThat(resetResponse.getCharactersList()).containsExactly(sharedCharacter("Emberline"));
       } finally {
         channel.shutdownNow();
       }
@@ -161,10 +130,6 @@ class EntityManagementStubServerTest {
   @Test
   void unknownOrMismatchedTenantAndAccountReturnNoCharacters() throws Exception {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
-      server.setCharacters(
-          List.of("Emberline", "Sora", "Nyx").stream()
-              .map(ChatTestFixtures::characterByName)
-              .toList());
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
       try {
@@ -193,10 +158,6 @@ class EntityManagementStubServerTest {
   @Test
   void unsupportedPlayableStateScopesReturnNoCharacters() throws Exception {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
-      server.setCharacters(
-          List.of("Emberline", "Sora", "Nyx").stream()
-              .map(ChatTestFixtures::characterByName)
-              .toList());
       ManagedChannel channel =
           ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
       try {

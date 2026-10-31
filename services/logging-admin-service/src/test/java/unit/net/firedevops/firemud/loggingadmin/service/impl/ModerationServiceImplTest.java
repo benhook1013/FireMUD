@@ -15,6 +15,7 @@ import net.firedevops.firemud.loggingadmin.mapper.ModerationActionMapper;
 import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -32,19 +33,32 @@ class ModerationServiceImplTest {
 
   @Test
   void applyActionSavesEntity() throws Exception {
-    ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "test");
+    ApplyModerationActionRequest req =
+        new ApplyModerationActionRequest(
+            1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", 9L, "ban", "test");
     ModerationAction saved = new ModerationAction();
     saved.setId(1L);
     saved.setCreatedAt(Instant.now());
     when(repository.save(any())).thenReturn(saved);
     ModerationActionDto dto =
-        new ModerationActionDto(1L, 1L, 2L, "ban", "test", saved.getCreatedAt(), null);
+        new ModerationActionDto(
+            1L,
+            1L,
+            "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1",
+            "ban",
+            "test",
+            saved.getCreatedAt(),
+            null);
     when(mapper.toDto(saved)).thenReturn(dto);
 
     ModerationActionDto result = service.applyAction(req);
 
     assertEquals(dto, result);
-    verify(repository).save(any(ModerationAction.class));
+    ArgumentCaptor<ModerationAction> captor = ArgumentCaptor.forClass(ModerationAction.class);
+    verify(repository).save(captor.capture());
+    assertEquals(
+        java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1"),
+        captor.getValue().getAccountId());
   }
 
   @Test
@@ -54,12 +68,17 @@ class ModerationServiceImplTest {
     action.setReason("abuse");
     when(repository.findActivePolicyActions(
             org.mockito.Mockito.eq(1L),
-            org.mockito.Mockito.eq(2L),
+            org.mockito.Mockito.eq(
+                java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1")),
             org.mockito.Mockito.anyList(),
             org.mockito.Mockito.any()))
         .thenReturn(List.of(action));
 
-    ModerationPolicyDecisionDto decision = service.evaluatePolicy(1L, 2L, "GAMEPLAY_ADMISSION");
+    ModerationPolicyDecisionDto decision =
+        service.evaluatePolicy(
+            1L,
+            java.util.UUID.fromString("b8d093f7-cb70-40ed-9fac-3c82d4bf28f1"),
+            "GAMEPLAY_ADMISSION");
 
     assertEquals(false, decision.allowed());
     assertEquals("gameplay_ban", decision.action());

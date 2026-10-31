@@ -40,6 +40,9 @@ public class WorldsCommandHandler {
   public CharacterBrowseResult browseCharacters(
       SessionContext sessionContext, String worldSelector, String realmSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
+    if (!sessionContext.hasAccountIdentity()) {
+      return CharacterBrowseResult.unavailable();
+    }
     java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
         worldCatalog.resolveWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
@@ -73,6 +76,10 @@ public class WorldsCommandHandler {
         new java.util.ArrayList<>(response.getCharactersCount());
     for (int i = 0; i < response.getCharactersCount(); i++) {
       net.firedevops.firemud.entitymanagement.v1.Character character = response.getCharacters(i);
+      if (!sessionContext.accountId().equals(character.getAccountId())
+          || !Long.toString(realm.tenantId()).equals(character.getTenantId())) {
+        return CharacterBrowseResult.unavailable();
+      }
       entries.add(
           new CharacterBrowseViewOutput.CharacterEntry(
               i + 1, character.getId(), character.getName(), character.getLevel()));

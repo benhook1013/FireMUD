@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -299,17 +300,16 @@ public class AccountServiceImpl implements AccountService {
       String username, String password) {
     PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
-    requireAuthenticationAccountOwner(account);
+    String accountUuid = requireAuthenticationAccountUuid(account).toString();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
-            account.getId().toString(),
+            accountUuid,
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims("control-ui", account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
-    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(accountUuid, token);
   }
 
   @Override
@@ -324,17 +324,16 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
-    requireAuthenticationAccountOwner(account);
+    String accountUuid = requireAuthenticationAccountUuid(account).toString();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
-            account.getId().toString(),
+            accountUuid,
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
-    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(accountUuid, token);
   }
 
   @Override
@@ -399,17 +398,16 @@ public class AccountServiceImpl implements AccountService {
       throw invalidCredentials();
     }
     requireAuthenticationEligible(account);
-    requireAuthenticationAccountOwner(account);
+    String accountUuid = requireAuthenticationAccountUuid(account).toString();
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
         mintToken(
-            account.getId().toString(),
+            accountUuid,
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
-    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(accountUuid, token);
   }
 
   @Override
@@ -419,8 +417,7 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(accountIdentifier, secret, true);
     Account account = authentication.account();
-    requireAuthenticationAccountOwner(account);
-    String accountUuid = account.getAccountUuid().toString();
+    String accountUuid = requireAuthenticationAccountUuid(account).toString();
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();
@@ -518,12 +515,13 @@ public class AccountServiceImpl implements AccountService {
     validateConnectScopeRoute(scopeContext, worldSlug, realmSlug);
     RuntimeRealmTarget realm =
         requireCurrentAdmissibleConnectScopeTarget(bootstrapContext, scopeContext);
+    UUID accountUuid = bootstrapContext.accountUuid();
+    if (accountUuid == null || NIL_ACCOUNT_UUID.equals(accountUuid)) {
+      throw new IllegalStateException("Bootstrap Account UUID is unavailable");
+    }
     return entityManagementClient
         .listCharactersByAccount(
-            realm.tenantId(),
-            bootstrapContext.accountId(),
-            realm.gameInstanceId(),
-            toPlayableStateScope(realm))
+            realm.tenantId(), accountUuid, realm.gameInstanceId(), toPlayableStateScope(realm))
         .stream()
         .sorted(Comparator.comparing(net.firedevops.firemud.entitymanagement.v1.Character::getName))
         .map(
@@ -601,7 +599,7 @@ public class AccountServiceImpl implements AccountService {
     }
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
-    requireAuthenticationAccountOwner(account);
+    requireAuthenticationAccountUuid(account);
     String scopeId =
         mintAndRetainConnectScope(
             new BootstrapContext(caller.accountId(), account.getAccountUuid()),
@@ -984,8 +982,7 @@ public class AccountServiceImpl implements AccountService {
       if (!Objects.equals(accountId, account.getId())) {
         throw new IllegalStateException("Account response readback returned a different owner");
       }
-      requireAuthenticationAccountOwner(account);
-      return account.getAccountUuid().toString();
+      return requireAuthenticationAccountUuid(account).toString();
     } catch (RuntimeException ex) {
       throw new AuthenticationException(
           "AUTH_UNAVAILABLE", "Account response authority is unavailable", ex);
@@ -2111,14 +2108,15 @@ public class AccountServiceImpl implements AccountService {
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
   }
 
-  /** Requires the authenticated identity to resolve back to its exact persisted Account owner. */
-  private void requireAuthenticationAccountOwner(Account account) {
+  private UUID requireAuthenticationAccountUuid(Account account) {
     try {
       requireAuthenticationPersistedIdentity(account);
-      Long storageId = resolveAccountStorageId(account.getAccountUuid());
+      UUID accountUuid = account.getAccountUuid();
+      Long storageId = resolveAccountStorageId(accountUuid);
       if (!Objects.equals(account.getId(), storageId)) {
         throw new IllegalStateException("Account identity does not match its persisted owner");
       }
+      return accountUuid;
     } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
       logger.warn(
           "Account owner validation failed during issuance; cause={}",
@@ -2138,6 +2136,54 @@ public class AccountServiceImpl implements AccountService {
         accountRepository
             .findByAccountUuid(accountUuid)
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    return requireAccountStorageId(account, accountUuid);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Map<UUID, Long> resolveAccountStorageIds(List<UUID> accountUuids) {
+    if (accountUuids == null) {
+      throw new IllegalArgumentException("Account UUIDs are required");
+    }
+    List<UUID> requestedAccountUuids = accountUuids.stream().distinct().toList();
+    if (requestedAccountUuids.isEmpty()) {
+      return Map.of();
+    }
+    if (requestedAccountUuids.stream()
+        .anyMatch(uuid -> uuid == null || NIL_ACCOUNT_UUID.equals(uuid))) {
+      throw new IllegalArgumentException("Canonical non-nil Account UUIDs are required");
+    }
+    Map<UUID, Long> storageIdsByAccountUuid = new LinkedHashMap<>();
+    Map<Long, UUID> accountUuidsByStorageId = new HashMap<>();
+    for (Account account : accountRepository.findByAccountUuids(requestedAccountUuids)) {
+      UUID accountUuid = account == null ? null : account.getAccountUuid();
+      if (accountUuid == null || !requestedAccountUuids.contains(accountUuid)) {
+        throw new IllegalStateException("Account UUID batch read returned an unexpected row");
+      }
+      long storageId;
+      try {
+        storageId = requireAccountStorageId(account, accountUuid);
+      } catch (IllegalArgumentException | IllegalStateException ex) {
+        // The scalar caller omits this subject after the same failed owner readback.
+        continue;
+      }
+      UUID previousAccountUuid = accountUuidsByStorageId.putIfAbsent(storageId, accountUuid);
+      if (previousAccountUuid != null && !previousAccountUuid.equals(accountUuid)) {
+        throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
+      }
+      Long previousStorageId = storageIdsByAccountUuid.putIfAbsent(accountUuid, storageId);
+      if (previousStorageId != null && previousStorageId != storageId) {
+        throw new IllegalStateException("Account UUID resolution returned an ambiguous row");
+      }
+    }
+    return Map.copyOf(storageIdsByAccountUuid);
+  }
+
+  private long requireAccountStorageId(Account account, UUID accountUuid) {
+    if (account == null) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
     AccountIdentityProvenance provenance = account.getAccountUuidProvenance();
     if (account.getId() == null
         || account.getId() <= 0L
@@ -2174,7 +2220,7 @@ public class AccountServiceImpl implements AccountService {
         "aud",
         audience,
         "accountId",
-        account.getId(),
+        account.getAccountUuid().toString(),
         "globalRoles",
         globalRoles,
         "jti",

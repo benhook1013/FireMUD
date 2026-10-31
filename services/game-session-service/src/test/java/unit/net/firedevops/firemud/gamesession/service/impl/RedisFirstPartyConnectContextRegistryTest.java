@@ -113,4 +113,27 @@ class RedisFirstPartyConnectContextRegistryTest {
     verify(redisTemplate, never()).delete(key);
     verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
   }
+
+  @Test
+  void unregisterRetainsTypedButUnverifiableContext() {
+    String key = "sessionctx:first-party:91:connect-context";
+    FirstPartyConnectContext incomplete = mock(FirstPartyConnectContext.class);
+    store.put(key, incomplete);
+    registry.unregister(91L);
+    assertEquals(incomplete, store.get(key));
+    verify(redisTemplate, never()).delete(key);
+  }
+
+  @Test
+  void unregisterRetainsSignedContextWhenCurrentTargetCannotBeVerified() {
+    String key = "sessionctx:first-party:91:connect-context";
+    FirstPartyConnectContext original = fixture.context();
+    store.put(key, original);
+    when(fixture.routes.readCurrentTarget(
+            net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT))
+        .thenReturn(null);
+    registry.unregister(91L);
+    assertEquals(original, store.get(key));
+    verify(redisTemplate, never()).delete(key);
+  }
 }

@@ -8,6 +8,7 @@ import org.mapstruct.Mapping;
 @Mapper(componentModel = "spring")
 public interface CharacterMapper {
   @Mapping(target = "playableStateScope", ignore = true)
+  @Mapping(target = "accountId", source = "accountUuid")
   CharacterDto toDto(Character entity);
 
   @Mapping(target = "inventoryEntries", ignore = true)
@@ -15,7 +16,8 @@ public interface CharacterMapper {
   @Mapping(target = "playableStateKey", ignore = true)
   @Mapping(target = "bodyLayoutKey", constant = "DEFAULT")
   @Mapping(target = "actorIdentity", ignore = true)
-  @Mapping(target = "accountUuid", ignore = true)
   @Mapping(target = "version", ignore = true)
+  @Mapping(target = "accountUuid", source = "accountId")
+  @Mapping(target = "accountId", ignore = true)
   Character toEntity(CharacterDto dto);
 }

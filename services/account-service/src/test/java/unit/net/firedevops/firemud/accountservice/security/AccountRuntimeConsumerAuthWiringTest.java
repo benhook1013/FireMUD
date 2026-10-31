@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
@@ -31,7 +32,9 @@ import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionClaims;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
@@ -44,12 +47,12 @@ class AccountRuntimeConsumerAuthWiringTest {
   private static final String IDENTITY_METHOD =
       "account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity";
   private static final String NONPUBLIC_METHOD = "account.v1.AccountService/GetProfile";
-  private static final String PROFILE_UPDATE_METHOD = "account.v1.AccountService/UpdateProfile";
+  private static final String UPDATE_PROFILE_METHOD = "account.v1.AccountService/UpdateProfile";
   private static final String REALM_GRANT_METHOD =
       "account.v1.AccountService/GetRealmAccessGrantForRuntime";
   private static final String PRESENCE_METHOD =
       "account.v1.AccountService/ListPresenceVisibilityPolicies";
-  private static final String ACCOUNT_ID = "42";
+  private static final String ACCOUNT_UUID = "87426bb3-a733-43f0-9c8e-2e379cbdf7ec";
   private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String SOCIAL_GROUPS_URI =
       "spiffe://firemud/ns/test/sa/social-groups-service";
@@ -75,21 +78,22 @@ class AccountRuntimeConsumerAuthWiringTest {
           productionLayer,
           (interceptor, jwtUtil) -> {
             AccountService accountService = mock(AccountService.class);
+            when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+                .thenReturn(42L);
             when(accountService.getRealmAccessGrantForRuntime(42L, 1L, "demo", "preview", "req-1"))
                 .thenReturn(
                     new RealmAccessGrantResult(
                         42L, 1L, "demo", "preview", true, 2L, Instant.now().toString()));
             AccountGrpcService service =
                 new AccountGrpcService(mock(PingService.class), accountService, null, "test");
-            String bearer = jwtUtil.generateToken(ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID));
+            String bearer = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
             GrantDispatchResult valid =
                 dispatchRealmGrantMethod(interceptor, service, GAME_SESSION_URI, null);
             assertThat(valid.handlerDispatched()).isTrue();
             assertThat(valid.observer().completed).isTrue();
-            assertThat(valid.observer().response.getAccountId()).isEqualTo(ACCOUNT_ID);
-            verify(accountService)
-                .getRealmAccessGrantForRuntime(42L, 1L, "demo", "preview", "req-1");
+            assertThat(valid.observer().response.getAccountId()).isEqualTo(ACCOUNT_UUID);
+            verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
 
             AccountService deniedService = mock(AccountService.class);
             AccountGrpcService deniedHandler =
@@ -119,6 +123,8 @@ class AccountRuntimeConsumerAuthWiringTest {
           productionLayer,
           (interceptor, ignored) -> {
             AccountService accountService = mock(AccountService.class);
+            when(accountService.resolveAccountStorageIds(List.of(UUID.fromString(ACCOUNT_UUID))))
+                .thenReturn(Map.of(UUID.fromString(ACCOUNT_UUID), 42L));
             when(accountService.listPresenceVisibilityPolicies(1L, List.of(42L)))
                 .thenReturn(Map.of(42L, ProfilePresenceVisibilityPolicy.PRIVATE));
             AccountGrpcService service =
@@ -131,15 +137,16 @@ class AccountRuntimeConsumerAuthWiringTest {
             assertThat(result.observer().completed).isTrue();
             assertThat(result.observer().response.getPoliciesCount()).isEqualTo(1);
             assertThat(result.observer().response.getPolicies(0).getAccountId())
-                .isEqualTo(ACCOUNT_ID);
+                .isEqualTo(ACCOUNT_UUID);
             assertThat(result.observer().response.getPolicies(0).getPolicy()).isEqualTo("PRIVATE");
+            verify(accountService).resolveAccountStorageIds(List.of(UUID.fromString(ACCOUNT_UUID)));
             verify(accountService).listPresenceVisibilityPolicies(1L, List.of(42L));
           });
     }
   }
 
   @Test
-  void bearerOnlyPresenceRequestReachesHandlerButIsDeniedWithoutSocialPeerUnderBothYamlLayers() {
+  void nonSocialPresenceRequestsReachHandlerButAreDeniedUnderBothYamlLayers() {
     for (boolean productionLayer : List.of(false, true)) {
       withConfiguredInterceptor(
           productionLayer,
@@ -147,7 +154,23 @@ class AccountRuntimeConsumerAuthWiringTest {
             AccountService accountService = mock(AccountService.class);
             AccountGrpcService service =
                 new AccountGrpcService(mock(PingService.class), accountService, null, "test");
-            String bearer = jwtUtil.generateToken(ACCOUNT_ID, Map.of("accountId", ACCOUNT_ID));
+            String bearer =
+                jwtUtil.generateToken(
+                    ACCOUNT_UUID,
+                    Map.of(
+                        "accountId",
+                        ACCOUNT_UUID,
+                        "globalRoles",
+                        List.of("platformAdmin"),
+                        "scopedRoles",
+                        Map.of()));
+
+            var validatedBearer = jwtUtil.parseToken(bearer);
+            assertThat(
+                    JwtClaims.requireSignedGameplayAccountUuid(
+                        validatedBearer.getPayload(), "Bearer subject/account UUID mismatch"))
+                .isEqualTo(ACCOUNT_UUID);
+            assertThat(SessionClaims.fromJwt(validatedBearer).hasPrivilegedRole()).isTrue();
 
             PresenceDispatchResult result =
                 dispatchPresenceMethod(interceptor, service, null, bearer);
@@ -158,14 +181,12 @@ class AccountRuntimeConsumerAuthWiringTest {
                     "spiffe://firemud/ns/other/sa/social-groups-service",
                     null);
 
-            assertThat(result.handlerDispatched()).isTrue();
-            assertThat(result.observer().completed).isTrue();
-            assertThat(result.observer().response.getError().getCode())
-                .isEqualTo("PERMISSION_DENIED");
-            assertThat(wrongNamespace.handlerDispatched()).isTrue();
-            assertThat(wrongNamespace.observer().completed).isTrue();
-            assertThat(wrongNamespace.observer().response.getError().getCode())
-                .isEqualTo("PERMISSION_DENIED");
+            for (PresenceDispatchResult denied : List.of(result, wrongNamespace)) {
+              assertThat(denied.handlerDispatched()).isTrue();
+              assertThat(denied.observer().completed).isTrue();
+              assertThat(denied.observer().response.getError().getCode())
+                  .isEqualTo("PERMISSION_DENIED");
+            }
             verifyNoInteractions(accountService);
           });
     }
@@ -204,7 +225,7 @@ class AccountRuntimeConsumerAuthWiringTest {
     ListPresenceVisibilityPoliciesRequest request =
         ListPresenceVisibilityPoliciesRequest.newBuilder()
             .setTenantId("1")
-            .addAccountIds(ACCOUNT_ID)
+            .addAccountIds(ACCOUNT_UUID)
             .build();
     Metadata headers = new Metadata();
     if (bearerToken != null) {
@@ -260,7 +281,7 @@ class AccountRuntimeConsumerAuthWiringTest {
             };
     GetRealmAccessGrantForRuntimeRequest request =
         GetRealmAccessGrantForRuntimeRequest.newBuilder()
-            .setAccountId(ACCOUNT_ID)
+            .setAccountId(ACCOUNT_UUID)
             .setTenantId("1")
             .setWorldSlug("demo")
             .setRealmSlug("preview")
@@ -328,8 +349,9 @@ class AccountRuntimeConsumerAuthWiringTest {
                   .contains(IDENTITY_METHOD)
                   .contains(PRESENCE_METHOD)
                   .contains(REALM_GRANT_METHOD)
-                  .doesNotContain(NONPUBLIC_METHOD)
-                  .doesNotContain(PROFILE_UPDATE_METHOD);
+                  .doesNotContain(NONPUBLIC_METHOD);
+              assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
+                  .doesNotContain(UPDATE_PROFILE_METHOD);
               action.accept(
                   context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
             });

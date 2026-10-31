@@ -7660,7 +7660,7 @@ Immutable identity and content digest of one exact roster snapshot.
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical lowercase non-nil Account UUID ownership. |
 | name | [string](#string) |  |  |
 | level | [int32](#int32) |  |  |
 | experience | [int32](#int32) |  |  |
@@ -7745,7 +7745,7 @@ Immutable identity and content digest of one exact roster snapshot.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical lowercase non-nil Account UUID; never an Account private row key. |
 | name | [string](#string) |  |  |
 | game_instance_id | [string](#string) |  |  |
 | playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
@@ -7945,7 +7945,7 @@ Immutable identity and content digest of one exact roster snapshot.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
+| account_id | [string](#string) |  | Canonical lowercase non-nil Account UUID; never an Account private row key. |
 | game_instance_id | [string](#string) |  |  |
 | playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 
@@ -8675,7 +8675,7 @@ Canonical gameplay roster discovery is a pre-admission, non-admitting boundary. 
 preseeded methods below remain restricted to PRESEEDED_ONLY; other policy values are
 non-authorizing and fail with FAILED_PRECONDITION. The PLAYER_CREATED methods are a separate
 source-bound read contract and do not authenticate their unsigned context or authorize the
-legacy numeric ListCharactersByAccount RPC for canonical gameplay. A valid ListPreseededRoster
+ordinary UUID-valued ListCharactersByAccount RPC for canonical gameplay. A valid ListPreseededRoster
 response may contain zero actors; that is a successful lookup. These RPCs use canonical non-OK gRPC statuses
 rather than in-response errors: malformed requests are INVALID_ARGUMENT, stale snapshots or
 selections not present in the bound snapshot are FAILED_PRECONDITION, unauthorized callers are

@@ -7,7 +7,7 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 public record CharacterDto(
     Long id,
     @NotNull Long tenantId,
-    @NotNull Long accountId,
+    @NotNull java.util.UUID accountId,
     @NotNull @Size(max = 100) String name,
     @NotNull PlayableStateScope playableStateScope,
     int level,
@@ -17,4 +17,11 @@ public record CharacterDto(
     int intelligence,
     int stamina,
     int health,
-    int mana) {}
+    int mana) {
+  public CharacterDto {
+    if (accountId == null || accountId.equals(new java.util.UUID(0L, 0L))) {
+      throw new IllegalArgumentException(
+          "Public character ownership requires a non-nil Account UUID");
+    }
+  }
+}

@@ -34,13 +34,21 @@ class TestDataSeederTest {
   @Mock private EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository;
   @Mock private BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository;
 
+  @Mock
+  private net.firedevops.firemud.entitymanagement.client.DemoAccountAuthenticationClient
+      demoAccountAuthenticationClient;
+
+  private static final java.util.UUID OWNER =
+      java.util.UUID.fromString("11111111-1111-4111-8111-111111111111");
   private TestDataSeeder seeder;
 
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
+    when(demoAccountAuthenticationClient.authenticateDemoOwner()).thenReturn(OWNER);
     seeder =
         new TestDataSeeder(
+            demoAccountAuthenticationClient,
             characterRepository,
             itemRepository,
             itemInstanceRepository,
@@ -79,6 +87,10 @@ class TestDataSeederTest {
         .thenAnswer(invocation -> withContainerInstanceId(invocation.getArgument(0)));
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
+    ArgumentCaptor<Character> ownerCaptor = ArgumentCaptor.forClass(Character.class);
+    verify(characterRepository).save(ownerCaptor.capture());
+    assertEquals(OWNER, ownerCaptor.getValue().getAccountUuid());
+    org.junit.jupiter.api.Assertions.assertNull(ownerCaptor.getValue().getAccountId());
 
     ArgumentCaptor<ItemInstance> itemInstanceCaptor = ArgumentCaptor.forClass(ItemInstance.class);
     verify(itemInstanceRepository, atLeast(1)).save(itemInstanceCaptor.capture());
@@ -97,6 +109,31 @@ class TestDataSeederTest {
         ArgumentCaptor.forClass(ContainerInstance.class);
     verify(containerInstanceRepository).save(containerCaptor.capture());
     assertEquals("R-1021", containerCaptor.getValue().getRoomInstanceId());
+  }
+
+  @Test
+  void refusesRetainedMissingOrMismatchedOwnershipWithoutRepair() {
+    for (java.util.UUID retained : new java.util.UUID[] {null, java.util.UUID.randomUUID()}) {
+      Character character = new Character();
+      character.setId(123L);
+      character.setAccountId(999L);
+      character.setAccountUuid(retained);
+      when(characterRepository.findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
+              1L, "shared-live", "demo"))
+          .thenReturn(Optional.of(character));
+      org.junit.jupiter.api.Assertions.assertThrows(
+          IllegalStateException.class,
+          () -> seeder.run(new DefaultApplicationArguments(new String[] {})));
+      assertEquals(retained, character.getAccountUuid());
+      assertEquals(999L, character.getAccountId());
+    }
+    org.mockito.Mockito.verify(characterRepository, org.mockito.Mockito.never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(
+        itemRepository,
+        itemInstanceRepository,
+        containerInstanceRepository,
+        equipmentSlotDefinitionRepository,
+        bodyLayoutSlotDefinitionRepository);
   }
 
   private Character withCharacterId(Character character) {
