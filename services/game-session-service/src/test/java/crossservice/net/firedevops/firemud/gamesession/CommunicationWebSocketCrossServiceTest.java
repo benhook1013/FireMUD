@@ -572,9 +572,10 @@ class CommunicationWebSocketCrossServiceTest {
                   "Room Inventory:",
                   "- Torch [torch#1] (A small torch)"))
           .contains("Room Inventory:");
+      int finalInventoryCount = client.responseCount();
       client.send("INV HERE");
-      client.awaitContains("Room Inventory:");
-      client.awaitContains("- Torch [torch#1] (A small torch)");
+      client.awaitTranscriptContainingAllAfter(
+          finalInventoryCount, "Room Inventory:", "- Torch [torch#1] (A small torch)");
       GameplayEntityAssertions.assertDrop(
           entityStub().lastDropRequest(),
           String.valueOf(TENANT_ID),

@@ -145,6 +145,7 @@ async function captureSlowServiceProvenance({
         id: job.id,
         run_id: job.run_id,
         head_sha: job.head_sha,
+        run_attempt: job.run_attempt,
         name: job.name,
         status: job.status,
         conclusion: job.conclusion,

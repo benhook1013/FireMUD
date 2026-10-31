@@ -164,6 +164,11 @@ validate_workloads() {
     if [[ "${#uri_sans[@]}" -ne 1 || "${uri_sans[0]:-}" != "$expected_uri" ]]; then
       fail_workload_validation "local Compose mTLS workload has the wrong SPIFFE identity: $service"
     fi
+    if [[ "$service" == "spring-cloud-gateway" ]]; then
+      openssl verify -CAfile "$authority_dir/ca.crt" -verify_hostname gateway \
+        "$service_dir/client.crt" >/dev/null 2>&1 \
+        || fail_workload_validation "local Compose Gateway certificate does not authenticate the gateway DNS alias."
+    fi
   done
 }
 
