@@ -47,7 +47,7 @@ class CharacterServiceImplListTest {
     c.setPlayableStateKey("shared-live");
     c.setName("Hero");
 
-    when(repo.findByTenantIdAndAccountIdAndPlayableStateKey(
+    when(repo.findByTenantIdAndAccountUuidAndPlayableStateKey(
             1L, OWNER, "shared-live", Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(c)));
 
@@ -58,7 +58,7 @@ class CharacterServiceImplListTest {
     assertEquals("Hero", result.getContent().get(0).name());
     assertEquals(OWNER, result.getContent().get(0).accountId());
     verify(repo)
-        .findByTenantIdAndAccountIdAndPlayableStateKey(
+        .findByTenantIdAndAccountUuidAndPlayableStateKey(
             1L, OWNER, "shared-live", Pageable.unpaged());
   }
 
@@ -78,7 +78,7 @@ class CharacterServiceImplListTest {
             new ScopedCharacterResolver(repo, new PlayableStateKeyResolver()));
     service.initMetrics();
 
-    when(repo.findByTenantIdAndAccountIdAndPlayableStateKey(
+    when(repo.findByTenantIdAndAccountUuidAndPlayableStateKey(
             2L, OWNER, "instance:91", Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of()));
 
@@ -87,7 +87,7 @@ class CharacterServiceImplListTest {
             2L, OWNER, "91", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED, Pageable.unpaged());
     assertEquals(0, result.getTotalElements());
     verify(repo)
-        .findByTenantIdAndAccountIdAndPlayableStateKey(
+        .findByTenantIdAndAccountUuidAndPlayableStateKey(
             2L, OWNER, "instance:91", Pageable.unpaged());
   }
 }

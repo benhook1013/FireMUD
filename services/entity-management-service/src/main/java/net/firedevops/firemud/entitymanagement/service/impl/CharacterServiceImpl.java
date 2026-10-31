@@ -143,7 +143,7 @@ public class CharacterServiceImpl implements CharacterService {
       Pageable pageable) {
     requireAccountOwner(accountId);
     return characterRepository
-        .findByTenantIdAndAccountIdAndPlayableStateKey(
+        .findByTenantIdAndAccountUuidAndPlayableStateKey(
             tenantId,
             accountId,
             playableStateKeyResolver.resolve(gameInstanceId, playableStateScope),

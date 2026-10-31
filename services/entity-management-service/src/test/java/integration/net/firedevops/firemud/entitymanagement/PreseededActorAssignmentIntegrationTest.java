@@ -1067,7 +1067,7 @@ class PreseededActorAssignmentIntegrationTest {
                 canonicalCharacterId, entityTenantRowId, namespaceUuid.toString()))
         .isEmpty();
     assertThat(
-            characterRepository.findByTenantIdAndAccountIdAndPlayableStateKey(
+            characterRepository.findByTenantIdAndAccountUuidAndPlayableStateKey(
                 entityTenantRowId, accountUuid, namespaceUuid.toString(), Pageable.unpaged()))
         .isEmpty();
     assertThat(
@@ -1097,7 +1097,7 @@ class PreseededActorAssignmentIntegrationTest {
     assertThat(characterRepository.findByIdAndTenantId(legacyCharacterId, entityTenantRowId))
         .isPresent();
     assertThat(
-            characterRepository.findByTenantIdAndAccountIdAndPlayableStateKey(
+            characterRepository.findByTenantIdAndAccountUuidAndPlayableStateKey(
                 entityTenantRowId, accountUuid, "shared-live", Pageable.unpaged()))
         .isEmpty();
     assertThat(legacy.getAccountUuid()).isNull();
