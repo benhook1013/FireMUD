@@ -1189,6 +1189,7 @@ jobs:
         with:
           name: slow-service-ci-partition-${{ github.run_id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}-${{ matrix.module }}-partition-${{ matrix.partition }}
           path: |
+            services/${{ matrix.module }}/build/classes/java/main/
             services/${{ matrix.module }}/build/slow-service-ci-partition/${{ matrix.module }}/partition-${{ matrix.partition }}/
             services/${{ matrix.module }}/build/jacoco/*.exec
             services/${{ matrix.module }}/build/reports/jacoco/test/
@@ -1287,6 +1288,7 @@ jobs:
           python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
             --module account-service \
             --input-dir services/account-service/build/slow-service-ci-partition-inputs \
+            --verified-classes-dir services/account-service/build/slow-service-ci-verified-classes \
             --selection-json services/account-service/build/slow-service-ci-partition-selection.json \
             --run-id "$GITHUB_RUN_ID" \
             --source-revision "$GITHUB_SHA" \
@@ -1307,7 +1309,7 @@ jobs:
           cache-read-only: false
 
       - name: Merge complete Account JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service
+        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
 
       - name: 📤 Upload Complete Account Coverage Report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -1397,6 +1399,7 @@ jobs:
           python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
             --module game-session-service \
             --input-dir services/game-session-service/build/slow-service-ci-partition-inputs \
+            --verified-classes-dir services/game-session-service/build/slow-service-ci-verified-classes \
             --selection-json services/game-session-service/build/slow-service-ci-partition-selection.json \
             --run-id "$GITHUB_RUN_ID" \
             --source-revision "$GITHUB_SHA" \
@@ -1417,7 +1420,7 @@ jobs:
           cache-read-only: false
 
       - name: Merge complete Game Session JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service
+        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
 
       - name: 📤 Upload Complete Game Session Coverage Report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

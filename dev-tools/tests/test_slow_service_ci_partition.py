@@ -87,6 +87,44 @@ def artifact(
     }
 
 
+def classfile_bytes(internal_name):
+    def u2(value):
+        return value.to_bytes(2, "big")
+
+    def utf8(value):
+        encoded = value.encode("utf-8")
+        return b"\x01" + u2(len(encoded)) + encoded
+
+    constant_pool = (
+        b"\x07\x00\x02"
+        + utf8(internal_name)
+        + b"\x07\x00\x04"
+        + utf8("java/lang/Object")
+    )
+    return (
+        b"\xca\xfe\xba\xbe"
+        + u2(0)
+        + u2(61)
+        + u2(5)
+        + constant_pool
+        + u2(0x0021)
+        + u2(1)
+        + u2(3)
+        + u2(0)
+        + u2(0)
+        + u2(0)
+        + u2(0)
+    )
+
+
+MAIN_CLASS_BYTES = {
+    "net/example/MeasuredService.class": classfile_bytes("net/example/MeasuredService"),
+    "net/example/MeasuredService$Nested.class": classfile_bytes(
+        "net/example/MeasuredService$Nested"
+    ),
+}
+
+
 def make_provenance(
     module="account-service",
     *,
@@ -171,6 +209,11 @@ def write_artifact(root, plan, partition, attempt):
     partition_dir.mkdir(parents=True)
     manifest = PARTITION.partition_manifest({**plan, "run_attempt": str(attempt)}, partition)
     (partition_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    classes_dir = destination / "classes/java/main"
+    for relative_path, contents in MAIN_CLASS_BYTES.items():
+        class_file = classes_dir / relative_path
+        class_file.parent.mkdir(parents=True, exist_ok=True)
+        class_file.write_bytes(contents)
     (partition_dir / "test.txt").write_text(
         "".join(f"{item}\n" for item in manifest["tasks"]["test"]["selected_classes"]),
         encoding="utf-8",
@@ -188,6 +231,34 @@ def write_artifact(root, plan, partition, attempt):
         encoding="utf-8",
     )
     return destination
+
+
+def prepare_aggregate(root, module, provenance):
+    input_dir = root / "slow-service-ci-partition-inputs"
+    input_dir.mkdir()
+    plan = make_plan(module)
+    artifacts = {
+        1: write_artifact(
+            input_dir,
+            plan,
+            1,
+            provenance["resolved"]["partitions"]["1"]["attempt"],
+        ),
+        2: write_artifact(
+            input_dir,
+            plan,
+            2,
+            provenance["resolved"]["partitions"]["2"]["attempt"],
+        ),
+    }
+    selection_path = root / "selection.json"
+    selection_path.write_text(json.dumps(provenance), encoding="utf-8")
+    return (
+        input_dir,
+        selection_path,
+        root / "slow-service-ci-verified-classes",
+        artifacts,
+    )
 
 
 def write_compiled_class(directory, class_name, access_flags):
@@ -445,21 +516,37 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             "latest effective outcome is ordered by attempt number, not response order",
         )
 
-        plan = make_plan(module)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            write_artifact(root, plan, 1, 1)
-            write_artifact(root, plan, 2, 2)
             selection = PARTITION.selection_document(
                 provenance, module, RUN_ID, SOURCE_SHA, "2"
             )
-            selection_path = root / "selection.json"
-            selection_path.write_text(json.dumps(selection), encoding="utf-8")
+            input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(
+                root, module, selection
+            )
             self.assertEqual(
                 PARTITION.verify_aggregate(
-                    root, selection_path, module, RUN_ID, SOURCE_SHA, "2"
+                    input_dir,
+                    selection_path,
+                    verified_classes_dir,
+                    module,
+                    RUN_ID,
+                    SOURCE_SHA,
+                    "2",
                 ),
                 2,
+            )
+            copied = {
+                path.relative_to(verified_classes_dir).as_posix(): path.read_bytes()
+                for path in verified_classes_dir.rglob("*.class")
+            }
+            self.assertEqual(copied, MAIN_CLASS_BYTES)
+            self.assertEqual(
+                {
+                    path.relative_to(artifacts[2] / "classes/java/main").as_posix(): path.read_bytes()
+                    for path in (artifacts[2] / "classes/java/main").rglob("*.class")
+                },
+                copied,
             )
 
     def test_pull_request_merge_source_is_distinct_from_native_api_head(self):
@@ -701,23 +788,152 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                 provenance, module, RUN_ID, SOURCE_SHA, "2"
             )
 
+    def test_aggregate_rejects_incomplete_or_different_measured_classfiles(self):
+        module = "account-service"
+        cases = (
+            (
+                "missing class",
+                lambda classes: (classes / "net/example/MeasuredService.class").unlink(),
+                "class inventories differ",
+            ),
+            (
+                "extra class",
+                lambda classes: (classes / "net/example/Unexpected.class").write_bytes(
+                    classfile_bytes("net/example/Unexpected")
+                ),
+                "class inventories differ",
+            ),
+            (
+                "different bytes",
+                lambda classes: (classes / "net/example/MeasuredService.class").write_bytes(
+                    classfile_bytes("net/example/ChangedService")
+                ),
+                "class bytes differ",
+            ),
+        )
+        for description, mutate_partition_two, message in cases:
+            with self.subTest(description=description), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                selection = PARTITION.selection_document(
+                    make_provenance(module), module, RUN_ID, SOURCE_SHA, "2"
+                )
+                input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(
+                    root, module, selection
+                )
+                mutate_partition_two(artifacts[2] / "classes/java/main")
+                with self.assertRaisesRegex(ValueError, message):
+                    PARTITION.verify_aggregate(
+                        input_dir,
+                        selection_path,
+                        verified_classes_dir,
+                        module,
+                        RUN_ID,
+                        SOURCE_SHA,
+                        "2",
+                    )
+                self.assertFalse(verified_classes_dir.exists())
+
+    def test_aggregate_rejects_symlinked_measured_classfiles(self):
+        module = "game-session-service"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selection = PARTITION.selection_document(
+                make_provenance(module), module, RUN_ID, SOURCE_SHA, "2"
+            )
+            input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(
+                root, module, selection
+            )
+            classes_dir = artifacts[2] / "classes/java/main"
+            original = classes_dir / "net/example/MeasuredService.class"
+            target = classes_dir / "net/example/MeasuredServiceTarget.class"
+            original.rename(target)
+            original.symlink_to(target.name)
+            with self.assertRaisesRegex(ValueError, "contain a symlink"):
+                PARTITION.verify_aggregate(
+                    input_dir,
+                    selection_path,
+                    verified_classes_dir,
+                    module,
+                    RUN_ID,
+                    SOURCE_SHA,
+                    "2",
+                )
+            self.assertFalse(verified_classes_dir.exists())
+
+    def test_aggregate_binds_measured_classes_to_source_and_retained_attempt(self):
+        module = "account-service"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selection = PARTITION.selection_document(
+                make_provenance(module), module, RUN_ID, SOURCE_SHA, "2"
+            )
+            input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(
+                root, module, selection
+            )
+            carried_class = (
+                artifacts[1] / "classes/java/main/net/example/MeasuredService.class"
+            )
+            carried_class.write_bytes(classfile_bytes("net/example/OldSource"))
+            with self.assertRaisesRegex(ValueError, "class bytes differ"):
+                PARTITION.verify_aggregate(
+                    input_dir,
+                    selection_path,
+                    verified_classes_dir,
+                    module,
+                    RUN_ID,
+                    SOURCE_SHA,
+                    "2",
+                )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selection = PARTITION.selection_document(
+                make_provenance(module), module, RUN_ID, SOURCE_SHA, "2"
+            )
+            input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(
+                root, module, selection
+            )
+            manifest = (
+                artifacts[1]
+                / "slow-service-ci-partition/account-service/partition-1/manifest.json"
+            )
+            manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+            manifest_data["source_revision"] = "b" * 40
+            manifest.write_text(json.dumps(manifest_data), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "different source revision"):
+                PARTITION.verify_aggregate(
+                    input_dir,
+                    selection_path,
+                    verified_classes_dir,
+                    module,
+                    RUN_ID,
+                    SOURCE_SHA,
+                    "2",
+                )
+            self.assertFalse(verified_classes_dir.exists())
+
     def test_aggregate_rejects_missing_junit_for_a_selected_test_class(self):
         module = "account-service"
-        plan = make_plan(module)
         provenance = make_provenance(module)
         selection = PARTITION.selection_document(
             provenance, module, RUN_ID, SOURCE_SHA, "2"
         )
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            write_artifact(root, plan, 1, 1)
-            second = write_artifact(root, plan, 2, 2)
-            selection_path = root / "selection.json"
-            selection_path.write_text(json.dumps(selection), encoding="utf-8")
+            input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(
+                root, module, selection
+            )
+            second = artifacts[2]
             (second / "test-results/test/TEST-results.xml").unlink()
             with self.assertRaisesRegex(ValueError, "JUnit reports miss"):
                 PARTITION.verify_aggregate(
-                    root, selection_path, module, RUN_ID, SOURCE_SHA, "2"
+                    input_dir,
+                    selection_path,
+                    verified_classes_dir,
+                    module,
+                    RUN_ID,
+                    SOURCE_SHA,
+                    "2",
                 )
 
     def test_partition_pair_rejects_incomplete_class_union(self):

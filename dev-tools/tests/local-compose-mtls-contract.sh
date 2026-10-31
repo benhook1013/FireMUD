@@ -37,11 +37,47 @@ for service in "${services[@]}"; do
     | tr ',' '\n' | sed -n 's/^[[:space:]]*\(URI:.*\)$/\1/p')
   [[ "${#uri_sans[@]}" -eq 1 ]]
   [[ "${uri_sans[0]}" == "URI:spiffe://firemud/ns/dev/sa/$service" ]]
+  if [[ "$service" == "spring-cloud-gateway" ]]; then
+    openssl verify -CAfile "$cert_root/authority/ca.crt" -verify_hostname gateway \
+      "$service_dir/client.crt" >/dev/null
+  elif openssl verify -CAfile "$cert_root/authority/ca.crt" -verify_hostname gateway \
+    "$service_dir/client.crt" >/dev/null 2>&1; then
+    echo "A different workload certificate unexpectedly authenticates the Gateway hostname." >&2
+    exit 1
+  fi
 done
 
 before="$(find "$cert_root" -type f -print0 | sort -z | xargs -0 sha256sum)"
 bash "$CERT_HELPER" "$cert_root" >/dev/null
 after="$(find "$cert_root" -type f -print0 | sort -z | xargs -0 sha256sum)"
+[[ "$before" == "$after" ]]
+
+legacy_root="$tmp_root/legacy-gateway"
+cp -a -- "$cert_root" "$legacy_root"
+legacy_gateway="$legacy_root/workloads/spring-cloud-gateway"
+chmod 600 "$legacy_gateway/client.key"
+chmod 644 "$legacy_gateway/client.crt"
+openssl req -new -newkey rsa:2048 -nodes -subj /CN=firemud-grpc-spring-cloud-gateway \
+  -keyout "$legacy_gateway/client.key" -out "$tmp_root/legacy-gateway.csr" >/dev/null 2>&1
+cat >"$tmp_root/legacy-gateway.ext" <<'EOF'
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+subjectAltName = URI:spiffe://firemud/ns/dev/sa/spring-cloud-gateway,DNS:spring-cloud-gateway
+EOF
+openssl x509 -req -in "$tmp_root/legacy-gateway.csr" \
+  -CA "$legacy_root/authority/ca.crt" -CAkey "$legacy_root/authority/ca.key" \
+  -set_serial 1 -days 1 -sha256 -extfile "$tmp_root/legacy-gateway.ext" \
+  -out "$legacy_gateway/client.crt" >/dev/null 2>&1
+chmod 444 "$legacy_gateway/client.key" "$legacy_gateway/client.crt"
+before="$(find "$legacy_root" -type f -print0 | sort -z | xargs -0 sha256sum)"
+if bash "$CERT_HELPER" "$legacy_root" >"$tmp_root/legacy-gateway-output" 2>&1; then
+  echo "local Compose mTLS helper accepted a retained Gateway leaf without its DNS alias." >&2
+  exit 1
+fi
+grep -Fq "does not authenticate the gateway DNS alias" "$tmp_root/legacy-gateway-output"
+grep -Fq "new dedicated FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT" "$tmp_root/legacy-gateway-output"
+after="$(find "$legacy_root" -type f -print0 | sort -z | xargs -0 sha256sum)"
 [[ "$before" == "$after" ]]
 
 corrupt_root="$tmp_root/corrupt"

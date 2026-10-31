@@ -388,12 +388,32 @@ subprojects {
     val slowServiceCiPartition = providers.gradleProperty("slowServiceCiPartition").orNull
     val slowServiceCiCoverageAggregate =
         providers.gradleProperty("slowServiceCiCoverageAggregate").orNull
+    val slowServiceCiCoverageClassesDirectory =
+        providers.gradleProperty("slowServiceCiCoverageClassesDirectory").orNull
     if (
         slowServiceCiCoverageAggregate != null &&
         slowServiceCiCoverageAggregate !in slowServiceCiModules
     ) {
         throw GradleException("slowServiceCiCoverageAggregate must name an allowed slow service")
     }
+    val verifiedSlowServiceCiClassesDirectory =
+        if (project.name == slowServiceCiCoverageAggregate) {
+            val configuredDirectory = slowServiceCiCoverageClassesDirectory
+                ?: throw GradleException(
+                    "slowServiceCiCoverageClassesDirectory is required for coverage aggregation"
+                )
+            val configuredFile = file(configuredDirectory).canonicalFile
+            val expectedFile = layout.buildDirectory.dir("slow-service-ci-verified-classes")
+                .get().asFile.canonicalFile
+            if (configuredFile != expectedFile) {
+                throw GradleException(
+                    "slowServiceCiCoverageClassesDirectory must use the verified build output"
+                )
+            }
+            configuredFile
+        } else {
+            null
+        }
     if (project.name in slowServiceCiModules && slowServiceCiPartition != null) {
         if (slowServiceCiPartition !in setOf("1", "2")) {
             throw GradleException("slowServiceCiPartition must be 1 or 2")
@@ -427,12 +447,26 @@ subprojects {
             }
         )
         if (project.name == slowServiceCiCoverageAggregate) {
-            setDependsOn(listOf("classes"))
+            val measuredClassesDirectory = requireNotNull(verifiedSlowServiceCiClassesDirectory)
+            setDependsOn(emptyList<String>())
             executionData.setFrom(
                 fileTree(layout.buildDirectory.dir("slow-service-ci-partition-inputs")) {
                     include("**/jacoco/*.exec")
                 }
             )
+            classDirectories.setFrom(
+                fileTree(measuredClassesDirectory) {
+                    include("**/*.class")
+                }
+            )
+            doFirst {
+                val measuredClassFiles = fileTree(measuredClassesDirectory) {
+                    include("**/*.class")
+                }.files
+                if (!measuredClassesDirectory.isDirectory || measuredClassFiles.isEmpty()) {
+                    throw GradleException("verified slow-service production classes are missing")
+                }
+            }
         }
         reports {
             xml.required.set(true)

@@ -508,6 +508,7 @@ require_equal(
     "ci workflow",
 )
 for artifact_path in (
+    "services/${{ matrix.module }}/build/classes/java/main/",
     "services/${{ matrix.module }}/build/slow-service-ci-partition/${{ matrix.module }}/partition-${{ matrix.partition }}/",
     "services/${{ matrix.module }}/build/jacoco/*.exec",
     "services/${{ matrix.module }}/build/reports/jacoco/test/",
@@ -563,10 +564,15 @@ for module, job_id, display, prefix in (
     require_equal(download, ("with", "artifact-ids"), "${{ steps.selection.outputs.artifact_ids }}", "ci workflow")
     verify = find_step(ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
     require_contains(verify, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate", "ci workflow")
+    require_contains(
+        verify, ("run",),
+        f"--verified-classes-dir services/{module}/build/slow-service-ci-verified-classes",
+        "ci workflow",
+    )
     merge = find_step(ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
     require_contains(
         merge, ("run",),
-        f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module}",
+        f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module} -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes",
         "ci workflow",
     )
     require_list_item(ci, ("jobs", "validation-gate", "needs"), job_id, "ci workflow")
