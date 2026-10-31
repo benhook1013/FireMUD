@@ -95,7 +95,6 @@ public final class DirectTextAuthenticatedLobbyScope {
     if (!original().equals(original)
         || !evidence().equals(verified.evidence())
         || !transport.equals(currentTransport)
-        || clock.instant().isBefore(issued.evaluatedAtInstant())
         || !issued.isLive(clock)) throw invalid();
     requireLiveResult(original, verified, clock);
   }
