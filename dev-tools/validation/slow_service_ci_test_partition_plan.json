@@ -1,0 +1,2594 @@
+{
+  "atomicity": "Each test-task/suite appears once per option. Nested suites share their enclosing class partition. Whole classes, all methods and lifecycle cycles retained.",
+  "baseline_run": 41131475765,
+  "partition_count": 2,
+  "schema_version": 1,
+  "services": {
+    "account-service": {
+      "tasks": {
+        "integrationTest": {
+          "classes": {
+            "integration.net.firedevops.firemud.accountservice.AccountLoggingTestClasspathIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 0.207224
+            },
+            "integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 37.465626
+            },
+            "integration.net.firedevops.firemud.accountservice.authordraft.AccountControlUiSourceGuardPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 13.200917
+            },
+            "integration.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 23.569079
+            },
+            "integration.net.firedevops.firemud.accountservice.authordraft.AccountDraftFenceHistoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 4.390072
+            },
+            "integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 34.625894
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundlePersistenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 12.043395
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityCurrentnessIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 4.904294
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidencePersistenceIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 13.534429
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountCanonicalJoinScopePersistenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 5.286646
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCommittedIssuanceRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 9.979531
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementPersistenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 7.73077
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountFirstJoinAuthorityStorageIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 10.97867
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuancePersistenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 37.402831
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 4.206571
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 10.514684
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationPersistenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 3.713979
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountJwtSignerStoragePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 10.784703
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountJwtValidatorInventoryPersistenceIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 6.262063
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 20.747488
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixtureTest": {
+              "partition": 1,
+              "weight_seconds": 0.004186
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountSecuritySourceOwnerGuardPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 3.159987
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 23.273245
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountSourceFoundationV73UpgradePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 3.34
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 60.355124
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 37.241657
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 40.899818
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 11.984786
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 18.580361
+            },
+            "integration.net.firedevops.firemud.accountservice.service.AccountActorStagingEligibilityPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 4.31123
+            },
+            "integration.net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinEventIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 11.461494
+            },
+            "integration.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 47.566561
+            },
+            "integration.net.firedevops.firemud.accountservice.service.session.AccountGameplayPrimaryCredentialVerifierPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 26.948849
+            },
+            "integration.net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.975788
+            },
+            "net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 14.72893
+            },
+            "net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingFencePostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 10.588643
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 15.638761
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameSessionDefinitiveAbortCompositionIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 591.433185
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 110.887704
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 87.065352
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 79.31365
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 23.846773
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 56.32996
+            },
+            "net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 3.09789
+            },
+            "net.firedevops.firemud.accountservice.repository.CredentialCleanupRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.635997
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuancePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 8.004975
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiOwnerWorkflowPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 12.550639
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiPositiveOwnerPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 40.733063
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiPrimaryAuthenticationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 5.602017
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryRedisIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 5.430377
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 40.891446
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessStoragePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 63.838156
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountOriginalDraftOrderPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 158.246344
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationMtlsPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 64.505877
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 61.821039
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 154.304209
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 10.368162
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionRepositoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 4.528222
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCapturePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.56762
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 26.549054
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "cases": 214,
+              "suites": 28
+            },
+            "2": {
+              "cases": 182,
+              "suites": 32
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 12.875778
+        },
+        "test": {
+          "classes": {
+            "net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthorityTest": {
+              "partition": 2,
+              "weight_seconds": 3.298155
+            },
+            "net.firedevops.firemud.accountservice.client.AccountOriginalNewFinalAdmissionGrpcReadClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.086253
+            },
+            "net.firedevops.firemud.accountservice.client.AccountOriginalNewFinalAdmissionReadClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.015402
+            },
+            "net.firedevops.firemud.accountservice.client.GameDesignFreshTenantIdentityClientTest": {
+              "partition": 1,
+              "weight_seconds": 1.628541
+            },
+            "net.firedevops.firemud.accountservice.client.GameSessionClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.332691
+            },
+            "net.firedevops.firemud.accountservice.client.LoggingAdminClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.265947
+            },
+            "net.firedevops.firemud.accountservice.client.OwnerApprovedAccountTenantAssociationTest": {
+              "partition": 2,
+              "weight_seconds": 0.005134
+            },
+            "net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClientTest": {
+              "partition": 1,
+              "weight_seconds": 16.737212
+            },
+            "net.firedevops.firemud.accountservice.client.StripeClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.00308
+            },
+            "net.firedevops.firemud.accountservice.config.AccountJwtJwksApiTransportTest": {
+              "partition": 2,
+              "weight_seconds": 2.130657
+            },
+            "net.firedevops.firemud.accountservice.config.AccountJwtReadinessTrustBindingTest": {
+              "partition": 1,
+              "weight_seconds": 0.210499
+            },
+            "net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBindingTest": {
+              "partition": 2,
+              "weight_seconds": 0.205365
+            },
+            "net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventorySourceTest": {
+              "partition": 1,
+              "weight_seconds": 0.763956
+            },
+            "net.firedevops.firemud.accountservice.config.AuthConfigTest": {
+              "partition": 2,
+              "weight_seconds": 0.61404
+            },
+            "net.firedevops.firemud.accountservice.controller.AccountControllerTest": {
+              "partition": 1,
+              "weight_seconds": 5.037593
+            },
+            "net.firedevops.firemud.accountservice.controller.AuthControllerTest": {
+              "partition": 2,
+              "weight_seconds": 1.692204
+            },
+            "net.firedevops.firemud.accountservice.controller.AuthenticationExceptionHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.02259
+            },
+            "net.firedevops.firemud.accountservice.controller.InternalRuntimeControllerTest": {
+              "partition": 1,
+              "weight_seconds": 1.05352
+            },
+            "net.firedevops.firemud.accountservice.controller.JwksControllerTest": {
+              "partition": 1,
+              "weight_seconds": 0.006161
+            },
+            "net.firedevops.firemud.accountservice.controller.PingControllerTest": {
+              "partition": 1,
+              "weight_seconds": 0.87896
+            },
+            "net.firedevops.firemud.accountservice.controller.ProfileControllerTest": {
+              "partition": 2,
+              "weight_seconds": 1.079191
+            },
+            "net.firedevops.firemud.accountservice.controller.PublicBootstrapRoutesProdProfileTest": {
+              "partition": 2,
+              "weight_seconds": 0.870746
+            },
+            "net.firedevops.firemud.accountservice.controller.RemovedExternalAccountRouteHttpTest": {
+              "partition": 2,
+              "weight_seconds": 3.824915
+            },
+            "net.firedevops.firemud.accountservice.data.TestDataSeederTest": {
+              "partition": 2,
+              "weight_seconds": 1.282502
+            },
+            "net.firedevops.firemud.accountservice.dto.AccountJoinDigestTest": {
+              "partition": 1,
+              "weight_seconds": 0.015402
+            },
+            "net.firedevops.firemud.accountservice.entity.AccountIdentityProvenanceTest": {
+              "partition": 2,
+              "weight_seconds": 0.007188
+            },
+            "net.firedevops.firemud.accountservice.entity.AccountLoginAuthModesTest": {
+              "partition": 2,
+              "weight_seconds": 0.004107
+            },
+            "net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffWorldParticipationTest": {
+              "partition": 1,
+              "weight_seconds": 2.175838
+            },
+            "net.firedevops.firemud.accountservice.mapper.AccountMapperTest": {
+              "partition": 2,
+              "weight_seconds": 0.017456
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 1.152095
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.107816
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.040046
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.265947
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.130406
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest": {
+              "partition": 1,
+              "weight_seconds": 2.076236
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalAckReceiptRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.101655
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalCommitExecutorTest": {
+              "partition": 1,
+              "weight_seconds": 0.222821
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingTest": {
+              "partition": 1,
+              "weight_seconds": 0.005134
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentityTest": {
+              "partition": 2,
+              "weight_seconds": 0.005134
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.160184
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.113977
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 2.534199
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountJwtValidatorInventoryRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.098575
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.024644
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwnerTest": {
+              "partition": 2,
+              "weight_seconds": 0.343986
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.005134
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.098575
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.234116
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.454883
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.006161
+            },
+            "net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.010268
+            },
+            "net.firedevops.firemud.accountservice.security.GrpcJwtAuthInterceptorTest": {
+              "partition": 2,
+              "weight_seconds": 0.016429
+            },
+            "net.firedevops.firemud.accountservice.service.AccountAuditDeliveryJobTest": {
+              "partition": 2,
+              "weight_seconds": 0.09036
+            },
+            "net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinatorTest": {
+              "partition": 1,
+              "weight_seconds": 0.379924
+            },
+            "net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReaderTest": {
+              "partition": 2,
+              "weight_seconds": 0.361442
+            },
+            "net.firedevops.firemud.accountservice.service.AccountGenerationProjectionRedisContractTest": {
+              "partition": 2,
+              "weight_seconds": 0.717749
+            },
+            "net.firedevops.firemud.accountservice.service.ExpiredConnectScopeCleanupJobTest": {
+              "partition": 2,
+              "weight_seconds": 0.10679
+            },
+            "net.firedevops.firemud.accountservice.service.ExpiredCredentialCleanupJobTest": {
+              "partition": 2,
+              "weight_seconds": 0.240277
+            },
+            "net.firedevops.firemud.accountservice.service.impl.AccountGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.259786
+            },
+            "net.firedevops.firemud.accountservice.service.impl.AccountServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 31.27805
+            },
+            "net.firedevops.firemud.accountservice.service.impl.EmailServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.086253
+            },
+            "net.firedevops.firemud.accountservice.service.impl.NotificationGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.01951
+            },
+            "net.firedevops.firemud.accountservice.service.impl.PaymentGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.032858
+            },
+            "net.firedevops.firemud.accountservice.service.impl.PaymentServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.089334
+            },
+            "net.firedevops.firemud.accountservice.service.impl.PingServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.001027
+            },
+            "net.firedevops.firemud.accountservice.service.impl.PurchaseWorkflowServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.175587
+            },
+            "net.firedevops.firemud.accountservice.service.impl.VirtualCurrencyGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.113977
+            },
+            "net.firedevops.firemud.accountservice.service.impl.VirtualCurrencyServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.079065
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiCoordinationTest": {
+              "partition": 2,
+              "weight_seconds": 0.719803
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceWorkflowTest": {
+              "partition": 2,
+              "weight_seconds": 0.915926
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReaderTest": {
+              "partition": 1,
+              "weight_seconds": 0.10679
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiResponseCryptographyTest": {
+              "partition": 1,
+              "weight_seconds": 0.01951
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountControlUiSigningAndActorTest": {
+              "partition": 1,
+              "weight_seconds": 0.76601
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.679757
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.086253
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationReadServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.251572
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationRecoveryTest": {
+              "partition": 1,
+              "weight_seconds": 0.17456
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeSettlementGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.161211
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeSourceReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.107816
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeSourceReadServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.00308
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifierTest": {
+              "partition": 2,
+              "weight_seconds": 1.129505
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionLeaseGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.41381
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionLeaseWorkloadGuardTest": {
+              "partition": 2,
+              "weight_seconds": 0.008215
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationCommittedIssuanceOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.293671
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSignerTest": {
+              "partition": 1,
+              "weight_seconds": 2.933633
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.075985
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.187909
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeSigningSpecTest": {
+              "partition": 1,
+              "weight_seconds": 0.002054
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountMountedGameplayCredentialDigestKeySourceTest": {
+              "partition": 2,
+              "weight_seconds": 0.030805
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountMountedJwtSignerBundleTest": {
+              "partition": 2,
+              "weight_seconds": 0.499036
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyringTest": {
+              "partition": 1,
+              "weight_seconds": 0.007188
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationReferenceFingerprintTest": {
+              "partition": 1,
+              "weight_seconds": 0.004107
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountOriginalDraftOrderGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.112951
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountOriginalDraftOrderServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.093441
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationReadServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.19715
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.002054
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptographyTest": {
+              "partition": 1,
+              "weight_seconds": 0.10987
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyringTest": {
+              "partition": 1,
+              "weight_seconds": 0.02259
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.113977
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.319342
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationSettlementServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.964187
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedGameplayAuthorityProjectionTest": {
+              "partition": 1,
+              "weight_seconds": 0.029778
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationProducerGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.195096
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.196123
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationReadServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.124246
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.002054
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.156077
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSettlementGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.212552
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSettlementServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.624308
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.135541
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReadServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.011295
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.009241
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.040046
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.157104
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeWorldClosureAuthorizationReadServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.068797
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionServiceTest": {
+              "partition": 1,
+              "weight_seconds": 3.30945
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.220767
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionManualFactoryTest": {
+              "partition": 1,
+              "weight_seconds": 23.267805
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.258759
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionWorkloadGuardTest": {
+              "partition": 1,
+              "weight_seconds": 0.00308
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCaptureRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.035939
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCaptureTest": {
+              "partition": 2,
+              "weight_seconds": 0.006161
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorityBundleTest": {
+              "partition": 1,
+              "weight_seconds": 0.086253
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.619174
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.169426
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.21974
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.111924
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.154023
+            },
+            "net.firedevops.firemud.accountservice.service.session.LettuceAccountCoordinationPinnedConnectionProviderTest": {
+              "partition": 1,
+              "weight_seconds": 0.133487
+            },
+            "net.firedevops.firemud.accountservice.service.session.SessionServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.120138
+            },
+            "net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPkiTest": {
+              "partition": 1,
+              "weight_seconds": 1.048386
+            },
+            "unit.net.firedevops.firemud.accountservice.AccountUuidTextTest": {
+              "partition": 2,
+              "weight_seconds": 0.009241
+            },
+            "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 11.298132
+            },
+            "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.006161
+            },
+            "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.014376
+            },
+            "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftSourceCompositionServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.778332
+            },
+            "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.401488
+            },
+            "unit.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceSelectedOwnerIntakeTest": {
+              "partition": 1,
+              "weight_seconds": 0.012322
+            },
+            "unit.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceWorldParticipationTest": {
+              "partition": 2,
+              "weight_seconds": 0.021563
+            },
+            "unit.net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfigurationTest": {
+              "partition": 1,
+              "weight_seconds": 0.237196
+            },
+            "unit.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.06777
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundleTest": {
+              "partition": 2,
+              "weight_seconds": 0.014376
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2Test": {
+              "partition": 2,
+              "weight_seconds": 0.005134
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementCodecTest": {
+              "partition": 1,
+              "weight_seconds": 0.009241
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResultTest": {
+              "partition": 1,
+              "weight_seconds": 0.002054
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.InitialGameplayLoginResultTest": {
+              "partition": 2,
+              "weight_seconds": 0.096521
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1CodecTest": {
+              "partition": 2,
+              "weight_seconds": 0.002054
+            },
+            "unit.net.firedevops.firemud.accountservice.hostedterms.AccountDeploymentEnvironmentBoundaryProviderTest": {
+              "partition": 2,
+              "weight_seconds": 0.004107
+            },
+            "unit.net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffTest": {
+              "partition": 1,
+              "weight_seconds": 0.005134
+            },
+            "unit.net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.004107
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.008215
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.026697
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.095495
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.083173
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.119111
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.32653
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.024644
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepositoryCanonicalTest": {
+              "partition": 1,
+              "weight_seconds": 0.002054
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.002054
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.010268
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.015402
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountRepositoryLifecycleSourceTest": {
+              "partition": 2,
+              "weight_seconds": 1.50943
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.30394
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.001027
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.137594
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.091387
+            },
+            "unit.net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.009241
+            },
+            "unit.net.firedevops.firemud.accountservice.security.RuntimeAccountIdentityGrpcAuthWiringTest": {
+              "partition": 2,
+              "weight_seconds": 0.340905
+            },
+            "unit.net.firedevops.firemud.accountservice.service.AccountActorStagingEligibilityServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.09036
+            },
+            "unit.net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadbackTest": {
+              "partition": 1,
+              "weight_seconds": 0.027724
+            },
+            "unit.net.firedevops.firemud.accountservice.service.AccountGenerationProjectionRestrictionDispatchTest": {
+              "partition": 2,
+              "weight_seconds": 0.00308
+            },
+            "unit.net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducerTest": {
+              "partition": 2,
+              "weight_seconds": 0.007188
+            },
+            "unit.net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducerCanonicalJoinTest": {
+              "partition": 1,
+              "weight_seconds": 0.297779
+            },
+            "unit.net.firedevops.firemud.accountservice.service.FreshTenantIdentityEnrollmentServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.190989
+            },
+            "unit.net.firedevops.firemud.accountservice.service.impl.AccountActorStagingEligibilityGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.099602
+            },
+            "unit.net.firedevops.firemud.accountservice.service.impl.AccountJwtSignerMaterializationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.309074
+            },
+            "unit.net.firedevops.firemud.accountservice.service.impl.RuntimeAccountIdentityGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.015402
+            },
+            "unit.net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.093441
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountControlUiCurrentActorVerifierTest": {
+              "partition": 1,
+              "weight_seconds": 1.386211
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.094468
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountControlUiPrimaryAuthenticationTest": {
+              "partition": 2,
+              "weight_seconds": 0.13246
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayAuthenticateReceiverTest": {
+              "partition": 1,
+              "weight_seconds": 0.708508
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.361442
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigesterTest": {
+              "partition": 1,
+              "weight_seconds": 0.002054
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjectionTest": {
+              "partition": 2,
+              "weight_seconds": 0.515465
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationIssuanceCommitServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.338852
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.544216
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationResponseEnvelopeServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.117058
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationResponseRecoveryOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.009241
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationTokenRegistryTest": {
+              "partition": 2,
+              "weight_seconds": 0.06469
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayPrimaryCredentialVerifierTest": {
+              "partition": 1,
+              "weight_seconds": 5.618774
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountJwtJwksTrustedSourceTest": {
+              "partition": 2,
+              "weight_seconds": 0.263893
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderGrpcMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 16.904584
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountSelectedPublicationSettlementGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.088307
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 23.951669
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.00308
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 22.545949
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.00308
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.841995
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.145809
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 11.854669
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.006161
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "cases": 824,
+              "suites": 103
+            },
+            "2": {
+              "cases": 891,
+              "suites": 102
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 0.113977
+        }
+      }
+    },
+    "game-session-service": {
+      "tasks": {
+        "crossServiceTest": {
+          "classes": {
+            "net.firedevops.firemud.gamesession.CommunicationWebSocketCrossServiceTest": {
+              "partition": 1,
+              "weight_seconds": 40.208696821319634
+            },
+            "net.firedevops.firemud.gamesession.GameSessionPingWebMvcTest": {
+              "partition": 2,
+              "weight_seconds": 2.3997700272916997
+            },
+            "net.firedevops.firemud.gamesession.LookWebSocketCrossServiceTest": {
+              "partition": 2,
+              "weight_seconds": 16.416050329105794
+            },
+            "net.firedevops.firemud.gamesession.MultiplayerLoadProofCrossServiceTest": {
+              "partition": 1,
+              "weight_seconds": 20.80548282228287
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "case_count": 25,
+              "suite_count": 2
+            },
+            "2": {
+              "case_count": 11,
+              "suite_count": 2
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 1.0
+        },
+        "integrationTest": {
+          "classes": {
+            "integration.net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionSettlementPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 21.608676228722494
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountInitialBarrierRedisScriptIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 0.8987596738878183
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.CanonicalGameplayInitialAdmissionIntentRequestIdMigrationIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 5.243976964291119
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanRuntimeCompletionRepositoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 87.53295806552515
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionIntentRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 31.457627614598366
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionProtectedWriterPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 43.40437759189563
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 47.09916302582058
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.CanonicalRosterCorrectionMigrationOrderingPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 8.244691343699234
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 16.976687065494872
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 10.822521113543948
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 10.740437860090609
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionOriginalStartSessionAssociationReadIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 30.62848285186718
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 10.290538508884339
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 42.46301774849406
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 50.38457122100356
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 30.522501942345144
+            },
+            "integration.net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 11.954023176970347
+            },
+            "integration.net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationServiceIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 11.960257348118699
+            },
+            "integration.net.firedevops.firemud.gamesession.service.GameSessionStartSessionOperatorAuthorizationCoordinatorIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 6.357815542797179
+            },
+            "net.firedevops.firemud.gamesession.GameSessionApplicationIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 11.172673726376544
+            },
+            "net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 3.0703292905647435
+            },
+            "net.firedevops.firemud.gamesession.charactercreate.PlayerCreatedRosterOwnerCompositionIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 100.66004444691093
+            },
+            "net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClientMtlsIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 7.566205717053286
+            },
+            "net.firedevops.firemud.gamesession.controller.EffectiveSettingsControllerIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 3.022533978427356
+            },
+            "net.firedevops.firemud.gamesession.controller.GameInstanceControllerTest": {
+              "partition": 1,
+              "weight_seconds": 1.669718839234363
+            },
+            "net.firedevops.firemud.gamesession.controller.PingControllerTest": {
+              "partition": 1,
+              "weight_seconds": 1.4951620470804283
+            },
+            "net.firedevops.firemud.gamesession.controller.SessionRoleControllerTest": {
+              "partition": 1,
+              "weight_seconds": 1.3871030805089448
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 14.014416741501611
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountAdmissionIntentMigrationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.0645496786301676
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 29.59776655533918
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountMemberRepairRedisOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 3.690629319826047
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 28.914085786069602
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayDecisionRuntimeFenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 24.41093615990798
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 171.72751748110628
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 25.57672616465033
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBindingLocalRedisOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 15.909604770601472
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBootstrapCoverageOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 19.655302602237988
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBootstrapMemberOperationRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 10.038054577375968
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBootstrapPartitionRedisOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 12.939022218410406
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerIdentityMigrationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.8749919279162923
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerLayoutBootstrapMigrationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.1320865327373446
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerLayoutBootstrapRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 20.31716377248832
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerLocalCapacityIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 91.3160609240518
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 37.17851867173862
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerPhysicalRetirementIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 416.72420944030193
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerRetirementMutationLineageIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 21.60140302904941
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayLegacyMigrationRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 5.5930905485989895
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewCandidateClosureLuaIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 0.31586467151664366
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 48.6140666148708
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 0.3065134147941114
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 118.43054930529631
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 44.52133325597586
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionBindingBridgeRedisOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 4.50418865468635
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionLeaseOwnerIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 40.48055132331722
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 0.31066952889301463
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.580946855418891
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferencePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 98.73160750501982
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 6.107409668338261
+            },
+            "net.firedevops.firemud.gamesession.repository.ExactScriptPatchBaseMigrationIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.7710890754437125
+            },
+            "net.firedevops.firemud.gamesession.repository.GameInstanceScriptPinMigrationIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.1061108196191993
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 24.244691595951853
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionServiceTest": {
+              "partition": 2,
+              "weight_seconds": 2.4365218904820045
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantHistoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.3596337796522953
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionV2QuiescenceMigrationIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 1.9190856851685552
+            },
+            "net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerMigrationIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 3.9109033670679167
+            },
+            "net.firedevops.firemud.gamesession.repository.GameplayCommandAccountUuidMigrationIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.6349763387046323
+            },
+            "net.firedevops.firemud.gamesession.repository.GameplayCommandRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 4.2007923254664155
+            },
+            "net.firedevops.firemud.gamesession.repository.PlayerCommandHistoryRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.312877496039634
+            },
+            "net.firedevops.firemud.gamesession.repository.RemoteCommandCoordinatorRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 3.223066483699436
+            },
+            "net.firedevops.firemud.gamesession.repository.ResumeTranscriptEntryRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.4936684593419236
+            },
+            "net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepositoryIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.4157413199874886
+            },
+            "net.firedevops.firemud.gamesession.repository.ScriptPinOperationRepositoryIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 3.348788935191258
+            },
+            "net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRedisIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 1.4006104513303805
+            },
+            "net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerCasPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 3.6927073768754983
+            },
+            "net.firedevops.firemud.gamesession.service.InitialAdmissionBindPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.1622183599543927
+            },
+            "net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextRedisIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 15.746477292219522
+            },
+            "net.firedevops.firemud.gamesession.service.RunOwnedInitialLaunchPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.124813333064264
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameInstanceServiceLifecycleIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 5.75621802698094
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameSessionGrpcServicePingIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 0.49353854924475565
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickQueueControlServiceRedisIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 1.1429313771983818
+            },
+            "net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 36.787843946441726
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "case_count": 310,
+              "suite_count": 43
+            },
+            "2": {
+              "case_count": 334,
+              "suite_count": 38
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 1.0
+        },
+        "test": {
+          "classes": {
+            "db.migration.V1__baselineTest": {
+              "partition": 1,
+              "weight_seconds": 0.1223409044001297
+            },
+            "db.migration.V2__scope_gameplay_command_identityTest": {
+              "partition": 2,
+              "weight_seconds": 0.008294298603398625
+            },
+            "db.migration.V4__retain_gameplay_command_script_patch_base_provenanceTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.CrossServiceAppHarnessTest": {
+              "partition": 1,
+              "weight_seconds": 2.515246051480633
+            },
+            "net.firedevops.firemud.gamesession.binding.CanonicalGameplayAccountMemberRepairOperationTest": {
+              "partition": 2,
+              "weight_seconds": 0.02488289581019587
+            },
+            "net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidenceTest": {
+              "partition": 1,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.cache.RedisLookCacheServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.4053838442411078
+            },
+            "net.firedevops.firemud.gamesession.cache.RedisScreenBufferServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.235350722871436
+            },
+            "net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.14929737486117522
+            },
+            "net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 10.704829135011348
+            },
+            "net.firedevops.firemud.gamesession.charactercreate.GameSessionCharacterCreatePublicSourceServiceTest": {
+              "partition": 2,
+              "weight_seconds": 4.056948804387352
+            },
+            "net.firedevops.firemud.gamesession.client.AccountClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.3877584597088857
+            },
+            "net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClientTest": {
+              "partition": 2,
+              "weight_seconds": 7.684667656048825
+            },
+            "net.firedevops.firemud.gamesession.client.AutomationScriptingClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.07153832545431314
+            },
+            "net.firedevops.firemud.gamesession.client.AutomationScriptingControlPlaneClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.08812692266111039
+            },
+            "net.firedevops.firemud.gamesession.client.CanonicalGameplayLoginAccountClientTest": {
+              "partition": 1,
+              "weight_seconds": 7.6877780180251
+            },
+            "net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterRecoveryClientMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 7.442059421899416
+            },
+            "net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRuntimeReferenceClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 5.803935447728187
+            },
+            "net.firedevops.firemud.gamesession.client.CanonicalPreseededActorAssignmentClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 6.977578700109094
+            },
+            "net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 10.053726694644556
+            },
+            "net.firedevops.firemud.gamesession.client.CanonicalPreseededActorRuntimeReferenceClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.12026732974928007
+            },
+            "net.firedevops.firemud.gamesession.client.EntityManagementClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.0808694113831366
+            },
+            "net.firedevops.firemud.gamesession.client.GameDesignClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.11197303114588143
+            },
+            "net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.3068890483257491
+            },
+            "net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 7.880620460554118
+            },
+            "net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.7444132996550265
+            },
+            "net.firedevops.firemud.gamesession.client.GameLogicClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.2177253383392139
+            },
+            "net.firedevops.firemud.gamesession.client.GrpcAccountStartSessionAdmissionProtectionClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 22.16340265560655
+            },
+            "net.firedevops.firemud.gamesession.client.GrpcAccountStartSessionAdmissionProtectionClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.003110361976274484
+            },
+            "net.firedevops.firemud.gamesession.client.StartSessionOperatorRedemptionClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 7.4814573402655595
+            },
+            "net.firedevops.firemud.gamesession.client.StartSessionOperatorRedemptionClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.09434764661365935
+            },
+            "net.firedevops.firemud.gamesession.client.WorldCanonicalInitialAdmissionHoldClientTest": {
+              "partition": 1,
+              "weight_seconds": 6.367947752759294
+            },
+            "net.firedevops.firemud.gamesession.client.WorldManagementClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.011404660579673107
+            },
+            "net.firedevops.firemud.gamesession.command.text.ActionStateCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.07775904940686211
+            },
+            "net.firedevops.firemud.gamesession.command.text.ActivityTextCommandDispatchHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.05391294092209106
+            },
+            "net.firedevops.firemud.gamesession.command.text.AdmittedCommandDefinitionReaderTest": {
+              "partition": 1,
+              "weight_seconds": 0.18765850590189387
+            },
+            "net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolverTest": {
+              "partition": 1,
+              "weight_seconds": 0.06946475080346348
+            },
+            "net.firedevops.firemud.gamesession.command.text.AfkCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.09331085928823453
+            },
+            "net.firedevops.firemud.gamesession.command.text.AggregatingTextCommandRegistryTest": {
+              "partition": 1,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.command.text.AuthoredActionCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.command.text.AuthoredActionTextCommandDispatchHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.04769221696954209
+            },
+            "net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandAliasResolverTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.command.text.CanonicalGameplayActorSelectionTest": {
+              "partition": 1,
+              "weight_seconds": 0.45929678516319883
+            },
+            "net.firedevops.firemud.gamesession.command.text.CommunicationCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.20424710310869112
+            },
+            "net.firedevops.firemud.gamesession.command.text.ContainerCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.023846108484771044
+            },
+            "net.firedevops.firemud.gamesession.command.text.ContainerIdentitySupportTest": {
+              "partition": 2,
+              "weight_seconds": 0.006220723952548968
+            },
+            "net.firedevops.firemud.gamesession.command.text.EquipmentCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.012441447905097935
+            },
+            "net.firedevops.firemud.gamesession.command.text.FriendsCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.12648805370182903
+            },
+            "net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalogTest": {
+              "partition": 2,
+              "weight_seconds": 0.09642122126450901
+            },
+            "net.firedevops.firemud.gamesession.command.text.HelpCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.008294298603398625
+            },
+            "net.firedevops.firemud.gamesession.command.text.HelpTextCommandDispatchHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.command.text.HistoryCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.10056837056620833
+            },
+            "net.firedevops.firemud.gamesession.command.text.HistoryTextCommandDispatchHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.command.text.InventoryCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.015551809881372421
+            },
+            "net.firedevops.firemud.gamesession.command.text.ItemCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.16899633404424697
+            },
+            "net.firedevops.firemud.gamesession.command.text.LoginCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.560901943054832
+            },
+            "net.firedevops.firemud.gamesession.command.text.LogoutCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.command.text.LookCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.1316719903289532
+            },
+            "net.firedevops.firemud.gamesession.command.text.LookTextCommandDispatchHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.05806009022379038
+            },
+            "net.firedevops.firemud.gamesession.command.text.MoveCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.03628755638986898
+            },
+            "net.firedevops.firemud.gamesession.command.text.PlayCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.22290927496633803
+            },
+            "net.firedevops.firemud.gamesession.command.text.PlayerCommandHistoryFlowTest": {
+              "partition": 1,
+              "weight_seconds": 0.06842796347803866
+            },
+            "net.firedevops.firemud.gamesession.command.text.PlayerCommandHistoryRecorderTest": {
+              "partition": 1,
+              "weight_seconds": 0.06013366487464004
+            },
+            "net.firedevops.firemud.gamesession.command.text.RegistryBackedTextCommandMetadataResolverTest": {
+              "partition": 2,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.command.text.SessionResumptionFlowTest": {
+              "partition": 1,
+              "weight_seconds": 0.49143719225136845
+            },
+            "net.firedevops.firemud.gamesession.command.text.StatusCommandHandlerTest": {
+              "partition": 1,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.command.text.TextCommandDispatcherTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.command.text.TextCommandEffectDeclarationTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.command.text.TextCommandInterpreterCapabilityTest": {
+              "partition": 2,
+              "weight_seconds": 0.05806009022379038
+            },
+            "net.firedevops.firemud.gamesession.command.text.TextCommandInterpreterDispatchSeamTest": {
+              "partition": 2,
+              "weight_seconds": 0.09953158324078348
+            },
+            "net.firedevops.firemud.gamesession.command.text.TextCommandInterpreterTest": {
+              "partition": 1,
+              "weight_seconds": 0.13581913963065248
+            },
+            "net.firedevops.firemud.gamesession.command.text.TextCommandParserTest": {
+              "partition": 1,
+              "weight_seconds": 0.0331771944135945
+            },
+            "net.firedevops.firemud.gamesession.command.text.WhoCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.1824745692747697
+            },
+            "net.firedevops.firemud.gamesession.command.text.WorldsCommandHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.command.text.WorldsTextCommandDispatchHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.config.EffectiveCommandHistorySettingsResolverTest": {
+              "partition": 2,
+              "weight_seconds": 0.054949728247515886
+            },
+            "net.firedevops.firemud.gamesession.config.EffectiveReconnectionSettingsResolverTest": {
+              "partition": 1,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.config.EffectiveSettingsResolverTest": {
+              "partition": 1,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.controller.EffectiveSettingsControllerTest": {
+              "partition": 2,
+              "weight_seconds": 0.1731434833459463
+            },
+            "net.firedevops.firemud.gamesession.data.GameplayAdmissionPointerBootstrapInitializerTest": {
+              "partition": 2,
+              "weight_seconds": 0.07879583673228693
+            },
+            "net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.22083570031548835
+            },
+            "net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCapabilityTest": {
+              "partition": 2,
+              "weight_seconds": 0.2218724876409132
+            },
+            "net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCoordinatorTest": {
+              "partition": 1,
+              "weight_seconds": 0.16588597206797248
+            },
+            "net.firedevops.firemud.gamesession.data.TestDataSeederTest": {
+              "partition": 1,
+              "weight_seconds": 0.10264194521705798
+            },
+            "net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResultTest": {
+              "partition": 2,
+              "weight_seconds": 0.7298982770990788
+            },
+            "net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResultTest": {
+              "partition": 2,
+              "weight_seconds": 0.006220723952548968
+            },
+            "net.firedevops.firemud.gamesession.dto.InitialGameplayLoginJournalSnapshotTest": {
+              "partition": 2,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbeTest": {
+              "partition": 1,
+              "weight_seconds": 0.07464868743058761
+            },
+            "net.firedevops.firemud.gamesession.health.GameplayPathReadinessHealthIndicatorTest": {
+              "partition": 1,
+              "weight_seconds": 2.4582227485822674
+            },
+            "net.firedevops.firemud.gamesession.health.PingHealthIndicatorTest": {
+              "partition": 1,
+              "weight_seconds": 0.07361190010516279
+            },
+            "net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizerTest": {
+              "partition": 2,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.mapper.GameInstanceMapperTest": {
+              "partition": 2,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapperTest": {
+              "partition": 1,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.presentation.LookViewOutputTest": {
+              "partition": 1,
+              "weight_seconds": 0.003110361976274484
+            },
+            "net.firedevops.firemud.gamesession.presentation.PlayerOutputTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinatorTest": {
+              "partition": 2,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.presentation.PromptComposerTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.presentation.SpeechPresentationNormalizerTest": {
+              "partition": 2,
+              "weight_seconds": 0.0
+            },
+            "net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRendererTest": {
+              "partition": 2,
+              "weight_seconds": 0.013478235230522766
+            },
+            "net.firedevops.firemud.gamesession.presentation.WorldsViewOutputTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.repository.AccountInitialAdmissionProtectionBindingRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.9787272352010375
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalCurrentOpenPointerSnapshotDigestTest": {
+              "partition": 2,
+              "weight_seconds": 0.008294298603398625
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountAdmissionFenceIntentTest": {
+              "partition": 1,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountInitialBarrierRedisOwnerTest": {
+              "partition": 2,
+              "weight_seconds": 1.2711012609708392
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountInitialBarrierValueTest": {
+              "partition": 1,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountMemberRepairOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.037324343715293806
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAccountMemberRepairRedisOwnerTest": {
+              "partition": 2,
+              "weight_seconds": 0.012441447905097935
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAdmissionAbortOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.4686278710920223
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayAdmissionDecisionReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.7070889559397328
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventorySqlTest": {
+              "partition": 2,
+              "weight_seconds": 0.01036787325424828
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayFreshNamespaceRedisReconcilerTest": {
+              "partition": 2,
+              "weight_seconds": 0.488326830275094
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBindingLocalAcknowledgementCodecTest": {
+              "partition": 1,
+              "weight_seconds": 0.05702330289836555
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerBootstrapAmbientTransactionTest": {
+              "partition": 1,
+              "weight_seconds": 0.5588283684039823
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerMemberV2ValueCodecTest": {
+              "partition": 2,
+              "weight_seconds": 0.0259196831356207
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerPhysicalFieldSetCodecTest": {
+              "partition": 2,
+              "weight_seconds": 0.014515022555947594
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerRedisKeysTest": {
+              "partition": 2,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayLegacyMigrationOwnerTest": {
+              "partition": 2,
+              "weight_seconds": 0.11923054242385522
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayLegacyRedisSourceTest": {
+              "partition": 1,
+              "weight_seconds": 0.011404660579673107
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverMainTest": {
+              "partition": 1,
+              "weight_seconds": 0.12441447905097937
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverProtocolTest": {
+              "partition": 2,
+              "weight_seconds": 0.5557180064277079
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverStdoutTest": {
+              "partition": 1,
+              "weight_seconds": 0.2260196369426125
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewAuthenticatedSessionTest": {
+              "partition": 1,
+              "weight_seconds": 0.3535444779698664
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewCandidateTest": {
+              "partition": 1,
+              "weight_seconds": 0.014515022555947594
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionReadRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.015551809881372421
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionRedisKeysTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalGameplayTenantGameplayTagRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.0
+            },
+            "net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.22083570031548835
+            },
+            "net.firedevops.firemud.gamesession.repository.CreateCanonicalRealmCatalogRequestSnapshotBoundsTest": {
+              "partition": 1,
+              "weight_seconds": 0.01036787325424828
+            },
+            "net.firedevops.firemud.gamesession.repository.GameInstanceRepositoryOperationKindValidationTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.repository.GameInstanceRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 1.3250142018929303
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.066354388827189
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldIntakeDigestTest": {
+              "partition": 1,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.003110361976274484
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.6324402685091451
+            },
+            "net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.25401289472908284
+            },
+            "net.firedevops.firemud.gamesession.repository.InitialAdmissionBindAttemptRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.01762538453222208
+            },
+            "net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.015551809881372421
+            },
+            "net.firedevops.firemud.gamesession.security.CanonicalGameplayAdmissionDecisionReadWorkloadGuardTest": {
+              "partition": 2,
+              "weight_seconds": 0.07672226208143727
+            },
+            "net.firedevops.firemud.gamesession.security.CanonicalGameplayOriginalNewFinalAdmissionReadWorkloadGuardTest": {
+              "partition": 2,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.security.GameSessionGrpcAuthInterceptorTest": {
+              "partition": 1,
+              "weight_seconds": 0.012441447905097935
+            },
+            "net.firedevops.firemud.gamesession.security.ProtectedGameSessionLoginGrpcInterceptorTest": {
+              "partition": 2,
+              "weight_seconds": 0.07050153812888832
+            },
+            "net.firedevops.firemud.gamesession.service.AccountInitialAdmissionSettlementReadServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.1181937550984304
+            },
+            "net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceRetentionServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.1814377819493449
+            },
+            "net.firedevops.firemud.gamesession.service.CanonicalRegionBootstrapAssignmentResolverTest": {
+              "partition": 2,
+              "weight_seconds": 0.41575171749535605
+            },
+            "net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.3141465596037229
+            },
+            "net.firedevops.firemud.gamesession.service.DurableResumeTranscriptExpiryJobTest": {
+              "partition": 2,
+              "weight_seconds": 0.07361190010516279
+            },
+            "net.firedevops.firemud.gamesession.service.DurableScreenBufferServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.023846108484771044
+            },
+            "net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolutionTest": {
+              "partition": 2,
+              "weight_seconds": 0.011404660579673107
+            },
+            "net.firedevops.firemud.gamesession.service.FirstPartyConnectContextServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.05080257894581658
+            },
+            "net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.34525017936646774
+            },
+            "net.firedevops.firemud.gamesession.service.GameSessionStartSessionOperatorAuthorizationCoordinatorTest": {
+              "partition": 2,
+              "weight_seconds": 0.14100307625777664
+            },
+            "net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolverTest": {
+              "partition": 1,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwnerTest": {
+              "partition": 2,
+              "weight_seconds": 0.30585226100032425
+            },
+            "net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextRedisClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.17210669602052148
+            },
+            "net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextStateTest": {
+              "partition": 2,
+              "weight_seconds": 0.02073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.20424710310869112
+            },
+            "net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisAttemptClosureTest": {
+              "partition": 2,
+              "weight_seconds": 0.06428081417633934
+            },
+            "net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBindingTest": {
+              "partition": 1,
+              "weight_seconds": 0.006220723952548968
+            },
+            "net.firedevops.firemud.gamesession.service.PlayerCommandHistoryRetentionSweepJobTest": {
+              "partition": 2,
+              "weight_seconds": 0.06842796347803866
+            },
+            "net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.13685592695607732
+            },
+            "net.firedevops.firemud.gamesession.service.PositiveLongParsingTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.service.ReplayableScreenBufferEntriesTest": {
+              "partition": 2,
+              "weight_seconds": 0.0404347056915683
+            },
+            "net.firedevops.firemud.gamesession.service.ResumeTranscriptEntryCanonicalizerTest": {
+              "partition": 1,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherenceTest": {
+              "partition": 2,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.service.SessionAuthenticationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.service.SessionContextTest": {
+              "partition": 2,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.SessionIdParsingTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.service.impl.AccountInitialAdmissionSettlementReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 7.3777786077230765
+            },
+            "net.firedevops.firemud.gamesession.service.impl.AccountPresenceQueryServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.013478235230522766
+            },
+            "net.firedevops.firemud.gamesession.service.impl.AuthenticatedCanonicalInitialAdmissionWorldVerifierTest": {
+              "partition": 1,
+              "weight_seconds": 0.295484387746076
+            },
+            "net.firedevops.firemud.gamesession.service.impl.AutomationGameplayCommandAdmissionSupportTest": {
+              "partition": 2,
+              "weight_seconds": 0.7070889559397328
+            },
+            "net.firedevops.firemud.gamesession.service.impl.AutomationScriptEventPublisherTest": {
+              "partition": 2,
+              "weight_seconds": 0.05080257894581658
+            },
+            "net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayOriginalNewFinalAdmissionReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.08294298603398624
+            },
+            "net.firedevops.firemud.gamesession.service.impl.CommandServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.09849479591535866
+            },
+            "net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.09123728463738486
+            },
+            "net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayCommandRecoveryServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.1596652481154235
+            },
+            "net.firedevops.firemud.gamesession.service.impl.DefaultDurableGameplayCommandExecutionServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.4655175091157478
+            },
+            "net.firedevops.firemud.gamesession.service.impl.DefaultDurableRemoteFollowupExecutionServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.07361190010516279
+            },
+            "net.firedevops.firemud.gamesession.service.impl.DefaultGameplayPresenceLifecycleServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.003110361976274484
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameAuthoredHelpReaderImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameInstanceServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.548460495149734
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameSessionAdmissionPointerControlPlaneServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.013478235230522766
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameSessionControlPlaneGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.8791956519602542
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameSessionFixtureLaunchAssociationReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.5723066036345051
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameSessionGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.5432765585226099
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameSessionOperatorControlPlaneServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.022809321159346214
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameSessionRuntimeControlPlaneReadServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.015551809881372421
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameplayCharacterIdParserTest": {
+              "partition": 2,
+              "weight_seconds": 0.0
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameplayCommandExecutionFenceServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.service.impl.GameplayPresenceRoleClassifierTest": {
+              "partition": 1,
+              "weight_seconds": 0.17418027067137112
+            },
+            "net.firedevops.firemud.gamesession.service.impl.InMemoryActiveTransportSessionRegistryTest": {
+              "partition": 2,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.service.impl.InitialAdmissionBindOwnerReadTest": {
+              "partition": 1,
+              "weight_seconds": 0.019698959183071733
+            },
+            "net.firedevops.firemud.gamesession.service.impl.InitialAdmissionBindServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.14203986358320145
+            },
+            "net.firedevops.firemud.gamesession.service.impl.InstanceCutoverCompatibilityServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.impl.IpConnectionLimiterImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.service.impl.PingServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.0
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RedisAccountRecentPresenceServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.015551809881372421
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RedisDisconnectDeduplicationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.003110361976274484
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RedisFirstPartyConnectContextRegistryTest": {
+              "partition": 2,
+              "weight_seconds": 0.014515022555947594
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RedisGameplayPresenceServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.1295984156781035
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RedisMovementEffectIdempotencyServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.006220723952548968
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RedisSessionContextServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.012441447905097935
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RemoteFollowupDrainServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.00518393662712414
+            },
+            "net.firedevops.firemud.gamesession.service.impl.RemoteFollowupRuntimeServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.09123728463738486
+            },
+            "net.firedevops.firemud.gamesession.service.impl.ScriptPatchPublicationLinkResolverTest": {
+              "partition": 2,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.impl.SessionRateLimiterImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TcpProxyServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.12441447905097937
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickBatchExecutionServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.820098774411039
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickQueueControlServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.235350722871436
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickRedisScriptTest": {
+              "partition": 2,
+              "weight_seconds": 3.266916862413633
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickRuntimeProgressServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.009331085928823452
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickSchedulerTest": {
+              "partition": 1,
+              "weight_seconds": 0.014515022555947594
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.8003998152279672
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickStageScriptTest": {
+              "partition": 1,
+              "weight_seconds": 2.053875691666584
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TickStagingServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.08812692266111039
+            },
+            "net.firedevops.firemud.gamesession.service.impl.TriggerScriptEventRequestFactoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.002073574650849656
+            },
+            "net.firedevops.firemud.gamesession.service.impl.VersionUpgradePreparationServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.09538443393908418
+            },
+            "net.firedevops.firemud.gamesession.test.ChatTestFixturesTest": {
+              "partition": 1,
+              "weight_seconds": 0.007257511277973797
+            },
+            "net.firedevops.firemud.gamesession.test.GameInstanceTestFixturesTest": {
+              "partition": 1,
+              "weight_seconds": 0.10056837056620833
+            },
+            "net.firedevops.firemud.gamesession.test.GameplayCommandTestFixturesTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "net.firedevops.firemud.gamesession.test.LookTestFixturesTest": {
+              "partition": 1,
+              "weight_seconds": 0.009331085928823452
+            },
+            "net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServerTest": {
+              "partition": 1,
+              "weight_seconds": 0.08605334801026074
+            },
+            "net.firedevops.firemud.gamesession.test.stubs.GameDesignStubServerTest": {
+              "partition": 1,
+              "weight_seconds": 0.0404347056915683
+            },
+            "net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServerTest": {
+              "partition": 1,
+              "weight_seconds": 0.054949728247515886
+            },
+            "net.firedevops.firemud.gamesession.testsupport.GameplayStructuredCommandAssertionsTest": {
+              "partition": 1,
+              "weight_seconds": 0.004147149301699312
+            },
+            "net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchersTest": {
+              "partition": 2,
+              "weight_seconds": 0.0
+            },
+            "net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerTest": {
+              "partition": 2,
+              "weight_seconds": 0.21461497636293939
+            },
+            "net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandshakeInterceptorTest": {
+              "partition": 1,
+              "weight_seconds": 0.01762538453222208
+            },
+            "net.firedevops.firemud.gamesession.websocket.WebSocketOutputProjectorTest": {
+              "partition": 2,
+              "weight_seconds": 0.06531760150176416
+            },
+            "unit.net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentityTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "unit.net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClientTest": {
+              "partition": 1,
+              "weight_seconds": 8.037175346693267
+            },
+            "unit.net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClientMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 7.259584852624646
+            },
+            "unit.net.firedevops.firemud.gamesession.client.CanonicalInitialPlayerLocationClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.16381239741712283
+            },
+            "unit.net.firedevops.firemud.gamesession.client.CanonicalPlayerCreatedRosterClientTest": {
+              "partition": 2,
+              "weight_seconds": 1.5614017120897912
+            },
+            "unit.net.firedevops.firemud.gamesession.client.CanonicalPreseededActorAssignmentClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.04976579162039174
+            },
+            "unit.net.firedevops.firemud.gamesession.config.CanonicalGameInstanceLaunchAssociationReadConfigurationTest": {
+              "partition": 1,
+              "weight_seconds": 0.2063206777595408
+            },
+            "unit.net.firedevops.firemud.gamesession.config.CanonicalInitialAdmissionOwnerConfigurationTest": {
+              "partition": 1,
+              "weight_seconds": 0.17003312136967183
+            },
+            "unit.net.firedevops.firemud.gamesession.config.CanonicalPlayerRouteReadConfigurationTest": {
+              "partition": 2,
+              "weight_seconds": 0.2000999538069918
+            },
+            "unit.net.firedevops.firemud.gamesession.config.GameLogicPropertiesTest": {
+              "partition": 2,
+              "weight_seconds": 0.1482605875357504
+            },
+            "unit.net.firedevops.firemud.gamesession.config.GameSessionGrpcRequestByteConfigurationTest": {
+              "partition": 1,
+              "weight_seconds": 0.6749485488515631
+            },
+            "unit.net.firedevops.firemud.gamesession.config.GameSessionStartSessionOperatorAuthorizationConfigurationTest": {
+              "partition": 2,
+              "weight_seconds": 0.17210669602052148
+            },
+            "unit.net.firedevops.firemud.gamesession.config.InternalGrpcClientAuthConfigTest": {
+              "partition": 2,
+              "weight_seconds": 0.038361131040718636
+            },
+            "unit.net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociationTest": {
+              "partition": 1,
+              "weight_seconds": 0.00518393662712414
+            },
+            "unit.net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequestTest": {
+              "partition": 1,
+              "weight_seconds": 0.003110361976274484
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.004147149301699312
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.CanonicalHumanRuntimeCompletionRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.1772906326476456
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionIntentRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.006220723952548968
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionProtectedWriterTest": {
+              "partition": 2,
+              "weight_seconds": 0.0
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.001036787325424828
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.002073574650849656
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.09434764661365935
+            },
+            "unit.net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.006220723952548968
+            },
+            "unit.net.firedevops.firemud.gamesession.security.CanonicalGameplayRosterOwnerReadInterceptorChainTest": {
+              "partition": 1,
+              "weight_seconds": 1.121803886109664
+            },
+            "unit.net.firedevops.firemud.gamesession.security.PreseededActorAssignmentOwnerReadInterceptorChainTest": {
+              "partition": 1,
+              "weight_seconds": 0.10471551986790764
+            },
+            "unit.net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferenceOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 1.6547125713780257
+            },
+            "unit.net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterReferencePolicyTest": {
+              "partition": 1,
+              "weight_seconds": 0.006220723952548968
+            },
+            "unit.net.firedevops.firemud.gamesession.service.CanonicalGameplayRosterSelectionServiceTest": {
+              "partition": 2,
+              "weight_seconds": 15.8224113733083
+            },
+            "unit.net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.011404660579673107
+            },
+            "unit.net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.2871900891426774
+            },
+            "unit.net.firedevops.firemud.gamesession.service.GameSessionStartSessionLaunchDescriptorContinuationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.3670227132003891
+            },
+            "unit.net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshotsTest": {
+              "partition": 2,
+              "weight_seconds": 0.003110361976274484
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.09331085928823453
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayRosterOwnerReadGrpcAdapterTest": {
+              "partition": 2,
+              "weight_seconds": 0.22394606229176287
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayRosterReferenceGrpcMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 9.076036246768945
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.CanonicalInitialAdmissionHoldPreparationTest": {
+              "partition": 1,
+              "weight_seconds": 0.012441447905097935
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.CanonicalInitialAdmissionOwnerReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.01762538453222208
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.DatabaseCanonicalInitialAdmissionServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.003110361976274484
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 11.93549569029062
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.5806009022379037
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.HistoricalOriginalStartSessionOwnerEvidenceReadWorkloadGuardTest": {
+              "partition": 2,
+              "weight_seconds": 0.003110361976274484
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.037324343715293806
+            },
+            "unit.net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadWorkloadGuardTest": {
+              "partition": 1,
+              "weight_seconds": 0.001036787325424828
+            },
+            "unit.net.firedevops.firemud.gamesession.support.MutableDefaultDemoCatalogTest": {
+              "partition": 1,
+              "weight_seconds": 0.003110361976274484
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "case_count": 1444,
+              "suite_count": 133
+            },
+            "2": {
+              "case_count": 1348,
+              "suite_count": 145
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 1.0
+        }
+      }
+    }
+  },
+  "source_assessment": "R1308-independent-runner-partition-assessment",
+  "source_head": "38c0da4fe656c07dad184838d8dcadf370a382c3",
+  "source_option": 2
+}

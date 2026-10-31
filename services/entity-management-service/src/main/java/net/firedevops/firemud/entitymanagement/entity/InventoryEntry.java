@@ -46,6 +46,7 @@ public class InventoryEntry {
     copy.setId(character.getId());
     copy.setTenantId(character.getTenantId());
     copy.setAccountId(character.getAccountId());
+    copy.setAccountUuid(character.getAccountUuid());
     copy.setName(character.getName());
     return copy;
   }
@@ -58,6 +59,7 @@ public class InventoryEntry {
       copy.setId(character.getId());
       copy.setTenantId(character.getTenantId());
       copy.setAccountId(character.getAccountId());
+      copy.setAccountUuid(character.getAccountUuid());
       copy.setName(character.getName());
       this.character = copy;
     }

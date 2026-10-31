@@ -137,7 +137,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
       DSLContext upgradedDsl = DSL.using(parentDataSource, SQLDialect.POSTGRES);
       assertThat(migrationHistory(upgradedDsl).subList(0, parentHistory.size()))
           .containsExactlyElementsOf(parentHistory);
-      assertThat(migrationVersions(upgradedDsl)).contains("1017").last().isEqualTo("1023");
+      assertThat(migrationVersions(upgradedDsl)).contains("1017").last().isEqualTo("1024");
       assertThat(retainedParentRows(upgradedDsl, character, snapshot))
           .containsExactlyElementsOf(retainedRows);
       assertThat(
@@ -183,7 +183,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
 
       assertThat(migrationHistory(retainedDsl).subList(0, historyBefore.size()))
           .containsExactlyElementsOf(historyBefore);
-      assertThat(migrationVersions(retainedDsl)).last().isEqualTo("1023");
+      assertThat(migrationVersions(retainedDsl)).last().isEqualTo("1024");
       assertThat(retainedDsl.fetch(retainedRowsSql).getValues(0, String.class))
           .containsExactlyElementsOf(before);
       assertThat(retainedRepository.settle(retainedProof, null)).isEqualTo(terminal);
@@ -256,7 +256,7 @@ class EntityCharacterCreatePostgresIntegrationTest {
 
       migrate(retainedDataSource, retainedSchema, null);
 
-      assertThat(migrationVersions(retainedDsl)).contains("1017").last().isEqualTo("1023");
+      assertThat(migrationVersions(retainedDsl)).contains("1017").last().isEqualTo("1024");
       assertThat(retainedRow(retainedDsl, "characters", "character_uuid", characterId))
           .isEqualTo(actorBefore);
       assertThat(

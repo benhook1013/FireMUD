@@ -47,44 +47,24 @@ public final class JwtClaims {
     }
   }
 
-  public static long requireSignedActorAccountId(Claims claims, String mismatchMessage) {
-    long subjectAccountId = requireLong(claims.getSubject(), "sub", false);
-    long claimedAccountId = requireLong(claims.get("accountId"), "accountId", false);
-    if (subjectAccountId != claimedAccountId) {
+  public static String requireSignedGameplayAccountUuid(Claims claims, String mismatchMessage) {
+    String subjectAccountUuid = requireCanonicalAccountUuid(claims.get("sub"), "sub");
+    String claimedAccountUuid = requireCanonicalAccountUuid(claims.get("accountId"), "accountId");
+    if (!subjectAccountUuid.equals(claimedAccountUuid)) {
       throw new IllegalArgumentException(mismatchMessage);
     }
-    return claimedAccountId;
+    return claimedAccountUuid;
   }
 
   public static SignedGameplayRoutingClaims requireSignedGameplayRoutingClaims(
       Claims claims, String accountMismatchMessage) {
     return new SignedGameplayRoutingClaims(
-        requireSignedScopeAccountUuid(claims, accountMismatchMessage),
+        requireSignedGameplayAccountUuid(claims, accountMismatchMessage),
         requireLong(claims.get("tenantId"), "tenantId", false),
         requireText(claims.get("worldSlug"), "worldSlug"),
         requireText(claims.get("realmSlug"), "realmSlug"),
         requireLong(claims.get("gameInstanceId"), "gameInstanceId", false),
         requireLong(claims.get("pointerVersion"), "pointerVersion", false));
-  }
-
-  private static String requireSignedScopeAccountUuid(Claims claims, String mismatchMessage) {
-    String subject = requireScopeAccountUuid(claims.get("sub"), "sub");
-    String account = requireScopeAccountUuid(claims.get("accountId"), "accountId");
-    if (!subject.equals(account)) {
-      throw new IllegalArgumentException(mismatchMessage);
-    }
-    return account;
-  }
-
-  private static String requireScopeAccountUuid(Object value, String field) {
-    if (!(value instanceof String text)) {
-      throw new IllegalArgumentException("Malformed claim: " + field);
-    }
-    try {
-      return parseCanonicalAccountUuid(text, "Noncanonical Account UUID");
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalArgumentException("Malformed claim: " + field, ex);
-    }
   }
 
   private static String parseCanonicalAccountUuid(String text, String invalidMessage) {

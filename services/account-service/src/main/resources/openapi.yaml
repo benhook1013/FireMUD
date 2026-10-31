@@ -258,6 +258,7 @@ components:
         accountId:
           type: string
           format: uuid
+          description: Canonical non-nil Account UUID; never a private database row ID.
         displayName:
           type: string
         bio:

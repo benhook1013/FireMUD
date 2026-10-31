@@ -37,7 +37,12 @@ final class JooqEntityManagementRepositorySupport {
   }
 
   static Character partialCharacter(
-      Long id, Long tenantId, Long accountId, String playableStateKey, String name) {
+      Long id,
+      Long tenantId,
+      Long accountId,
+      java.util.UUID accountUuid,
+      String playableStateKey,
+      String name) {
     if (id == null) {
       return null;
     }
@@ -45,6 +50,7 @@ final class JooqEntityManagementRepositorySupport {
     character.setId(id);
     character.setTenantId(tenantId);
     character.setAccountId(accountId);
+    character.setAccountUuid(accountUuid);
     character.setPlayableStateKey(playableStateKey);
     character.setName(name);
     return character;

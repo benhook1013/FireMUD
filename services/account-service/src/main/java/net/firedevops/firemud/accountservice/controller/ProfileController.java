@@ -55,8 +55,7 @@ public class ProfileController {
     }
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
     requireProfileOwner(parsedAccountUuid);
-    long parsedAccountId =
-        AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
+    AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     if (request.presenceVisibilityPolicy() == null) {
       throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
     }
@@ -65,7 +64,7 @@ public class ProfileController {
         accountService.updateProfile(
             new UpdateProfileRequest(
                 parsedTenantId,
-                parsedAccountId,
+                parsedAccountUuid.toString(),
                 request.displayName(),
                 request.bio(),
                 request.presenceVisibilityPolicy()));
