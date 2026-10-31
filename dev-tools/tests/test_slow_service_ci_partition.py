@@ -1,10 +1,11 @@
+import contextlib
 import copy
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT / "dev-tools/validation/slow_service_ci_test_partition.py"
@@ -329,11 +330,10 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
         wrong_tested_source["run"]["tested_source_sha"] = PR_HEAD_SHA
         wrong_identity_cases.append(wrong_tested_source)
         for invalid in wrong_identity_cases:
-            with self.subTest(provenance=invalid):
-                with self.assertRaises(ValueError):
-                    PARTITION.resolve_effective_artifacts(
-                        invalid, module, RUN_ID, SOURCE_SHA, "2"
-                    )
+            with self.subTest(provenance=invalid), self.assertRaises(ValueError):
+                PARTITION.resolve_effective_artifacts(
+                    invalid, module, RUN_ID, SOURCE_SHA, "2"
+                )
 
     def test_push_and_dispatch_keep_one_native_tested_revision(self):
         for event_name in ("push", "workflow_dispatch"):
@@ -355,6 +355,63 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                         wrong_head, "account-service", RUN_ID, SOURCE_SHA, "2"
                     )
 
+    def test_malformed_provenance_types_raise_type_error(self):
+        malformed_cases = (
+            ("top-level provenance", None),
+            ("run", lambda data: data.update(run=[])),
+            ("native head", lambda data: data["run"].update(head_sha=[])),
+            ("attempt collection", lambda data: data.update(attempts={})),
+            ("attempt entry", lambda data: data["attempts"].__setitem__(0, [])),
+            ("jobs collection", lambda data: data["attempts"][0].update(jobs={})),
+            ("job entry", lambda data: data["attempts"][0]["jobs"].__setitem__(0, [])),
+            ("artifact collection", lambda data: data.update(artifacts=[])),
+            ("artifact entries", lambda data: data["artifacts"].update(items={})),
+            ("artifact entry", lambda data: data["artifacts"]["items"].__setitem__(0, [])),
+            ("artifact name", lambda data: data["artifacts"]["items"][0].update(name=70)),
+            ("artifact expiration", lambda data: data["artifacts"]["items"][0].update(expired=0)),
+            (
+                "artifact API provenance",
+                lambda data: data["artifacts"]["items"][0].update(workflow_run=[]),
+            ),
+            ("pull-request identity", lambda data: data["run"].update(pull_request=[])),
+            ("pull-request associations", lambda data: data["run"].update(api_pull_requests={})),
+        )
+        for description, make_malformed in malformed_cases:
+            with self.subTest(description=description), self.assertRaises(TypeError):
+                provenance = [] if make_malformed is None else make_provenance()
+                if make_malformed is not None:
+                    make_malformed(provenance)
+                PARTITION.resolve_effective_artifacts(
+                    provenance, "account-service", RUN_ID, SOURCE_SHA, "2"
+                )
+
+    def test_cli_reports_malformed_json_and_provenance_without_traceback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            provenance_path = root / "provenance.json"
+            for contents in ("[", "[]"):
+                with self.subTest(contents=contents):
+                    provenance_path.write_text(contents, encoding="utf-8")
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr):
+                        result = PARTITION.main(
+                            [
+                                "select-artifacts",
+                                "--module", "account-service",
+                                "--run-id", RUN_ID,
+                                "--source-revision", SOURCE_SHA,
+                                "--run-attempt", "2",
+                                "--provenance-json", str(provenance_path),
+                                "--selection-json", str(root / "selection.json"),
+                                "--github-output", str(root / "github-output"),
+                            ]
+                        )
+                    self.assertEqual(result, 1)
+                    self.assertTrue(
+                        stderr.getvalue().startswith("Slow-service CI partition error: ")
+                    )
+                    self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_wrong_run_or_source_provenance_is_rejected(self):
         module = "game-session-service"
         for change in (
@@ -364,11 +421,12 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
         ):
             provenance = make_provenance(module)
             change(provenance)
-            with self.subTest(provenance=provenance):
-                with self.assertRaisesRegex(ValueError, "provenance|identity|wrong-run|wrong-source"):
-                    PARTITION.resolve_effective_artifacts(
-                        provenance, module, RUN_ID, SOURCE_SHA, "2"
-                    )
+            with self.subTest(provenance=provenance), self.assertRaisesRegex(
+                ValueError, "provenance|identity|wrong-run|wrong-source"
+            ):
+                PARTITION.resolve_effective_artifacts(
+                    provenance, module, RUN_ID, SOURCE_SHA, "2"
+                )
 
     def test_missing_or_ambiguous_job_and_artifact_provenance_holds(self):
         module = "account-service"
@@ -399,11 +457,10 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             incomplete_artifact_page,
             incomplete_page,
         ):
-            with self.subTest(provenance=provenance):
-                with self.assertRaises(ValueError):
-                    PARTITION.resolve_effective_artifacts(
-                        provenance, module, RUN_ID, SOURCE_SHA, "2"
-                    )
+            with self.subTest(provenance=provenance), self.assertRaises(ValueError):
+                PARTITION.resolve_effective_artifacts(
+                    provenance, module, RUN_ID, SOURCE_SHA, "2"
+                )
 
     def test_failed_newer_partition_never_falls_back_to_older_success(self):
         module = "game-session-service"
