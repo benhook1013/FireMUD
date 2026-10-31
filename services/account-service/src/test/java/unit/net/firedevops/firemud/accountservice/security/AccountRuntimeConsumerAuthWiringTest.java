@@ -122,8 +122,8 @@ class AccountRuntimeConsumerAuthWiringTest {
           productionLayer,
           (interceptor, ignored) -> {
             AccountService accountService = mock(AccountService.class);
-            when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
-                .thenReturn(42L);
+            when(accountService.resolveAccountStorageIds(List.of(UUID.fromString(ACCOUNT_UUID))))
+                .thenReturn(Map.of(UUID.fromString(ACCOUNT_UUID), 42L));
             when(accountService.listPresenceVisibilityPolicies(1L, List.of(42L)))
                 .thenReturn(Map.of(42L, ProfilePresenceVisibilityPolicy.PRIVATE));
             AccountGrpcService service =
@@ -138,7 +138,7 @@ class AccountRuntimeConsumerAuthWiringTest {
             assertThat(result.observer().response.getPolicies(0).getAccountId())
                 .isEqualTo(ACCOUNT_UUID);
             assertThat(result.observer().response.getPolicies(0).getPolicy()).isEqualTo("PRIVATE");
-            verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+            verify(accountService).resolveAccountStorageIds(List.of(UUID.fromString(ACCOUNT_UUID)));
             verify(accountService).listPresenceVisibilityPolicies(1L, List.of(42L));
           });
     }
