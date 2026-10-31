@@ -16,15 +16,18 @@ class ProbeOperationalFailure(RuntimeError):
     """An expected transport, upstream, or protocol failure from a live probe."""
 
 
+class ProbeCommandTimeout(ProbeOperationalFailure):
+    """The bounded command-response deadline expired without its expected output."""
+
+
 class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
     """A startup-time upstream error that a bounded smoke retry may retry."""
 
 
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
 INVALID_COMMAND_LINE_ERROR = "commands must not contain embedded CR or LF"
-PLAINTEXT_TELNET_HOST_ERROR = (
-    "tls_enabled=False requires a localhost-equivalent Telnet host"
-)
+PLAINTEXT_TELNET_HOST_ERROR = "tls_enabled=False requires a localhost-equivalent Telnet host"
+WORLD_DISCOVERY_ROW = re.compile(r"^\s*(\d+)\)\s+.+\s+\(([^()\r\n]+)\)\s*$")
 
 
 def is_localhost_equivalent(host):
@@ -75,19 +78,13 @@ def verify_smoke_account(account_api_base, username, password, timeout_seconds):
                 if attempt < 3:
                     time.sleep(1)
                     continue
-                raise RuntimeError(
-                    f"Smoke account validation failed with status {exc.code}"
-                ) from exc
-            raise RuntimeError(
-                f"Smoke account validation failed with status {exc.code}"
-            ) from exc
+                raise RuntimeError(f"Smoke account validation failed with status {exc.code}") from exc
+            raise RuntimeError(f"Smoke account validation failed with status {exc.code}") from exc
         except OSError as exc:
             if attempt < 3:
                 time.sleep(1)
                 continue
-            raise RuntimeError(
-                "Smoke account validation failed due to a transport error"
-            ) from exc
+            raise RuntimeError("Smoke account validation failed due to a transport error") from exc
 
 
 def http_request_json(url, timeout_seconds, method="GET", payload=None, headers=None):
@@ -100,9 +97,7 @@ def http_request_json(url, timeout_seconds, method="GET", payload=None, headers=
     )[0]
 
 
-def http_request_json_with_headers(
-    url, timeout_seconds, method="GET", payload=None, headers=None
-):
+def http_request_json_with_headers(url, timeout_seconds, method="GET", payload=None, headers=None):
     request_headers = {"Content-Type": "application/json"}
     if headers:
         request_headers.update(headers)
@@ -119,9 +114,7 @@ def http_request_json_with_headers(
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             return json.loads(response.read().decode("utf-8")), response.headers
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProbeOperationalFailure(
-            f"Request {method} {url} returned invalid JSON: {exc}"
-        ) from exc
+        raise ProbeOperationalFailure(f"Request {method} {url} returned invalid JSON: {exc}") from exc
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="ignore").strip()
         raise ProbeOperationalFailure(
@@ -170,7 +163,7 @@ def http_readiness_up(readiness_url, timeout_seconds):
     try:
         with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
             body = response.read().decode("utf-8", errors="ignore")
-            return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
+            return response.status < 500 and '"status":"UP"' in body.replace(" ", "")
     except (urllib.error.URLError, OSError):
         return False
 
@@ -186,8 +179,8 @@ def wait_for_http_readiness(name, base_url, startup_wait_seconds, timeout_second
     raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
 
 
-def run_command_plan(steps, executor):
-    for step in steps:
+def run_command_plan(steps, executor, first_step_precondition=None):
+    for index, step in enumerate(steps):
         if len(step) == 3:
             line, expected_substrings, label = step
             timeout = None
@@ -195,7 +188,61 @@ def run_command_plan(steps, executor):
             line, expected_substrings, label, timeout = step
         else:
             raise ValueError(f"Unsupported command-plan step: {step!r}")
-        executor(line, expected_substrings, label, timeout)
+        if index == 0 and first_step_precondition is not None:
+            if line.strip().casefold() != "worlds" or label != "WORLDS":
+                raise ValueError("World discovery requires the command plan to begin with WORLDS")
+            first_step_precondition(line, expected_substrings, label, timeout)
+        else:
+            executor(line, expected_substrings, label, timeout)
+
+
+def worlds_response_contains_selector(response, selector):
+    if not isinstance(selector, str) or not selector.strip():
+        raise ValueError("World discovery selector must be a non-empty string")
+    normalized_selector = selector.strip().casefold()
+    rows = []
+    for line in response.splitlines():
+        match = WORLD_DISCOVERY_ROW.fullmatch(line)
+        if match is not None:
+            rows.append((int(match.group(1)), match.group(2).strip().casefold()))
+
+    try:
+        ordinal_selector = int(normalized_selector)
+    except ValueError:
+        ordinal_selector = None
+    if ordinal_selector is not None:
+        matches = [row for row in rows if row[0] == ordinal_selector] if ordinal_selector >= 1 else []
+    else:
+        matches = [row for row in rows if row[1] == normalized_selector]
+
+    if len(matches) > 1:
+        raise ProbeOperationalFailure(f"Configured smoke world selector {selector!r} appears ambiguously in WORLDS")
+    return len(matches) == 1
+
+
+def wait_for_world_discovery(selector, expected_substrings, timeout_seconds, execute_worlds):
+    deadline = time.time() + timeout_seconds
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise ProbeOperationalFailure(
+                f"Configured smoke world selector {selector!r} was not listed in "
+                f"WORLDS before the {timeout_seconds}s discovery deadline"
+            )
+        try:
+            response = execute_worlds("WORLDS", expected_substrings, "WORLDS", remaining)
+        except ProbeCommandTimeout as expired:
+            raise ProbeOperationalFailure(
+                f"Configured smoke world selector {selector!r} was not listed in "
+                f"WORLDS before the {timeout_seconds}s discovery deadline"
+            ) from expired
+        if time.time() >= deadline:
+            raise ProbeOperationalFailure(
+                f"Configured smoke world selector {selector!r} was not listed in "
+                f"WORLDS before the {timeout_seconds}s discovery deadline"
+            )
+        if worlds_response_contains_selector(response, selector):
+            return response
 
 
 def run_transport_session(
@@ -212,19 +259,13 @@ def run_transport_session(
             session = open_session()
         except retriable_exceptions as exc:
             if deadline is None:
-                raise ProbeOperationalFailure(
-                    f"Failed to open {session_label}: {exc}"
-                ) from exc
+                raise ProbeOperationalFailure(f"Failed to open {session_label}: {exc}") from exc
             remaining = deadline - time.time()
             if remaining <= 0:
-                raise ProbeOperationalFailure(
-                    f"Failed to open {session_label}: {exc}"
-                ) from exc
+                raise ProbeOperationalFailure(f"Failed to open {session_label}: {exc}") from exc
             time.sleep(min(retry_interval_seconds, remaining))
             if time.time() >= deadline:
-                raise ProbeOperationalFailure(
-                    f"Failed to open {session_label}: {exc}"
-                ) from exc
+                raise ProbeOperationalFailure(f"Failed to open {session_label}: {exc}") from exc
             continue
 
         try:
@@ -233,9 +274,7 @@ def run_transport_session(
             try:
                 session.close()
             except Exception as exc:
-                raise ProbeOperationalFailure(
-                    f"Failed to close {session_label}: {exc}"
-                ) from exc
+                raise ProbeOperationalFailure(f"Failed to close {session_label}: {exc}") from exc
             if deadline is None:
                 raise
             remaining = deadline - time.time()
@@ -250,12 +289,9 @@ def run_transport_session(
                 session.close()
             except Exception as close_exc:  # noqa: BLE001 - transport close failures vary by client
                 raise ProbeOperationalFailure(
-                    f"Failed during {session_label}: {exc}; "
-                    f"close failed: {close_exc}"
+                    f"Failed during {session_label}: {exc}; close failed: {close_exc}"
                 ) from exc
-            raise ProbeOperationalFailure(
-                f"Failed during {session_label}: {exc}"
-            ) from exc
+            raise ProbeOperationalFailure(f"Failed during {session_label}: {exc}") from exc
         except Exception:
             # A secondary close failure must not hide the primary command failure.
             with contextlib.suppress(Exception):
@@ -265,9 +301,7 @@ def run_transport_session(
             try:
                 session.close()
             except Exception as exc:
-                raise ProbeOperationalFailure(
-                    f"Failed to close {session_label}: {exc}"
-                ) from exc
+                raise ProbeOperationalFailure(f"Failed to close {session_label}: {exc}") from exc
             return result
 
 
@@ -349,31 +383,24 @@ def redact_login_command(command):
     return f"{command_parts[0]} {command_parts[1]} [REDACTED]"
 
 
-def unexpected_explicit_failure_line(
-    response, explicit_failure_prefixes, expected_substrings
-):
+def unexpected_explicit_failure_line(response, explicit_failure_prefixes, expected_substrings):
     expected_failures = [
         substring
         for substring in expected_substrings
-        if any(
-            substring.startswith(prefix) for prefix in explicit_failure_prefixes
-        )
+        if any(substring.startswith(prefix) for prefix in explicit_failure_prefixes)
     ]
     accepted_expected_failures = set()
     response_ends_with_line_break = response.endswith(("\n", "\r"))
     response_lines = response.splitlines()
     for index, line in enumerate(response_lines):
         stripped = line.strip()
-        if not any(
-            stripped.startswith(prefix) for prefix in explicit_failure_prefixes
-        ):
+        if not any(stripped.startswith(prefix) for prefix in explicit_failure_prefixes):
             continue
         matching_expected_failure = next(
             (
                 expected_index
                 for expected_index, expected in enumerate(expected_failures)
-                if expected_index not in accepted_expected_failures
-                and stripped.startswith(expected)
+                if expected_index not in accepted_expected_failures and stripped.startswith(expected)
             ),
             None,
         )
@@ -397,20 +424,12 @@ def raise_for_explicit_failure(
     retry_upstream_failure,
     sanitize_response,
 ):
-    failure_line = unexpected_explicit_failure_line(
-        response, explicit_failure_prefixes, expected_substrings
-    )
+    failure_line = unexpected_explicit_failure_line(response, explicit_failure_prefixes, expected_substrings)
     if failure_line is None:
         return
-    diagnostic_response = (
-        sanitize_response(response) if sanitize_response else response
-    ).strip()
-    if retry_upstream_failure and failure_line.startswith(
-        ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
-    ):
-        raise TransientUpstreamSmokeFailure(
-            f"Command failed explicitly: {diagnostic_response}"
-        )
+    diagnostic_response = (sanitize_response(response) if sanitize_response else response).strip()
+    if retry_upstream_failure and failure_line.startswith(("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")):
+        raise TransientUpstreamSmokeFailure(f"Command failed explicitly: {diagnostic_response}")
     raise ProbeOperationalFailure(f"Command failed explicitly: {diagnostic_response}")
 
 
@@ -456,15 +475,12 @@ def wait_for_incremental_response(
                         retry_upstream_failure,
                         sanitize_response,
                     )
-                    if trailing:
-                        response = drained_response
+                    response = drained_response
                 return response
         else:
             time.sleep(min(idle_sleep_seconds, max(0, deadline - time.time())))
     diagnostic_response = sanitize_response(response) if sanitize_response else response
-    raise ProbeOperationalFailure(
-        f"Expected response containing {expected_substrings}, got '{diagnostic_response}'"
-    )
+    raise ProbeCommandTimeout(f"Expected response containing {expected_substrings}, got '{diagnostic_response}'")
 
 
 def gameplay_item_container_equipment_steps(
@@ -580,6 +596,7 @@ def send_telnet_command_and_expect(
     timeout_seconds,
     drain_timeout=0.25,
     step_results=None,
+    retry_upstream_failure=True,
 ):
     line = _normalize_command_line(line)
     start_index = len(responses)
@@ -588,14 +605,12 @@ def send_telnet_command_and_expect(
     command_bytes = line.encode("iso-8859-1").replace(b"\xff", b"\xff\xff")
     remaining_timeout = command_deadline - time.time()
     if remaining_timeout <= 0:
-        raise ProbeOperationalFailure(f"Timed out before sending {label}")
+        raise ProbeCommandTimeout(f"Timed out before sending {label}")
     sock.settimeout(remaining_timeout)
     sock.sendall(command_bytes + b"\r\n")
     remaining_timeout = max(0, command_deadline - time.time())
     response = wait_for_incremental_response(
-        lambda: recv_until_socket(
-            sock, "", deadline=command_deadline
-        ),
+        lambda: recv_until_socket(sock, "", deadline=command_deadline),
         responses,
         start_index,
         expected_substrings,
@@ -606,7 +621,7 @@ def send_telnet_command_and_expect(
             min(drain_timeout, max(0, command_deadline - time.time())),
             deadline=command_deadline,
         ),
-        retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
+        retry_upstream_failure=(retry_upstream_failure and label in RETRYABLE_STARTUP_COMMAND_LABELS),
         sanitize_response=lambda value: redact_login_credential(value, line),
         deadline=command_deadline,
     )
@@ -632,11 +647,12 @@ def run_telnet_command_plan(
     play_drain_timeout=1.0,
     default_drain_timeout=0.25,
     step_results=None,
+    discovery_selector=None,
 ):
     responses = []
-    run_command_plan(
-        steps,
-        lambda line, expected_substrings, label, timeout: send_telnet_command_and_expect(
+
+    def execute(line, expected_substrings, label, timeout):
+        return send_telnet_command_and_expect(
             sock,
             responses,
             line,
@@ -645,7 +661,34 @@ def run_telnet_command_plan(
             timeout_seconds if timeout is None else timeout,
             play_drain_timeout if label == "PLAY" else default_drain_timeout,
             step_results,
-        ),
+            retry_upstream_failure=discovery_selector is None,
+        )
+
+    def send_discovery_worlds(command, expected, label, remaining):
+        return send_telnet_command_and_expect(
+            sock,
+            responses,
+            command,
+            expected,
+            label,
+            remaining,
+            default_drain_timeout,
+            step_results,
+            retry_upstream_failure=False,
+        )
+
+    def precondition(_line, expected_substrings, _label, _timeout):
+        return wait_for_world_discovery(
+            discovery_selector,
+            expected_substrings,
+            timeout_seconds,
+            send_discovery_worlds,
+        )
+
+    run_command_plan(
+        steps,
+        execute,
+        first_step_precondition=(precondition if discovery_selector is not None else None),
     )
     return responses
 
@@ -665,9 +708,7 @@ def open_telnet_socket(
         if not isinstance(tls_server_hostname, str) or not tls_server_hostname.strip():
             raise ValueError("TLS Telnet connections require an explicit server hostname")
     elif tls_server_hostname is not None or tls_ca_file is not None:
-        raise ValueError(
-            "TLS server hostname and CA file are only valid for TLS Telnet connections"
-        )
+        raise ValueError("TLS server hostname and CA file are only valid for TLS Telnet connections")
     if not tls_enabled and not is_localhost_equivalent(host):
         raise ValueError(PLAINTEXT_TELNET_HOST_ERROR)
 
@@ -706,6 +747,7 @@ def run_telnet_smoke_session(
     tls_enabled,
     tls_server_hostname=None,
     tls_ca_file=None,
+    discovery_selector=None,
 ):
     return run_transport_session(
         open_session
@@ -726,6 +768,7 @@ def run_telnet_smoke_session(
             play_drain_timeout=play_drain_timeout,
             default_drain_timeout=default_drain_timeout,
             step_results=step_results,
+            discovery_selector=discovery_selector,
         ),
         f"Telnet session {host}:{port}",
         retry_window_seconds=retry_window_seconds,
@@ -747,17 +790,11 @@ def recv_text_websocket(ws, label, timeout=None, *, deadline=None):
         try:
             return ws.recv()
         except Exception as exc:
-            if exc.__class__.__name__ != "WebSocketTimeoutException" and not isinstance(
-                exc, TimeoutError
-            ):
+            if exc.__class__.__name__ != "WebSocketTimeoutException" and not isinstance(exc, TimeoutError):
                 raise
             last_error = exc
-    timeout_description = (
-        f"{timeout}s" if timeout is not None else "the command deadline"
-    )
-    raise ProbeOperationalFailure(
-        f"Timed out waiting for {label} after {timeout_description}"
-    ) from last_error
+    timeout_description = f"{timeout}s" if timeout is not None else "the command deadline"
+    raise ProbeOperationalFailure(f"Timed out waiting for {label} after {timeout_description}") from last_error
 
 
 def recv_optional_websocket_chunk(ws, label, timeout=None, *, deadline=None):
@@ -772,9 +809,7 @@ def drain_available_websocket(ws, responses, quiet_timeout=0.25, *, deadline=Non
     if deadline is not None:
         quiet_deadline = min(quiet_deadline, deadline)
     while time.time() < quiet_deadline:
-        chunk = recv_optional_websocket_chunk(
-            ws, "drain chunk", deadline=quiet_deadline
-        )
+        chunk = recv_optional_websocket_chunk(ws, "drain chunk", deadline=quiet_deadline)
         if not chunk:
             return
         responses.append(chunk)
@@ -788,6 +823,7 @@ def send_websocket_command_and_expect(
     label,
     timeout_seconds,
     step_results=None,
+    retry_upstream_failure=True,
 ):
     line = _normalize_command_line(line)
     start_index = len(responses)
@@ -795,23 +831,19 @@ def send_websocket_command_and_expect(
     command_deadline = started_at + timeout_seconds
     remaining_timeout = command_deadline - time.time()
     if remaining_timeout <= 0:
-        raise ProbeOperationalFailure(f"Timed out before sending {label}")
+        raise ProbeCommandTimeout(f"Timed out before sending {label}")
     ws.settimeout(remaining_timeout)
     ws.send(line)
     remaining_timeout = max(0, command_deadline - time.time())
     response = wait_for_incremental_response(
-        lambda: recv_optional_websocket_chunk(
-            ws, f"{label} response chunk", deadline=command_deadline
-        ),
+        lambda: recv_optional_websocket_chunk(ws, f"{label} response chunk", deadline=command_deadline),
         responses,
         start_index,
         expected_substrings,
         remaining_timeout,
         lambda parts: "\n".join(chunk for chunk in parts if chunk),
-        lambda: drain_available_websocket(
-            ws, responses, deadline=command_deadline
-        ),
-        retry_upstream_failure=label in RETRYABLE_STARTUP_COMMAND_LABELS,
+        lambda: drain_available_websocket(ws, responses, deadline=command_deadline),
+        retry_upstream_failure=(retry_upstream_failure and label in RETRYABLE_STARTUP_COMMAND_LABELS),
         sanitize_response=lambda value: redact_login_credential(value, line),
         deadline=command_deadline,
     )
@@ -830,11 +862,11 @@ def send_websocket_command_and_expect(
     return response
 
 
-def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None):
+def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None, discovery_selector=None):
     responses = []
-    run_command_plan(
-        steps,
-        lambda line, expected_substrings, label, timeout: send_websocket_command_and_expect(
+
+    def execute(line, expected_substrings, label, timeout):
+        return send_websocket_command_and_expect(
             ws,
             responses,
             line,
@@ -842,7 +874,33 @@ def run_websocket_command_plan(ws, steps, timeout_seconds, step_results=None):
             label,
             timeout_seconds if timeout is None else timeout,
             step_results,
-        ),
+            retry_upstream_failure=discovery_selector is None,
+        )
+
+    def send_discovery_worlds(command, expected, label, remaining):
+        return send_websocket_command_and_expect(
+            ws,
+            responses,
+            command,
+            expected,
+            label,
+            remaining,
+            step_results,
+            retry_upstream_failure=False,
+        )
+
+    def precondition(_line, expected_substrings, _label, _timeout):
+        return wait_for_world_discovery(
+            discovery_selector,
+            expected_substrings,
+            timeout_seconds,
+            send_discovery_worlds,
+        )
+
+    run_command_plan(
+        steps,
+        execute,
+        first_step_precondition=(precondition if discovery_selector is not None else None),
     )
     return responses
 
@@ -856,6 +914,7 @@ def run_websocket_smoke_session(
     retriable_exceptions=(OSError,),
     session_label="WebSocket session",
     step_results=None,
+    discovery_selector=None,
 ):
     return run_transport_session(
         open_session,
@@ -864,6 +923,7 @@ def run_websocket_smoke_session(
             steps,
             timeout_seconds,
             step_results=step_results,
+            discovery_selector=discovery_selector,
         ),
         session_label,
         retry_window_seconds=retry_window_seconds,

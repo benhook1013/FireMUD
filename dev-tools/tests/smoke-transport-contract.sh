@@ -405,11 +405,13 @@ class CommandResponseSession(FakeSession):
 
     def sendall(self, payload):
         super().sendall(payload)
-        self.chunks = [self.responses.pop(0)]
+        response = self.responses.pop(0)
+        self.chunks = list(response) if isinstance(response, list) else [response]
 
     def send(self, payload):
         super().send(payload)
-        self.chunks = [self.responses.pop(0)]
+        response = self.responses.pop(0)
+        self.chunks = list(response) if isinstance(response, list) else [response]
 
 
 class FakeTlsContext:
@@ -1056,6 +1058,190 @@ assert opened[0].sent == ["WORLDS\r\n"]
 assert opened[0].closed is True
 
 
+# Positive discovery waits on the same transport and reuses the first WORLDS
+# response once the configured slug is present.
+discovery_session = CommandResponseSession(
+    [
+        "OK WORLDS\n",
+        "OK WORLDS\n1) Builder Sandbox (sandbox)\n2) Demo World (demo)\n",
+        "OK LOGIN\n",
+        "OK PLAY Entered world: demo\n",
+        "OK LOOK\n",
+    ]
+)
+discovery_results = []
+discovery_responses = run_telnet_smoke_session(
+    "example.test",
+    2323,
+    [
+        ("WORLDS", ["OK WORLDS"], "WORLDS"),
+        ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+        ("PLAY demo", ["OK PLAY"], "PLAY"),
+        ("LOOK", ["OK LOOK"], "LOOK"),
+    ],
+    1,
+    open_session=lambda: discovery_session,
+    step_results=discovery_results,
+    tls_enabled=False,
+    discovery_selector="demo",
+)
+assert discovery_session.sent == [
+    "WORLDS\r\n",
+    "WORLDS\r\n",
+    "LOGIN demo swordfish\r\n",
+    "PLAY demo\r\n",
+    "LOOK\r\n",
+]
+assert discovery_responses == [
+    "OK WORLDS\n",
+    "OK WORLDS\n1) Builder Sandbox (sandbox)\n2) Demo World (demo)\n",
+    "OK LOGIN\n",
+    "OK PLAY Entered world: demo\n",
+    "OK LOOK\n",
+]
+assert [result["label"] for result in discovery_results] == [
+    "WORLDS",
+    "WORLDS",
+    "LOGIN",
+    "PLAY",
+    "LOOK",
+]
+
+
+login_failure_attempts = []
+
+
+def open_after_discovery_login_failure():
+    session = CommandResponseSession(
+        [
+            "OK WORLDS\n1) Demo World (demo)\n",
+            "ERROR UPSTREAM_FAILURE Login is temporarily unavailable.\n",
+        ]
+    )
+    login_failure_attempts.append(session)
+    return session
+
+
+try:
+    run_telnet_smoke_session(
+        "example.test",
+        2323,
+        [
+            ("WORLDS", ["OK WORLDS"], "WORLDS"),
+            ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+            ("PLAY demo", ["OK PLAY"], "PLAY"),
+        ],
+        1,
+        open_session=open_after_discovery_login_failure,
+        retry_window_seconds=1,
+        retry_interval_seconds=0,
+        tls_enabled=False,
+        discovery_selector="demo",
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert "ERROR UPSTREAM_FAILURE" in str(exc)
+else:
+    raise AssertionError("discovery-enabled LOGIN upstream failure unexpectedly passed")
+assert len(login_failure_attempts) == 1
+assert login_failure_attempts[0].sent == ["WORLDS\r\n", "LOGIN demo swordfish\r\n"]
+
+
+fragmented_discovery_session = CommandResponseSession(
+    [
+        ["OK WORLDS\n", "1) Demo World (demo)\n"],
+        "OK LOGIN\n",
+        "OK PLAY Entered world: demo\n",
+        "OK LOOK\n",
+    ]
+)
+run_websocket_smoke_session(
+    open_session=lambda: fragmented_discovery_session,
+    steps=[
+        ("WORLDS", ["OK WORLDS"], "WORLDS"),
+        ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+        ("PLAY demo", ["OK PLAY"], "PLAY"),
+        ("LOOK", ["OK LOOK"], "LOOK"),
+    ],
+    timeout_seconds=1,
+    discovery_selector="demo",
+)
+assert fragmented_discovery_session.sent == [
+    "WORLDS",
+    "LOGIN demo swordfish",
+    "PLAY demo",
+    "LOOK",
+]
+
+
+# Telnet bytes may split inside a rendered row; WebSocket recv above returns
+# complete logical messages and only splits the header from the complete row.
+fragmented_telnet_session = CommandResponseSession(
+    [
+        ["OK WORLDS\n1) Demo", " World (de", "mo)\n"],
+        "OK LOGIN\n",
+        "OK PLAY Entered world: demo\n",
+    ]
+)
+run_telnet_smoke_session(
+    "example.test",
+    2323,
+    [
+        ("WORLDS", ["OK WORLDS"], "WORLDS"),
+        ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+        ("PLAY demo", ["OK PLAY"], "PLAY"),
+    ],
+    1,
+    open_session=lambda: fragmented_telnet_session,
+    tls_enabled=False,
+    discovery_selector="demo",
+)
+assert fragmented_telnet_session.sent == [
+    "WORLDS\r\n", "LOGIN demo swordfish\r\n", "PLAY demo\r\n"
+]
+
+
+class RepeatingWorldResponseSession(FakeSession):
+    def __init__(self, menu):
+        super().__init__()
+        self.menu = menu
+
+    def sendall(self, payload):
+        super().sendall(payload)
+        self.chunks = [self.menu]
+
+
+for selector, menu, expected_error in (
+    ("Builder", "OK WORLDS\n1) Builder Sandbox (sandbox)\n", "was not listed"),
+    ("123", "OK WORLDS\n1) Numeric Slug (123)\n", "was not listed"),
+    (
+        "demo",
+        "OK WORLDS\n1) Demo World (demo)\n2) Other Demo (demo)\n",
+        "appears ambiguously",
+    ),
+):
+    missing_world_session = RepeatingWorldResponseSession(menu)
+    try:
+        run_telnet_smoke_session(
+            "example.test",
+            2323,
+            [
+                ("WORLDS", ["OK WORLDS"], "WORLDS"),
+                ("LOGIN demo swordfish", ["OK LOGIN"], "LOGIN"),
+                ("PLAY demo", ["OK PLAY"], "PLAY"),
+                ("LOOK", ["OK LOOK"], "LOOK"),
+            ],
+            0.01,
+            open_session=lambda: missing_world_session,
+            tls_enabled=False,
+            discovery_selector=selector,
+        )
+    except smoke_common.ProbeOperationalFailure as exc:
+        assert expected_error in str(exc), str(exc)
+    else:
+        raise AssertionError(f"unavailable or ambiguous world {selector!r} was accepted")
+    assert all(command == "WORLDS\r\n" for command in missing_world_session.sent)
+
+
 # Transport helper proof only: command sequencing is not live Game Session proof.
 command_plan_session = CommandResponseSession(
     ["OK LOGIN\n", "OK MOVE NORTH\n", "OK SAY hello\n"]
@@ -1586,9 +1772,15 @@ assert_command_rejects \
   "must be invoked by the run-owned smoke wrapper" \
   python3 "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 
+grep -Fq 'discovery_selector=world' \
+  "$ROOT_DIR/dev-tools/hosted/shared/hosted-login-look-smoke.sh" ||
+  { echo "Hosted positive smoke must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }
+
 for script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
+  grep -Fq 'discovery_selector=world' "$script" ||
+    { echo "$script must gate LOGIN on the configured WORLDS selector" >&2; exit 1; }
   assert_command_rejects \
     "SMOKE_MUTATION_EXTENSION must be boolean" \
     env SMOKE_MUTATION_EXTENSION=invalid bash "$script"

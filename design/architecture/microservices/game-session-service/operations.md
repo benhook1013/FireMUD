@@ -27,13 +27,14 @@ Before deploying the new Game Session admission validation, Automation must alre
   - local persistence required for login/session state is usable;
   - required Redis-backed session and tick infrastructure is usable;
   - the readiness-only local round-trip canaries for session-context storage and command-queue storage both succeed;
-  - Account Service authentication is reachable through a bounded readiness-only authentication probe; and
+  - Account Service authentication is reachable through a bounded readiness-only authentication probe;
   - Game Logic answers its existing authenticated gRPC `Ping` with `pong`, without an application error, within a two-second readiness deadline, and its configured internal `/actuator/health/readiness` endpoint returns a successful HTTP status through the shared bounded HTTP checker. Both checks are required; Game Logic retains ownership of its private World Management and Entity Management dependency probes.
+  - Game Session’s own Entity Management client answers its authenticated workload `Ping` with `pong`, without an application error, within a two-second readiness deadline. A healthy Game Logic channel does not substitute for this direct dependency.
 - A successful `LOGIN` without a safe first `LOOK` is not sufficient readiness for new player traffic.
-- Local store and Account canaries use reserved readiness-only identifiers. The Game Logic checks carry no player execution context, synthetic player identity, or admitted routing bundle. They do not invoke player `ResolveLook` or bypass its admission guards.
+- Local store and Account canaries use reserved readiness-only identifiers. The Game Logic and direct Entity checks carry no player execution context, synthetic player identity, or admitted routing bundle. They do not invoke player `ResolveLook` or bypass its admission guards.
 - The HTTP destination must use HTTP or HTTPS, contain a host and exactly `/actuator/health/readiness`, and contain no user information, query, or fragment. Missing, malformed, unavailable, or unsuccessful readiness responses fail closed. The shared checker bounds connection establishment to one second and the request to two seconds; Ping uses the existing authenticated gRPC client configuration.
 - These checks establish dependency readiness for the exposed service boundary. Successful player admission, executable `LOOK`, and genuine owner handoffs require their separate runtime proof; Ping and dependency readiness cannot supply player authority. Current implementation, focused proof, and remaining runtime gaps are recorded under [PO-4.2](../../../project-management/implementation-tracking/platform-operations-and-delivery.md).
-- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `accountService`, `sessionContextStore`, `commandQueueStore`, and `gameLogicService`.
+- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `accountService`, `sessionContextStore`, `commandQueueStore`, `gameLogicService`, and `entityManagementService`.
 
 ## Operational Notes
 

@@ -143,5 +143,6 @@ run_websocket_smoke_session(
     timeout_seconds,
     retriable_exceptions=(OSError, websocket.WebSocketException),
     session_label=f"WebSocket session {websocket_url}",
+    discovery_selector=world,
 )
 PYTHON

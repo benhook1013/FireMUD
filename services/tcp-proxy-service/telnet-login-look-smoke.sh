@@ -183,6 +183,7 @@ run_telnet_smoke_session(
     steps,
     timeout_seconds,
     tls_enabled=False,
+    discovery_selector=world,
 )
 
 if os.environ["SMOKE_MUTATION_EXTENSION"] == "true":
