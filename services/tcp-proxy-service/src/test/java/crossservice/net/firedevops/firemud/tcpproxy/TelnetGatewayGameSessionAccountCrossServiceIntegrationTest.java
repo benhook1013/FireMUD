@@ -572,7 +572,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetCommunicationMatchesCanonicalTranscriptsWithoutSession() throws Exception {
+  void telnetCommunicationMatchesCanonicalTranscripts() throws Exception {
     ensureTestServicesStarted();
     entityStub().setRoomEntities(ChatTestFixtures.sampleEntities());
     seedLiveTargetSession();

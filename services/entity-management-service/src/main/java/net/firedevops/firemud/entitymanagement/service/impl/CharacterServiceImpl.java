@@ -182,6 +182,10 @@ public class CharacterServiceImpl implements CharacterService {
   }
 
   private CharacterDto toDto(Character character) {
+    java.util.UUID accountUuid = character.getAccountUuid();
+    if (accountUuid == null || accountUuid.equals(new java.util.UUID(0L, 0L))) {
+      throw new IllegalStateException("Persisted character has no valid Account UUID");
+    }
     CharacterDto dto = characterMapper.toDto(character);
     return new CharacterDto(
         dto.id(),
