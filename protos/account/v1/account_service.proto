@@ -54,6 +54,8 @@ message IssueDirectTextConnectScopeResponse {
   string connect_scope_id = 1;
   string connect_scope_expires_at = 2;
   shared.v1.ErrorDetail error = 3;
+  // Account's immutable evaluation time from the exact retained scope snapshot.
+  string evaluated_at = 4;
 }
 
 message JoinPublicProductionMembershipRequest {

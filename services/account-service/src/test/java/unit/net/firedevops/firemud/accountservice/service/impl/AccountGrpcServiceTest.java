@@ -213,7 +213,8 @@ class AccountGrpcServiceTest {
             accountService.issueDirectTextConnectScope(
                 Mockito.any(DirectTextCallerContext.class),
                 Mockito.any(DirectTextJoinTarget.class)))
-        .thenReturn(new DirectTextJoinScope("scope-1", "2026-09-24T12:00:00Z"));
+        .thenReturn(
+            new DirectTextJoinScope("scope-1", "2026-09-24T12:00:00Z", "2026-09-24T11:59:30Z"));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<IssueDirectTextConnectScopeResponse> observer = new RecordingObserver<>();
@@ -226,6 +227,7 @@ class AccountGrpcServiceTest {
     Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
     assertEquals("scope-1", observer.response().getConnectScopeId());
     assertEquals("2026-09-24T12:00:00Z", observer.response().getConnectScopeExpiresAt());
+    assertEquals("2026-09-24T11:59:30Z", observer.response().getEvaluatedAt());
     Mockito.verify(accountService)
         .issueDirectTextConnectScope(
             new DirectTextCallerContext(
