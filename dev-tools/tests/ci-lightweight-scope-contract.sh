@@ -541,15 +541,20 @@ for module, job_id, display, prefix in (
         require_contains(capture, ("with", "script"), api_owner, "ci workflow")
     for env_name, expected in (
         ("CI_EVENT_NAME", "${{ github.event_name }}"),
+        ("CI_REF_NAME", "${{ github.ref_name }}"),
         ("CI_SOURCE_SHA", "${{ github.sha }}"),
         ("CI_NATIVE_HEAD_SHA", "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"),
     ):
         require_equal(capture, ("env", env_name), expected, "ci workflow")
     for identity_field in (
         "tested_source_sha: testedSourceSha",
+        "context.sha !== testedSourceSha",
+        "run.name !== expectedRunTitle",
         "head_sha: run.head_sha",
         "run.event !== eventName",
-        "run.display_title !== expectedDisplayTitle",
+        "run.display_title !== expectedRunTitle",
+        "api_name: run.name",
+        'name: "CI — Validation"',
     ):
         require_contains(capture, ("with", "script"), identity_field, "ci workflow")
     select = find_step(ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
@@ -624,10 +629,13 @@ const artifactRows = ["account-service", "game-session-service"].flatMap((module
 function runFor(options) {
   const eventName = options.eventName;
   const sourceSha = options.sourceSha || (eventName === "pull_request" ? testedMerge : nativeHead);
+  const refName = options.refName || "develop";
   const eventHead = options.eventHead || nativeHead;
   const eventBase = options.eventBase || baseSha;
   const number = 42;
-  const displayTitle = `CI — Validation pr-${number} base-${eventBase} head-${eventHead}`;
+  const expectedRunTitle = eventName === "pull_request"
+    ? `CI — Validation pr-${number} base-${eventBase} head-${eventHead}`
+    : `CI — Validation ${refName}`;
   const eventPullRequest = {
     number,
     base: { sha: eventBase, ref: "develop" },
@@ -635,14 +643,16 @@ function runFor(options) {
   };
   const context = {
     repo: { owner, repo: repository }, eventName,
+    sha: options.contextSha || sourceSha,
     payload: eventName === "pull_request" ? { pull_request: eventPullRequest } : {},
   };
   const apiAssociations = options.apiPullRequests === undefined ? [] : options.apiPullRequests;
   const run = {
     id: runId, head_sha: options.runHead || (eventName === "pull_request" ? nativeHead : sourceSha),
-    run_attempt: 1, path: ".github/workflows/ci.yml", name: "CI — Validation",
+    run_attempt: 1, path: options.runPath || ".github/workflows/ci.yml",
+    name: options.runName || expectedRunTitle,
     event: options.runEvent || eventName, repository: { full_name: repositoryFullName },
-    display_title: options.displayTitle || displayTitle, pull_requests: apiAssociations,
+    display_title: options.displayTitle || expectedRunTitle, pull_requests: apiAssociations,
   };
   const calls = [];
   const assertRepo = request => {
@@ -681,6 +691,7 @@ function runFor(options) {
   const requireMock = name => name === "node:fs" ? fakeFs : name === "node:path" ? fakePath : assert.fail(`unexpected require ${name}`);
   const env = {
     CI_RUN_ID: String(runId), CI_RUN_ATTEMPT: "1", CI_EVENT_NAME: eventName,
+    CI_REF_NAME: refName,
     CI_SOURCE_SHA: sourceSha,
     CI_NATIVE_HEAD_SHA: options.nativeHead || (eventName === "pull_request" ? nativeHead : sourceSha),
     CI_PROVENANCE_PATH: "services/test/build/provenance.json",
@@ -697,8 +708,8 @@ function runFor(options) {
       { eventName: "pull_request", script: embedded.script },
       { eventName: "pull_request", script: embedded.script,
         apiPullRequests: [{ number: 42, base: { sha: baseSha }, head: { sha: nativeHead } }] },
-      { eventName: "push", script: embedded.script },
-      { eventName: "workflow_dispatch", script: embedded.script },
+      { eventName: "push", script: embedded.script, refName: "develop" },
+      { eventName: "workflow_dispatch", script: embedded.script, refName: "release/2026" },
     ]) {
       const result = await runFor(options);
       assert.equal(result.ok, true, `${embedded.module}/${options.eventName}: ${result.error}`);
@@ -706,6 +717,11 @@ function runFor(options) {
       assert.equal(result.provenance.run.head_sha, nativeHead);
       assert.equal(result.provenance.run.tested_source_sha,
         options.eventName === "pull_request" ? testedMerge : nativeHead);
+      assert.equal(result.provenance.run.api_name,
+        options.eventName === "pull_request"
+          ? `CI — Validation pr-42 base-${baseSha} head-${nativeHead}`
+          : `CI — Validation ${options.refName || "develop"}`);
+      assert.equal(result.provenance.run.name, "CI — Validation");
       for (const attempt of result.provenance.attempts) {
         for (const job of attempt.jobs) assert.equal(job.head_sha, result.provenance.run.head_sha);
       }
@@ -724,7 +740,14 @@ function runFor(options) {
       { eventName: "pull_request", script: embedded.script,
         apiPullRequests: [{ number: 43, base: { sha: baseSha }, head: { sha: nativeHead } }] },
       { eventName: "pull_request", script: embedded.script, displayTitle: "unbound PR title" },
+      { eventName: "pull_request", script: embedded.script, runName: "CI — Validation" },
+      { eventName: "pull_request", script: embedded.script, runPath: ".github/workflows/other.yml" },
+      { eventName: "pull_request", script: embedded.script, runEvent: "push" },
+      { eventName: "pull_request", script: embedded.script,
+        sourceSha: wrongSha, contextSha: testedMerge },
       { eventName: "workflow_dispatch", script: embedded.script, nativeHead: wrongSha },
+      { eventName: "workflow_dispatch", script: embedded.script,
+        refName: "release/2026", runName: "CI — Validation develop" },
     ]) {
       const result = await runFor(options);
       assert.equal(result.ok, false, `${embedded.module} accepted a wrong event/run identity`);

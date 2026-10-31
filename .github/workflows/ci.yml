@@ -1243,6 +1243,7 @@ jobs:
           CI_RUN_ID: ${{ github.run_id }}
           CI_RUN_ATTEMPT: ${{ github.run_attempt }}
           CI_EVENT_NAME: ${{ github.event_name }}
+          CI_REF_NAME: ${{ github.ref_name }}
           CI_SOURCE_SHA: ${{ github.sha }}
           CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           CI_PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
@@ -1252,16 +1253,18 @@ jobs:
             const runId = Number(process.env.CI_RUN_ID);
             const runAttempt = Number(process.env.CI_RUN_ATTEMPT);
             const eventName = process.env.CI_EVENT_NAME;
+            const refName = process.env.CI_REF_NAME;
             const testedSourceSha = process.env.CI_SOURCE_SHA;
             const nativeHeadSha = process.env.CI_NATIVE_HEAD_SHA;
             const shaPattern = /^[0-9a-f]{40}$/;
             const isPullRequest = eventName === "pull_request";
-            if (context.eventName !== eventName || !shaPattern.test(testedSourceSha || "") ||
+            if (context.eventName !== eventName || context.sha !== testedSourceSha ||
+                !shaPattern.test(testedSourceSha || "") ||
                 !shaPattern.test(nativeHeadSha || "")) {
               throw new Error("Workflow event or tested/native source identity is malformed.");
             }
             let pullRequest = null;
-            let expectedDisplayTitle = null;
+            let expectedRunTitle = null;
             if (isPullRequest) {
               const eventPullRequest = context.payload?.pull_request;
               const number = eventPullRequest?.number;
@@ -1271,18 +1274,22 @@ jobs:
                   !shaPattern.test(headSha || "") || headSha !== nativeHeadSha) {
                 throw new Error("Trusted pull-request event identity does not match the native head.");
               }
-              expectedDisplayTitle = `CI — Validation pr-${number} base-${baseSha} head-${headSha}`;
+              expectedRunTitle = `CI — Validation pr-${number} base-${baseSha} head-${headSha}`;
               pullRequest = { number, base_sha: baseSha, head_sha: headSha };
-            } else if (!["push", "workflow_dispatch"].includes(eventName) || nativeHeadSha !== testedSourceSha) {
-              throw new Error("Non-pull-request runs must test their native workflow head.");
+            } else {
+              if (!["push", "workflow_dispatch"].includes(eventName) || nativeHeadSha !== testedSourceSha ||
+                  typeof refName !== "string" || !refName) {
+                throw new Error("Non-pull-request runs must test their native workflow head and ref.");
+              }
+              expectedRunTitle = `CI — Validation ${refName}`;
             }
             const run = (await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId })).data;
             const repository = `${context.repo.owner}/${context.repo.repo}`;
             if (run.id !== runId || run.head_sha !== nativeHeadSha ||
                 run.run_attempt !== runAttempt || run.path !== ".github/workflows/ci.yml" ||
-                run.name !== "CI — Validation" || run.event !== eventName ||
+                run.name !== expectedRunTitle || run.event !== eventName ||
                 run.repository?.full_name !== repository ||
-                (isPullRequest && run.display_title !== expectedDisplayTitle)) {
+                run.display_title !== expectedRunTitle) {
               throw new Error("Current workflow run identity does not match the event source.");
             }
             let apiPullRequests = [];
@@ -1353,8 +1360,9 @@ jobs:
                 id: run.id, head_sha: run.head_sha, tested_source_sha: testedSourceSha,
                 event: run.event, event_name: eventName,
                 pull_request: pullRequest, api_pull_requests: apiPullRequests,
-                display_title: run.display_title, repository: run.repository?.full_name,
-                run_attempt: run.run_attempt, path: run.path, name: run.name,
+                display_title: run.display_title, api_name: run.name,
+                repository: run.repository?.full_name,
+                run_attempt: run.run_attempt, path: run.path, name: "CI — Validation",
               },
               attempts,
               artifacts: {
@@ -1459,6 +1467,7 @@ jobs:
           CI_RUN_ID: ${{ github.run_id }}
           CI_RUN_ATTEMPT: ${{ github.run_attempt }}
           CI_EVENT_NAME: ${{ github.event_name }}
+          CI_REF_NAME: ${{ github.ref_name }}
           CI_SOURCE_SHA: ${{ github.sha }}
           CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           CI_PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
@@ -1468,16 +1477,18 @@ jobs:
             const runId = Number(process.env.CI_RUN_ID);
             const runAttempt = Number(process.env.CI_RUN_ATTEMPT);
             const eventName = process.env.CI_EVENT_NAME;
+            const refName = process.env.CI_REF_NAME;
             const testedSourceSha = process.env.CI_SOURCE_SHA;
             const nativeHeadSha = process.env.CI_NATIVE_HEAD_SHA;
             const shaPattern = /^[0-9a-f]{40}$/;
             const isPullRequest = eventName === "pull_request";
-            if (context.eventName !== eventName || !shaPattern.test(testedSourceSha || "") ||
+            if (context.eventName !== eventName || context.sha !== testedSourceSha ||
+                !shaPattern.test(testedSourceSha || "") ||
                 !shaPattern.test(nativeHeadSha || "")) {
               throw new Error("Workflow event or tested/native source identity is malformed.");
             }
             let pullRequest = null;
-            let expectedDisplayTitle = null;
+            let expectedRunTitle = null;
             if (isPullRequest) {
               const eventPullRequest = context.payload?.pull_request;
               const number = eventPullRequest?.number;
@@ -1487,18 +1498,22 @@ jobs:
                   !shaPattern.test(headSha || "") || headSha !== nativeHeadSha) {
                 throw new Error("Trusted pull-request event identity does not match the native head.");
               }
-              expectedDisplayTitle = `CI — Validation pr-${number} base-${baseSha} head-${headSha}`;
+              expectedRunTitle = `CI — Validation pr-${number} base-${baseSha} head-${headSha}`;
               pullRequest = { number, base_sha: baseSha, head_sha: headSha };
-            } else if (!["push", "workflow_dispatch"].includes(eventName) || nativeHeadSha !== testedSourceSha) {
-              throw new Error("Non-pull-request runs must test their native workflow head.");
+            } else {
+              if (!["push", "workflow_dispatch"].includes(eventName) || nativeHeadSha !== testedSourceSha ||
+                  typeof refName !== "string" || !refName) {
+                throw new Error("Non-pull-request runs must test their native workflow head and ref.");
+              }
+              expectedRunTitle = `CI — Validation ${refName}`;
             }
             const run = (await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: runId })).data;
             const repository = `${context.repo.owner}/${context.repo.repo}`;
             if (run.id !== runId || run.head_sha !== nativeHeadSha ||
                 run.run_attempt !== runAttempt || run.path !== ".github/workflows/ci.yml" ||
-                run.name !== "CI — Validation" || run.event !== eventName ||
+                run.name !== expectedRunTitle || run.event !== eventName ||
                 run.repository?.full_name !== repository ||
-                (isPullRequest && run.display_title !== expectedDisplayTitle)) {
+                run.display_title !== expectedRunTitle) {
               throw new Error("Current workflow run identity does not match the event source.");
             }
             let apiPullRequests = [];
@@ -1569,8 +1584,9 @@ jobs:
                 id: run.id, head_sha: run.head_sha, tested_source_sha: testedSourceSha,
                 event: run.event, event_name: eventName,
                 pull_request: pullRequest, api_pull_requests: apiPullRequests,
-                display_title: run.display_title, repository: run.repository?.full_name,
-                run_attempt: run.run_attempt, path: run.path, name: run.name,
+                display_title: run.display_title, api_name: run.name,
+                repository: run.repository?.full_name,
+                run_attempt: run.run_attempt, path: run.path, name: "CI — Validation",
               },
               attempts,
               artifacts: {

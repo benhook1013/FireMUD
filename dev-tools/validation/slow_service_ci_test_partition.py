@@ -19,6 +19,7 @@ SERVICES = ("account-service", "game-session-service")
 PARTITION_COUNT = 2
 TEST_CLASS_SUFFIX = re.compile(r"(?:^Test.*|.*(?:Test|Tests|TestCase))$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+NON_RUNNABLE_TEST_TYPE_FLAGS = 0x0200 | 0x2000
 ARTIFACT_PATTERN = re.compile(
     r"^slow-service-ci-partition-(?P<run_id>[1-9][0-9]*)-"
     r"(?P<source_revision>[0-9a-f]{40})-attempt-(?P<attempt>[1-9][0-9]*)-"
@@ -56,6 +57,93 @@ def class_names_from_directories(directories: list[Path]) -> set[str]:
     return class_names
 
 
+def read_class_access_flags(class_file: Path) -> int:
+    data = class_file.read_bytes()
+    offset = 0
+
+    def take(size: int) -> bytes:
+        nonlocal offset
+        end = offset + size
+        if end > len(data):
+            raise ValueError(f"truncated compiled class metadata: {class_file}")
+        value = data[offset:end]
+        offset = end
+        return value
+
+    def read_u1() -> int:
+        return take(1)[0]
+
+    def read_u2() -> int:
+        return int.from_bytes(take(2), "big")
+
+    if take(4) != b"\xca\xfe\xba\xbe":
+        raise ValueError(f"invalid compiled class magic: {class_file}")
+    take(4)  # minor and major version
+    constant_pool_count = read_u2()
+    if constant_pool_count < 1:
+        raise ValueError(f"invalid compiled class constant pool: {class_file}")
+
+    index = 1
+    while index < constant_pool_count:
+        tag = read_u1()
+        if tag == 1:  # CONSTANT_Utf8
+            take(read_u2())
+        elif tag in (3, 4):  # CONSTANT_Integer, CONSTANT_Float
+            take(4)
+        elif tag in (5, 6):  # CONSTANT_Long, CONSTANT_Double
+            take(8)
+            index += 1
+        elif tag in (7, 8, 16, 19, 20):  # two-byte constant-pool references
+            take(2)
+        elif tag in (9, 10, 11, 12, 17, 18):  # four-byte constant-pool references
+            take(4)
+        elif tag == 15:  # CONSTANT_MethodHandle
+            take(3)
+        else:
+            raise ValueError(
+                f"unsupported compiled class constant-pool tag {tag}: {class_file}"
+            )
+        index += 1
+
+    return read_u2()
+
+
+def test_class_access_flags_from_directories(
+    directories: list[Path], test_classes: set[str]
+) -> dict[str, int]:
+    access_flags: dict[str, int] = {}
+    for directory in directories:
+        if not directory.exists():
+            continue
+        if not directory.is_dir():
+            raise ValueError(f"test class path is not a directory: {directory}")
+        for class_file in directory.rglob("*.class"):
+            relative = class_file.relative_to(directory).with_suffix("")
+            if relative.name in {"module-info", "package-info"} or "$" in relative.name:
+                continue
+            class_name = ".".join(relative.parts)
+            if class_name not in test_classes:
+                continue
+            flags = read_class_access_flags(class_file)
+            existing_flags = access_flags.get(class_name)
+            if existing_flags is not None and existing_flags != flags:
+                raise ValueError(f"compiled test class metadata conflicts for {class_name}")
+            access_flags[class_name] = flags
+
+    missing = test_classes - set(access_flags)
+    if missing:
+        raise ValueError(
+            "compiled test class metadata is missing: " + ", ".join(sorted(missing))
+        )
+    return access_flags
+
+
+def is_runnable_test_class(class_name: str, access_flags: int) -> bool:
+    return is_test_class(class_name) and not (
+        access_flags & NON_RUNNABLE_TEST_TYPE_FLAGS
+    )
+
+
 def parse_class_directories(values: list[str]) -> dict[str, list[Path]]:
     result: dict[str, list[Path]] = defaultdict(list)
     for value in values:
@@ -75,6 +163,8 @@ def build_plan(
     run_id: str,
     module: str,
     historical_plan: dict[str, Any] | None = None,
+    *,
+    class_access_flags_by_task: dict[str, dict[str, int]],
 ) -> dict[str, Any]:
     if module not in SERVICES:
         raise ValueError(f"unsupported slow-service module: {module}")
@@ -91,17 +181,23 @@ def build_plan(
         historic_classes = task_history.get("classes", {})
         assignments: dict[str, int] = {}
         expected_test_classes: set[str] = set()
+        task_access_flags = class_access_flags_by_task.get(task, {})
+        test_candidates = {class_name for class_name in discovered if is_test_class(class_name)}
+        if set(task_access_flags) != test_candidates:
+            raise ValueError(f"compiled test class metadata is incomplete for {task}")
         for class_name in discovered:
+            access_flags = task_access_flags.get(class_name, ())
+            runnable_test = is_runnable_test_class(class_name, access_flags)
             historic_entry = historic_classes.get(class_name)
             if historic_entry is not None:
                 partition = int(historic_entry["partition"])
                 weight = float(historic_entry["weight_seconds"])
                 assignments[class_name] = partition
                 global_load[partition] += weight
-                if is_test_class(class_name):
+                if runnable_test:
                     global_test_count[partition] += 1
-                expected_test_classes.add(class_name)
-            elif is_test_class(class_name):
+                    expected_test_classes.add(class_name)
+            elif runnable_test:
                 estimate = float(
                     task_history.get("unknown_class_estimated_weight_seconds", 1.0)
                 )
@@ -699,12 +795,21 @@ def main(argv: list[str] | None = None) -> int:
                 task: class_names_from_directories(directories)
                 for task, directories in class_dirs.items()
             }
+            class_access_flags = {}
+            for task, class_names in discovered.items():
+                test_classes = {
+                    class_name for class_name in class_names if is_test_class(class_name)
+                }
+                class_access_flags[task] = test_class_access_flags_from_directories(
+                    class_dirs[task], test_classes
+                )
             plan = build_plan(
                 discovered,
                 args.source_revision,
                 args.run_attempt,
                 args.run_id,
                 args.module,
+                class_access_flags_by_task=class_access_flags,
             )
             manifest_path = write_partition(plan, args.partition, args.output_dir)
             print(f"Wrote {args.module} partition {args.partition} selector: {manifest_path}")
