@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.lang.reflect.Field;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
+import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
@@ -15,6 +18,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.client.DemoAccountAuthenticationClient;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -47,6 +51,148 @@ class DemoAccountAuthenticationClientTest {
                 request ->
                     request.getEmail().equals("demo@example.com")
                         && request.getPassword().equals("swordfish")));
+  }
+
+  @Test
+  void retriesOnlyTransientTransportFailuresWithTheSameCredentialRequest() throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5, TimeUnit.SECONDS)).thenReturn(stub);
+    UUID owner = UUID.randomUUID();
+    when(stub.authenticate(any()))
+        .thenThrow(Status.UNAVAILABLE.asRuntimeException())
+        .thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException())
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAccountId(owner.toString())
+                .setAuthToken("ordinary-fixture-token")
+                .build());
+
+    assertThat(client(stub).authenticateDemoOwner()).isEqualTo(owner);
+
+    var requests = ArgumentCaptor.forClass(AuthenticateRequest.class);
+    verify(stub, times(3)).authenticate(requests.capture());
+    verify(stub, times(3)).withDeadlineAfter(5, TimeUnit.SECONDS);
+    assertThat(requests.getAllValues())
+        .allSatisfy(
+            request -> {
+              assertThat(request).isSameAs(requests.getValue());
+              assertThat(request.getEmail()).isEqualTo("demo@example.com");
+              assertThat(request.getPassword()).isEqualTo("swordfish");
+            });
+  }
+
+  @Test
+  void propagatesFinalTransientFailureAfterThreeCalls() throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5, TimeUnit.SECONDS)).thenReturn(stub);
+    var failure = Status.DEADLINE_EXCEEDED.asRuntimeException();
+    when(stub.authenticate(any())).thenThrow(failure);
+    var client = client(stub);
+
+    assertThatThrownBy(client::authenticateDemoOwner).isSameAs(failure);
+
+    verify(stub, times(3)).authenticate(any());
+  }
+
+  @Test
+  void refusesPermanentAuthorizationStatusesWithoutRetry() throws Exception {
+    for (Status status : new Status[] {Status.PERMISSION_DENIED, Status.UNAUTHENTICATED}) {
+      var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+      when(stub.withDeadlineAfter(5, TimeUnit.SECONDS)).thenReturn(stub);
+      var failure = status.asRuntimeException();
+      when(stub.authenticate(any())).thenThrow(failure);
+      var client = client(stub);
+
+      assertThatThrownBy(client::authenticateDemoOwner)
+          .isInstanceOf(StatusRuntimeException.class)
+          .isSameAs(failure);
+
+      verify(stub).authenticate(any());
+    }
+  }
+
+  @Test
+  void refusesCredentialErrorsAndMissingTokensWithoutRetry() throws Exception {
+    for (AuthenticateResponse response :
+        new AuthenticateResponse[] {
+          AuthenticateResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("AUTH_INVALID_CREDENTIALS"))
+              .build(),
+          AuthenticateResponse.newBuilder().setAccountId(UUID.randomUUID().toString()).build()
+        }) {
+      var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+      when(stub.withDeadlineAfter(5, TimeUnit.SECONDS)).thenReturn(stub);
+      when(stub.authenticate(any())).thenReturn(response);
+      var client = client(stub);
+
+      assertThatThrownBy(client::authenticateDemoOwner).isInstanceOf(IllegalStateException.class);
+
+      verify(stub).authenticate(any());
+    }
+  }
+
+  @Test
+  void interruptionStopsRetryAndPreservesInterruptWithoutReturningAnOwner() throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.authenticate(any()))
+        .thenAnswer(
+            invocation -> {
+              Thread.currentThread().interrupt();
+              throw Status.UNAVAILABLE.asRuntimeException();
+            });
+    var client = client(stub);
+    try {
+      assertThatThrownBy(client::authenticateDemoOwner)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account demo authentication interrupted");
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+      verify(stub).authenticate(any());
+      verify(stub).withDeadlineAfter(5, TimeUnit.SECONDS);
+      assertThatThrownBy(client::authenticateDemoOwner)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account demo authentication interrupted");
+      verifyNoMoreInteractions(stub);
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
+  void interruptedFixtureAuthenticationCannotReachOwnerMutation() throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    var characters =
+        mock(net.firedevops.firemud.entitymanagement.repository.CharacterRepository.class);
+    var items = mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
+    var itemInstances =
+        mock(net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository.class);
+    var containers =
+        mock(net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository.class);
+    var equipmentSlots =
+        mock(
+            net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitionRepository
+                .class);
+    var bodySlots =
+        mock(
+            net.firedevops.firemud.entitymanagement.repository.BodyLayoutSlotDefinitionRepository
+                .class);
+    var seeder =
+        new net.firedevops.firemud.entitymanagement.data.TestDataSeeder(
+            client(stub), characters, items, itemInstances, containers, equipmentSlots, bodySlots);
+    Thread.currentThread().interrupt();
+    try {
+      assertThatThrownBy(
+              () -> seeder.run(new org.springframework.boot.DefaultApplicationArguments()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account demo authentication interrupted");
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+      verifyNoInteractions(
+          stub, characters, items, itemInstances, containers, equipmentSlots, bodySlots);
+    } finally {
+      Thread.interrupted();
+    }
   }
 
   @Test
