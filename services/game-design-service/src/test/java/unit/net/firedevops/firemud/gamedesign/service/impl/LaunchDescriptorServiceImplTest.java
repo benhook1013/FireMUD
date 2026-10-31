@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
@@ -759,6 +760,52 @@ class LaunchDescriptorServiceImplTest {
     assertEquals(
         "LAUNCH_DESCRIPTOR_CONFLICT: stored resolved result digest is inconsistent",
         thrown.getMessage());
+  }
+
+  @Test
+  void retainedCommittedPatchCannotReplayOrReadBackWithoutOwnerReadinessEvidence() {
+    var request = request("cp-retained-patch", 9L);
+    stubSuccessfulLaunch(request, 7L, 11L);
+    var stored = descriptorFor(request, 7L, 11L);
+    var patched =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            request,
+            stored.getLaunchDescriptorId(),
+            7L,
+            true,
+            "retained-patch",
+            "{}",
+            "genrev-1",
+            17L,
+            11L,
+            PUBLISHED_RELEASE_BUNDLE_REF,
+            false,
+            null);
+    stored.setScriptPatchVersion("retained-patch");
+    stored.setResultDigest(patched.resultDigest());
+    when(launchDescriptorRepository.findBoundByRequest(
+            NAMESPACE, CANONICAL_TENANT_ID, request.controlPlaneRequestId()))
+        .thenReturn(Optional.of(stored));
+
+    IllegalArgumentException replay =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    assertTrue(replay.getMessage().startsWith("SCRIPT_PATCH_NOT_READY:"));
+    IllegalArgumentException read =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.getLaunchDescriptor(
+                    UUID.fromString("62345678-1234-4234-8234-123456789abc"),
+                    CANONICAL_TENANT_ID,
+                    WORLD_SLUG,
+                    request.controlPlaneRequestId(),
+                    request.requestDigest(),
+                    patched.resultDigest()));
+    assertTrue(read.getMessage().startsWith("SCRIPT_PATCH_NOT_READY:"));
+    assertEquals("retained-patch", stored.getScriptPatchVersion());
+    assertEquals(patched.resultDigest(), stored.getResultDigest());
+    verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
   }
 
   @Test
