@@ -1,6 +1,7 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
 import static net.firedevops.firemud.socialgroups.test.AccountUuidFixtures.accountUuid;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -27,5 +28,7 @@ class VoiceChatServiceImplTest {
 
     assertNotNull(dto.token());
     assertNotNull(dto.expiresAt());
+    assertThat(jwtUtil.parseToken(dto.token()).getPayload().getSubject())
+        .isEqualTo(request.accountId());
   }
 }
