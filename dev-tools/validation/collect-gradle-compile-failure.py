@@ -202,6 +202,13 @@ def diagnostic(root, task, output):
             'output_limit_reached': limited, 'output_possibly_truncated': limited}
 
 
+def diagnostic_basename(task):
+    if TASK_PATH.fullmatch(task) is None:
+        raise ValueError('Diagnostic compile task path is invalid')
+    # The task-path grammar excludes "--" within components, so separators stay unique.
+    return task[1:].replace(':', '--') + '-diagnostic.json'
+
+
 def collect(root, log, output, check_exit):
     if not 0 < check_exit < 128:
         return
@@ -289,7 +296,7 @@ def collect(root, log, output, check_exit):
         copy(path)
     for task, module in tasks[:4]:
         try:
-            result = diagnostic(root, task, output / (module + '-diagnostic.json'))
+            result = diagnostic(root, task, output / diagnostic_basename(task))
         except (OSError, ValueError) as error:
             result = {'status': 'unavailable', 'reason': type(error).__name__}
         manifest['diagnostics'].append({'task': task, **result})
