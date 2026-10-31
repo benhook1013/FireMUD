@@ -810,6 +810,11 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                 ),
                 "class bytes differ",
             ),
+            (
+                "unknown nonclass payload",
+                lambda classes: (classes / "resource.bin").write_bytes(b"not bytecode"),
+                "not a class file",
+            ),
         )
         for description, mutate_partition_two, message in cases:
             with self.subTest(description=description), tempfile.TemporaryDirectory() as temporary:
@@ -832,6 +837,41 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                         "2",
                     )
                 self.assertFalse(verified_classes_dir.exists())
+
+    def test_aggregate_ignores_only_the_spring_metadata_sidecar(self):
+        module = "game-session-service"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selection = PARTITION.selection_document(
+                make_provenance(module), module, RUN_ID, SOURCE_SHA, "2"
+            )
+            input_dir, selection_path, verified_classes_dir, artifacts = prepare_aggregate(
+                root, module, selection
+            )
+            sidecar = (
+                artifacts[2]
+                / "classes/java/main/META-INF/spring-configuration-metadata.json"
+            )
+            sidecar.parent.mkdir(parents=True)
+            sidecar.write_text('{"groups": []}\n', encoding="utf-8")
+            self.assertEqual(
+                PARTITION.verify_aggregate(
+                    input_dir,
+                    selection_path,
+                    verified_classes_dir,
+                    module,
+                    RUN_ID,
+                    SOURCE_SHA,
+                    "2",
+                ),
+                2,
+            )
+            copied_paths = {
+                path.relative_to(verified_classes_dir).as_posix()
+                for path in verified_classes_dir.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(copied_paths, set(MAIN_CLASS_BYTES))
 
     def test_aggregate_rejects_symlinked_measured_classfiles(self):
         module = "game-session-service"
