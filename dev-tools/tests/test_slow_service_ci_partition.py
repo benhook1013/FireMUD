@@ -235,7 +235,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     }
                 }
                 access_flags = {
-                    class_name: 0x0021
+                    class_name: {class_name: 0x0021}
                     for class_name in discovered[task]
                     if PARTITION.is_test_class(class_name)
                 }
@@ -286,13 +286,22 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             interface_test = "net.example.InterfaceIntegrationTest"
             real_test = "net.example.RealIntegrationTest"
             abstract_test = "net.example.AbstractIntegrationTest"
+            abstract_base = "net.example.AbstractBaseIntegrationTest"
+            abstract_nested_only = "net.example.AbstractNestedOnlyIntegrationTest"
             helper = "net.example.FixtureHelper"
             write_compiled_class(classes, marker, 0x2601)
             write_compiled_class(classes, interface_test, 0x0621)
             write_compiled_class(classes, real_test, 0x0021)
             write_compiled_class(classes, f"{real_test}$Nested", 0x0021)
             write_compiled_class(classes, abstract_test, 0x0421)
-            write_compiled_class(classes, f"{abstract_test}$NestedScenario", 0x0021)
+            write_compiled_class(
+                classes, f"{abstract_test}$NestedScenario$WhenConfigured", 0x0021
+            )
+            write_compiled_class(classes, abstract_base, 0x0421)
+            write_compiled_class(classes, abstract_nested_only, 0x0421)
+            write_compiled_class(
+                classes, f"{abstract_nested_only}$NestedTemplate", 0x0421
+            )
             write_compiled_class(classes, helper, 0x0021)
 
             discovered = PARTITION.class_names_from_directories([classes])
@@ -302,9 +311,11 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             access_flags = PARTITION.test_class_access_flags_from_directories(
                 [classes], candidates
             )
-            self.assertEqual(access_flags[marker], 0x2601)
+            self.assertEqual(access_flags[marker][marker], 0x2601)
             self.assertTrue(PARTITION.is_runnable_test_class(real_test, access_flags[real_test]))
-            self.assertFalse(PARTITION.is_runnable_test_class(marker, access_flags[marker]))
+            self.assertFalse(
+                PARTITION.is_runnable_test_class(marker, access_flags[marker])
+            )
             self.assertFalse(
                 PARTITION.is_runnable_test_class(
                     interface_test, access_flags[interface_test]
@@ -313,6 +324,16 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
             self.assertTrue(
                 PARTITION.is_runnable_test_class(
                     abstract_test, access_flags[abstract_test]
+                )
+            )
+            self.assertFalse(
+                PARTITION.is_runnable_test_class(
+                    abstract_base, access_flags[abstract_base]
+                )
+            )
+            self.assertFalse(
+                PARTITION.is_runnable_test_class(
+                    abstract_nested_only, access_flags[abstract_nested_only]
                 )
             )
 
@@ -366,7 +387,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                 test_cases = []
                 for class_name in sorted(reported_groups):
                     report_name = (
-                        f"{abstract_test}$NestedScenario"
+                        f"{abstract_test}$NestedScenario$WhenConfigured"
                         if class_name == abstract_test
                         else class_name
                     )
