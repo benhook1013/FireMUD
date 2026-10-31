@@ -18,7 +18,8 @@ import java.util.regex.Pattern;
 /**
  * Reads a local workload Pod UID from its fixed kubelet-projected downwardAPI volume. Filesystem
  * checks constrain the expected projection shape; platform admission must establish its kubelet and
- * read-only-mount provenance.
+ * read-only-mount provenance. The volume must project the UID file with {@code defaultMode: 0444};
+ * a read-only mount alone does not clear owner-write from the file mode.
  */
 public final class ProtectedPodUidProjection {
   private static final Pattern UID =

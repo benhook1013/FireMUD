@@ -20,6 +20,8 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache.TrustedPubl
 
 /**
  * Reads only Account's fixed projected public JWKS; it never discovers keys or uses classpath data.
+ * The volume must use {@code defaultMode: 0444}; a read-only mount alone retains owner-write in the
+ * projected file mode, which this reader refuses.
  */
 public final class GameSessionJwtReadinessProtectedJwksSource implements TrustedPublicJwksSource {
   public static final Path JWKS_PATH = fixedJwksPath();
@@ -27,10 +29,9 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
   private static final int MAX_FILE_BYTES = AccountPublicJwksCache.MAX_JWKS_BYTES;
 
   private final GameSessionJwtReadinessLocalIdentityProvider identityProvider;
-  private final Path jwksPath;
   private final Path jwksDirectory;
-  private final Path dataLink;
   private final long expectedOwnerUid;
+  private final boolean allowFixedProductionAlias;
 
   @SuppressFBWarnings(
       value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
@@ -42,27 +43,36 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
 
   public GameSessionJwtReadinessProtectedJwksSource(
       GameSessionJwtReadinessLocalIdentityProvider identityProvider) {
-    this(identityProvider, JWKS_PATH, 0L);
+    this(identityProvider, JWKS_PATH, 0L, true);
   }
 
   GameSessionJwtReadinessProtectedJwksSource(
       GameSessionJwtReadinessLocalIdentityProvider identityProvider,
       Path jwksPath,
       long expectedOwnerUid) {
+    this(identityProvider, jwksPath, expectedOwnerUid, false);
+  }
+
+  private GameSessionJwtReadinessProtectedJwksSource(
+      GameSessionJwtReadinessLocalIdentityProvider identityProvider,
+      Path jwksPath,
+      long expectedOwnerUid,
+      boolean allowFixedProductionAlias) {
     this.identityProvider = Objects.requireNonNull(identityProvider);
-    this.jwksPath = Objects.requireNonNull(jwksPath);
+    Path configuredJwksPath = Objects.requireNonNull(jwksPath);
     this.jwksDirectory =
-        Objects.requireNonNull(jwksPath.getParent(), "The Account JWKS path must have a parent");
-    this.dataLink = jwksDirectory.resolve("..data");
-    Path fileName = jwksPath.getFileName();
-    if (!jwksPath.isAbsolute()
-        || !jwksPath.equals(jwksPath.normalize())
+        Objects.requireNonNull(
+            configuredJwksPath.getParent(), "The Account JWKS path must have a parent");
+    Path fileName = configuredJwksPath.getFileName();
+    if (!configuredJwksPath.isAbsolute()
+        || !configuredJwksPath.equals(configuredJwksPath.normalize())
         || fileName == null
         || !"jwks.json".equals(fileName.toString())
         || expectedOwnerUid < 0L) {
       throw new IllegalArgumentException("Protected Account JWKS path or owner is invalid");
     }
     this.expectedOwnerUid = expectedOwnerUid;
+    this.allowFixedProductionAlias = allowFixedProductionAlias;
   }
 
   @Override
@@ -93,11 +103,15 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
 
   private byte[] readProjectedFile() throws IOException {
     Path normalizedDirectory = jwksDirectory.toAbsolutePath().normalize();
-    if (!normalizedDirectory.equals(jwksDirectory)
-        || Files.isSymbolicLink(jwksDirectory)
-        || !Files.isSymbolicLink(dataLink)
-        || !Files.isSymbolicLink(jwksPath)
-        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(jwksPath))) {
+    if (!normalizedDirectory.equals(jwksDirectory) || Files.isSymbolicLink(jwksDirectory)) {
+      throw unavailable();
+    }
+    Path trustedDirectory = resolveTrustedProjectionRoot();
+    Path dataLink = trustedDirectory.resolve("..data");
+    Path projectedJwksPath = trustedDirectory.resolve("jwks.json");
+    if (!Files.isSymbolicLink(dataLink)
+        || !Files.isSymbolicLink(projectedJwksPath)
+        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(projectedJwksPath))) {
       throw unavailable();
     }
     Path dataVersion = Files.readSymbolicLink(dataLink);
@@ -106,12 +120,9 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
         || !dataVersion.toString().matches("\\.\\.[A-Za-z0-9._-]{1,128}")) {
       throw unavailable();
     }
-    Path trustedDirectory = jwksDirectory.toRealPath(LinkOption.NOFOLLOW_LINKS);
     verifyOwnedProjectionPath(trustedDirectory, true);
-    Path dataTarget = dataLink.toRealPath();
-    Path dataTargetParent = dataTarget.getParent();
-    if (dataTargetParent == null
-        || !dataTargetParent.equals(trustedDirectory)
+    Path dataTarget = trustedDirectory.resolve(dataVersion).normalize();
+    if (!trustedDirectory.equals(dataTarget.getParent())
         || !Files.isDirectory(dataTarget, LinkOption.NOFOLLOW_LINKS)) {
       throw unavailable();
     }
@@ -143,12 +154,62 @@ public final class GameSessionJwtReadinessProtectedJwksSource implements Trusted
         || !before.lastModifiedTime().equals(after.lastModifiedTime())
         || !dataVersion.equals(Files.readSymbolicLink(dataLink))
         || !dataTarget.equals(dataLink.toRealPath())
-        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(jwksPath))) {
+        || !Path.of("..data/jwks.json").equals(Files.readSymbolicLink(projectedJwksPath))
+        || !trustedDirectory.equals(resolveTrustedProjectionRoot())) {
       java.util.Arrays.fill(bytes, (byte) 0);
       throw unavailable();
     }
+    verifyOwnedProjectionPath(trustedDirectory, true);
     verifyOwnedProjectionPath(file, false);
     return bytes;
+  }
+
+  private Path resolveTrustedProjectionRoot() throws IOException {
+    Path realDirectory = jwksDirectory.toRealPath();
+    if (realDirectory.equals(jwksDirectory)) {
+      return jwksDirectory;
+    }
+    if (!allowFixedProductionAlias
+        || !isCanonicalProductionAlias(jwksDirectory, realDirectory)
+        || !hasExactVarRunAlias()) {
+      throw unavailable();
+    }
+    return realDirectory;
+  }
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "The only permitted alias is the fixed production /var/run projection resolving to /run.")
+  static boolean isCanonicalProductionAlias(Path configuredDirectory, Path realDirectory) {
+    return Path.of("/var/run/secrets/firemud/jwks").equals(configuredDirectory)
+        && Path.of("/run/secrets/firemud/jwks").equals(realDirectory);
+  }
+
+  @SuppressFBWarnings(
+      value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+      justification =
+          "The protected JWKS path may use only the fixed production /var/run to /run alias.")
+  private static boolean hasExactVarRunAlias() throws IOException {
+    Path var = Path.of("/var");
+    Path varRun = Path.of("/var/run");
+    Path run = Path.of("/run");
+    if (Files.isSymbolicLink(var)
+        || !Files.isSymbolicLink(varRun)
+        || !run.equals(varRun.toRealPath())
+        || Files.isSymbolicLink(run)) {
+      return false;
+    }
+    Path directory = run;
+    Path varRunDirectory = varRun;
+    for (String child : new String[] {"secrets", "firemud", "jwks"}) {
+      directory = directory.resolve(child);
+      varRunDirectory = varRunDirectory.resolve(child);
+      if (Files.isSymbolicLink(directory) || Files.isSymbolicLink(varRunDirectory)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private void verifyOwnedProjectionPath(Path path, boolean directory) throws IOException {

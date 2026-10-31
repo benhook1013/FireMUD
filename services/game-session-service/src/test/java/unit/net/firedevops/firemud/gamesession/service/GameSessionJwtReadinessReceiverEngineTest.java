@@ -8,6 +8,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -37,7 +38,6 @@ import org.mockito.InOrder;
 
 class GameSessionJwtReadinessReceiverEngineTest {
   private static final String NAMESPACE = "firemud-prod";
-  private static final String METHOD = GameSessionJwtReadinessReceiverEngine.FULL_METHOD_NAME;
   private static final String KID = "pending-key-7";
   private static final Instant NOW = Instant.parse("2030-06-01T00:10:00Z");
   private static final Clock CLOCK = Clock.fixed(NOW, ZoneId.of("UTC"));
@@ -45,6 +45,37 @@ class GameSessionJwtReadinessReceiverEngineTest {
   @AfterEach
   void clearSessionContext() {
     SessionContext.clear();
+  }
+
+  @Test
+  void missingOrWrongAccountPeerDeniesBeforeLocalIdentityOwnerOrCrypto() {
+    Fixture fixture = new Fixture();
+    Context previous = Context.ROOT.attach();
+    try {
+      assertThatThrownBy(() -> fixture.engine.receiveReadinessProbe(fixture.request))
+          .isInstanceOf(
+              GameSessionJwtReadinessProbeOwnerWorkloadGuard.ReceiverCallerDeniedException.class);
+      verifyNoInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
+
+      GrpcPeerIdentity wrongPeer =
+          new GrpcPeerIdentity(
+              "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service",
+              NAMESPACE,
+              "game-design-service");
+      Context wrongPeerContext = Context.ROOT.withValue(GrpcPeerIdentity.CONTEXT_KEY, wrongPeer);
+      Context beforeWrongPeer = wrongPeerContext.attach();
+      try {
+        assertThatThrownBy(() -> fixture.engine.receiveReadinessProbe(fixture.request))
+            .isInstanceOf(
+                GameSessionJwtReadinessProbeOwnerWorkloadGuard.ReceiverCallerDeniedException.class);
+        verifyNoInteractions(fixture.localIdentityProvider, fixture.ownerReadPort, fixture.crypto);
+      } finally {
+        wrongPeerContext.detach(beforeWrongPeer);
+      }
+    } finally {
+      Context.ROOT.detach(previous);
+      SessionContext.clear();
+    }
   }
 
   @Test

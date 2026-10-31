@@ -489,13 +489,9 @@ class AccountJwtSignerMaterializationServiceTest {
   }
 
   @Test
-  void serviceCallsWithoutInterceptorContextAreDeniedEvenWithBearerHeader() {
+  void serviceCallsWithoutInterceptorContextAreDenied() {
     Fixture fixture = fixture();
     RecordingObserver<GetCurrentGenerationRequestResponse> response = new RecordingObserver<>();
-    Metadata headers = new Metadata();
-    headers.put(
-        Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER),
-        "Bearer caller-controlled-header");
 
     fixture.service.getCurrentGenerationRequest(
         GetCurrentGenerationRequestRequest.newBuilder().setSchemaVersion(1).build(), response);

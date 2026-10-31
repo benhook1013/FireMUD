@@ -21,6 +21,8 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtReadiness
  */
 public final class AccountJwtReadinessProbeOwnerGrpcService
     extends AccountJwtReadinessProbeOwnerServiceGrpc.AccountJwtReadinessProbeOwnerServiceImplBase {
+  private static final org.slf4j.Logger LOG =
+      org.slf4j.LoggerFactory.getLogger(AccountJwtReadinessProbeOwnerGrpcService.class);
   private static final String UNAVAILABLE = "Account readiness probe owner is unavailable";
 
   private final AccountJwtReadinessProbeOwnerService owner;
@@ -56,6 +58,7 @@ public final class AccountJwtReadinessProbeOwnerGrpcService
               .withDescription("Current readiness owner evidence is unavailable")
               .asRuntimeException());
     } catch (RuntimeException unavailable) {
+      LOG.warn("Readiness owner lookup failed: {}", unavailable.getClass().getName());
       responseObserver.onError(
           Status.UNAVAILABLE.withDescription(UNAVAILABLE).asRuntimeException());
     }
@@ -84,6 +87,7 @@ public final class AccountJwtReadinessProbeOwnerGrpcService
               .withDescription("Current readiness owner evidence is unavailable")
               .asRuntimeException());
     } catch (RuntimeException unavailable) {
+      LOG.warn("Readiness receiver metadata lookup failed: {}", unavailable.getClass().getName());
       responseObserver.onError(
           Status.UNAVAILABLE.withDescription(UNAVAILABLE).asRuntimeException());
     }
