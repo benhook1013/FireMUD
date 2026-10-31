@@ -6820,6 +6820,10 @@ class AccountServiceImplTest {
     }
 
     assertFalse(current.isEmailVerified());
+    org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(emailVerificationTokenRepository, accountRepository);
+    order.verify(emailVerificationTokenRepository).findByToken("tok");
+    order.verify(accountRepository).findByIdForUpdate(1L);
     org.mockito.Mockito.verify(emailVerificationTokenRepository, org.mockito.Mockito.never())
         .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())

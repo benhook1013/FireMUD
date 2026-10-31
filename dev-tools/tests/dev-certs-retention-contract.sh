@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GENERATOR="$REPO_ROOT/dev-tools/certs/generate-dev-certs.sh"
 ENSURE="$REPO_ROOT/dev-tools/certs/ensure-dev-certs.sh"
 CLEAN="$REPO_ROOT/dev-tools/certs/clean-dev-certs.sh"
-TEST_ROOT="$(mktemp -d)"
+TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "$TEST_ROOT"' EXIT
 
 # Only inspect this test's own fixture; record links without following targets.
@@ -83,8 +83,12 @@ for corruption in malformed key ca ca-key; do
     ca) cp -- "$other/ca.crt" "$fixture/ca.crt"; cp -- "$other/ca.key" "$fixture/ca.key"; cp -- "$other/dev-ca.pem" "$fixture/dev-ca.pem" ;;
     ca-key) cp -- "$other/ca.key" "$fixture/ca.key" ;;
   esac
-  expect_unchanged_failure "$fixture" "Invalid retained development certificate bundle" bash "$GENERATOR" "$fixture"
-  expect_unchanged_failure "$fixture" "Invalid retained development certificate bundle" bash "$ENSURE" "$fixture"
+  for command in "$GENERATOR" "$ENSURE"; do
+    expect_unchanged_failure "$fixture" "Invalid retained development certificate bundle" bash "$command" "$fixture"
+    grep -Fq 'Only for disposable generated local material' "$TEST_ROOT/failure-stderr"
+    grep -Fq 'clean-dev-certs.sh ' "$TEST_ROOT/failure-stderr"
+    grep -Fq 'Preserve externally managed material' "$TEST_ROOT/failure-stderr"
+  done
 done
 
 links="$TEST_ROOT/links"

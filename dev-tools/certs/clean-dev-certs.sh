@@ -46,8 +46,10 @@ generated_files=(
 
 removed_any=false
 for filename in "${generated_files[@]}"; do
-  if [[ -f "$CERT_DIR/$filename" && ! -L "$CERT_DIR/$filename" && "$(stat -c %h -- "$CERT_DIR/$filename")" == 1 ]]; then
-    rm -f -- "$CERT_DIR/$filename"
+  entry="$CERT_DIR/$filename"
+  [[ "$entry" == /* ]] || entry="$PWD/$entry"
+  if [[ -f "$entry" && ! -L "$entry" && -n "$(find "$entry" -prune -type f -links 1 -print)" ]]; then
+    rm -f -- "$entry"
     removed_any=true
   fi
 done
