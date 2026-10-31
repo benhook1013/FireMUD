@@ -20,6 +20,7 @@ PARTITION_COUNT = 2
 TEST_CLASS_SUFFIX = re.compile(r"(?:^Test.*|.*(?:Test|Tests|TestCase))$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 NON_RUNNABLE_TEST_TYPE_FLAGS = 0x0200 | 0x2000
+ABSTRACT_TYPE_FLAG = 0x0400
 ARTIFACT_PATTERN = re.compile(
     r"^slow-service-ci-partition-(?P<run_id>[1-9][0-9]*)-"
     r"(?P<source_revision>[0-9a-f]{40})-attempt-(?P<attempt>[1-9][0-9]*)-"
@@ -110,8 +111,8 @@ def read_class_access_flags(class_file: Path) -> int:
 
 def test_class_access_flags_from_directories(
     directories: list[Path], test_classes: set[str]
-) -> dict[str, int]:
-    access_flags: dict[str, int] = {}
+) -> dict[str, dict[str, int]]:
+    access_flags: dict[str, dict[str, int]] = defaultdict(dict)
     for directory in directories:
         if not directory.exists():
             continue
@@ -119,28 +120,54 @@ def test_class_access_flags_from_directories(
             raise ValueError(f"test class path is not a directory: {directory}")
         for class_file in directory.rglob("*.class"):
             relative = class_file.relative_to(directory).with_suffix("")
-            if relative.name in {"module-info", "package-info"} or "$" in relative.name:
+            if relative.name in {"module-info", "package-info"}:
                 continue
-            class_name = ".".join(relative.parts)
-            if class_name not in test_classes:
+            group_relative = relative.with_name(relative.name.split("$", 1)[0])
+            group_name = ".".join(group_relative.parts)
+            if group_name not in test_classes:
                 continue
             flags = read_class_access_flags(class_file)
-            existing_flags = access_flags.get(class_name)
+            binary_name = ".".join(relative.parts)
+            group_access_flags = access_flags[group_name]
+            existing_flags = group_access_flags.get(binary_name)
             if existing_flags is not None and existing_flags != flags:
-                raise ValueError(f"compiled test class metadata conflicts for {class_name}")
-            access_flags[class_name] = flags
+                raise ValueError(
+                    f"compiled test class metadata conflicts for {binary_name}"
+                )
+            group_access_flags[binary_name] = flags
 
     missing = test_classes - set(access_flags)
     if missing:
         raise ValueError(
             "compiled test class metadata is missing: " + ", ".join(sorted(missing))
         )
-    return access_flags
+    missing_outer = {
+        class_name
+        for class_name, members in access_flags.items()
+        if class_name not in members
+    }
+    if missing_outer:
+        raise ValueError(
+            "compiled test class metadata is missing: "
+            + ", ".join(sorted(missing_outer))
+        )
+    return dict(access_flags)
 
 
-def is_runnable_test_class(class_name: str, access_flags: int) -> bool:
-    return is_test_class(class_name) and not (
-        access_flags & NON_RUNNABLE_TEST_TYPE_FLAGS
+def is_runnable_test_class(
+    class_name: str, group_access_flags: dict[str, int]
+) -> bool:
+    if not is_test_class(class_name):
+        return False
+    outer_flags = group_access_flags.get(class_name)
+    if outer_flags is None or outer_flags & NON_RUNNABLE_TEST_TYPE_FLAGS:
+        return False
+    if not outer_flags & ABSTRACT_TYPE_FLAG:
+        return True
+    return any(
+        binary_name.startswith(f"{class_name}$")
+        and not flags & (NON_RUNNABLE_TEST_TYPE_FLAGS | ABSTRACT_TYPE_FLAG)
+        for binary_name, flags in group_access_flags.items()
     )
 
 
@@ -164,7 +191,7 @@ def build_plan(
     module: str,
     historical_plan: dict[str, Any] | None = None,
     *,
-    class_access_flags_by_task: dict[str, dict[str, int]],
+    class_access_flags_by_task: dict[str, dict[str, dict[str, int]]],
 ) -> dict[str, Any]:
     if module not in SERVICES:
         raise ValueError(f"unsupported slow-service module: {module}")
@@ -186,7 +213,7 @@ def build_plan(
         if set(task_access_flags) != test_candidates:
             raise ValueError(f"compiled test class metadata is incomplete for {task}")
         for class_name in discovered:
-            access_flags = task_access_flags.get(class_name, ())
+            access_flags = task_access_flags.get(class_name, {})
             runnable_test = is_runnable_test_class(class_name, access_flags)
             historic_entry = historic_classes.get(class_name)
             if historic_entry is not None:

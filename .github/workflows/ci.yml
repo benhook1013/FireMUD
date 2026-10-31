@@ -433,8 +433,6 @@ jobs:
           time bash ./dev-tools/tests/publisher-checksum-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/jacoco-combined-report-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/jacoco-combined-report-contract.sh
-          TIMEFORMAT="python3 -m unittest discover -s dev-tools/tests -p 'test_slow_service_ci_partition.py': real=%3R user=%3U sys=%3S"
-          time python3 -m unittest discover -s dev-tools/tests -p 'test_slow_service_ci_partition.py'
           TIMEFORMAT='bash ./dev-tools/tests/gradle-proof-tooling-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/gradle-proof-tooling-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/testcontainers-disabled-contract.sh: real=%3R user=%3U sys=%3S'

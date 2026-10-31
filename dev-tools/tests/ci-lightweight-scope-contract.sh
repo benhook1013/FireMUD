@@ -227,7 +227,6 @@ DEV_TOOL_CONTRACT_COMMANDS = (
     "bash ./dev-tools/tests/hosted-gateway-bridge-contract.sh",
     "bash ./dev-tools/tests/postgres-runtime-upgrade-contract.sh",
     "bash ./dev-tools/tests/minio-pr-smoke-bootstrap-contract.sh",
-    "python3 -m unittest discover -s dev-tools/tests -p 'test_slow_service_ci_partition.py'",
 )
 DISCOVERABLE_ARCHITECTURE_UNIT_TEST_MODULES = (
     "dev-tools/validation/test_design_capability_allocation.py",
@@ -242,6 +241,7 @@ VALIDATION_DISCOVERY_COMMAND = (
     "python3 -m unittest discover -s dev-tools/validation "
     "-p 'test_*.py' --durations 0"
 )
+DEV_TOOLS_TEST_DISCOVERY_COMMAND = "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'"
 
 
 def require_gating_run_step(workflow, job_id, name_suffix, command):
@@ -1223,7 +1223,7 @@ require_contains(
 require_contains(
     complete_contract_step,
     ("run",),
-    "python3 -m unittest discover -s dev-tools/tests -p 'test_*.py'",
+    DEV_TOOLS_TEST_DISCOVERY_COMMAND,
     "ci workflow",
 )
 require_contains(
