@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GENERATOR="$REPO_ROOT/dev-tools/certs/generate-dev-certs.sh"
 ENSURE="$REPO_ROOT/dev-tools/certs/ensure-dev-certs.sh"
 CLEAN="$REPO_ROOT/dev-tools/certs/clean-dev-certs.sh"
-TEST_ROOT="$(mktemp -d)"
+TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "$TEST_ROOT"' EXIT
 
 # Only inspect this test's own fixture; record links without following targets.
