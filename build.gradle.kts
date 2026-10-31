@@ -91,7 +91,7 @@ tasks.register<JavaCompile>("compileBufGeneratedJava") {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
-val checkstyleToolVersion = "14.3.0"
+val checkstyleToolVersion = "14.4.0"
 val spotbugsToolVersion = "4.10.5"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
