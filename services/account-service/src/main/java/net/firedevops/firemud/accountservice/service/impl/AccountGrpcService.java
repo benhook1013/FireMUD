@@ -249,7 +249,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       return;
     }
     requireWorkloadPeer(
-        "Verified Game Session workload identity is required", "entity-management-service");
+        "Verified Game Session or local-fixture Entity Management workload identity is required",
+        "entity-management-service");
     if (!localDemoAuthenticationEnabled) {
       throw new AdminAuthorizationException("Local demo authentication is unavailable");
     }

@@ -152,7 +152,12 @@ class AccountCredentialPeerGrpcMtlsTest {
     try (TransportServer server = startServer(fixtureService(owner, true, "local-fixture"))) {
       for (String alias : List.of("world", "other-game-session", "other-entity")) {
         try (ClientTransport client = newClient(server.port(), alias)) {
-          assertAllDenied(client.stub(), AuthenticateRequest.getDefaultInstance());
+          var response = client.stub().authenticate(AuthenticateRequest.getDefaultInstance());
+          assertAuthenticationDenied(response);
+          assertThat(response.getError().getMessage())
+              .isEqualTo(
+                  "Verified Game Session or local-fixture Entity Management workload identity is required");
+          assertOtpDenied(client.stub());
         }
       }
       verifyNoInteractions(owner);
