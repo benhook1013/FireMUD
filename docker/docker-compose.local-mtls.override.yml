@@ -25,6 +25,9 @@ services:
   gateway:
     environment:
       <<: *local-mtls-environment
+    # Local startup may complete while the separate traffic-admission hold remains.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/liveness >/dev/null"]
     volumes:
       - type: bind
         source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/spring-cloud-gateway
@@ -116,6 +119,8 @@ services:
   tcp-proxy-service:
     environment:
       <<: *local-mtls-environment
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/liveness >/dev/null"]
     volumes:
       - type: bind
         source: ${FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT:?devUp must set the local Compose mTLS certificate root}/workloads/tcp-proxy-service
