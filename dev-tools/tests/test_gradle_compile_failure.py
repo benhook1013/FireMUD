@@ -358,6 +358,45 @@ class CaptureTests(unittest.TestCase):
         self.assertIn(':world-management-service:check', calls[0])
         self.assertNotIn('--refresh-dependencies', calls[0])
 
+    def test_early_capture_exit_drains_output_and_preserves_check_status(self):
+        for check_exit in [0, 1]:
+            with self.subTest(check_exit=check_exit):
+                scenario_root = self.root / f'capture-exit-{check_exit}'
+                scenario_root.mkdir()
+                result = self.fixture_wrapper_with_early_capture_failure(check_exit, scenario_root)
+                self.assertEqual(check_exit, result.returncode)
+                self.assertEqual('producer-end-marker\n', (scenario_root / 'producer-ended').read_text())
+                calls = (scenario_root / 'calls').read_text().splitlines()
+                self.assertEqual(1, len(calls))
+                self.assertIn(':world-management-service:check', calls[0])
+                self.assertNotIn('--refresh-dependencies', calls[0])
+
+    def fixture_wrapper_with_early_capture_failure(self, exit_code, root):
+        for relative in ['.github/scripts/run-gradle-module-checks.sh',
+                         'dev-tools/validation/run-gradle-with-dependency-recovery.sh',
+                         'dev-tools/validation/collect-gradle-compile-failure.py']:
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, destination)
+        collector = root / 'dev-tools/validation/collect-gradle-compile-failure.py'
+        collector.write_text(
+            'import sys\n'
+            "if '--capture-log' in sys.argv:\n"
+            '    sys.stdin.buffer.read(1)\n'
+            '    raise SystemExit(23)\n'
+            'raise SystemExit(24)\n')
+        gradlew = root / 'gradlew'
+        gradlew.write_text(
+            '#!/bin/bash\n'
+            'echo "$*" >> calls\n'
+            'head -c 1048576 /dev/zero | tr "\\0" x\n'
+            "printf 'producer-end-marker\\n' > producer-ended\n"
+            f'exit {exit_code}\n')
+        gradlew.chmod(0o755)
+        return subprocess.run(['bash', '.github/scripts/run-gradle-module-checks.sh',
+                               'world-management-service'], cwd=root,
+                              capture_output=True, text=True, check=False)
+
 
 if __name__ == '__main__':
     unittest.main()
