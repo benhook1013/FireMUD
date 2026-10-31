@@ -51,6 +51,28 @@ fail() {
   exit 1
 }
 
+fail_retained_material() {
+  echo "$1" >&2
+  echo "Keep the retained files; stop the ordinary local Compose stack and retry with a new dedicated FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT. See docker/README.md#local-compose-mtls-certificate-recovery." >&2
+  exit 1
+}
+
+fail_authority_validation() {
+  local directory="$1" message="$2"
+  if [[ "$directory" == "$authority_dir" ]]; then
+    fail_retained_material "$message"
+  fi
+  fail "$message"
+}
+
+fail_workload_validation() {
+  local message="$1"
+  if [[ "$workloads_dir" == "$CERT_ROOT/workloads" ]]; then
+    fail_retained_material "$message"
+  fi
+  fail "$message"
+}
+
 require_directory() {
   local path="$1" mode="$2" description="$3"
   if [[ -L "$path" || ! -d "$path" ]]; then
@@ -85,17 +107,17 @@ validate_authority() {
   local -a entries
   entries=("$directory"/*)
   if [[ "${#entries[@]}" -ne 2 || ! -e "$directory/ca.crt" || ! -e "$directory/ca.key" ]]; then
-    fail "local Compose mTLS authority is incomplete or contains unexpected material; refusing replacement."
+    fail_authority_validation "$directory" "local Compose mTLS authority is incomplete or contains unexpected material; refusing replacement."
   fi
   require_directory "$directory" 700 "local Compose mTLS authority directory"
   require_file "$directory/ca.crt" 644 "local Compose mTLS public CA certificate"
   require_file "$directory/ca.key" 600 "local Compose mTLS CA private key"
   openssl x509 -in "$directory/ca.crt" -noout -checkend 0 >/dev/null \
-    || fail "local Compose mTLS CA certificate is expired or invalid."
+    || fail_authority_validation "$directory" "local Compose mTLS CA certificate is expired or invalid."
   openssl verify -CAfile "$directory/ca.crt" "$directory/ca.crt" >/dev/null \
-    || fail "local Compose mTLS CA certificate is not a valid self-signed trust root."
+    || fail_authority_validation "$directory" "local Compose mTLS CA certificate is not a valid self-signed trust root."
   if ! certificate_matches_private_key "$directory/ca.crt" "$directory/ca.key"; then
-    fail "local Compose mTLS CA certificate and private key do not match."
+    fail_authority_validation "$directory" "local Compose mTLS CA certificate and private key do not match."
   fi
 }
 
@@ -111,7 +133,7 @@ validate_workloads() {
   require_directory "$workloads_dir" 755 "local Compose mTLS workload root"
   entries=("$workloads_dir"/*)
   if [[ "${#entries[@]}" -ne "${#services[@]}" ]]; then
-    fail "local Compose mTLS workload set is incomplete or contains unexpected paths."
+    fail_workload_validation "local Compose mTLS workload set is incomplete or contains unexpected paths."
   fi
   for service in "${services[@]}"; do
     service_dir="$workloads_dir/$service"
@@ -119,28 +141,28 @@ validate_workloads() {
     entries=("$service_dir"/*)
     if [[ "${#entries[@]}" -ne 3 \
       || ! -e "$service_dir/client.crt" || ! -e "$service_dir/client.key" || ! -e "$service_dir/ca.crt" ]]; then
-      fail "local Compose mTLS workload material is incomplete or contains unexpected files: $service"
+      fail_workload_validation "local Compose mTLS workload material is incomplete or contains unexpected files: $service"
     fi
     require_file "$service_dir/client.crt" 444 "local Compose mTLS workload certificate"
     require_file "$service_dir/client.key" 444 "local Compose mTLS workload private key"
     require_file "$service_dir/ca.crt" 444 "local Compose mTLS workload CA certificate"
     if ! cmp -s "$authority_dir/ca.crt" "$service_dir/ca.crt"; then
-      fail "local Compose mTLS workload uses a different CA: $service"
+      fail_workload_validation "local Compose mTLS workload uses a different CA: $service"
     fi
     openssl verify -CAfile "$authority_dir/ca.crt" "$service_dir/client.crt" >/dev/null \
-      || fail "local Compose mTLS workload certificate is not trusted: $service"
+      || fail_workload_validation "local Compose mTLS workload certificate is not trusted: $service"
     openssl x509 -in "$service_dir/client.crt" -noout -checkend 0 >/dev/null \
-      || fail "local Compose mTLS workload certificate is expired or invalid: $service"
+      || fail_workload_validation "local Compose mTLS workload certificate is expired or invalid: $service"
     if ! certificate_matches_private_key "$service_dir/client.crt" "$service_dir/client.key"; then
-      fail "local Compose mTLS workload certificate and private key do not match: $service"
+      fail_workload_validation "local Compose mTLS workload certificate and private key do not match: $service"
     fi
     san_output="$(openssl x509 -in "$service_dir/client.crt" -noout -ext subjectAltName)" \
-      || fail "could not inspect local Compose mTLS workload identity: $service"
+      || fail_workload_validation "could not inspect local Compose mTLS workload identity: $service"
     mapfile -t uri_sans < <(printf '%s\n' "$san_output" \
       | tr ',' '\n' | sed -n 's/^[[:space:]]*\(URI:.*\)$/\1/p')
     expected_uri="URI:spiffe://firemud/ns/dev/sa/$service"
     if [[ "${#uri_sans[@]}" -ne 1 || "${uri_sans[0]:-}" != "$expected_uri" ]]; then
-      fail "local Compose mTLS workload has the wrong SPIFFE identity: $service"
+      fail_workload_validation "local Compose mTLS workload has the wrong SPIFFE identity: $service"
     fi
   done
 }
@@ -163,14 +185,14 @@ if [[ -e "$authority_dir" ]]; then
   authority_entries=("$authority_dir"/*)
   if [[ "${#authority_entries[@]}" -eq 0 ]]; then
     if [[ -e "$workloads_dir" || -L "$workloads_dir" ]]; then
-      fail "local Compose mTLS workloads exist without their retained authority; refusing regeneration."
+      fail_retained_material "local Compose mTLS workloads exist without their retained authority; refusing regeneration."
     fi
     rmdir -- "$authority_dir"
   else
     validate_authority
   fi
 elif [[ -e "$workloads_dir" || -L "$workloads_dir" ]]; then
-  fail "local Compose mTLS workloads exist without their retained authority; refusing regeneration."
+  fail_retained_material "local Compose mTLS workloads exist without their retained authority; refusing regeneration."
 fi
 
 if [[ ! -e "$authority_dir" && ! -L "$authority_dir" ]]; then

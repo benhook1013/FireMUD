@@ -1452,8 +1452,9 @@ class AccountGrpcServiceTest {
     Mockito.verifyNoInteractions(accountService);
   }
 
-  @Test
-  void updateProfileResolvesUuidOwnerAfterCallerCheck() {
+  @ParameterizedTest
+  @ValueSource(strings = {"PRIVATE", "FRIENDS_ONLY"})
+  void updateProfileResolvesUuidOwnerAfterCallerCheck(String policyName) {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     UUID accountUuid = UUID.fromString(PROFILE_ACCOUNT_UUID);
@@ -1466,7 +1467,7 @@ class AccountGrpcServiceTest {
                 PROFILE_ACCOUNT_UUID,
                 "demo",
                 "bio",
-                ProfilePresenceVisibilityPolicy.PRIVATE));
+                ProfilePresenceVisibilityPolicy.valueOf(policyName)));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     SessionContext.setContext(PROFILE_ACCOUNT_UUID, List.of("player"), Map.of());
@@ -1480,7 +1481,9 @@ class AccountGrpcServiceTest {
                     .setTenantId("1")
                     .setAccountId(PROFILE_ACCOUNT_UUID)
                     .setProfileJson(
-                        "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                        "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\""
+                            + policyName
+                            + "\"}")
                     .build(),
                 observer));
 
@@ -1493,6 +1496,42 @@ class AccountGrpcServiceTest {
     Mockito.verify(accountService).updateProfile(requestCaptor.capture());
     assertEquals(PROFILE_ACCOUNT_UUID, requestCaptor.getValue().accountId());
     assertEquals(1L, requestCaptor.getValue().tenantId());
+    assertEquals(
+        ProfilePresenceVisibilityPolicy.valueOf(policyName),
+        requestCaptor.getValue().presenceVisibilityPolicy());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "{\"displayName\":\"demo\"}",
+        "{\"displayName\":\"demo\",\"presenceVisibilityPolicy\":null}",
+        "{\"displayName\":\"demo\",\"presenceVisibilityPolicy\":\"UNKNOWN\"}"
+      })
+  void updateProfileRejectsMissingNullOrInvalidVisibilityPolicy(String profileJson) {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    UUID accountUuid = UUID.fromString(PROFILE_ACCOUNT_UUID);
+    Mockito.when(accountService.resolveAccountStorageId(accountUuid)).thenReturn(2L);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    SessionContext.setContext(PROFILE_ACCOUNT_UUID, List.of("player"), Map.of());
+    RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("1")
+                    .setAccountId(PROFILE_ACCOUNT_UUID)
+                    .setProfileJson(profileJson)
+                    .build(),
+                observer));
+
+    assertFalse(observer.response().getSuccess());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    Mockito.verify(accountService, Mockito.never()).updateProfile(Mockito.any());
   }
 
   @Test
@@ -1511,7 +1550,8 @@ class AccountGrpcServiceTest {
                 UpdateProfileRequest.newBuilder()
                     .setTenantId("1")
                     .setAccountId(PROFILE_ACCOUNT_UUID)
-                    .setProfileJson("{\"displayName\":\"demo\"}")
+                    .setProfileJson(
+                        "{\"displayName\":\"demo\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                     .build(),
                 observer));
 
@@ -1581,7 +1621,8 @@ class AccountGrpcServiceTest {
                 UpdateProfileRequest.newBuilder()
                     .setTenantId("1")
                     .setAccountId(PROFILE_ACCOUNT_UUID)
-                    .setProfileJson("{\"displayName\":\"demo\"}")
+                    .setProfileJson(
+                        "{\"displayName\":\"demo\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                     .build(),
                 observer));
 
