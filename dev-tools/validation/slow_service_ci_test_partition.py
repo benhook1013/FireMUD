@@ -869,11 +869,16 @@ def class_file_inventory(classes_dir: Path) -> dict[str, Path]:
     for path in classes_dir.rglob("*"):
         if path.is_symlink():
             raise ValueError(f"measured production classes contain a symlink: {path}")
+        relative_path = path.relative_to(classes_dir).as_posix()
+        if relative_path == "META-INF/spring-configuration-metadata.json":
+            if not path.is_file():
+                raise ValueError("Spring configuration metadata must be a regular file")
+            continue
         if path.is_dir():
             continue
         if not path.is_file() or path.suffix != ".class":
             raise ValueError(f"measured production output is not a class file: {path}")
-        inventory[path.relative_to(classes_dir).as_posix()] = path
+        inventory[relative_path] = path
     if not inventory:
         raise ValueError(f"measured production classes are empty: {classes_dir}")
     return inventory
@@ -913,7 +918,11 @@ def copy_verified_main_classes(
     if not verified_classes_dir.parent.is_dir():
         raise ValueError("verified production class output parent is missing")
 
-    shutil.copytree(source_directory, verified_classes_dir)
+    verified_classes_dir.mkdir()
+    for relative_path, source_file in sorted(source_inventory.items()):
+        copied_file = verified_classes_dir / relative_path
+        copied_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_file, copied_file)
     copied_inventory = class_file_inventory(verified_classes_dir)
     if set(copied_inventory) != set(source_inventory):
         raise ValueError("verified production class copy changed the class inventory")
