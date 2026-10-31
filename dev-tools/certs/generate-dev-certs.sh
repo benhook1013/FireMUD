@@ -171,6 +171,9 @@ if ((retained)); then
   done
   if (( ! valid )); then
     echo "Invalid retained development certificate bundle; refusing to replace material: $CERT_DIR" >&2
+    echo "Only for disposable generated local material (for example expired), explicitly clean and retry:" >&2
+    printf '  bash %q %q\n' "$SCRIPT_DIR/clean-dev-certs.sh" "$CERT_DIR" >&2
+    echo "Preserve externally managed material; select a fresh dedicated directory instead." >&2
     exit 1
   fi
   echo "Dev certificates already exist in $CERT_DIR"
