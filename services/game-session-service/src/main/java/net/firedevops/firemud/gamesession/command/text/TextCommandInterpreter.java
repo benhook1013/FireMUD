@@ -243,11 +243,34 @@ public class TextCommandInterpreter {
         parser.parse(rawLine, activeRegistry),
         requiresSoloTick,
         context,
-        activeRegistry);
+        activeRegistry,
+        Optional.empty());
   }
 
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
+    return interpret(sessionId, command, requiresSoloTick, Optional.empty());
+  }
+
+  public TextCommandInterpretationResult interpret(
+      String sessionId,
+      TextCommand command,
+      boolean requiresSoloTick,
+      ObservedDirectTextTransport observedDirectTextTransport) {
+    Objects.requireNonNull(observedDirectTextTransport, "transport observation must not be null");
+    if (!Objects.equals(sessionId, observedDirectTextTransport.transportSessionId())) {
+      throw new IllegalArgumentException(
+          "Observed transport session ID must match interpreter session ID");
+    }
+    return interpret(
+        sessionId, command, requiresSoloTick, Optional.of(observedDirectTextTransport));
+  }
+
+  private TextCommandInterpretationResult interpret(
+      String sessionId,
+      TextCommand command,
+      boolean requiresSoloTick,
+      Optional<ObservedDirectTextTransport> observedDirectTextTransport) {
     Optional<SessionContext> context =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     TextCommandRegistry activeRegistry = registryFor(context);
@@ -255,7 +278,13 @@ public class TextCommandInterpreter {
         admittedRegistryResolver == null
             ? command
             : parser.parse(command.rawLine(), activeRegistry);
-    return interpret(sessionId, activeCommand, requiresSoloTick, context, activeRegistry);
+    return interpret(
+        sessionId,
+        activeCommand,
+        requiresSoloTick,
+        context,
+        activeRegistry,
+        observedDirectTextTransport);
   }
 
   private TextCommandInterpretationResult interpret(
@@ -263,7 +292,8 @@ public class TextCommandInterpreter {
       TextCommand command,
       boolean requiresSoloTick,
       Optional<SessionContext> maybeContext,
-      TextCommandRegistry activeRegistry) {
+      TextCommandRegistry activeRegistry,
+      Optional<ObservedDirectTextTransport> observedDirectTextTransport) {
     TextCommandDefinition definition =
         activeRegistry
             .findDefinition(command.commandId())
@@ -311,7 +341,8 @@ public class TextCommandInterpreter {
     TextCommandInterpretationResult dispatchResult =
         dispatcher.dispatch(
             definition.dispatchGroup(),
-            new TextCommandDispatchRequest(sessionId, command, requiresSoloTick, maybeContext));
+            new TextCommandDispatchRequest(
+                sessionId, command, requiresSoloTick, maybeContext, observedDirectTextTransport));
     Optional<net.firedevops.firemud.gamesession.service.SessionContext> promptContext =
         promptContextAfterDispatch(sessionId, definition, dispatchResult, maybeContext);
     commandHistoryRecorder.record(

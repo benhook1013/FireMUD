@@ -1,0 +1,76 @@
+{
+  "scriptId": "game-session.direct-text-world-menu-cas.v1",
+  "resourcePath": "redis/lua/game-session-direct-text-world-menu-cas.lua",
+  "sha256": "0f5d0396608ba26475820643e2a5f059564e48ce5f1a36d02b6d89c78d3ea2b9",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "originalPublicWorldMenu",
+      "ownedPrefix": "session:game:direct-text-worlds:v1:",
+      "hashTagDeclaration": "NOT_REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "operation"
+    },
+    {
+      "name": "exactExpectedOuterBytesOrEmptyForAbsent"
+    },
+    {
+      "name": "desiredOuterBytesOrEmptyForClear"
+    },
+    {
+      "name": "originalMenuExpiryEpochMillisOrZeroForClear"
+    },
+    {
+      "name": "nowEpochMillis"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "MENU_WRITTEN",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "MENU_CLEARED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "MENU_UNCHANGED",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "PREIMAGE_MISMATCH",
+      "category": "CONTENTION",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "EXPIRED_MENU",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "SESSION",
+  "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
+  "tailLossBehavior": "Reset-sensitive non-authoritative PUBLIC WORLDS UI only. One tenantless original proxy UUID key uses full-key hashing, no fixed slot or multikey claim. REPLACE and CLEAR use one exact expected byte preimage CAS; empty means absent only. Outer bytes are bounded to 2 MiB and inner original menu to 1 MiB. The owner observes nowEpochMillis once from its injected Clock per mutation. Java and Lua require canonical positive safe-integer epoch milliseconds; REPLACE requires original expiry greater than observed now and at most 300000 milliseconds later, and CLEAR requires zero expiry with the same bounded now input. REPLACE uses PXAT at the ORIGINAL menu expiry. Lua uses only KEYS, ARGV and current owned-key state, never server TIME. Exact retries never refresh expiry. The observed clock is UI-expiry bookkeeping only, never authentication, reset, restore or initial-LOGIN proof. Missing, reset, expired or source-stale state requires fresh WORLDS discovery, never old-menu reconstruction. A present malformed or undecodable envelope is refused by discovery, reassertion and clear until actual key expiry or existing owner-authorized administrative repair; it establishes no trustworthy original expiry. Tail loss invalidates UI only; no AOF acknowledgement or external recovery qualifier applies. Correlation metadata and restored menus prove neither authenticated ingress, genuine resume nor admission. This family contains no Account identity, credentials, REALMS scope, JOIN intent or initial-LOGIN closure authority.",
+  "compatibilityLevel": "COMPATIBLE",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "v1"
+    }
+  ],
+  "legacyPayloadShape": null
+}

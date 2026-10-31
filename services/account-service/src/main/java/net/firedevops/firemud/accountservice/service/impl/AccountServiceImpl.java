@@ -606,7 +606,7 @@ public class AccountServiceImpl implements AccountService {
             current,
             evaluatedAt,
             expiresAt);
-    return new DirectTextJoinScope(scopeId, expiresAt.toString());
+    return new DirectTextJoinScope(scopeId, expiresAt.toString(), evaluatedAt.toString());
   }
 
   @Override

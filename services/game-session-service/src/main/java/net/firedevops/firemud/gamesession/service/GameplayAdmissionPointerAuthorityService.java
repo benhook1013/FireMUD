@@ -7,8 +7,10 @@ import java.util.Optional;
 public interface GameplayAdmissionPointerAuthorityService {
   record PointerAuditKey(long tenantId, String worldSlug, String realmSlug) {}
 
+  /** Returns pointers ordered by world slug, realm slug, then tenant ID, all ascending. */
   List<GameplayAdmissionPointerSnapshot> listPointers();
 
+  /** Returns selected tenants' pointers in the same order as {@link #listPointers()}. */
   List<GameplayAdmissionPointerSnapshot> listPointersForTenants(List<Long> tenantIds);
 
   List<GameplayAdmissionPointerSnapshot> listPointersByTenant(long tenantId);

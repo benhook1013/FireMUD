@@ -3724,8 +3724,11 @@ class AccountServiceImplTest {
     assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
     assertNotNull(result.connectScopeId());
     assertNotNull(result.connectScopeExpiresAt());
-    org.mockito.Mockito.verify(accountConnectScopeRepository)
-        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+    assertEquals(result.evaluatedAt(), claims.get("evaluatedAt", String.class));
+    var retained = org.mockito.ArgumentCaptor.forClass(VerifiedJoinScope.class);
+    org.mockito.Mockito.verify(accountConnectScopeRepository).insert(retained.capture());
+    assertEquals(result.evaluatedAt(), retained.getValue().evaluatedAt());
+    assertEquals(result.connectScopeExpiresAt(), retained.getValue().connectScopeExpiresAt());
   }
 
   @Test

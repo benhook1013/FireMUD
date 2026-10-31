@@ -46,7 +46,8 @@ class HistoryTextCommandDispatchHandlerTest {
                     "HISTORY",
                     new TextCommandPayload.HistoryRequest(2)),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(handler.group()).isEqualTo(TextCommandDispatchGroup.HISTORY);
     assertThat(result.commandResult().accepted()).isTrue();

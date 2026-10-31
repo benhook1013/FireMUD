@@ -141,7 +141,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                   request.getPointerVersion()));
       response
           .setConnectScopeId(scope.connectScopeId())
-          .setConnectScopeExpiresAt(scope.connectScopeExpiresAt());
+          .setConnectScopeExpiresAt(scope.connectScopeExpiresAt())
+          .setEvaluatedAt(scope.evaluatedAt());
     } catch (AdminAuthorizationException ex) {
       response.setError(
           appError("IssueDirectTextConnectScope", "PERMISSION_DENIED", ex.getMessage()));

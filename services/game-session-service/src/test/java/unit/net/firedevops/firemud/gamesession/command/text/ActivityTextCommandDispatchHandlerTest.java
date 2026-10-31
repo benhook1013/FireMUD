@@ -27,6 +27,7 @@ class ActivityTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.AFK, List.of("ON"), "AFK ON"),
                 false,
+                Optional.empty(),
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
@@ -50,6 +51,7 @@ class ActivityTextCommandDispatchHandlerTest {
                     "MEDITATE",
                     new TextCommandPayload.AuthoredActionInvocation("meditate", List.of())),
                 true,
+                Optional.empty(),
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();

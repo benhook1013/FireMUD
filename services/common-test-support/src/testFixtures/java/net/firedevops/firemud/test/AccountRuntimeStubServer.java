@@ -246,6 +246,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
     if (caller.getAccountId().isBlank()
+        || resolveRegisteredAccountId(caller.getAccountId()) == null
         || caller.getTenantId().isBlank()
         || caller.getRealmId().isBlank()
         || caller.getRequestId().isBlank()
@@ -279,7 +280,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .build());
     } else {
       String scopeId = "stub-connect-scope-" + nextConnectScopeId.getAndIncrement();
-      Instant expiresAt = clock.instant().plusSeconds(300);
+      Instant evaluatedAt = clock.instant();
+      Instant expiresAt = evaluatedAt.plusSeconds(300);
       connectScopesById.put(
           scopeId,
           new StubConnectScope(
@@ -294,6 +296,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           IssueDirectTextConnectScopeResponse.newBuilder()
               .setConnectScopeId(scopeId)
               .setConnectScopeExpiresAt(expiresAt.toString())
+              .setEvaluatedAt(evaluatedAt.toString())
               .build());
     }
     responseObserver.onCompleted();
@@ -320,6 +323,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || request.getRequestId().isBlank()
         || !request.getRequestId().equals(caller.getRequestId())
         || caller.getAccountId().isBlank()
+        || resolveRegisteredAccountId(caller.getAccountId()) == null
         || caller.getTenantId().isBlank()
         || caller.getSessionId().isBlank()
         || scope == null
