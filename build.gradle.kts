@@ -589,12 +589,29 @@ tasks.register<Exec>("generateDevCerts") {
     commandLine("bash", "dev-tools/certs/generate-dev-certs.sh")
 }
 
+val localComposeMtlsCertRoot = providers.provider {
+    System.getenv("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT")?.takeIf { it.isNotBlank() }
+        ?: run {
+            val dataHome = System.getenv("XDG_DATA_HOME")?.takeIf { it.isNotBlank() }
+                ?: "${System.getProperty("user.home")}/.local/share"
+            "$dataHome/firemud/local-compose-mtls"
+        }
+}
+
+tasks.register<Exec>("ensureLocalComposeMtlsCerts") {
+    val certificateRoot = localComposeMtlsCertRoot.get()
+    environment("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT", certificateRoot)
+    commandLine("bash", "dev-tools/certs/ensure-local-compose-mtls.sh", certificateRoot)
+}
+
 tasks.register<Exec>("ensureLocalComposeEnv") {
     commandLine("bash", "dev-tools/ensure-local-compose-env.sh")
 }
 
 tasks.register<Exec>("devUp") {
-    dependsOn("generateDevCerts", "buildDockerImages", "ensureLocalComposeEnv")
+    val certificateRoot = localComposeMtlsCertRoot.get()
+    dependsOn("ensureLocalComposeMtlsCerts", "buildDockerImages", "ensureLocalComposeEnv")
+    environment("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT", certificateRoot)
     commandLine(
         "docker",
         "compose",
@@ -604,6 +621,8 @@ tasks.register<Exec>("devUp") {
         "docker/docker-compose.override.yml",
         "-f",
         "docker/docker-compose.local-images.override.yml",
+        "-f",
+        "docker/docker-compose.local-mtls.override.yml",
         "up",
         "-d",
         "--wait",
@@ -631,6 +650,8 @@ tasks.register<Exec>("devUp") {
 }
 
 tasks.register<Exec>("devDown") {
+    val certificateRoot = localComposeMtlsCertRoot.get()
+    environment("FIREMUD_LOCAL_COMPOSE_MTLS_CERT_ROOT", certificateRoot)
     commandLine(
         "docker",
         "compose",
@@ -640,6 +661,8 @@ tasks.register<Exec>("devDown") {
         "docker/docker-compose.override.yml",
         "-f",
         "docker/docker-compose.local-images.override.yml",
+        "-f",
+        "docker/docker-compose.local-mtls.override.yml",
         "down"
     )
 }
