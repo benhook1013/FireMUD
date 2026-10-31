@@ -242,6 +242,40 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
+  void accountAuditDeniesBothMethodsWhenWorkloadNamespaceIsNullOrBlank() {
+    for (String namespace : new String[] {null, "", "  "}) {
+      LogEventService logEventService = Mockito.mock(LogEventService.class);
+      LoggingAdminGrpcService service =
+          new LoggingAdminGrpcService(
+              Mockito.mock(LogQueryService.class),
+              logEventService,
+              Mockito.mock(ModerationService.class),
+              new SimpleMeterRegistry(),
+              namespace);
+      AtomicReference<CreateLogEventResponse> createResponse = new AtomicReference<>();
+      AtomicReference<Throwable> createError = new AtomicReference<>();
+      AtomicReference<ReadLogEventReceiptResponse> readResponse = new AtomicReference<>();
+      AtomicReference<Throwable> readError = new AtomicReference<>();
+
+      invokeWithPeer(
+          "account-service",
+          () -> {
+            service.createLogEvent(
+                validCreateRequest(), responseObserver(createResponse, createError));
+            service.readLogEventReceipt(
+                validReadRequest(), responseObserver(readResponse, readError));
+          });
+
+      assertEquals(
+          Status.Code.PERMISSION_DENIED, Status.fromThrowable(createError.get()).getCode());
+      assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(readError.get()).getCode());
+      assertNull(createResponse.get());
+      assertNull(readResponse.get());
+      verifyNoInteractions(logEventService);
+    }
+  }
+
+  @Test
   void receiptReadReturnsCanonicalNotFoundStatus() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     when(logEventService.readLogEventReceipt(any())).thenThrow(new AuditReceiptNotFoundException());
