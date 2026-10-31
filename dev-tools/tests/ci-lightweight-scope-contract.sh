@@ -529,16 +529,13 @@ for module, job_id, display, prefix in (
     )
     require_equal(aggregate_job, ("permissions",), {"actions": "read", "contents": "read"}, "ci workflow")
     capture = find_step(ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
-    for api_owner in (
-        "github.rest.actions.getWorkflowRun",
-        "listJobsForWorkflowRunAttempt",
-        "listWorkflowRunArtifacts",
-        "listCompletePages",
-        "...context.repo",
-        "data?.total_count",
-        "rows.length !== expected",
-    ):
-        require_contains(capture, ("with", "script"), api_owner, "ci workflow")
+    require_equal(capture, ("env", "CI_MODULE"), module, "ci workflow")
+    require_equal(
+        capture,
+        ("env", "CI_PROVENANCE_PATH"),
+        f"services/{module}/build/slow-service-ci-partition-provenance.json",
+        "ci workflow",
+    )
     for env_name, expected in (
         ("CI_EVENT_NAME", "${{ github.event_name }}"),
         ("CI_REF_NAME", "${{ github.ref_name }}"),
@@ -546,17 +543,18 @@ for module, job_id, display, prefix in (
         ("CI_NATIVE_HEAD_SHA", "${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"),
     ):
         require_equal(capture, ("env", env_name), expected, "ci workflow")
-    for identity_field in (
-        "tested_source_sha: testedSourceSha",
-        "context.sha !== testedSourceSha",
-        "run.name !== expectedRunTitle",
-        "head_sha: run.head_sha",
-        "run.event !== eventName",
-        "run.display_title !== expectedRunTitle",
-        "api_name: run.name",
-        'name: "CI — Validation"',
-    ):
-        require_contains(capture, ("with", "script"), identity_field, "ci workflow")
+    require_contains(
+        capture,
+        ("with", "script"),
+        ".github/scripts/capture-slow-service-provenance.cjs",
+        "ci workflow",
+    )
+    require_contains(
+        capture,
+        ("with", "script"),
+        "module: process.env.CI_MODULE",
+        "ci workflow",
+    )
     select = find_step(ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
     require_contains(select, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts", "ci workflow")
     require_contains(select, ("run",), f"--module {module}", "ci workflow")
@@ -590,27 +588,30 @@ for module, job_id, display, prefix in (
         "ci workflow",
     )
 
-# Execute the actual embedded provenance programs with strict, offline GitHub
-# API mocks. This checks request repository binding and the PR merge/head split.
+# Execute the shared provenance helper with strict, offline GitHub API mocks.
+# This covers both service callers, identity aliases, pagination, and refusal paths.
+helper_path = Path(sys.argv[1]).resolve().parents[2] / ".github/scripts/capture-slow-service-provenance.cjs"
+if not helper_path.is_file():
+    raise SystemExit(f"ci workflow: missing shared provenance helper: {helper_path}")
 capture_scripts = []
-for job_id, display in (
-    ("account-coverage-aggregate", "Account"),
-    ("game-session-coverage-aggregate", "Game Session"),
+for module, job_id, display in (
+    ("account-service", "account-coverage-aggregate", "Account"),
+    ("game-session-service", "game-session-coverage-aggregate", "Game Session"),
 ):
     capture = find_step(
         ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow"
     )
-    capture_scripts.append({"module": job_id, "script": capture["with"]["script"]})
+    capture_scripts.append({"module": module, "script": capture["with"]["script"]})
 capture_node = r"""
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
+const captureSlowServiceProvenance = require(input.helper);
 const owner = "example", repository = "firemud", runId = 70;
 const testedMerge = "a".repeat(40), nativeHead = "b".repeat(40), baseSha = "c".repeat(40);
 const wrongSha = "d".repeat(40);
 const repositoryFullName = `${owner}/${repository}`;
-const scripts = input.scripts;
-const jobRows = ["account-service", "game-session-service"].flatMap((module, index) =>
+const coreJobRows = ["account-service", "game-session-service"].flatMap((module, index) =>
   [1, 2].map(partition => ({
     id: 100 + index * 10 + partition, run_id: runId, head_sha: nativeHead,
     name: `Build and Test (${module} / ${partition})`, status: "completed",
@@ -618,7 +619,12 @@ const jobRows = ["account-service", "game-session-service"].flatMap((module, ind
     completed_at: "2026-10-30T02:00:00Z",
   }))
 );
-const artifactRows = ["account-service", "game-session-service"].flatMap((module, index) =>
+const jobRows = coreJobRows.concat(Array.from({ length: 97 }, (_, index) => ({
+  id: 1000 + index, run_id: runId, head_sha: nativeHead,
+  name: `Unrelated completed job ${index}`, status: "completed", conclusion: "success",
+  started_at: "2026-10-30T01:00:00Z", completed_at: "2026-10-30T02:00:00Z",
+})));
+const coreArtifactRows = ["account-service", "game-session-service"].flatMap((module, index) =>
   [1, 2].map(partition => ({
     id: 700 + index * 10 + partition,
     name: `slow-service-ci-partition-${runId}-${testedMerge}-attempt-1-${module}-partition-${partition}`,
@@ -626,33 +632,51 @@ const artifactRows = ["account-service", "game-session-service"].flatMap((module
     workflow_run: { id: runId, head_sha: nativeHead },
   }))
 );
-function runFor(options) {
-  const eventName = options.eventName;
+const artifactRows = coreArtifactRows.concat(Array.from({ length: 97 }, (_, index) => ({
+  id: 2000 + index, name: `unrelated-artifact-${index}`, expired: false,
+  size_in_bytes: 512, created_at: "2026-10-30T02:00:00Z",
+  workflow_run: { id: runId, head_sha: nativeHead },
+})));
+
+function rowsForPage(rows, request, incompletePage) {
+  const start = (request.page - 1) * request.per_page;
+  let pageRows = rows.slice(start, start + request.per_page);
+  if (request.page === incompletePage && pageRows.length > 0) pageRows = pageRows.slice(0, -1);
+  return pageRows;
+}
+
+async function runFor(embedded, options = {}) {
+  const eventName = options.eventName || "pull_request";
+  const runAttempt = options.runAttempt ?? 1;
   const sourceSha = options.sourceSha || (eventName === "pull_request" ? testedMerge : nativeHead);
   const refName = options.refName || "develop";
   const eventHead = options.eventHead || nativeHead;
   const eventBase = options.eventBase || baseSha;
-  const number = 42;
   const expectedRunTitle = eventName === "pull_request"
-    ? `CI — Validation pr-${number} base-${eventBase} head-${eventHead}`
+    ? `CI — Validation pr-42 base-${eventBase} head-${eventHead}`
     : `CI — Validation ${refName}`;
   const eventPullRequest = {
-    number,
+    number: 42,
     base: { sha: eventBase, ref: "develop" },
     head: { sha: eventHead, repo: { full_name: "contributor/firemud" } },
   };
   const context = {
-    repo: { owner, repo: repository }, eventName,
+    repo: { owner, repo: repository },
+    eventName,
     sha: options.contextSha || sourceSha,
     payload: eventName === "pull_request" ? { pull_request: eventPullRequest } : {},
   };
   const apiAssociations = options.apiPullRequests === undefined ? [] : options.apiPullRequests;
   const run = {
-    id: runId, head_sha: options.runHead || (eventName === "pull_request" ? nativeHead : sourceSha),
-    run_attempt: 1, path: options.runPath || ".github/workflows/ci.yml",
-    name: options.runName || expectedRunTitle,
-    event: options.runEvent || eventName, repository: { full_name: repositoryFullName },
-    display_title: options.displayTitle || expectedRunTitle, pull_requests: apiAssociations,
+    id: runId,
+    head_sha: options.runHead || (eventName === "pull_request" ? nativeHead : sourceSha),
+    run_attempt: options.apiRunAttempt ?? runAttempt,
+    path: options.runPath || ".github/workflows/ci.yml",
+    name: options.runName ?? expectedRunTitle,
+    event: options.runEvent || eventName,
+    repository: { full_name: options.runRepository || repositoryFullName },
+    display_title: options.displayTitle ?? expectedRunTitle,
+    pull_requests: apiAssociations,
   };
   const calls = [];
   const assertRepo = request => {
@@ -672,9 +696,14 @@ function runFor(options) {
       assert.deepEqual(Object.keys(request).sort(), ["attempt_number", "owner", "page", "per_page", "repo", "run_id"]);
       assert.equal(request.run_id, runId);
       assert.equal(request.per_page, 100);
-      assert.equal(request.attempt_number, 1);
+      assert.ok(request.attempt_number >= 1 && request.attempt_number <= runAttempt);
       calls.push(["jobs", request]);
-      return { data: { total_count: jobRows.length, jobs: jobRows } };
+      return {
+        data: {
+          total_count: jobRows.length,
+          jobs: rowsForPage(jobRows, request, options.incompleteJobsPage),
+        },
+      };
     },
     listWorkflowRunArtifacts: async request => {
       assertRepo(request);
@@ -682,49 +711,93 @@ function runFor(options) {
       assert.equal(request.run_id, runId);
       assert.equal(request.per_page, 100);
       calls.push(["artifacts", request]);
-      return { data: { total_count: artifactRows.length, artifacts: artifactRows } };
+      return {
+        data: {
+          total_count: artifactRows.length,
+          artifacts: rowsForPage(artifactRows, request, options.incompleteArtifactsPage),
+        },
+      };
     },
   };
   const writes = [];
-  const fakeFs = { mkdirSync() {}, writeFileSync(path, contents) { writes.push([path, String(contents)]); } };
-  const fakePath = { dirname: value => value.slice(0, value.lastIndexOf("/")) };
-  const requireMock = name => name === "node:fs" ? fakeFs : name === "node:path" ? fakePath : assert.fail(`unexpected require ${name}`);
   const env = {
-    CI_RUN_ID: String(runId), CI_RUN_ATTEMPT: "1", CI_EVENT_NAME: eventName,
+    CI_RUN_ID: String(runId),
+    CI_RUN_ATTEMPT: String(runAttempt),
+    CI_EVENT_NAME: eventName,
     CI_REF_NAME: refName,
     CI_SOURCE_SHA: sourceSha,
     CI_NATIVE_HEAD_SHA: options.nativeHead || (eventName === "pull_request" ? nativeHead : sourceSha),
-    CI_PROVENANCE_PATH: "services/test/build/provenance.json",
+    CI_PROVENANCE_PATH: `services/${embedded.module}/build/slow-service-ci-partition-provenance.json`,
+  };
+  const fileSystem = {
+    mkdirSync(directory, options) { assert.ok(directory.startsWith("services/")); assert.equal(options.recursive, true); },
+    writeFileSync(path, contents) { writes.push([path, String(contents)]); },
   };
   const github = { rest: { actions } };
-  return new Function("github", "context", "core", "process", "require", `return (async () => {\n${options.script}\n})()`)(
-    github, context, {}, { env }, requireMock,
-  ).then(() => ({ ok: true, calls, provenance: JSON.parse(writes[0][1]) }))
-   .catch(error => ({ ok: false, calls, error: error.message }));
+  try {
+    await captureSlowServiceProvenance({
+      github,
+      context,
+      env,
+      module: options.module || embedded.module,
+      fileSystem,
+    });
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0][0], env.CI_PROVENANCE_PATH);
+    return { ok: true, calls, provenance: JSON.parse(writes[0][1]) };
+  } catch (error) {
+    return { ok: false, calls, error: error.message };
+  }
 }
+
 (async () => {
-  for (const embedded of scripts) {
-    for (const options of [
-      { eventName: "pull_request", script: embedded.script },
-      { eventName: "pull_request", script: embedded.script,
+  assert.equal(jobRows.length, 101);
+  assert.equal(artifactRows.length, 101);
+  for (const embedded of input.scripts) {
+    assert.ok(embedded.script.includes("capture-slow-service-provenance.cjs"));
+    assert.ok(embedded.script.includes("module: process.env.CI_MODULE"));
+    const validCases = [
+      { eventName: "pull_request" },
+      { eventName: "pull_request", runName: "CI — Validation",
         apiPullRequests: [{ number: 42, base: { sha: baseSha }, head: { sha: nativeHead } }] },
-      { eventName: "push", script: embedded.script, refName: "develop" },
-      { eventName: "workflow_dispatch", script: embedded.script, refName: "release/2026" },
-    ]) {
-      const result = await runFor(options);
+      { eventName: "push", refName: "develop" },
+      { eventName: "workflow_dispatch", refName: "release/2026", runName: "CI — Validation" },
+      { eventName: "pull_request", runAttempt: 2 },
+    ];
+    for (const options of validCases) {
+      const result = await runFor(embedded, options);
       assert.equal(result.ok, true, `${embedded.module}/${options.eventName}: ${result.error}`);
-      assert.deepEqual(result.calls.map(([kind]) => kind), ["run", "jobs", "artifacts"]);
+      const attempts = options.runAttempt || 1;
+      const expectedKinds = ["run", ...Array(attempts * 2).fill("jobs"), "artifacts", "artifacts"];
+      assert.deepEqual(result.calls.map(([kind]) => kind), expectedKinds);
+      assert.deepEqual(
+        result.calls.filter(([kind]) => kind === "jobs").map(([, request]) => request.page),
+        Array.from({ length: attempts }, () => [1, 2]).flat(),
+      );
+      assert.deepEqual(
+        result.calls.filter(([kind]) => kind === "jobs").map(([, request]) => request.attempt_number),
+        Array.from({ length: attempts }, (_, index) => [index + 1, index + 1]).flat(),
+      );
+      assert.deepEqual(
+        result.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+        [1, 2],
+      );
       assert.equal(result.provenance.run.head_sha, nativeHead);
       assert.equal(result.provenance.run.tested_source_sha,
         options.eventName === "pull_request" ? testedMerge : nativeHead);
-      assert.equal(result.provenance.run.api_name,
-        options.eventName === "pull_request"
-          ? `CI — Validation pr-42 base-${baseSha} head-${nativeHead}`
-          : `CI — Validation ${options.refName || "develop"}`);
+      const expectedTitle = options.eventName === "pull_request"
+        ? `CI — Validation pr-42 base-${baseSha} head-${nativeHead}`
+        : `CI — Validation ${options.refName || "develop"}`;
+      assert.equal(result.provenance.run.api_name, options.runName || expectedTitle);
       assert.equal(result.provenance.run.name, "CI — Validation");
+      assert.equal(result.provenance.run.display_title, expectedTitle);
+      assert.equal(result.provenance.run.run_attempt, attempts);
+      assert.equal(result.provenance.attempts.length, attempts);
       for (const attempt of result.provenance.attempts) {
+        assert.equal(attempt.jobs.length, 101);
         for (const job of attempt.jobs) assert.equal(job.head_sha, result.provenance.run.head_sha);
       }
+      assert.equal(result.provenance.artifacts.items.length, 101);
       for (const artifact of result.provenance.artifacts.items) {
         assert.equal(artifact.workflow_run.head_sha, result.provenance.run.head_sha);
       }
@@ -735,37 +808,67 @@ function runFor(options) {
         assert.equal(result.provenance.run.head_sha, result.provenance.run.tested_source_sha);
       }
     }
-    for (const options of [
-      { eventName: "pull_request", script: embedded.script, runHead: wrongSha },
-      { eventName: "pull_request", script: embedded.script,
-        apiPullRequests: [{ number: 43, base: { sha: baseSha }, head: { sha: nativeHead } }] },
-      { eventName: "pull_request", script: embedded.script, displayTitle: "unbound PR title" },
-      { eventName: "pull_request", script: embedded.script, runName: "CI — Validation" },
-      { eventName: "pull_request", script: embedded.script, runPath: ".github/workflows/other.yml" },
-      { eventName: "pull_request", script: embedded.script, runEvent: "push" },
-      { eventName: "pull_request", script: embedded.script,
-        sourceSha: wrongSha, contextSha: testedMerge },
-      { eventName: "workflow_dispatch", script: embedded.script, nativeHead: wrongSha },
-      { eventName: "workflow_dispatch", script: embedded.script,
-        refName: "release/2026", runName: "CI — Validation develop" },
-    ]) {
-      const result = await runFor(options);
-      assert.equal(result.ok, false, `${embedded.module} accepted a wrong event/run identity`);
-      assert.ok(result.calls.length <= 1, "reject bad run identity before job/artifact lookup");
+
+    const wrongIdentityCases = [
+      { label: "wrong run head", options: { eventName: "pull_request", runHead: wrongSha } },
+      { label: "wrong PR number", options: { eventName: "pull_request",
+        apiPullRequests: [{ number: 43, base: { sha: baseSha }, head: { sha: nativeHead } }] } },
+      { label: "wrong PR base", options: { eventName: "pull_request",
+        apiPullRequests: [{ number: 42, base: { sha: wrongSha }, head: { sha: nativeHead } }] } },
+      { label: "wrong PR head", options: { eventName: "pull_request",
+        apiPullRequests: [{ number: 42, base: { sha: baseSha }, head: { sha: wrongSha } }] } },
+      { label: "ambiguous PR association", options: { eventName: "pull_request",
+        apiPullRequests: [
+          { number: 42, base: { sha: baseSha }, head: { sha: nativeHead } },
+          { number: 42, base: { sha: baseSha }, head: { sha: nativeHead } },
+        ] } },
+      { label: "wrong display title", options: { eventName: "pull_request", displayTitle: "unbound PR title" } },
+      { label: "unrelated API name", options: { eventName: "pull_request", runName: "CI — Security" } },
+      { label: "wrong workflow path", options: { eventName: "pull_request", runPath: ".github/workflows/other.yml" } },
+      { label: "wrong event", options: { eventName: "pull_request", runEvent: "push" } },
+      { label: "wrong tested source", options: { eventName: "pull_request", sourceSha: wrongSha, contextSha: testedMerge } },
+      { label: "wrong context source", options: { eventName: "pull_request", contextSha: wrongSha } },
+      { label: "wrong native head", options: { eventName: "pull_request", nativeHead: wrongSha } },
+      { label: "wrong attempt", options: { eventName: "pull_request", runAttempt: 1, apiRunAttempt: 2 } },
+      { label: "wrong repository", options: { eventName: "pull_request", runRepository: "other/repository" } },
+      { label: "wrong dispatch title", options: { eventName: "workflow_dispatch", refName: "release/2026", runName: "CI — Validation develop" } },
+      { label: "unsupported module", options: { eventName: "pull_request", module: "world-management-service" } },
+    ];
+    for (const { label, options } of wrongIdentityCases) {
+      const result = await runFor(embedded, options);
+      assert.equal(result.ok, false, `${embedded.module} accepted ${label}`);
+      assert.ok(result.calls.length <= 1, `reject ${label} before job/artifact lookup`);
     }
+
+    const incompleteJobs = await runFor(embedded, {
+      eventName: "pull_request", incompleteJobsPage: 2,
+    });
+    assert.equal(incompleteJobs.ok, false, `${embedded.module} accepted incomplete jobs pagination`);
+    assert.match(incompleteJobs.error, /Incomplete attempt 1 job page 2/);
+    assert.deepEqual(incompleteJobs.calls.map(([kind]) => kind), ["run", "jobs", "jobs"]);
+
+    const incompleteArtifacts = await runFor(embedded, {
+      eventName: "pull_request", incompleteArtifactsPage: 2,
+    });
+    assert.equal(incompleteArtifacts.ok, false, `${embedded.module} accepted incomplete artifact pagination`);
+    assert.match(incompleteArtifacts.error, /Incomplete workflow artifact page 2/);
+    assert.deepEqual(
+      incompleteArtifacts.calls.map(([kind]) => kind),
+      ["run", "jobs", "jobs", "artifacts", "artifacts"],
+    );
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
 try:
     fixture_result = subprocess.run(
         ["node", "-e", capture_node],
-        input=json.dumps({"scripts": capture_scripts}),
+        input=json.dumps({"helper": str(helper_path), "scripts": capture_scripts}),
         check=True,
         capture_output=True,
         text=True,
     )
 except (OSError, subprocess.CalledProcessError) as exc:
-    raise SystemExit(f"ci workflow: embedded provenance capture fixture failed: {exc}") from exc
+    raise SystemExit(f"ci workflow: shared provenance capture fixture failed: {exc}") from exc
 
 coverage_report_step = find_step(ci, "build-and-test", "Upload Coverage Report", "ci workflow")
 require_equal(
