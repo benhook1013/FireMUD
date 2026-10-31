@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import net.firedevops.firemud.common.security.JwtClaims;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 /** Ordinary credential authentication used only by explicitly enabled local demo seeding. */
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Component;
     prefix = "firemud.smoke.seed-demo-runtime",
     name = "enabled",
     havingValue = "true")
+@Lazy
 public final class DemoAccountAuthenticationClient
     extends AbstractReloadingBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
   private final String namespace;
