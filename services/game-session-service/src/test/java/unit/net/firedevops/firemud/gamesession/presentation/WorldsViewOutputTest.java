@@ -1,8 +1,9 @@
 package net.firedevops.firemud.gamesession.presentation;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.lang.reflect.RecordComponent;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -11,18 +12,21 @@ class WorldsViewOutputTest {
   void worldsAreCopiedDefensively() {
     List<WorldsViewOutput.WorldEntry> worlds =
         new java.util.ArrayList<>(
-            List.of(new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false)));
+            List.of(new WorldsViewOutput.WorldEntry("123", "Demo World", 1L, false)));
 
     WorldsViewOutput output = new WorldsViewOutput(worlds);
     worlds.clear();
 
     assertThat(output.worlds()).hasSize(1);
+    assertThat(output.worlds().getFirst().slug()).isEqualTo("123");
   }
 
   @Test
-  void ordinalMustBePositive() {
-    assertThatThrownBy(() -> new WorldsViewOutput.WorldEntry(0, "demo", "Demo World", 1L, false))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("ordinal");
+  void worldEntryCarriesNoListOrdinal() {
+    assertThat(
+            Arrays.stream(WorldsViewOutput.WorldEntry.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .toList())
+        .containsExactly("slug", "displayName", "gameInstanceId", "requiresCharacterSelection");
   }
 }

@@ -50,7 +50,7 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void unboundWorldOrdinalReturnsRediscoveryGuidanceWithoutPublishingAnEvent() {
+  void nonmatchingNumericWorldSelectorReturnsRediscoveryGuidanceWithoutPublishingAnEvent() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     var result =
         handler.handle(
@@ -71,6 +71,38 @@ class WorldsTextCommandDispatchHandlerTest {
                     .isEqualTo(
                         "ERROR INVALID_ARGUMENT REALMS requires a valid world selector. Use WORLDS first."));
     Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  @Test
+  void dispatchAcceptsExactNumericWorldSlugWithoutTreatingItAsAListPosition() {
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("other", 23L, 40L, false), world("1", 22L, 41L, false)));
+    SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                new TextCommandParser().parse("REALMS 1"),
+                false,
+                Optional.of(context),
+                Optional.empty()));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output -> {
+              assertThat(output.payload()).isInstanceOf(RealmBrowseViewOutput.class);
+              assertThat(((RealmBrowseViewOutput) output.payload()).worldSlug()).isEqualTo("1");
+            });
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.eq(context),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "REALMS".equals(gameplayCommand.getCommandName())
+                        && "REALMS 1".equals(gameplayCommand.getCommandText())));
   }
 
   @Test

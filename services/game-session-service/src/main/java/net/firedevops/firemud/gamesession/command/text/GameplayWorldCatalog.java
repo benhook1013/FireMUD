@@ -570,7 +570,6 @@ public final class GameplayWorldCatalog {
       RealmView publicRealm = world.realms().getFirst();
       entries.add(
           new WorldsViewOutput.WorldEntry(
-              entries.size() + 1,
               world.slug(),
               world.displayName(),
               publicRealm.gameInstanceId(),
@@ -582,11 +581,9 @@ public final class GameplayWorldCatalog {
   private List<RealmBrowseViewOutput.RealmEntry> realmEntries(WorldView world) {
     List<RealmView> realms = visibleRealms(world);
     ArrayList<RealmBrowseViewOutput.RealmEntry> entries = new ArrayList<>(realms.size());
-    for (int i = 0; i < realms.size(); i++) {
-      RealmView realm = realms.get(i);
+    for (RealmView realm : realms) {
       entries.add(
           new RealmBrowseViewOutput.RealmEntry(
-              i + 1,
               realm.slug(),
               realm.displayName(),
               realm.gameInstanceId(),
@@ -934,12 +931,6 @@ public final class GameplayWorldCatalog {
 
   private static String selectorKey(String slug) {
     return slug.trim().toLowerCase(Locale.ROOT);
-  }
-
-  static boolean isOrdinalSelector(String selector) {
-    return selector != null
-        && !selector.isBlank()
-        && selector.trim().chars().allMatch(character -> character >= '0' && character <= '9');
   }
 
   private record RealmSelectorKey(long tenantId, String selector) {}
