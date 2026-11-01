@@ -18,7 +18,7 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
   }
 
   @Override
-  public void notifyUpdate(
+  public boolean notifyUpdate(
       String tenantId,
       long baseVersionId,
       String scriptPatchVersion,
@@ -28,5 +28,6 @@ public class ScriptVersionServiceImpl implements ScriptVersionService {
     if (temporalOrchestrator.isPresent() && readinessActive) {
       temporalOrchestrator.get().startTracking(tenantId, scriptPatchVersion);
     }
+    return readinessActive;
   }
 }

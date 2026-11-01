@@ -474,6 +474,11 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       throw new IllegalArgumentException(
           "LAUNCH_DESCRIPTOR_CONFLICT: stored resolved result digest is inconsistent");
     }
+    requireReadyScriptPatch(
+        request.requestedScriptPatchVersionPresent()
+            ? request.requestedScriptPatchVersion()
+            : null);
+    requireReadyScriptPatch(evidence.scriptPatchVersion());
     return new ResolvedLaunchDescriptorDto(
         evidence.launchDescriptorId(),
         evidence.canonicalTenantId().toString(),

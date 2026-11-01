@@ -4,6 +4,6 @@ import java.util.List;
 
 /** Handles live script patch updates. */
 public interface ScriptVersionService {
-  void notifyUpdate(
+  boolean notifyUpdate(
       String tenantId, long baseVersionId, String scriptPatchVersion, List<String> affectedScripts);
 }

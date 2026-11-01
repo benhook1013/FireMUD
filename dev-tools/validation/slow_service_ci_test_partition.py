@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select, provenance-check, and aggregate the two slow-service CI partitions."""
+"""Select, provenance-check, and aggregate the module-specific slow-service CI partitions."""
 
 from __future__ import annotations
 
@@ -17,7 +17,11 @@ from typing import Any
 
 PLAN_PATH = Path(__file__).with_name("slow_service_ci_test_partition_plan.json")
 SERVICES = ("account-service", "game-session-service")
-PARTITION_COUNT = 2
+PARTITION_COUNTS = {"account-service": 2, "game-session-service": 4}
+
+
+def partitions_for(module: str) -> range:
+    return range(1, PARTITION_COUNTS[module] + 1)
 TEST_CLASS_SUFFIX = re.compile(r"(?:^Test.*|.*(?:Test|Tests|TestCase))$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 NON_RUNNABLE_TEST_TYPE_FLAGS = 0x0200 | 0x2000
@@ -25,17 +29,20 @@ ABSTRACT_TYPE_FLAG = 0x0400
 ARTIFACT_PATTERN = re.compile(
     r"^slow-service-ci-partition-(?P<run_id>[1-9][0-9]*)-"
     r"(?P<source_revision>[0-9a-f]{40})-attempt-(?P<attempt>[1-9][0-9]*)-"
-    r"(?P<module>[a-z0-9]+(?:-[a-z0-9]+)*)-partition-(?P<partition>[12])$"
+    r"(?P<module>[a-z0-9]+(?:-[a-z0-9]+)*)-partition-(?P<partition>[1-9][0-9]*)$"
 )
 
 
 def load_historical_plan(module: str, path: Path = PLAN_PATH) -> dict[str, Any]:
     plan = json.loads(path.read_text(encoding="utf-8"))
-    if plan.get("schema_version") != 1 or plan.get("partition_count") != PARTITION_COUNT:
+    if plan.get("schema_version") != 2:
         raise ValueError(f"unsupported slow-service partition plan: {path}")
     if module not in SERVICES or module not in plan.get("services", {}):
         raise ValueError(f"unsupported slow-service module: {module}")
-    return plan["services"][module]
+    historical = plan["services"][module]
+    if historical.get("partition_count") != PARTITION_COUNTS[module]:
+        raise ValueError(f"unsupported partition count for {module}: {path}")
+    return historical
 
 
 def is_test_class(class_name: str) -> bool:
@@ -198,8 +205,8 @@ def build_plan(
         raise ValueError(f"unsupported slow-service module: {module}")
     historical = historical_plan or load_historical_plan(module)
     task_plans: dict[str, Any] = {}
-    global_load = {1: 0.0, 2: 0.0}
-    global_test_count = {1: 0, 2: 0}
+    global_load = dict.fromkeys(partitions_for(module), 0.0)
+    global_test_count = dict.fromkeys(partitions_for(module), 0)
     pending_unknown_tests: list[tuple[str, str, float]] = []
     pending_other_classes: list[tuple[str, str]] = []
 
@@ -241,15 +248,15 @@ def build_plan(
 
     for task, class_name, estimate in sorted(pending_unknown_tests):
         partition = min(
-            (1, 2), key=lambda value: (global_load[value], global_test_count[value], value)
+            partitions_for(module), key=lambda value: (global_load[value], global_test_count[value], value)
         )
         task_plans[task]["assignments"][class_name] = partition
         global_load[partition] += estimate
         global_test_count[partition] += 1
 
-    other_class_count = {1: 0, 2: 0}
+    other_class_count = dict.fromkeys(partitions_for(module), 0)
     for task, class_name in sorted(pending_other_classes):
-        partition = min((1, 2), key=lambda value: (other_class_count[value], value))
+        partition = min(partitions_for(module), key=lambda value: (other_class_count[value], value))
         task_plans[task]["assignments"][class_name] = partition
         other_class_count[partition] += 1
 
@@ -258,7 +265,7 @@ def build_plan(
         assignments = task_plan["assignments"]
         if set(assignments) != universe:
             raise ValueError(f"partition assignment is incomplete for {task}")
-        if any(partition not in (1, 2) for partition in assignments.values()):
+        if any(partition not in partitions_for(module) for partition in assignments.values()):
             raise ValueError(f"partition assignment is invalid for {task}")
 
     return {
@@ -267,14 +274,14 @@ def build_plan(
         "source_revision": source_revision,
         "run_id": str(run_id),
         "run_attempt": str(run_attempt),
-        "partition_count": PARTITION_COUNT,
+        "partition_count": PARTITION_COUNTS[module],
         "tasks": task_plans,
     }
 
 
 def partition_manifest(plan: dict[str, Any], partition: int) -> dict[str, Any]:
-    if partition not in (1, 2):
-        raise ValueError("partition must be 1 or 2")
+    if partition not in partitions_for(plan["module"]):
+        raise ValueError("partition is outside the module partition range")
     tasks = {}
     for task, task_plan in plan["tasks"].items():
         tasks[task] = {
@@ -305,52 +312,52 @@ def write_partition(plan: dict[str, Any], partition: int, output_dir: Path) -> P
     return manifest_path
 
 
-def validate_partition_pair(
-    first: dict[str, Any], second: dict[str, Any]
-) -> dict[str, Any]:
-    if first.get("module") not in SERVICES or first.get("module") != second.get("module"):
+def validate_partitions(manifests: list[dict[str, Any]]) -> dict[str, Any]:
+    if not manifests or manifests[0].get("module") not in SERVICES:
         raise ValueError("aggregate requires matching supported service partitions")
-    if first.get("partition") != 1 or second.get("partition") != 2:
-        raise ValueError("aggregate requires partition 1 and partition 2 exactly once")
-    if first.get("partition_count") != PARTITION_COUNT or second.get("partition_count") != PARTITION_COUNT:
-        raise ValueError("aggregate requires the complete two-partition plan")
-    for identity in ("run_id", "source_revision"):
-        if first.get(identity) != second.get(identity):
-            raise ValueError(f"partition artifacts have different {identity}")
-    common_first = copy.deepcopy(
-        {key: value for key, value in first.items() if key not in {"partition", "run_attempt"}}
-    )
-    common_second = copy.deepcopy(
-        {key: value for key, value in second.items() if key not in {"partition", "run_attempt"}}
-    )
-    for manifest in (common_first, common_second):
-        for task_plan in manifest["tasks"].values():
+    first = manifests[0]
+    module = first["module"]
+    expected = set(partitions_for(module))
+    if len(manifests) != len(expected) or {item.get("partition") for item in manifests} != expected:
+        raise ValueError("aggregate requires every module partition exactly once")
+    common = None
+    for manifest in manifests:
+        if manifest.get("module") != module:
+            raise ValueError("aggregate requires matching supported service partitions")
+        if manifest.get("partition_count") != PARTITION_COUNTS[module]:
+            raise ValueError("aggregate requires the complete module partition plan")
+        for identity in ("run_id", "source_revision"):
+            if first.get(identity) != manifest.get(identity):
+                raise ValueError(f"partition artifacts have different {identity}")
+        candidate = copy.deepcopy({
+            key: value for key, value in manifest.items()
+            if key not in {"partition", "run_attempt"}
+        })
+        for task_plan in candidate["tasks"].values():
             task_plan.pop("selected_classes", None)
-    if common_first != common_second:
-        raise ValueError("partition artifacts do not share one discovered class plan")
+        if common is not None and common != candidate:
+            raise ValueError("partition artifacts do not share one discovered class plan")
+        common = candidate
 
     for task, task_plan in first["tasks"].items():
-        second_task = second["tasks"].get(task)
-        if second_task is None:
-            raise ValueError(f"partition 2 is missing test task {task}")
         universe = set(task_plan["class_universe"])
         assignments = task_plan["assignments"]
-        if set(assignments) != universe:
-            raise ValueError(f"class assignment is incomplete for {task}")
-        first_selected = set(task_plan["selected_classes"])
-        second_selected = set(second_task["selected_classes"])
-        if first_selected & second_selected:
-            raise ValueError(f"test classes overlap between partitions for {task}")
-        if first_selected | second_selected != universe:
+        if set(assignments) != universe or any(value not in expected for value in assignments.values()):
+            raise ValueError(f"class assignment is incomplete or invalid for {task}")
+        union: set[str] = set()
+        for manifest in manifests:
+            selected = set(manifest["tasks"][task]["selected_classes"])
+            if union & selected:
+                raise ValueError(f"test classes overlap between partitions for {task}")
+            union.update(selected)
+        if union != universe:
             raise ValueError(f"test class union is incomplete for {task}")
-        if first_selected != {
-            name for name, assigned in assignments.items() if assigned == 1
-        }:
-            raise ValueError(f"partition 1 selector disagrees with its assignment for {task}")
-        if second_selected != {
-            name for name, assigned in assignments.items() if assigned == 2
-        }:
-            raise ValueError(f"partition 2 selector disagrees with its assignment for {task}")
+        for manifest in manifests:
+            partition = manifest["partition"]
+            if set(manifest["tasks"][task]["selected_classes"]) != {
+                name for name, assigned in assignments.items() if assigned == partition
+            }:
+                raise ValueError(f"partition {partition} selector disagrees with its assignment for {task}")
     return first
 
 
@@ -583,7 +590,7 @@ def resolve_effective_artifacts(
     attempt_map: dict[int, dict[str, Any]] = {}
     expected_names = {
         partition: f"Build and Test ({module} / {partition})"
-        for partition in (1, 2)
+        for partition in partitions_for(module)
     }
     latest_jobs: dict[int, tuple[int, dict[str, Any]]] = {}
 
@@ -605,7 +612,7 @@ def resolve_effective_artifacts(
         if total_count < 0:
             raise ValueError(f"workflow attempt {attempt_number} job count is invalid")
         ids: set[int] = set()
-        matches: dict[int, list[dict[str, Any]]] = {1: [], 2: []}
+        matches: dict[int, list[dict[str, Any]]] = {partition: [] for partition in partitions_for(module)}
         for job in jobs:
             if not isinstance(job, dict):
                 raise TypeError(f"workflow attempt {attempt_number} jobs must be objects")
@@ -658,7 +665,10 @@ def resolve_effective_artifacts(
             match = ARTIFACT_PATTERN.fullmatch(name)
             if not match:
                 raise ValueError(f"slow-service partition artifact name is malformed: {name}")
-            if match.group("module") == module:
+            artifact_module = match.group("module")
+            if artifact_module not in SERVICES or int(match.group("partition")) not in partitions_for(artifact_module):
+                raise ValueError(f"slow-service partition artifact is outside its module plan: {name}")
+            if artifact_module == module:
                 if int(match.group("run_id")) != expected_run_id or match.group("source_revision") != source_revision:
                     raise ValueError(f"partition artifact {name} has wrong-run or wrong-source identity")
                 if int(match.group("attempt")) > expected_attempt:
@@ -678,7 +688,7 @@ def resolve_effective_artifacts(
 
     selected: dict[str, Any] = {}
     selected_ids: set[int] = set()
-    for partition in (1, 2):
+    for partition in partitions_for(module):
         latest = latest_jobs.get(partition)
         if latest is None:
             raise ValueError(f"partition {partition} has no authoritative job outcome")
@@ -781,21 +791,21 @@ def verify_aggregate(
         raise ValueError("saved artifact selection differs from authoritative Actions provenance")
 
     if not input_dir.is_dir():
-        raise ValueError("could not retrieve both effective successful partition artifacts")
+        raise ValueError("could not retrieve all effective successful partition artifacts")
     artifacts = sorted(path for path in input_dir.iterdir() if path.is_dir())
     expected_names = {
         resolved["partitions"][str(partition)]["artifact_name"]
-        for partition in (1, 2)
+        for partition in partitions_for(module)
     }
     if {path.name for path in artifacts} != expected_names:
         raise ValueError(
-            "aggregate requires exactly both latest-effective successful partition artifacts; "
+            "aggregate requires exactly all latest-effective successful partition artifacts; "
             f"found {[path.name for path in artifacts]}"
         )
 
     manifests = {}
     artifact_directories = {}
-    for partition in (1, 2):
+    for partition in partitions_for(module):
         artifact_name = resolved["partitions"][str(partition)]["artifact_name"]
         artifact_dir = input_dir / artifact_name
         artifact_directories[partition] = artifact_dir
@@ -820,17 +830,20 @@ def verify_aggregate(
             raise ValueError(f"partition {partition} selector manifest identifies another shard")
         manifests[partition] = manifest
 
-    common = validate_partition_pair(manifests[1], manifests[2])
-    measured_classes = verify_identical_main_classes(
-        artifact_directories[1], artifact_directories[2]
-    )
+    common = validate_partitions(list(manifests.values()))
+    measured_classes = None
+    for partition in partitions_for(module):
+        if partition != 1:
+            measured_classes = verify_identical_main_classes(
+                artifact_directories[1], artifact_directories[partition]
+            )
     execution_data = []
-    for partition in (1, 2):
+    for partition in partitions_for(module):
         artifact_name = resolved["partitions"][str(partition)]["artifact_name"]
         artifact_dir = input_dir / artifact_name
         execution_data.extend(verify_artifact_reports(artifact_dir, manifests[partition]))
     if not execution_data:
-        raise ValueError("aggregate has no JaCoCo execution data from either partition")
+        raise ValueError("aggregate has no JaCoCo execution data from any partition")
     copy_verified_main_classes(
         artifact_directories[1] / "classes" / "java" / "main",
         measured_classes,
@@ -841,7 +854,7 @@ def verify_aggregate(
         f"Verified complete {module} partition coverage input: "
         f"{len(common['tasks'])} test tasks, "
         f"{sum(len(task['class_universe']) for task in common['tasks'].values())} "
-        "discovered class groups, identical measured production classes, both "
+        "discovered class groups, identical measured production classes, all "
         "partition reports, and latest effective same-run/source job provenance."
     )
     return len(execution_data)
@@ -892,7 +905,7 @@ def verify_identical_main_classes(first_artifact: Path, second_artifact: Path) -
         extra = sorted(set(second) - set(first))
         raise ValueError(
             "partition measured production class inventories differ: "
-            f"partition 2 missing {missing}, extra {extra}"
+            f"compared partition missing {missing}, extra {extra}"
         )
     for relative_path in sorted(first):
         if first[relative_path].read_bytes() != second[relative_path].read_bytes():
@@ -940,7 +953,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_parser = subparsers.add_parser("plan", help="write one slow-service shard selector")
     plan_parser.add_argument("--module", choices=SERVICES, required=True)
-    plan_parser.add_argument("--partition", type=int, choices=(1, 2), required=True)
+    plan_parser.add_argument("--partition", type=int, required=True)
     plan_parser.add_argument("--source-revision", required=True)
     plan_parser.add_argument("--run-id", required=True)
     plan_parser.add_argument("--run-attempt", required=True)
@@ -959,7 +972,7 @@ def build_parser() -> argparse.ArgumentParser:
     select_parser.add_argument("--github-output", type=Path, required=True)
 
     aggregate_parser = subparsers.add_parser(
-        "verify-aggregate", help="require complete reports from both effective shard attempts"
+        "verify-aggregate", help="require complete reports from all effective shard attempts"
     )
     aggregate_parser.add_argument("--module", choices=SERVICES, required=True)
     aggregate_parser.add_argument("--input-dir", type=Path, required=True)
@@ -1015,11 +1028,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             artifact_ids = ",".join(
                 str(document["resolved"]["partitions"][str(partition)]["artifact_id"])
-                for partition in (1, 2)
+                for partition in partitions_for(args.module)
             )
             with args.github_output.open("a", encoding="utf-8") as output:
                 output.write(f"artifact_ids={artifact_ids}\n")
-            print(f"Selected both successful {args.module} partition artifact IDs: {artifact_ids}")
+            print(f"Selected all successful {args.module} partition artifact IDs: {artifact_ids}")
             return 0
         verify_aggregate(
             args.input_dir,

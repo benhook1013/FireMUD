@@ -1,7 +1,10 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -18,7 +21,7 @@ class ScriptVersionServiceImplTest {
         new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
     when(commandService.notifyUpdate("1", 1L, "patch-1", List.of("guard-script"))).thenReturn(true);
 
-    service.notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    assertTrue(service.notifyUpdate("1", 1L, "patch-1", List.of("guard-script")));
 
     verify(commandService).notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
     verify(orchestrator).startTracking("1", "patch-1");
@@ -35,9 +38,24 @@ class ScriptVersionServiceImplTest {
     when(commandService.notifyUpdate("1", 1L, "patch-1", List.of("guard-script")))
         .thenReturn(false);
 
-    service.notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
+    assertFalse(service.notifyUpdate("1", 1L, "patch-1", List.of("guard-script")));
 
     verify(commandService).notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
-    org.mockito.Mockito.verifyNoInteractions(orchestrator);
+    verifyNoInteractions(orchestrator);
+  }
+
+  @Test
+  void notifyUpdateReturnsNotAcceptedWithoutTemporalTrackingForEmptyManifest() {
+    ScriptPatchVersionCommandService commandService = mock(ScriptPatchVersionCommandService.class);
+    TemporalScriptPatchReadinessOrchestrator orchestrator =
+        mock(TemporalScriptPatchReadinessOrchestrator.class);
+    ScriptVersionServiceImpl service =
+        new ScriptVersionServiceImpl(commandService, Optional.of(orchestrator));
+    when(commandService.notifyUpdate("1", 1L, "patch-1", List.of())).thenReturn(false);
+
+    assertFalse(service.notifyUpdate("1", 1L, "patch-1", List.of()));
+
+    verify(commandService).notifyUpdate("1", 1L, "patch-1", List.of());
+    verifyNoInteractions(orchestrator);
   }
 }

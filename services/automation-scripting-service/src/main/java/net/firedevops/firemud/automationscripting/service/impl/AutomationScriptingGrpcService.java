@@ -13,7 +13,6 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
-import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
@@ -62,7 +61,6 @@ public class AutomationScriptingGrpcService
       LoggerFactory.getLogger(AutomationScriptingGrpcService.class);
   private final PingService pingService;
   private final ScriptDefinitionService scriptService;
-  private final ScriptDesignDigestService scriptDesignDigestService;
   private final ScriptVersionService scriptVersionService;
   private final ScriptScheduleInstanceService scriptScheduleInstanceService;
   private final ScriptEventIngressService scriptEventIngressService;
@@ -78,7 +76,6 @@ public class AutomationScriptingGrpcService
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
-      ScriptDesignDigestService scriptDesignDigestService,
       ScriptVersionService scriptVersionService,
       ScriptScheduleInstanceService scriptScheduleInstanceService,
       ScriptEventIngressService scriptEventIngressService,
@@ -88,7 +85,6 @@ public class AutomationScriptingGrpcService
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.pingService = pingService;
     this.scriptService = scriptService;
-    this.scriptDesignDigestService = scriptDesignDigestService;
     this.scriptVersionService = scriptVersionService;
     this.scriptScheduleInstanceService = scriptScheduleInstanceService;
     this.scriptEventIngressService = Objects.requireNonNull(scriptEventIngressService);
@@ -382,37 +378,19 @@ public class AutomationScriptingGrpcService
       requirePublicationRead();
       PublicationDigestRequestBinding binding = publicationBinding(request);
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      long baseVersionId = 0L;
-      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH) {
-        baseVersionId =
-            RequestIdValidation.requirePositiveLong(binding.baseVersionId(), "baseVersionId");
-      }
-      var digest =
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? scriptDesignDigestService.getDraftDesignDigestForVersion(
-                  binding.tenantId(), binding.versionId())
-              : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  binding.tenantId(), baseVersionId, binding.scriptPatchVersion());
-      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
-      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH
-          && (digest.baseVersionId() <= 0L || baseVersionId != digest.baseVersionId())) {
-        throw new IllegalArgumentException(
-            "owner digest base_version_id does not match publication binding");
-      }
-      GetDraftDesignDigestResponse.Builder response =
+      // The current helper digests do not prove exact published-version or base-bound patch
+      // content. Keep the authenticated receiver closed until those mappings are authoritative.
+      responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(binding.tenantId())
-              .setAppliedCommitId(digest.appliedCommitId())
-              .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion());
-      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
-        response.setVersionId(binding.versionId());
-      } else {
-        response
-            .setScriptPatchVersion(binding.scriptPatchVersion())
-            .setBaseVersionId(Long.toString(digest.baseVersionId()));
-      }
-      responseObserver.onNext(response.build());
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "UNSUPPORTED_SCOPE",
+                      "Automation cannot attest this scope until its exact version mapping "
+                          + "and base-bound patch digest are available"))
+              .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -514,12 +492,26 @@ public class AutomationScriptingGrpcService
         NotifyScriptVersionUpdateResponse.newBuilder();
     try {
       requireAdminRole();
-      scriptVersionService.notifyUpdate(
-          request.getTenantId(),
-          request.getBaseVersionId(),
-          request.getScriptPatchVersion(),
-          request.getAffectedScriptsList());
-      response.setSuccess(true);
+      boolean readinessAccepted =
+          scriptVersionService.notifyUpdate(
+              request.getTenantId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getAffectedScriptsList());
+      response.setSuccess(readinessAccepted);
+      if (!readinessAccepted) {
+        String errorMessage =
+            request.getAffectedScriptsCount() == 0
+                ? "zero_handler_manifest_unverifiable"
+                : "patch_readiness_not_current";
+        response.setError(
+            GrpcAppErrors.error(
+                meterRegistry,
+                logger,
+                "NotifyScriptVersionUpdate",
+                "FAILED_PRECONDITION",
+                errorMessage));
+      }
     } catch (IllegalArgumentException ex) {
       response
           .setSuccess(false)

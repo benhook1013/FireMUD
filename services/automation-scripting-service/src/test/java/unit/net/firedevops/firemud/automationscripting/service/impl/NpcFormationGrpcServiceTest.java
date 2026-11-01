@@ -14,7 +14,6 @@ import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepos
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
-import net.firedevops.firemud.automationscripting.service.ScriptDesignDigestService;
 import net.firedevops.firemud.automationscripting.service.ScriptEventIngressService;
 import net.firedevops.firemud.automationscripting.service.ScriptScheduleInstanceService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
@@ -310,7 +309,6 @@ class NpcFormationGrpcServiceTest {
     return new AutomationScriptingGrpcService(
         Mockito.mock(PingService.class),
         Mockito.mock(ScriptDefinitionService.class),
-        Mockito.mock(ScriptDesignDigestService.class),
         Mockito.mock(ScriptVersionService.class),
         Mockito.mock(ScriptScheduleInstanceService.class),
         Mockito.mock(ScriptEventIngressService.class),

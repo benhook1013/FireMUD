@@ -656,6 +656,35 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishScriptPatchVersionMapsManifestUnavailableToStableApplicationError() throws Exception {
+    Mockito.when(
+            versionService.publishScriptPatchVersion(
+                "tenant-1", 7L, "patch-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new ScriptPatchPublishFailureException(
+                "SCRIPT_PATCH_MANIFEST_UNAVAILABLE",
+                "owner-verified affected-script manifest is unavailable"));
+    AtomicReference<PublishScriptPatchVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishScriptPatchVersion(
+          PublishScriptPatchVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setBaseVersionId(7L)
+              .setScriptPatchVersion("patch-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("SCRIPT_PATCH_MANIFEST_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(
+        "owner-verified affected-script manifest is unavailable",
+        ref.get().getError().getMessage());
+  }
+
+  @Test
   void publishVersionMapsPendingReconciliationToStableApplicationError() throws Exception {
     Mockito.when(versionService.publishVersion(selectedIntent("request-1")))
         .thenThrow(new PublishAttemptPendingReconciliationException());
