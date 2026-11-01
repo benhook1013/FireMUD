@@ -524,6 +524,10 @@ class SessionResumptionFlowTest {
     assertFalse(lookAfterCutover.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", lookAfterCutover.commandResult().errorCode());
 
+    TextCommandInterpretationResult realmsAfterCutover =
+        interpreter.interpret("1", "REALMS demo", false);
+    assertTrue(realmsAfterCutover.commandResult().accepted());
+
     TextCommandInterpretationResult charsAfterCutover =
         interpreter.interpret("1", "CHARS demo", false);
     assertFalse(charsAfterCutover.commandResult().accepted());

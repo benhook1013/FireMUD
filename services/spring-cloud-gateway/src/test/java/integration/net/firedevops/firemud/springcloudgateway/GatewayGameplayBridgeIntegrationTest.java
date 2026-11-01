@@ -32,6 +32,7 @@ import org.springframework.http.client.ReactorResourceFactory;
 import org.springframework.http.codec.ServerCodecConfigurer;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
@@ -90,6 +91,37 @@ class GatewayGameplayBridgeIntegrationTest {
     assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
     assertThat(UPSTREAM.seenTransportSessionIds().get(0))
         .isEqualTo(UPSTREAM.seenTransportSessionIds().get(1));
+  }
+
+  @Test
+  @SuppressWarnings("removal")
+  void clientEdgeClosureClosesTheActualUpstreamBeforeTeardown() throws Exception {
+    ensureStarted();
+
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Proxy-Client-IP", "203.0.113.10");
+    headers.add("X-Proxy-Game-Instance-Id", "42");
+    headers.add("X-Proxy-Tenant-Id", "22");
+    headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
+
+    UpstreamRuntimeState state = TEST_UPSTREAM_STATE.get();
+    try (WebSocketTestProbe probe = WebSocketTestProbe.connect(GATEWAY.websocketUrl(), headers)) {
+      probe.awaitStartsWith("UPSTREAM_READY", Duration.ofSeconds(5));
+      assertThat(state.connectionCount()).isEqualTo(1);
+
+      probe.close();
+
+      TestAsyncAssertions.assertEventually(
+          "actual upstream WebSocket close after client edge closure",
+          Duration.ofSeconds(5),
+          () -> !state.closedUpstreamSessions().isEmpty());
+      assertThat(state.closedUpstreamSessions()).hasSize(1);
+      assertThat(state.closedUpstreamSessions().get(0)).isNotNull();
+
+      Thread.sleep(Duration.ofMillis(750).toMillis());
+      assertThat(state.connectionCount()).isEqualTo(1);
+      assertThat(state.seenTransportSessionIds()).hasSize(1);
+    }
   }
 
   @Test
@@ -297,7 +329,8 @@ class GatewayGameplayBridgeIntegrationTest {
                   .receive()
                   .map(WebSocketMessage::getPayloadAsText)
                   .concatMap(command -> handleCommand(session, command))
-                  .then());
+                  .then())
+          .then(session.closeStatus().doOnNext(state::recordClosedUpstreamSession).then());
     }
 
     private Mono<Void> handleCommand(
@@ -314,6 +347,7 @@ class GatewayGameplayBridgeIntegrationTest {
 
   private static final class UpstreamRuntimeState {
     private final List<String> seenTransportSessionIds = new CopyOnWriteArrayList<>();
+    private final List<CloseStatus> closedUpstreamSessions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean firstConnectionDropped = new AtomicBoolean(false);
     private final AtomicInteger connectionCount = new AtomicInteger();
 
@@ -331,6 +365,14 @@ class GatewayGameplayBridgeIntegrationTest {
 
     List<String> seenTransportSessionIds() {
       return seenTransportSessionIds;
+    }
+
+    List<CloseStatus> closedUpstreamSessions() {
+      return List.copyOf(closedUpstreamSessions);
+    }
+
+    void recordClosedUpstreamSession(CloseStatus closeStatus) {
+      closedUpstreamSessions.add(closeStatus);
     }
 
     boolean markFirstConnectionDropped() {
