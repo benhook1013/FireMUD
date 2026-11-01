@@ -15,6 +15,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.lettuce.core.ClientOptions;
+import io.lettuce.core.RedisCommandExecutionException;
+import io.lettuce.core.RedisCommandTimeoutException;
+import io.lettuce.core.RedisConnectionException;
+import io.lettuce.core.RedisNoScriptException;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -27,8 +31,11 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldMenuRedisScriptContribution;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldMenuRedisStore;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
@@ -52,17 +59,33 @@ class DirectTextWorldMenuRedisStoreTest {
           "101", UUID.fromString("aaaaaaaa-1111-4111-8111-111111111111"));
   private final CanonicalPlayerRouteReadService routes =
       mock(CanonicalPlayerRouteReadService.class);
+  private final AtomicInteger catalogReads = new AtomicInteger();
   private final DirectTextWorldSelectionService selection =
       new DirectTextWorldSelectionService(
-          GameplayWorldCatalog.forWorldViews(List.of()), routes, CLOCK);
+          GameplayWorldCatalog.forWorldSupplier(
+              () -> {
+                catalogReads.incrementAndGet();
+                return List.of();
+              }),
+          routes,
+          CLOCK);
   private final StatefulRedisConnection<byte[], byte[]> connection = mockConnection();
   private final RedisCommands<byte[], byte[]> commands = mockCommands();
   private final AtomicReference<byte[]> stored = new AtomicReference<>();
   private final AtomicReference<String> outcome = new AtomicReference<>("MENU_WRITTEN");
   private DirectTextWorldMenuRedisStore store;
+  private byte[] source;
+  private String sha1;
 
   @BeforeEach
   void prepare() throws Exception {
+    try (var input =
+        DirectTextWorldMenuRedisStore.class
+            .getClassLoader()
+            .getResourceAsStream(DirectTextWorldMenuRedisScriptContribution.RESOURCE_PATH)) {
+      source = java.util.Objects.requireNonNull(input).readAllBytes();
+    }
+    sha1 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(source));
     when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of());
     when(connection.isOpen()).thenReturn(true);
     when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
@@ -119,6 +142,219 @@ class DirectTextWorldMenuRedisStoreTest {
   void clearUsesZeroExpiryAndTheSameBoundedClockArgument() {
     outcome.set("MENU_UNCHANGED");
     assertThat(store.clear(transport)).isTrue();
+  }
+
+  @Test
+  void freshDiscoveryComposesOnceButFindAndRetainedReassertEachRestoreFreshSources() {
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    assertThat(catalogReads.get()).isEqualTo(2);
+    verify(routes).readVisiblePublicProductionTargets();
+    byte[] original = stored.get();
+
+    clearInvocations(routes);
+    catalogReads.set(0);
+    var restored = store.find(transport).orElseThrow();
+    assertThat(catalogReads.get()).isEqualTo(2);
+    verify(routes).readVisiblePublicProductionTargets();
+    assertThat(restored.expiresAt()).isEqualTo(menu.expiresAt());
+
+    for (var retained : List.of(menu, restored)) {
+      clearInvocations(routes);
+      catalogReads.set(0);
+      outcome.set("MENU_UNCHANGED");
+      assertThat(store.reassert(transport, retained)).isTrue();
+      assertThat(catalogReads.get()).isEqualTo(2);
+      verify(routes).readVisiblePublicProductionTargets();
+      assertThat(stored.get()).isEqualTo(original);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = {-1L, 300L})
+  void freshDiscoveryStillRejectsFutureOrExpiredLifetimeBeforeRedis(long clockOffsetSeconds) {
+    var bounded =
+        new DirectTextWorldMenuRedisStore(
+            selection,
+            Clock.offset(CLOCK, java.time.Duration.ofSeconds(clockOffsetSeconds)),
+            () -> connection,
+            installed());
+    assertThat(bounded.discoverAndReplace(transport)).isEmpty();
+    assertThat(catalogReads.get()).isEqualTo(2);
+    verify(routes).readVisiblePublicProductionTargets();
+    verifyNoInteractions(commands, connection);
+  }
+
+  @Test
+  void expiredRetainedHandleCannotUseTheFreshDiscoveryPath() {
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(CLOCK.instant());
+    when(clock.millis()).thenReturn(CLOCK.millis());
+    var localSelection =
+        new DirectTextWorldSelectionService(
+            GameplayWorldCatalog.forWorldViews(List.of()), routes, clock);
+    var localStore =
+        new DirectTextWorldMenuRedisStore(localSelection, clock, () -> connection, installed());
+    var menu = localStore.discoverAndReplace(transport).orElseThrow();
+    byte[] original = stored.get();
+    when(clock.instant()).thenReturn(menu.expiresAt());
+    when(clock.millis()).thenReturn(menu.expiresAt().toEpochMilli());
+    clearInvocations(commands, connection, routes);
+
+    assertThat(localStore.reassert(transport, menu)).isFalse();
+    assertThat(localSelection.resolve(menu, "1")).isEmpty();
+    assertThat(stored.get()).isEqualTo(original);
+    verifyNoInteractions(commands, connection, routes);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void selectionOwnerClockMovementRejectsFreshHandleEvenWhenStoreClockRemainsLive(boolean expired) {
+    var clock = mock(Clock.class);
+    var createdAt = CLOCK.instant();
+    // browse sees a live original for both of its own clock reads. The selection owner's next
+    // read sees expiry or sub-millisecond rollback, while the independent store clock stays live.
+    when(clock.instant())
+        .thenReturn(
+            createdAt, createdAt, expired ? createdAt.plusSeconds(300) : createdAt.minusNanos(1));
+    var localSelection =
+        new DirectTextWorldSelectionService(
+            GameplayWorldCatalog.forWorldViews(List.of()), routes, clock);
+    var localStore =
+        new DirectTextWorldMenuRedisStore(localSelection, CLOCK, () -> connection, installed());
+
+    assertThat(localStore.discoverAndReplace(transport)).isEmpty();
+    verify(routes).readVisiblePublicProductionTargets();
+    verifyNoInteractions(commands, connection);
+  }
+
+  @Test
+  void verifiedSourceIsResolvedOnceAtConstructionAndWarmOperationsNeverLoad() {
+    var catalog = mock(RedisScriptCatalog.class);
+    String id = DirectTextWorldMenuRedisScriptContribution.SCRIPT_ID;
+    when(catalog.require(id)).thenReturn(installed().require(id));
+    var cached = new DirectTextWorldMenuRedisStore(selection, CLOCK, () -> connection, catalog);
+    // Later catalog lookups would fail: all operations must use the already verified source.
+    when(catalog.require(id)).thenThrow(new IllegalStateException("unexpected repeated lookup"));
+    var menu = cached.discoverAndReplace(transport).orElseThrow();
+    assertThat(cached.find(transport)).isPresent();
+    outcome.set("MENU_UNCHANGED");
+    assertThat(cached.reassert(transport, menu)).isTrue();
+    outcome.set("MENU_CLEARED");
+    assertThat(cached.clear(transport)).isTrue();
+    verify(catalog).require(id);
+    verify(commands, never()).scriptLoad(any(byte[].class));
+    verifyEvaluations(3);
+    verify(commands, times(4)).aclWhoami();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"scriptId", "owner", "principal", "resourcePath", "role", "sha256"})
+  void mismatchedInstalledDescriptorIsDeniedAtConstructionWithoutRedis(String field) {
+    var catalog = mock(RedisScriptCatalog.class);
+    String id = DirectTextWorldMenuRedisScriptContribution.SCRIPT_ID;
+    ObjectNode changed = (ObjectNode) JSON.valueToTree(installed().require(id));
+    changed.put(
+        field,
+        switch (field) {
+          case "scriptId" -> "game-session.wrong-menu.v1";
+          case "owner" -> "wrong-service";
+          case "principal" -> "wrong_principal";
+          case "resourcePath" -> "redis/lua/wrong-menu.lua";
+          case "role" -> "CACHE_RATE_LIMIT";
+          case "sha256" -> "0".repeat(64);
+          default -> throw new IllegalArgumentException(field);
+        });
+    when(catalog.require(id)).thenReturn(JSON.treeToValue(changed, RedisScriptDescriptor.class));
+    clearInvocations(commands);
+    assertThatThrownBy(
+            () -> new DirectTextWorldMenuRedisStore(selection, CLOCK, () -> connection, catalog))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(commands, connection);
+  }
+
+  @Test
+  void noScriptLoadsExactVerifiedBytesAndRetriesExactShaOnce() {
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    byte[] original = stored.get();
+    when(evaluation())
+        .thenThrow(new RedisNoScriptException("NOSCRIPT controlled loss"))
+        .thenReturn("MENU_UNCHANGED");
+    clearInvocations(commands, connection);
+    assertThat(store.reassert(transport, menu)).isTrue();
+    verify(commands).scriptLoad(eq(source));
+    verifyEvaluations(2);
+    verify(connection).sync();
+    verify(connection).close();
+    assertThat(stored.get()).isEqualTo(original);
+  }
+
+  @Test
+  void loadedDigestMismatchRefusesBeforeSecondEvaluation() {
+    when(evaluation()).thenThrow(new RedisNoScriptException("NOSCRIPT controlled loss"));
+    when(commands.scriptLoad(any(byte[].class))).thenReturn("wrong-loaded-hash");
+    clearInvocations(commands);
+    assertThatThrownBy(() -> store.discoverAndReplace(transport))
+        .isInstanceOf(IllegalStateException.class);
+    verify(commands).scriptLoad(eq(source));
+    verifyEvaluations(1);
+    assertThat(stored.get()).isNull();
+  }
+
+  @Test
+  void nullReturnedStatusIsUnavailableWithoutLoadOrRetry() {
+    when(evaluation()).thenReturn(null);
+    clearInvocations(commands);
+    assertThatThrownBy(() -> store.discoverAndReplace(transport))
+        .isInstanceOf(IllegalStateException.class);
+    verify(commands, never()).scriptLoad(any(byte[].class));
+    verifyEvaluations(1);
+    assertThat(stored.get()).isNull();
+  }
+
+  @Test
+  void secondNoScriptEscapesWithoutAnotherLoadOrRetry() {
+    var second = new RedisNoScriptException("NOSCRIPT second loss");
+    when(evaluation())
+        .thenThrow(new RedisNoScriptException("NOSCRIPT first loss"))
+        .thenThrow(second);
+    clearInvocations(commands);
+    assertThatThrownBy(() -> store.discoverAndReplace(transport)).isSameAs(second);
+    verify(commands).scriptLoad(eq(source));
+    verifyEvaluations(2);
+    assertThat(stored.get()).isNull();
+  }
+
+  @Test
+  void arbitraryErrorsAndUnknownWriteFailuresAreNeverLoadedOrRetried() {
+    for (RuntimeException failure :
+        List.of(
+            new RedisCommandExecutionException("NOSCRIPT text is not the typed exception"),
+            new RedisCommandExecutionException("ERR controlled failure"),
+            new RedisCommandTimeoutException("controlled timeout"),
+            new RedisConnectionException("controlled transport loss"))) {
+      // doAnswer also models a write that completed before its reply became unavailable.
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                stored.set(invocation.getArgument(5, byte[].class));
+                throw failure;
+              })
+          .when(commands)
+          .evalsha(
+              anyString(),
+              eq(ScriptOutputType.STATUS),
+              any(byte[][].class),
+              any(byte[].class),
+              any(byte[].class),
+              any(byte[].class),
+              any(byte[].class),
+              any(byte[].class));
+      stored.set(null);
+      clearInvocations(commands);
+      assertThatThrownBy(() -> store.discoverAndReplace(transport)).isSameAs(failure);
+      assertThat(stored.get()).isNotEmpty();
+      verify(commands, never()).scriptLoad(any(byte[].class));
+      verifyEvaluations(1);
+    }
   }
 
   @Test
@@ -283,17 +519,13 @@ class DirectTextWorldMenuRedisStoreTest {
   }
 
   @Test
-  void principalReconnectAndLoadedHashMismatchDenyBeforeEval() {
+  void principalAndReconnectMismatchDenyBeforeEval() {
     when(commands.aclWhoami()).thenReturn("default");
     assertThatThrownBy(() -> store.discoverAndReplace(transport))
         .isInstanceOf(IllegalStateException.class);
     when(commands.aclWhoami()).thenReturn("gamesession_coord_app");
     when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
     assertThatThrownBy(() -> store.find(transport)).isInstanceOf(IllegalStateException.class);
-    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
-    when(commands.scriptLoad(any(byte[].class))).thenReturn("wrong-loaded-hash");
-    assertThatThrownBy(() -> store.discoverAndReplace(transport))
-        .isInstanceOf(IllegalStateException.class);
     verify(commands, never())
         .evalsha(
             anyString(), eq(ScriptOutputType.STATUS), any(byte[][].class), any(byte[][].class));
@@ -315,8 +547,8 @@ class DirectTextWorldMenuRedisStoreTest {
     clearInvocations(routes);
     var fresh = store.discoverAndReplace(transport).orElseThrow();
     assertThat(fresh).isNotSameAs(retained);
-    // One new browse and its existing complete source revalidation, not local reconstruction.
-    verify(routes, times(2)).readVisiblePublicProductionTargets();
+    // One new guarded browse, not local reconstruction or a redundant second composition.
+    verify(routes).readVisiblePublicProductionTargets();
     assertThat(stored.get()).isNotEmpty();
     assertThat(store.find(transport)).isPresent();
   }
@@ -331,7 +563,37 @@ class DirectTextWorldMenuRedisStoreTest {
     assertThat(store.reassert(transport, menu)).isFalse();
     assertThat(stored.get()).isNull();
     verify(commands).getrange(any(byte[].class), eq(0L), eq(2097152L));
-    verify(commands).scriptLoad(any(byte[].class));
+    verify(commands, never()).scriptLoad(any(byte[].class));
+    verifyEvaluations(1);
+  }
+
+  private String evaluation() {
+    return commands.evalsha(
+        anyString(),
+        eq(ScriptOutputType.STATUS),
+        any(byte[][].class),
+        any(byte[].class),
+        any(byte[].class),
+        any(byte[].class),
+        any(byte[].class),
+        any(byte[].class));
+  }
+
+  private void verifyEvaluations(int count) {
+    verify(commands, times(count))
+        .evalsha(
+            eq(sha1),
+            eq(ScriptOutputType.STATUS),
+            eq(
+                new byte[][] {
+                  (DirectTextWorldMenuRedisStore.OWNED_PREFIX + transport.proxyConnectionId())
+                      .getBytes(StandardCharsets.US_ASCII)
+                }),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class));
   }
 
   private static RedisScriptCatalog installed() {

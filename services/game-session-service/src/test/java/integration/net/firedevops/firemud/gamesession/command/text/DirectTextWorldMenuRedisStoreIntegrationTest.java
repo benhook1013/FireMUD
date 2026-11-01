@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -26,14 +27,18 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
@@ -189,6 +194,146 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
   }
 
   @Test
+  void oneFreshCompositionRetainsPhysicalMenuWhileLaterUsesRestoreFreshSources() {
+    var fixture = fixture(Clock.systemUTC());
+    var reads = new AtomicInteger();
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              reads.incrementAndGet();
+              return List.of(world(fixture.targets().get(1)), world(fixture.targets().get(0)));
+            });
+    var selection = new DirectTextWorldSelectionService(catalog, fixture.routes(), fixture.clock());
+    var store = store(selection, fixture.clock());
+    var transport = observation();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    assertThat(reads.get()).isEqualTo(2);
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
+    byte[] original = admin.get(key(transport));
+    long expiry = admin.pexpiretime(key(transport));
+    assertThat(expiry).isEqualTo(menu.expiresAt().toEpochMilli());
+
+    reads.set(0);
+    clearInvocations(fixture.routes());
+    var restored = store.find(transport).orElseThrow();
+    assertThat(reads.get()).isEqualTo(2);
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
+    reads.set(0);
+    clearInvocations(fixture.routes());
+    assertThat(store.reassert(transport, restored)).isTrue();
+    assertThat(reads.get()).isEqualTo(2);
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
+    assertThat(store.reassert(transport, fixture.selection().browse().orElseThrow())).isFalse();
+    assertThat(admin.get(key(transport))).isEqualTo(original);
+    assertThat(admin.pexpiretime(key(transport))).isEqualTo(expiry);
+  }
+
+  @Test
+  void sourceMovementAfterCompositionLeavesOnlyStaleUiNeverRecoverableAuthority() {
+    var fixture = fixture(Clock.systemUTC());
+    var worlds =
+        new AtomicReference<>(
+            List.of(world(fixture.targets().get(1)), world(fixture.targets().get(0))));
+    var catalog = GameplayWorldCatalog.forWorldSupplier(worlds::get);
+    var selection = new DirectTextWorldSelectionService(catalog, fixture.routes(), fixture.clock());
+    var transport = observation();
+    var store =
+        new DirectTextWorldMenuRedisStore(
+            selection,
+            fixture.clock(),
+            () -> {
+              // Move source only after browse/preparation, immediately before the physical CAS.
+              worlds.set(List.of());
+              return writer.connect(ByteArrayCodec.INSTANCE);
+            },
+            installed());
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    byte[] original = admin.get(key(transport));
+    long expiry = admin.pexpiretime(key(transport));
+    assertThat(original).isNotEmpty();
+    assertThat(expiry).isEqualTo(menu.expiresAt().toEpochMilli());
+
+    assertThat(selection.resolve(menu, "1")).isEmpty();
+    assertThat(store.find(transport)).isEmpty();
+    assertThat(store.reassert(transport, menu)).isFalse();
+    var replacement =
+        new DirectTextWorldSelectionService(catalog, fixture.routes(), fixture.clock());
+    assertThat(store(replacement, fixture.clock()).find(transport)).isEmpty();
+    assertThat(admin.get(key(transport))).isEqualTo(original);
+    assertThat(admin.pexpiretime(key(transport))).isEqualTo(expiry);
+    admin.del(new byte[][] {key(transport)});
+    assertThat(store.reassert(transport, menu)).isFalse();
+    assertThat(admin.get(key(transport))).isNull();
+  }
+
+  @Test
+  void physicalScriptCacheLossLoadsOnceWhileWarmAndReadOnlyUsesDoNotLoad() throws Exception {
+    var fixture = fixture(Clock.systemUTC());
+    var selection = fixture.selection();
+    var transport = observation();
+    byte[] source;
+    try (var input =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream(DirectTextWorldMenuRedisScriptContribution.RESOURCE_PATH)) {
+      source = java.util.Objects.requireNonNull(input).readAllBytes();
+    }
+    String sha1 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(source));
+    List<RedisCommands<byte[], byte[]>> uses = new ArrayList<>();
+    Supplier<StatefulRedisConnection<byte[], byte[]>> observedConnections =
+        () -> {
+          var physical = writer.connect(ByteArrayCodec.INSTANCE);
+          var observed = delegatedCommands(physical.sync());
+          uses.add(observed);
+          return delegatedConnection(physical, observed);
+        };
+    var store =
+        new DirectTextWorldMenuRedisStore(
+            selection, fixture.clock(), observedConnections, installed());
+    flushScripts();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    verify(uses.get(0)).scriptLoad(eq(source));
+    verifyEvaluations(uses.get(0), sha1, 2);
+    byte[] original = admin.get(key(transport));
+    long deadline = admin.pexpiretime(key(transport));
+
+    assertThat(store.reassert(transport, menu)).isTrue();
+    verify(uses.get(1), never()).scriptLoad(any(byte[].class));
+    verifyEvaluations(uses.get(1), sha1, 1);
+
+    var controller = client(null, null);
+    try (var inspection = controller.connect(ByteArrayCodec.INSTANCE)) {
+      long originalPttl = inspection.sync().pttl(key(transport));
+      assertThat(originalPttl).isPositive();
+      flushScripts();
+      // SCRIPT FLUSH discards code only, not the original menu or its physical deadline/PTTL.
+      assertThat(admin.get(key(transport))).isEqualTo(original);
+      assertThat(admin.pexpiretime(key(transport))).isEqualTo(deadline);
+      assertThat(store.find(transport)).isPresent();
+      verify(uses.get(2), never()).scriptLoad(any(byte[].class));
+      verifyEvaluations(uses.get(2), sha1, 0);
+      assertThat(store.reassert(transport, menu)).isTrue();
+      verify(uses.get(3)).scriptLoad(eq(source));
+      verifyEvaluations(uses.get(3), sha1, 2);
+      assertThat(admin.get(key(transport))).isEqualTo(original);
+      assertThat(admin.pexpiretime(key(transport))).isEqualTo(deadline);
+      assertThat(inspection.sync().pttl(key(transport))).isBetween(1L, originalPttl);
+    } finally {
+      controller.shutdown();
+    }
+
+    flushScripts();
+    assertThat(store.clear(transport)).isTrue();
+    verify(uses.get(4)).scriptLoad(eq(source));
+    verifyEvaluations(uses.get(4), sha1, 2);
+    assertThat(admin.get(key(transport))).isNull();
+    assertThat(store.reassert(transport, menu)).isFalse();
+    verify(uses.get(5), never()).scriptLoad(any(byte[].class));
+    verifyEvaluations(uses.get(5), sha1, 0);
+    for (var use : uses) verify(use).aclWhoami();
+  }
+
+  @Test
   void exactTransportBindingRefusesReadReassertDiscoveryAndDeleteWithoutMutating() {
     var fixture = fixture(Clock.systemUTC());
     var selection = fixture.selection();
@@ -230,6 +375,8 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
                     } else {
                       admin.set(key(transport), competitor);
                     }
+                    // Cache loss must not bypass the original preimage on the load/retry path.
+                    flushScripts();
                     return prior;
                   })
               .when(intercepted)
@@ -342,12 +489,14 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
                     return List.of(mismatched);
                   }
                 }));
-    var wrongDigest =
-        new DirectTextWorldMenuRedisStore(
-            selection, fixture.clock(), () -> writer.connect(ByteArrayCodec.INSTANCE), badCatalog);
-    assertThatThrownBy(() -> wrongDigest.discoverAndReplace(transport))
+    assertThatThrownBy(
+            () ->
+                new DirectTextWorldMenuRedisStore(
+                    selection,
+                    fixture.clock(),
+                    () -> writer.connect(ByteArrayCodec.INSTANCE),
+                    badCatalog))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(() -> wrongDigest.find(transport)).isInstanceOf(IllegalStateException.class);
     assertThat(admin.get(key(transport))).isNull();
   }
 
@@ -426,7 +575,7 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     when(clock.millis()).thenReturn(now.plusSeconds(1).toEpochMilli());
     clearInvocations(fixture.routes());
     var fresh = store.discoverAndReplace(transport).orElseThrow();
-    verify(fixture.routes(), times(2)).readVisiblePublicProductionTargets();
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
     assertThat(fresh).isNotSameAs(retained);
     assertThat(fresh.expiresAt()).isEqualTo(original.expiresAt().plusSeconds(1));
     byte[] freshBytes = admin.get(key(transport));
@@ -445,6 +594,31 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
       DirectTextWorldSelectionService selection, Clock clock) {
     return new DirectTextWorldMenuRedisStore(
         selection, clock, () -> writer.connect(ByteArrayCodec.INSTANCE), installed());
+  }
+
+  private static void flushScripts() {
+    // The default fixture controller exists only in this isolated disposable Redis. Application
+    // and scoped administrator ACLs are unchanged; neither receives SCRIPT FLUSH permission.
+    var controller = client(null, null);
+    try (var connection = controller.connect(ByteArrayCodec.INSTANCE)) {
+      assertThat(connection.sync().scriptFlush()).isEqualTo("OK");
+    } finally {
+      controller.shutdown();
+    }
+  }
+
+  private static void verifyEvaluations(
+      RedisCommands<byte[], byte[]> commands, String sha1, int count) {
+    verify(commands, times(count))
+        .evalsha(
+            eq(sha1),
+            eq(ScriptOutputType.STATUS),
+            any(byte[][].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class));
   }
 
   private ObservedDirectTextTransport observation() {
