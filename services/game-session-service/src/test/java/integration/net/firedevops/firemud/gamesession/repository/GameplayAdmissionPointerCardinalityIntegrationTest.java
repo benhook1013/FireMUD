@@ -3,15 +3,19 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerConflictException;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.IntegrityConstraintViolationException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -153,6 +157,104 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
     assertThat(indexExists(dsl)).isFalse();
   }
 
+  @Test
+  void actualUniqueIndexViolationsAreTypedAndRollBackPointerAndAuditWrites() {
+    DriverManagerDataSource dataSource = isolatedDataSource();
+    migrateToVersion(dataSource, "1053");
+    DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    DatabaseGameplayAdmissionPointerAuthorityService service = authorityService(dsl);
+    service.upsertPointer(
+        pointerMutation(
+            "one-world",
+            "production",
+            SINGLE_PUBLIC_TENANT_ID,
+            9510201L,
+            true,
+            0L,
+            0L,
+            "first-public"));
+
+    List<String> pointersBeforeCreateConflict =
+        retainedRowsAndXmins(dsl, "gameplay_admission_pointer");
+    List<String> eventsBeforeCreateConflict =
+        retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event");
+    assertThatThrownBy(
+            () ->
+                dsl.transaction(
+                    configuration ->
+                        authorityService(DSL.using(configuration))
+                            .upsertPointer(
+                                pointerMutation(
+                                    "another-world",
+                                    "production",
+                                    SINGLE_PUBLIC_TENANT_ID,
+                                    9510202L,
+                                    true,
+                                    0L,
+                                    0L,
+                                    "duplicate-public-create"))))
+        .isInstanceOf(AdmissionPointerConflictException.class)
+        .satisfies(
+            failure -> {
+              assertThat(failure.getCause())
+                  .isInstanceOf(IntegrityConstraintViolationException.class);
+              assertThat(sqlState(failure)).isEqualTo("23505");
+            });
+    assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer"))
+        .isEqualTo(pointersBeforeCreateConflict);
+    assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event"))
+        .isEqualTo(eventsBeforeCreateConflict);
+
+    service.upsertPointer(
+        pointerMutation(
+            "preview-world",
+            "preview",
+            SINGLE_PUBLIC_TENANT_ID,
+            9510203L,
+            false,
+            0L,
+            0L,
+            "preview-create"));
+    List<String> pointersBeforeUpdateConflict =
+        retainedRowsAndXmins(dsl, "gameplay_admission_pointer");
+    List<String> eventsBeforeUpdateConflict =
+        retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event");
+    assertThatThrownBy(
+            () ->
+                dsl.transaction(
+                    configuration ->
+                        authorityService(DSL.using(configuration))
+                            .upsertPointer(
+                                pointerMutation(
+                                    "preview-world",
+                                    "preview",
+                                    SINGLE_PUBLIC_TENANT_ID,
+                                    9510203L,
+                                    true,
+                                    1L,
+                                    1L,
+                                    "duplicate-public-update"))))
+        .isInstanceOf(AdmissionPointerConflictException.class)
+        .satisfies(
+            failure -> {
+              assertThat(failure.getCause())
+                  .isInstanceOf(IntegrityConstraintViolationException.class);
+              assertThat(sqlState(failure)).isEqualTo("23505");
+            });
+    assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer"))
+        .isEqualTo(pointersBeforeUpdateConflict);
+    assertThat(retainedRowsAndXmins(dsl, "gameplay_admission_pointer_event"))
+        .isEqualTo(eventsBeforeUpdateConflict);
+    assertThat(
+            scalarLong(
+                dsl,
+                "SELECT COUNT(*) FROM gameplay_admission_pointer WHERE tenant_id = ? "
+                    + "AND world_slug = 'preview-world' AND visible = true "
+                    + "AND public_production_realm = false",
+                SINGLE_PUBLIC_TENANT_ID))
+        .isEqualTo(1L);
+  }
+
   private static void seedRetainedPointerHistory(
       DriverManagerDataSource dataSource, boolean includeDuplicatePublicRows) {
     migrateToVersion(dataSource, "5");
@@ -274,6 +376,50 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
         "SELECT COUNT(*) FROM gameplay_admission_pointer WHERE tenant_id = ? "
             + "AND visible = true AND public_production_realm = true",
         tenantId);
+  }
+
+  private static DatabaseGameplayAdmissionPointerAuthorityService authorityService(DSLContext dsl) {
+    return new DatabaseGameplayAdmissionPointerAuthorityService(
+        new GameplayAdmissionPointerRepository(dsl),
+        new GameplayAdmissionPointerEventRepository(dsl));
+  }
+
+  private static GameplayAdmissionPointerMutation pointerMutation(
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      boolean publicProductionRealm,
+      Long expectedPointerVersion,
+      Long expectedCatalogRevision,
+      String requestId) {
+    return new GameplayAdmissionPointerMutation(
+        worldSlug,
+        "World " + worldSlug,
+        realmSlug,
+        "Realm " + realmSlug,
+        tenantId,
+        gameInstanceId,
+        true,
+        publicProductionRealm,
+        false,
+        "SHARED",
+        "ALLOW_NEW",
+        "integration-test",
+        "cardinality conflict proof",
+        requestId,
+        expectedPointerVersion,
+        expectedCatalogRevision,
+        null);
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) {
+        return sqlException.getSQLState();
+      }
+    }
+    return null;
   }
 
   private static long scalarLong(DSLContext dsl, String query, Object... bindings) {

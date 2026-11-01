@@ -1063,7 +1063,7 @@ assert opened[0].closed is True
 discovery_session = CommandResponseSession(
     [
         "OK WORLDS\n",
-        "OK WORLDS\n1) Builder Sandbox (sandbox)\n2) Demo World (demo)\n",
+        "OK WORLDS\nBuilder Sandbox (sandbox)\nDemo World (demo)\n",
         "OK LOGIN\n",
         "OK PLAY Entered world: demo\n",
         "OK LOOK\n",
@@ -1094,7 +1094,7 @@ assert discovery_session.sent == [
 ]
 assert discovery_responses == [
     "OK WORLDS\n",
-    "OK WORLDS\n1) Builder Sandbox (sandbox)\n2) Demo World (demo)\n",
+    "OK WORLDS\nBuilder Sandbox (sandbox)\nDemo World (demo)\n",
     "OK LOGIN\n",
     "OK PLAY Entered world: demo\n",
     "OK LOOK\n",
@@ -1108,6 +1108,31 @@ assert [result["label"] for result in discovery_results] == [
 ]
 
 
+# Discovery matches exact displayed slugs; a numeric selector is a numeric
+# slug, never the position of a row in the list.
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\nDemo World (demo)\nNumeric World (123)\n", "123"
+)
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\nDemo World (demo)\nFirst World (1)\n", "1"
+)
+assert not smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\nDemo World (demo)\nNumeric World (123)\n", "2"
+)
+assert not smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\nDemonstration World (demonstration)\n", "demo"
+)
+assert not smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\nDemo World (demo-tools)\n", "demo"
+)
+assert smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\n1) Ranked World (ranked)\n", "ranked"
+)
+assert not smoke_common.worlds_response_contains_selector(
+    "OK WORLDS\nWelcome to the demo world\n", "demo"
+)
+
+
 for transient_error in (
     "ERROR UPSTREAM_FAILURE WORLDS is temporarily unavailable.\n",
     "ERROR UPSTREAM_UNAVAILABLE WORLDS is temporarily unavailable.\n",
@@ -1118,7 +1143,7 @@ for transient_error in (
         session = CommandResponseSession(
             [
                 transient_error,
-                "OK WORLDS\n1) Demo World (demo)\n",
+                "OK WORLDS\nDemo World (demo)\n",
                 "OK LOGIN\n",
                 "OK PLAY Entered world: demo\n",
             ]
@@ -1217,7 +1242,7 @@ login_failure_attempts = []
 def open_after_discovery_login_failure():
     session = CommandResponseSession(
         [
-            "OK WORLDS\n1) Demo World (demo)\n",
+            "OK WORLDS\nDemo World (demo)\n",
             "ERROR UPSTREAM_FAILURE Login is temporarily unavailable.\n",
         ]
     )
@@ -1251,7 +1276,7 @@ assert login_failure_attempts[0].sent == ["WORLDS\r\n", "LOGIN demo swordfish\r\
 
 fragmented_discovery_session = CommandResponseSession(
     [
-        ["OK WORLDS\n", "1) Demo World (demo)\n"],
+        ["OK WORLDS\n", "Demo World (demo)\n"],
         "OK LOGIN\n",
         "OK PLAY Entered world: demo\n",
         "OK LOOK\n",
@@ -1280,7 +1305,7 @@ assert fragmented_discovery_session.sent == [
 # complete logical messages and only splits the header from the complete row.
 fragmented_telnet_session = CommandResponseSession(
     [
-        ["OK WORLDS\n1) Demo", " World (de", "mo)\n"],
+        ["OK WORLDS\nDemo", " World (de", "mo)\n"],
         "OK LOGIN\n",
         "OK PLAY Entered world: demo\n",
     ]
@@ -1314,11 +1339,10 @@ class RepeatingWorldResponseSession(FakeSession):
 
 
 for selector, menu, expected_error in (
-    ("Builder", "OK WORLDS\n1) Builder Sandbox (sandbox)\n", "was not listed"),
-    ("123", "OK WORLDS\n1) Numeric Slug (123)\n", "was not listed"),
+    ("Builder", "OK WORLDS\nBuilder Sandbox (sandbox)\n", "was not listed"),
     (
         "demo",
-        "OK WORLDS\n1) Demo World (demo)\n2) Other Demo (demo)\n",
+        "OK WORLDS\nDemo World (demo)\nOther Demo (demo)\n",
         "appears ambiguously",
     ),
 ):

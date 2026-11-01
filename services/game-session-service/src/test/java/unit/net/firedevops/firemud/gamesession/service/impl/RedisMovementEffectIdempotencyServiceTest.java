@@ -2,8 +2,10 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -96,7 +98,12 @@ class RedisMovementEffectIdempotencyServiceTest {
     SessionContext current = baselineContext();
     when(valueOperations.get("sessionctx:22:41:context")).thenReturn(current);
     when(valueOperations.get("sessionctx:22:41:movement-effect:tfx-1")).thenReturn(null);
-    MoveEffectApplyResult result = service.apply("tfx-1", withAccountId(current, 999L), "R-2045");
+    SessionContext differentAccount =
+        withAccountId(current, "2b23537d-c5cc-4fa8-8c0d-dc4c38c77a92");
+    assertTrue(current.hasAccountIdentity());
+    assertTrue(differentAccount.hasAccountIdentity());
+    assertNotEquals(current.accountId(), differentAccount.accountId());
+    MoveEffectApplyResult result = service.apply("tfx-1", differentAccount, "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
     assertEquals(current.withoutJwt(), result.context());
@@ -194,11 +201,11 @@ class RedisMovementEffectIdempotencyServiceTest {
         "SHARED");
   }
 
-  private SessionContext withAccountId(SessionContext context, long accountId) {
+  private SessionContext withAccountId(SessionContext context, String accountId) {
     return new SessionContext(
         context.sessionId(),
         context.tenantId(),
-        Long.toString(accountId),
+        accountId,
         context.loginName(),
         context.characterId(),
         context.characterName(),

@@ -27,7 +27,9 @@ class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
 INVALID_COMMAND_LINE_ERROR = "commands must not contain embedded CR or LF"
 PLAINTEXT_TELNET_HOST_ERROR = "tls_enabled=False requires a localhost-equivalent Telnet host"
-WORLD_DISCOVERY_ROW = re.compile(r"^\s*(\d+)\)\s+.+\s+\(([^()\r\n]+)\)\s*$")
+WORLD_DISCOVERY_ROW = re.compile(
+    r"^\s*\S(?:.*?\S)?\s+\(([^()\r\n]+)\)\s*$"
+)
 WORLD_DISCOVERY_POLL_INTERVAL_SECONDS = 0.5
 RETRYABLE_UPSTREAM_FAILURE_PREFIXES = ("ERROR UPSTREAM_FAILURE", "ERROR UNAVAILABLE")
 DISCOVERY_RETRYABLE_UPSTREAM_PREFIXES = (
@@ -206,20 +208,13 @@ def worlds_response_contains_selector(response, selector):
     if not isinstance(selector, str) or not selector.strip():
         raise ValueError("World discovery selector must be a non-empty string")
     normalized_selector = selector.strip().casefold()
-    rows = []
+    slugs = []
     for line in response.splitlines():
         match = WORLD_DISCOVERY_ROW.fullmatch(line)
         if match is not None:
-            rows.append((int(match.group(1)), match.group(2).strip().casefold()))
+            slugs.append(match.group(1).strip().casefold())
 
-    try:
-        ordinal_selector = int(normalized_selector)
-    except ValueError:
-        ordinal_selector = None
-    if ordinal_selector is not None:
-        matches = [row for row in rows if row[0] == ordinal_selector] if ordinal_selector >= 1 else []
-    else:
-        matches = [row for row in rows if row[1] == normalized_selector]
+    matches = [slug for slug in slugs if slug == normalized_selector]
 
     if len(matches) > 1:
         raise ProbeOperationalFailure(f"Configured smoke world selector {selector!r} appears ambiguously in WORLDS")
