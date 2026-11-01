@@ -500,13 +500,17 @@ public class AutomationScriptingGrpcService
               request.getAffectedScriptsList());
       response.setSuccess(readinessAccepted);
       if (!readinessAccepted) {
+        String errorMessage =
+            request.getAffectedScriptsCount() == 0
+                ? "zero_handler_manifest_unverifiable"
+                : "patch_readiness_not_current";
         response.setError(
             GrpcAppErrors.error(
                 meterRegistry,
                 logger,
                 "NotifyScriptVersionUpdate",
                 "FAILED_PRECONDITION",
-                "patch_readiness_not_current"));
+                errorMessage));
       }
     } catch (IllegalArgumentException ex) {
       response

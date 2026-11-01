@@ -182,13 +182,11 @@ public class VersionServiceImpl implements VersionService {
               "SCRIPT_PATCH_MANIFEST_UNAVAILABLE: the prior publish attempt may have dispatched readiness without a verifiable affected-script manifest"));
     }
 
-    boolean participantGatePassed = false;
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectScriptPatchParticipantDigests(
               reservation.versionDto(), patchBinding.publishRequestId(), publishWorkflowId);
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
-      participantGatePassed = true;
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
       throw new ScriptPatchPublishFailureException(
@@ -208,19 +206,13 @@ public class VersionServiceImpl implements VersionService {
       }
       boolean retryableParticipantDependencyFailure =
           PublicationFailureClassifier.isRetryableParticipantDependencyFailure(operationFailure);
-      boolean retryablePreDispatchParticipantFailure =
-          !participantGatePassed && retryableParticipantDependencyFailure;
-      if (retryableParticipantDependencyFailure && !retryablePreDispatchParticipantFailure) {
-        throw new IllegalStateException(
-            "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: participant dependency is temporarily unavailable; retry exact publish request",
-            operationFailure);
-      }
+      // This newly reserved path never dispatches readiness, even after the participant gate.
       String failureCode =
-          retryablePreDispatchParticipantFailure
+          retryableParticipantDependencyFailure
               ? RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE
               : publishFailureCode(operationFailure);
       String failureMessage =
-          retryablePreDispatchParticipantFailure
+          retryableParticipantDependencyFailure
               ? retryableParticipantDependencyFailureMessage()
               : publishFailureMessage(operationFailure);
       ScriptPatchFinalization failure;
@@ -242,7 +234,7 @@ public class VersionServiceImpl implements VersionService {
       if (failure.status() == PublishAttemptStatus.FAILED) {
         if (Objects.equals(failure.failureCode(), failureCode)
             && Objects.equals(failure.failureMessage(), failureMessage)) {
-          if (retryablePreDispatchParticipantFailure) {
+          if (retryableParticipantDependencyFailure) {
             throw new ScriptPatchPublishFailureException(
                 failure.failureCode(), failure.failureMessage(), operationFailure);
           }
@@ -458,7 +450,7 @@ public class VersionServiceImpl implements VersionService {
     return new ScriptPatchPublishFailureException(
         errorCode,
         errorCode
-            + ": script-patch publication outcome is unknown; retry the exact publish request",
+            + ": script-patch publication outcome is unknown; owner reconciliation of the original attempt is required before publication can progress",
         cause);
   }
 

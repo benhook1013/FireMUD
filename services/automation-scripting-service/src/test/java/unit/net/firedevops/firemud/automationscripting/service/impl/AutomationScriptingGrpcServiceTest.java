@@ -783,8 +783,53 @@ class AutomationScriptingGrpcServiceTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().getSuccess());
     assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
-    assertEquals("patch_readiness_not_current", ref.get().getError().getMessage());
+    assertEquals("zero_handler_manifest_unverifiable", ref.get().getError().getMessage());
     Mockito.verify(versionService).notifyUpdate("1", 1L, "patch-1", List.of());
+  }
+
+  @Test
+  void notifyScriptVersionUpdateKeepsGenericReadinessFailureForNonEmptyAffectedScripts() {
+    ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    Mockito.when(versionService.notifyUpdate("1", 1L, "patch-1", List.of("guard-script")))
+        .thenReturn(false);
+    AutomationScriptingGrpcService service =
+        new AutomationScriptingGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(ScriptDefinitionService.class),
+            versionService,
+            Mockito.mock(ScriptScheduleInstanceService.class),
+            Mockito.mock(ScriptEventIngressService.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(NpcFormationService.class),
+            new SimpleMeterRegistry(),
+            "");
+    AtomicReference<NotifyScriptVersionUpdateResponse> response = new AtomicReference<>();
+
+    service.notifyScriptVersionUpdate(
+        NotifyScriptVersionUpdateRequest.newBuilder()
+            .setTenantId("1")
+            .setBaseVersionId(1L)
+            .setScriptPatchVersion("patch-1")
+            .addAffectedScripts("guard-script")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(NotifyScriptVersionUpdateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(response.get());
+    assertFalse(response.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", response.get().getError().getCode());
+    assertEquals("patch_readiness_not_current", response.get().getError().getMessage());
+    Mockito.verify(versionService).notifyUpdate("1", 1L, "patch-1", List.of("guard-script"));
   }
 
   @Test
