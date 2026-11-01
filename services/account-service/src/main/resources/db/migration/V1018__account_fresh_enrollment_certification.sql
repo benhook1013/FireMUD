@@ -252,7 +252,7 @@ BEGIN
         OR birth_row.result_id IS DISTINCT FROM NEW.expected_result_id
         OR birth_row.account_insert_transaction_id IS DISTINCT FROM NEW.insertion_xid
         OR EXISTS (SELECT 1 FROM account_platform_restriction_current_projections WHERE account_uuid = NEW.account_uuid AND category = NEW.category)
-        OR NEW.expected_generation IS DISTINCT FROM CASE NEW.category WHEN 'account_security_lock' THEN 1 ELSE 2 END
+        OR NEW.expected_generation IS DISTINCT FROM (CASE NEW.category WHEN 'account_security_lock' THEN 1 ELSE 2 END)
         OR NEW.expected_source_version IS DISTINCT FROM NEW.expected_generation
         OR NEW.expected_fence IS DISTINCT FROM NEW.expected_generation
         OR NEW.expected_fence_source_version IS DISTINCT FROM NEW.expected_generation THEN
@@ -346,8 +346,8 @@ BEGIN
         RAISE EXCEPTION 'Both explicit category certifications and exact enrollment result must commit atomically' USING ERRCODE = '23514';
     END IF;
     FOR decision IN SELECT * FROM account_fresh_enrollment_decisions WHERE enrollment_id = enrollment_uuid LOOP
-        IF decision.request_id IS DISTINCT FROM CASE decision.category
-            WHEN 'account_security_lock' THEN result.security_request_id ELSE result.ban_request_id END THEN
+        IF decision.request_id IS DISTINCT FROM (CASE decision.category
+            WHEN 'account_security_lock' THEN result.security_request_id ELSE result.ban_request_id END) THEN
             RAISE EXCEPTION 'Enrollment result does not reciprocate its exact two owner decisions' USING ERRCODE = '23514';
         END IF;
         PERFORM account_fresh_enrollment_require_operation(decision.request_id);
