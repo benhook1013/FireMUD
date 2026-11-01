@@ -251,8 +251,10 @@ public class PlayCommandHandler {
       }
       Optional<GameplayWorldCatalog.RealmView> maybeRealm =
           selection.explicitRealmSelector() != null
-              ? gameplayWorldCatalog.resolveRealmForAdmission(
-                  selectedWorld, selection.explicitRealmSelector())
+              ? GameplayWorldCatalog.isOrdinalSelector(selection.explicitRealmSelector())
+                  ? Optional.empty()
+                  : gameplayWorldCatalog.resolveRealmForAdmission(
+                      selectedWorld, selection.explicitRealmSelector())
               : selectDefaultRealm(selectedWorld, catalogSnapshot);
       if (maybeRealm.isEmpty()) {
         return failure(
@@ -563,7 +565,7 @@ public class PlayCommandHandler {
         "Entered world: " + displaySelection + characterSuffix,
         "notice.world.entered",
         Map.of(
-            "worldName", world.slug(),
+            "worldName", displaySelection,
             "realmName", realm.slug(),
             "characterSuffix", characterSuffix));
   }
@@ -1014,7 +1016,8 @@ public class PlayCommandHandler {
       TextCommandPayload.PlayRequest playRequest,
       GameplayWorldCatalog.ReadSnapshot catalogSnapshot) {
     String worldSelector = playRequest.worldSelector();
-    if (!StringUtils.hasText(worldSelector)) {
+    if (!StringUtils.hasText(worldSelector)
+        || GameplayWorldCatalog.isOrdinalSelector(worldSelector)) {
       return Optional.empty();
     }
     String secondSelector =
@@ -1034,7 +1037,10 @@ public class PlayCommandHandler {
         catalogSnapshot.resolveWorld(worldSelector);
     if (maybeWorld.isPresent()
         && StringUtils.hasText(secondSelector)
-        && !gameplayWorldCatalog.hasRealmForAdmission(maybeWorld.orElseThrow(), secondSelector)) {
+        && (GameplayWorldCatalog.isOrdinalSelector(secondSelector)
+            || !gameplayWorldCatalog.hasRealmForAdmission(
+                maybeWorld.orElseThrow(), secondSelector))) {
+      // A numeric second argument remains a character name, never an unbound realm ordinal.
       return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), null, secondSelector));
     }
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));

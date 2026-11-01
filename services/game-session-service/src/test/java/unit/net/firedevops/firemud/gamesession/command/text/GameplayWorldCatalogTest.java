@@ -1127,7 +1127,7 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void numericWorldSelectionRequiresARetainedTransportMenuRatherThanAFreshCatalog() {
+  void numericSlugLookupDoesNotIndexFreshCatalogOrdering() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
             List.of(
@@ -1163,13 +1163,38 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void unboundNumericRealmSelectorsCannotBecomeRealmSlugs() {
+  void typedNumericWorldAndRealmSlugsResolveExactlyRatherThanAsPositions() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                worldWithRealm("123", "456", 7L, true),
+                worldWithRealm("demo", "production", 8L, true)));
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("123").orElseThrow();
+
+    assertThat(world.slug()).isEqualTo("123");
+    assertThat(catalog.readSnapshot().resolveWorld("123")).contains(world);
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("123")).contains(world);
+    assertThat(catalog.resolvePublicWorldFromAuthoritySnapshot("123")).contains(world);
+    assertThat(catalog.browseRealms("123").orElseThrow().realms().getFirst().realmSlug())
+        .isEqualTo("456");
+    assertThat(catalog.resolveRealm(world, "456")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveRealmForAdmission(world, "456")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveWorld("1")).isEmpty();
+    assertThat(catalog.resolveWorld("2")).isEmpty();
+    assertThat(catalog.resolveRealm(world, "1")).isEmpty();
+    assertThat(catalog.resolveRealmForAdmission(world, "1")).isEmpty();
+  }
+
+  @Test
+  void typedNumericRealmSlugResolvesExactlyWithoutOrdinalFallback() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(List.of(worldWithRealm("demo", "1", 7L, true)));
     GameplayWorldCatalog.WorldView world = catalog.resolveWorld("demo").orElseThrow();
 
-    assertThat(catalog.resolveRealm(world, "1")).isEmpty();
-    assertThat(catalog.resolveRealmForAdmission(world, "1")).isEmpty();
+    assertThat(catalog.resolveRealm(world, "1")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveRealmForAdmission(world, "1")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveRealm(world, "2")).isEmpty();
+    assertThat(catalog.resolveRealmForAdmission(world, "2")).isEmpty();
   }
 
   @Test

@@ -129,6 +129,49 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
+  void textWorldOrdinalsAreRefusedEvenWhenMatchingSlugsExistWithoutReadingFreshCatalog() {
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("1", 22L, 1L, false), world("123", 23L, 2L, false)));
+    var original =
+        TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties).visibleWorlds();
+    AtomicInteger reads = new AtomicInteger();
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              reads.incrementAndGet();
+              return original;
+            });
+    var localHandler = new WorldsCommandHandler(catalog);
+    var actor = GameplayCommandTestFixtures.worldBrowseDemo();
+
+    for (String selector : List.of("1", " 123 ", "2")) {
+      assertThat(localHandler.browseRealms(selector)).isEmpty();
+      assertThat(localHandler.browseCharacters(actor, selector, null))
+          .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidWorld.class);
+    }
+    assertThat(reads).hasValue(0);
+  }
+
+  @Test
+  void charsRefusesUnboundNumericRealmEvenWhenExactRealmSlugExists() {
+    var demo = world("demo", 22L, 1L, false);
+    demo.getRealms().getFirst().setSlug("1");
+    gameplayCatalogProperties.setWorlds(List.of(demo));
+    var original =
+        TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties).visibleWorlds();
+    AtomicInteger reads = new AtomicInteger();
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> reads.getAndIncrement() == 0 ? original : List.of());
+
+    assertThat(
+            new WorldsCommandHandler(catalog)
+                .browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", "1"))
+        .isEqualTo(new WorldsCommandHandler.CharacterBrowseResult.InvalidRealm("demo"));
+    assertThat(reads).hasValue(1);
+  }
+
+  @Test
   void charsRejectsNonCanonicalCallerBeforeCatalogSelection() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
     var actor =
