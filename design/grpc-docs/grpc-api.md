@@ -2070,6 +2070,7 @@ exact catalog/pointer evidence. Account re-resolves the target before issuance.
 | connect_scope_id | [string](#string) |  |  |
 | connect_scope_expires_at | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| evaluated_at | [string](#string) |  | Account&#39;s immutable evaluation time from the exact retained scope snapshot. |
 
 
 

@@ -1,8 +1,12 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -103,6 +107,51 @@ public final class GameplayWorldCatalog {
   /** Builds the no-caller discovery projection from one validated authority snapshot. */
   public List<WorldView> publicWorldsFromAuthoritySnapshot() {
     return publicDiscoveryWorlds(loadAuthorityWorldSnapshot());
+  }
+
+  /**
+   * Captures the exact ordered public world projection and its local comparison fingerprint from
+   * one validated catalog snapshot.
+   */
+  public DiscoverySnapshot discoverySnapshot() {
+    CatalogSnapshot snapshot = loadAuthorityWorldSnapshot();
+    return new DiscoverySnapshot(publicDiscoveryWorlds(snapshot), catalogFingerprint(snapshot));
+  }
+
+  /**
+   * Captures the current visible realm projection for an exact world entry retained from a prior
+   * discovery response. A stale or no-longer-public world entry does not resolve.
+   */
+  public Optional<RealmDiscoverySnapshot> realmDiscoverySnapshot(WorldView selectedWorld) {
+    if (selectedWorld == null) {
+      return Optional.empty();
+    }
+    CatalogSnapshot snapshot = loadAuthorityWorldSnapshot();
+    List<WorldView> publicWorlds = publicDiscoveryWorlds(snapshot);
+    if (!publicWorlds.contains(selectedWorld) || selectedWorld.realms().size() != 1) {
+      return Optional.empty();
+    }
+
+    RealmView publicRealm = selectedWorld.realms().getFirst();
+    List<WorldView> selectedWorldMatches =
+        visibleWorlds(snapshot).stream()
+            .filter(world -> world.slug().equals(selectedWorld.slug()))
+            .filter(
+                world ->
+                    world.realms().stream()
+                        .anyMatch(realm -> realm.tenantId() == publicRealm.tenantId()))
+            .toList();
+    if (selectedWorldMatches.size() != 1) {
+      return Optional.empty();
+    }
+
+    WorldView currentWorld = selectedWorldMatches.getFirst();
+    List<RealmView> currentVisibleRealms = visibleRealms(currentWorld);
+    WorldView visibleWorld =
+        new WorldView(currentWorld.slug(), currentWorld.displayName(), currentVisibleRealms);
+    return Optional.of(
+        new RealmDiscoverySnapshot(
+            visibleWorld, currentVisibleRealms, catalogFingerprint(snapshot)));
   }
 
   /** Resolves only worlds exposed by the no-caller public discovery surface. */
@@ -533,10 +582,16 @@ public final class GameplayWorldCatalog {
     if (authorityPointerSupplier == null) {
       return loadWorldSnapshot();
     }
-    return catalogSnapshot(toWorlds(healthyTenantPointers(loadAuthorityPointers())));
+    List<GameplayAdmissionPointerSnapshot> pointers = List.copyOf(loadAuthorityPointers());
+    return catalogSnapshot(toWorlds(healthyTenantPointers(pointers)), pointers);
   }
 
   private static CatalogSnapshot catalogSnapshot(List<WorldView> sourceWorlds) {
+    return catalogSnapshot(sourceWorlds, null);
+  }
+
+  private static CatalogSnapshot catalogSnapshot(
+      List<WorldView> sourceWorlds, List<GameplayAdmissionPointerSnapshot> authorityPointers) {
     List<WorldView> worlds = normalizeWorlds(sourceWorlds);
     Map<Long, Long> publicProductionRealmCounts = new HashMap<>();
     for (WorldView world : worlds) {
@@ -546,7 +601,64 @@ public final class GameplayWorldCatalog {
         }
       }
     }
-    return new CatalogSnapshot(worlds, Map.copyOf(publicProductionRealmCounts));
+    return new CatalogSnapshot(worlds, Map.copyOf(publicProductionRealmCounts), authorityPointers);
+  }
+
+  /**
+   * Creates a deterministic, locally scoped comparison value over the validated catalog projection.
+   * This digest is neither an authority token nor an interoperable schema.
+   */
+  private static String catalogFingerprint(CatalogSnapshot snapshot) {
+    CatalogFingerprintEncoder encoder =
+        new CatalogFingerprintEncoder("firemud:gamesession:world-catalog-discovery:v1");
+    if (snapshot.authorityPointers() != null) {
+      encoder.writeMarker(0x50);
+      encoder.writeCount(snapshot.authorityPointers().size());
+      for (GameplayAdmissionPointerSnapshot pointer : snapshot.authorityPointers()) {
+        encoder.writeMarker(0x51);
+        encoder.writeString(pointer.worldSlug());
+        encoder.writeString(pointer.worldDisplayName());
+        encoder.writeString(pointer.realmSlug());
+        encoder.writeString(pointer.realmDisplayName());
+        encoder.writeLong(pointer.tenantId());
+        encoder.writeLong(pointer.gameInstanceId());
+        encoder.writeLong(pointer.pointerVersion());
+        encoder.writeBoolean(pointer.visible());
+        encoder.writeBoolean(pointer.publicProductionRealm());
+        encoder.writeBoolean(pointer.requiresCharacterSelection());
+        encoder.writeString(pointer.stateScope());
+        encoder.writeString(pointer.characterCreationPolicy());
+        encoder.writeLong(pointer.catalogRevision());
+        encoder.writeUuid(pointer.realmId());
+        encoder.writeUuid(pointer.playableStateNamespaceId());
+      }
+      return encoder.finish();
+    }
+
+    encoder.writeCount(snapshot.worlds().size());
+    for (WorldView world : snapshot.worlds()) {
+      encoder.writeMarker(0x41);
+      encoder.writeString(world.slug());
+      encoder.writeString(world.displayName());
+      encoder.writeCount(world.realms().size());
+      for (RealmView realm : world.realms()) {
+        encoder.writeMarker(0x52);
+        encoder.writeString(realm.slug());
+        encoder.writeString(realm.displayName());
+        encoder.writeLong(realm.tenantId());
+        encoder.writeLong(realm.gameInstanceId());
+        encoder.writeLong(realm.pointerVersion());
+        encoder.writeBoolean(realm.visible());
+        encoder.writeBoolean(realm.publicProductionRealm());
+        encoder.writeBoolean(realm.requiresCharacterSelection());
+        encoder.writeString(realm.stateScope());
+        encoder.writeString(realm.characterCreationPolicy());
+        encoder.writeLong(realm.catalogRevision());
+        encoder.writeUuid(realm.realmId());
+        encoder.writeUuid(realm.playableStateNamespaceId());
+      }
+    }
+    return encoder.finish();
   }
 
   private static List<WorldView> normalizeWorlds(List<WorldView> worlds) {
@@ -781,7 +893,27 @@ public final class GameplayWorldCatalog {
   }
 
   private record CatalogSnapshot(
-      List<WorldView> worlds, Map<Long, Long> publicProductionRealmCounts) {}
+      List<WorldView> worlds,
+      Map<Long, Long> publicProductionRealmCounts,
+      List<GameplayAdmissionPointerSnapshot> authorityPointers) {}
+
+  /** Immutable response-local public world data plus an opaque local comparison value. */
+  public record DiscoverySnapshot(List<WorldView> worlds, String fingerprint) {
+    public DiscoverySnapshot {
+      worlds = List.copyOf(worlds);
+      Objects.requireNonNull(fingerprint, "fingerprint must not be null");
+    }
+  }
+
+  /** Immutable response-local realm data plus an opaque local comparison value. */
+  public record RealmDiscoverySnapshot(
+      WorldView world, List<RealmView> realms, String fingerprint) {
+    public RealmDiscoverySnapshot {
+      Objects.requireNonNull(world, "world must not be null");
+      realms = List.copyOf(realms);
+      Objects.requireNonNull(fingerprint, "fingerprint must not be null");
+    }
+  }
 
   public record WorldView(String slug, String displayName, List<RealmView> realms) {
     public WorldView {
@@ -877,6 +1009,81 @@ public final class GameplayWorldCatalog {
     private MutableWorldAccumulator(String slug, String displayName) {
       this.slug = slug;
       this.displayName = displayName;
+    }
+  }
+
+  /** Fixed-order, explicitly framed encoding used only for local snapshot comparison. */
+  private static final class CatalogFingerprintEncoder {
+    private final MessageDigest digest;
+
+    private CatalogFingerprintEncoder(String domainTag) {
+      try {
+        digest = MessageDigest.getInstance("SHA-256");
+      } catch (NoSuchAlgorithmException exception) {
+        throw new IllegalStateException("SHA-256 is unavailable", exception);
+      }
+      writeString(domainTag);
+    }
+
+    private void writeMarker(int marker) {
+      digest.update((byte) 0x01);
+      digest.update((byte) marker);
+    }
+
+    private void writeCount(int value) {
+      digest.update((byte) 0x02);
+      writeRawInt(value);
+    }
+
+    private void writeString(String value) {
+      digest.update((byte) 0x10);
+      if (value == null) {
+        digest.update((byte) 0x00);
+        return;
+      }
+      digest.update((byte) 0x01);
+      byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+      writeRawInt(bytes.length);
+      digest.update(bytes);
+    }
+
+    private void writeLong(long value) {
+      digest.update((byte) 0x20);
+      for (int shift = Long.SIZE - Byte.SIZE; shift >= 0; shift -= Byte.SIZE) {
+        digest.update((byte) ((value >>> shift) & 0xff));
+      }
+    }
+
+    private void writeBoolean(boolean value) {
+      digest.update((byte) 0x30);
+      digest.update((byte) (value ? 0x01 : 0x00));
+    }
+
+    private void writeUuid(UUID value) {
+      digest.update((byte) 0x40);
+      if (value == null) {
+        digest.update((byte) 0x00);
+        return;
+      }
+      digest.update((byte) 0x01);
+      writeRawLong(value.getMostSignificantBits());
+      writeRawLong(value.getLeastSignificantBits());
+    }
+
+    private String finish() {
+      return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private void writeRawInt(int value) {
+      for (int shift = Integer.SIZE - Byte.SIZE; shift >= 0; shift -= Byte.SIZE) {
+        digest.update((byte) ((value >>> shift) & 0xff));
+      }
+    }
+
+    private void writeRawLong(long value) {
+      for (int shift = Long.SIZE - Byte.SIZE; shift >= 0; shift -= Byte.SIZE) {
+        digest.update((byte) ((value >>> shift) & 0xff));
+      }
     }
   }
 }

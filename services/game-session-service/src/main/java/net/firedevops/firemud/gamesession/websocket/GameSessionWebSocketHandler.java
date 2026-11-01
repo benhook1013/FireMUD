@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.BuiltInTextCommandMetadataResolvers;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionTag;
 import net.firedevops.firemud.gamesession.command.text.TextCommandDispatchGroup;
@@ -211,8 +212,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       if (!ensureBootstrapSessionContextIfMissing(session, sessionId)) {
         return;
       }
+      Optional<ObservedDirectTextTransport> observed = resolveObservedDirectTextTransport(session);
       TextCommandInterpretationResult interpretation =
-          interpreter.interpret(sessionId, command, requiresSoloTick);
+          observed.isPresent()
+              ? interpreter.interpret(sessionId, command, requiresSoloTick, observed.orElseThrow())
+              : interpreter.interpret(sessionId, command, requiresSoloTick);
       TextCommand resolvedCommand =
           interpretation.resolvedCommand() == null ? command : interpretation.resolvedCommand();
       recordGameplayActivity(sessionId, interpretation);
@@ -283,6 +287,17 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     Object cached =
         session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR);
     return cached instanceof String text ? text : null;
+  }
+
+  private Optional<ObservedDirectTextTransport> resolveObservedDirectTextTransport(
+      WebSocketSession session) {
+    Object observed =
+        session
+            .getAttributes()
+            .get(GameSessionWebSocketHandshakeInterceptor.OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR);
+    return observed instanceof ObservedDirectTextTransport transport
+        ? Optional.of(transport)
+        : Optional.empty();
   }
 
   private String resolveBootstrapGameInstanceIdText(WebSocketSession session) {

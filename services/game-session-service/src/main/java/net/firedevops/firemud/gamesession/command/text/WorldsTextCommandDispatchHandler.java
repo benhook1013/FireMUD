@@ -34,6 +34,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
                   List.of(
                       net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
                           worldsHandler.browseView())));
+          case JOIN -> errorResult("FEATURE_UNAVAILABLE", "JOIN is not available.");
           case REALMS -> handleRealms(request.command());
           case CHARS -> handleChars(request);
           default ->

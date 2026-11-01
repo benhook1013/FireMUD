@@ -45,7 +45,8 @@ class AuthoredActionTextCommandDispatchHandlerTest {
                 "session-1",
                 authoredAction("wave-salute", "salute captain", List.of("captain")),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     verify(commandService).enqueue("session-1", "salute captain", false, admission);
@@ -63,7 +64,8 @@ class AuthoredActionTextCommandDispatchHandlerTest {
                 "session-1",
                 authoredAction("wave-salute", "salute captain", List.of("captain")),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
@@ -79,6 +81,7 @@ class AuthoredActionTextCommandDispatchHandlerTest {
                 "session-1",
                 authoredAction("wave-salute", "salute captain", List.of("captain")),
                 false,
+                Optional.empty(),
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isFalse();

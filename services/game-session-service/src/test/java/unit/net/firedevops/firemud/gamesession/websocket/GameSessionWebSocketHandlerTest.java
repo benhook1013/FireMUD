@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -17,6 +19,7 @@ import java.util.UUID;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
@@ -150,6 +153,68 @@ class GameSessionWebSocketHandlerTest {
                         && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
     verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
     verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
+  void carriesObservedTrustedProxyTransportThroughTextInterpretation() throws Exception {
+    var observed =
+        new ObservedDirectTextTransport(
+            "41", UUID.fromString("9fb38c88-2f1d-42aa-8e0b-7eb69caf8814"));
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR,
+                observed));
+    TextCommand command = new TextCommand(TextCommandType.HELP, List.of(), "HELP");
+    when(parser.parse("HELP")).thenReturn(command);
+    when(interpreter.interpret("41", command, false, observed))
+        .thenReturn(new TextCommandInterpretationResult(CommandEnqueueResult.success()));
+    SessionContext context = GameplayCommandTestFixtures.bootstrapDemo();
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(context));
+    when(promptBurstCoordinator.applyPromptWindow(any(), any(), any(), anyBoolean()))
+        .thenAnswer(invocation -> invocation.getArgument(2));
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            Mockito.nullable(String.class),
+            any(PresentationProperties.class),
+            any()))
+        .thenReturn("OK HELP");
+
+    handler.handleMessage(session, new TextMessage("HELP"));
+
+    verify(interpreter).interpret("41", command, false, observed);
+    verify(interpreter, never()).interpret("41", command, false);
+  }
+
+  @Test
+  void nullObservedDispatchResultNeverFallsBackToASecondDispatch() throws Exception {
+    var observed =
+        new ObservedDirectTextTransport(
+            "41", UUID.fromString("9fb38c88-2f1d-42aa-8e0b-7eb69caf8814"));
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR,
+                observed));
+    TextCommand command = new TextCommand(TextCommandType.HELP, List.of(), "HELP");
+    when(parser.parse("HELP")).thenReturn(command);
+    when(interpreter.interpret("41", command, false, observed)).thenReturn(null);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.of(GameplayCommandTestFixtures.bootstrapDemo()));
+
+    assertThatThrownBy(() -> handler.handleMessage(session, new TextMessage("HELP")))
+        .isInstanceOf(NullPointerException.class);
+
+    verify(interpreter).interpret("41", command, false, observed);
+    verify(interpreter, never()).interpret("41", command, false);
   }
 
   @Test

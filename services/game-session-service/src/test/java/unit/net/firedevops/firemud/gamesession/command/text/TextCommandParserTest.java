@@ -47,6 +47,43 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesJoinAsOneUnmodifiedWorldSelector() {
+    TextCommand command = parser.parse("JOIN Tenant-A/World-A");
+
+    assertEquals(TextCommandType.JOIN, command.type());
+    assertEquals("join", command.commandId());
+    assertEquals("JOIN", command.aliasUsed());
+    assertEquals(List.of("Tenant-A/World-A"), command.args());
+    assertEquals(new TextCommandPayload.JoinRequest("Tenant-A/World-A"), command.payload());
+  }
+
+  @Test
+  void requiresExactlyOneJoinWorldSelector() {
+    TextCommand missingSelector = parser.parse("JOIN");
+    TextCommand extraArguments = parser.parse("JOIN tenant-a/world-a production");
+
+    assertEquals(TextCommandType.JOIN, missingSelector.type());
+    assertTrue(missingSelector.payload() instanceof TextCommandPayload.Tokens);
+    assertEquals(TextCommandType.JOIN, extraArguments.type());
+    assertEquals(List.of("tenant-a/world-a", "production"), extraArguments.args());
+    assertTrue(extraArguments.payload() instanceof TextCommandPayload.Tokens);
+  }
+
+  @Test
+  void registersJoinAsLoginStageNonpromptingMetaCommand() {
+    TextCommandDefinition definition =
+        new BuiltInTextCommandDefinitionProvider()
+            .definitions().stream()
+                .filter(candidate -> candidate.type() == TextCommandType.JOIN)
+                .findFirst()
+                .orElseThrow();
+
+    assertEquals(TextCommandStageRequirement.LOGIN, definition.stageRequirement());
+    assertEquals(TextCommandPromptPolicy.NEVER, definition.promptPolicy());
+    assertEquals(TextCommandActionCategory.META, definition.actionCategory());
+  }
+
+  @Test
   void rejectsLegacyThreeArgumentLoginShape() {
     TextCommand command = parser.parse("LOGIN demo@example.com swordfish 123456");
 

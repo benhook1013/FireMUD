@@ -40,6 +40,7 @@ class LookTextCommandDispatchHandlerTest {
                     LOOK_LINE,
                     new TextCommandPayload.ViewRequest(LOOK_LINE, false)),
                 false,
+                Optional.empty(),
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();

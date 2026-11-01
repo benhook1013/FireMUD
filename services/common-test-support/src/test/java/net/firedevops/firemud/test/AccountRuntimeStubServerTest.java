@@ -100,21 +100,21 @@ class AccountRuntimeStubServerTest {
             AccountServiceGrpc.newBlockingStub(channel);
         server.mapAccountId("demo@example.com", 7L);
 
-        assertThat(
-                stub.authenticate(
-                        AuthenticateRequest.newBuilder()
-                            .setEmail("  DEMO@EXAMPLE.COM ")
-                            .setPassword("password")
-                            .build())
-                    .getAccountId())
-            .isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(7L));
+        String accountUuid =
+            stub.authenticate(
+                    AuthenticateRequest.newBuilder()
+                        .setEmail("  DEMO@EXAMPLE.COM ")
+                        .setPassword("password")
+                        .build())
+                .getAccountId();
+        assertThat(accountUuid).isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(7L));
 
         server.setMembershipExists(false);
 
         var membership =
             stub.getTenantMembershipForRuntime(
                 GetTenantMembershipForRuntimeRequest.newBuilder()
-                    .setAccountId("7")
+                    .setAccountId(accountUuid)
                     .setTenantId("1")
                     .setRequestId("request-1")
                     .build());

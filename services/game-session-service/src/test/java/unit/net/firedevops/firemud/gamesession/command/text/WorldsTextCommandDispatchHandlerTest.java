@@ -35,6 +35,30 @@ class WorldsTextCommandDispatchHandlerTest {
           scriptEventPublisher);
 
   @Test
+  void preparedJoinExplicitlyRefusesWithoutDiscoveryOrGameplayEffects() {
+    var command = new TextCommandParser().parse("JOIN 1");
+    assertThat(command.type()).isEqualTo(TextCommandType.JOIN);
+    var result =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                command,
+                false,
+                Optional.of(GameplayCommandTestFixtures.authoredDispatchEmberline()),
+                Optional.empty()));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("FEATURE_UNAVAILABLE");
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output ->
+                assertThat(output.text())
+                    .isEqualTo("ERROR FEATURE_UNAVAILABLE JOIN is not available."));
+    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+  }
+
+  @Test
   void publishesCommandEventForGameplayScopedWorldsBrowse() {
     SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
 
@@ -44,7 +68,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
@@ -73,7 +98,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
@@ -117,7 +143,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.CHARS, List.of("demo"), "CHARS demo"),
                 false,
-                Optional.of(context)));
+                Optional.of(context),
+                Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
@@ -147,6 +174,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 "session-1",
                 new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
                 false,
+                Optional.empty(),
                 Optional.empty()));
 
     assertThat(result.commandResult().accepted()).isTrue();

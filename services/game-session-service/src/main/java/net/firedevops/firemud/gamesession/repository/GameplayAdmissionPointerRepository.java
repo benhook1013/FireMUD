@@ -85,7 +85,8 @@ public class GameplayAdmissionPointerRepository {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
-            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
+            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc(),
+            GAMEPLAY_ADMISSION_POINTER.TENANT_ID.asc())
         .fetch(this::toEntity);
   }
 
@@ -98,7 +99,8 @@ public class GameplayAdmissionPointerRepository {
         .where(GAMEPLAY_ADMISSION_POINTER.TENANT_ID.in(tenantIds))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
-            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
+            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc(),
+            GAMEPLAY_ADMISSION_POINTER.TENANT_ID.asc())
         .fetch(this::toEntity);
   }
 
