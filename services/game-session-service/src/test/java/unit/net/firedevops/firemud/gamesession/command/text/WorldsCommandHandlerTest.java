@@ -129,9 +129,11 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void textWorldOrdinalsAreRefusedEvenWhenMatchingSlugsExistWithoutReadingFreshCatalog() {
-    gameplayCatalogProperties.setWorlds(
-        List.of(world("1", 22L, 1L, false), world("123", 23L, 2L, false)));
+  void numericWorldAndRealmSelectorsResolveExactSlugsWithoutOrdinalFallback() {
+    GameplayCatalogProperties.World otherWorld = world("other", 23L, 1L, false);
+    GameplayCatalogProperties.World numericWorld = world("1", 22L, 2L, false);
+    numericWorld.getRealms().getFirst().setSlug("2");
+    gameplayCatalogProperties.setWorlds(List.of(otherWorld, numericWorld));
     var original =
         TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties).visibleWorlds();
     AtomicInteger reads = new AtomicInteger();
@@ -144,16 +146,22 @@ class WorldsCommandHandlerTest {
     var localHandler = new WorldsCommandHandler(catalog);
     var actor = GameplayCommandTestFixtures.worldBrowseDemo();
 
-    for (String selector : List.of("1", " 123 ", "2")) {
-      assertThat(localHandler.browseRealms(selector)).isEmpty();
-      assertThat(localHandler.browseCharacters(actor, selector, null))
-          .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidWorld.class);
-    }
-    assertThat(reads).hasValue(0);
+    RealmBrowseViewOutput realms = localHandler.browseRealms("1").orElseThrow();
+
+    assertThat(realms.worldSlug()).isEqualTo("1");
+    assertThat(realms.realms())
+        .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
+        .containsExactly("2");
+    assertThat(localHandler.browseCharacters(actor, "1", "2"))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    assertThat(localHandler.browseRealms("2")).isEmpty();
+    assertThat(localHandler.browseCharacters(actor, "2", null))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidWorld.class);
+    assertThat(reads).hasValue(4);
   }
 
   @Test
-  void charsRefusesUnboundNumericRealmEvenWhenExactRealmSlugExists() {
+  void charsAcceptsAnExactNumericRealmSlug() {
     var demo = world("demo", 22L, 1L, false);
     demo.getRealms().getFirst().setSlug("1");
     gameplayCatalogProperties.setWorlds(List.of(demo));
@@ -167,8 +175,27 @@ class WorldsCommandHandlerTest {
     assertThat(
             new WorldsCommandHandler(catalog)
                 .browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", "1"))
-        .isEqualTo(new WorldsCommandHandler.CharacterBrowseResult.InvalidRealm("demo"));
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
     assertThat(reads).hasValue(1);
+  }
+
+  @Test
+  void numericCharacterBrowseSelectorStillRequiresCanonicalAccountIdentity() {
+    AtomicInteger reads = new AtomicInteger();
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              reads.incrementAndGet();
+              return List.of(new GameplayWorldCatalog.WorldView("123", "Numeric World", List.of()));
+            });
+    var invalidAccountContext =
+        new net.firedevops.firemud.gamesession.service.SessionContext(
+            1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt");
+
+    assertThat(
+            new WorldsCommandHandler(catalog).browseCharacters(invalidAccountContext, "123", null))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    assertThat(reads).hasValue(0);
   }
 
   @Test

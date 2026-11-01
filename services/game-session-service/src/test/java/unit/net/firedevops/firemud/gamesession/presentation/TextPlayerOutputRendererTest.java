@@ -1043,10 +1043,9 @@ class TextPlayerOutputRendererTest {
         renderer.renderAll(
             new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
             CommandEnqueueResult.success(),
-            List.of(PlayerOutput.notice("1) Demo World (demo)\n2) Builder Sandbox (sandbox)")));
+            List.of(PlayerOutput.notice("Demo World (demo)\nBuilder Sandbox (sandbox)")));
 
-    assertThat(rendered)
-        .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");
+    assertThat(rendered).isEqualTo("OK WORLDS\nDemo World (demo)\nBuilder Sandbox (sandbox)\n\n");
   }
 
   @Test
@@ -1067,12 +1066,40 @@ class TextPlayerOutputRendererTest {
                 PlayerOutput.view(
                     new WorldsViewOutput(
                         List.of(
-                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false),
-                            new WorldsViewOutput.WorldEntry(
-                                2, "sandbox", "Builder Sandbox", 2L, true))))));
+                            new WorldsViewOutput.WorldEntry("demo", "Demo World", 1L, false),
+                            new WorldsViewOutput.WorldEntry("123", "Numeric World", 2L, true))))));
+
+    assertThat(rendered).isEqualTo("OK WORLDS\nDemo World (demo)\nNumeric World (123)\n\n");
+  }
+
+  @Test
+  void renderAllFormatsRealmsViewWithStableSlugSelectorsOnly() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new RealmBrowseViewOutput(
+                        "demo",
+                        List.of(
+                            new RealmBrowseViewOutput.RealmEntry(
+                                "123", "Numeric Realm", 1L, false, "SHARED", "ALLOW_NEW"),
+                            new RealmBrowseViewOutput.RealmEntry(
+                                "production", "Live Realm", 2L, true, "ISOLATED", "PRESEEDED"))))));
 
     assertThat(rendered)
-        .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");
+        .isEqualTo(
+            "OK REALMS\nNumeric Realm (123) [shared, allow_new]\n"
+                + "Live Realm (production) [isolated, preseeded]\n\n");
   }
 
   @Test

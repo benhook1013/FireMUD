@@ -12,7 +12,6 @@ public record RealmBrowseViewOutput(String worldSlug, List<RealmEntry> realms)
   }
 
   public record RealmEntry(
-      int ordinal,
       String realmSlug,
       String displayName,
       long gameInstanceId,
@@ -20,9 +19,6 @@ public record RealmBrowseViewOutput(String worldSlug, List<RealmEntry> realms)
       String stateScope,
       String characterCreationPolicy) {
     public RealmEntry {
-      if (ordinal < 1) {
-        throw new IllegalArgumentException("ordinal must be at least 1");
-      }
       Objects.requireNonNull(realmSlug, "realmSlug must not be null");
       Objects.requireNonNull(displayName, "displayName must not be null");
       Objects.requireNonNull(stateScope, "stateScope must not be null");

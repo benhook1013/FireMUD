@@ -26,9 +26,6 @@ public class WorldsCommandHandler {
   }
 
   public java.util.Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
-    if (GameplayWorldCatalog.isOrdinalSelector(worldSelector)) {
-      return java.util.Optional.empty();
-    }
     return worldCatalog.browseRealms(worldSelector);
   }
 
@@ -38,9 +35,6 @@ public class WorldsCommandHandler {
     if (!sessionContext.hasAccountIdentity()) {
       return CharacterBrowseResult.unavailable();
     }
-    if (GameplayWorldCatalog.isOrdinalSelector(worldSelector)) {
-      return CharacterBrowseResult.invalidWorld();
-    }
     GameplayWorldCatalog.ReadSnapshot snapshot = worldCatalog.readSnapshot();
     java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
         snapshot.resolveWorld(worldSelector);
@@ -48,9 +42,6 @@ public class WorldsCommandHandler {
       return CharacterBrowseResult.invalidWorld();
     }
     GameplayWorldCatalog.WorldView world = maybeWorld.orElseThrow();
-    if (GameplayWorldCatalog.isOrdinalSelector(realmSelector)) {
-      return CharacterBrowseResult.invalidRealm(world.slug());
-    }
     java.util.Optional<GameplayWorldCatalog.RealmView> maybeRealm =
         StringUtils.hasText(realmSelector)
             ? worldCatalog.resolveRealm(world, realmSelector)

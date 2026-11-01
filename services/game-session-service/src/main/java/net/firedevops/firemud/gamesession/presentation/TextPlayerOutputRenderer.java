@@ -355,7 +355,7 @@ public class TextPlayerOutputRenderer {
 
   private String renderWorldsView(WorldsViewOutput output) {
     return output.worlds().stream()
-        .map(world -> world.ordinal() + ") " + world.displayName() + " (" + world.slug() + ")")
+        .map(world -> world.displayName() + " (" + world.slug() + ")")
         .collect(Collectors.joining("\n"));
   }
 
@@ -363,9 +363,7 @@ public class TextPlayerOutputRenderer {
     return output.realms().stream()
         .map(
             realm ->
-                realm.ordinal()
-                    + ") "
-                    + realm.displayName()
+                realm.displayName()
                     + " ("
                     + realm.realmSlug()
                     + ") ["

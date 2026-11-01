@@ -252,10 +252,8 @@ public class PlayCommandHandler {
       }
       Optional<GameplayWorldCatalog.RealmView> maybeRealm =
           selection.explicitRealmSelector() != null
-              ? GameplayWorldCatalog.isOrdinalSelector(selection.explicitRealmSelector())
-                  ? Optional.empty()
-                  : gameplayWorldCatalog.resolveRealmForAdmission(
-                      selectedWorld, selection.explicitRealmSelector())
+              ? gameplayWorldCatalog.resolveRealmForAdmission(
+                  selectedWorld, selection.explicitRealmSelector())
               : selectDefaultRealm(selectedWorld, catalogSnapshot);
       if (maybeRealm.isEmpty()) {
         return failure(
@@ -1131,8 +1129,7 @@ public class PlayCommandHandler {
       TextCommandPayload.PlayRequest playRequest,
       GameplayWorldCatalog.ReadSnapshot catalogSnapshot) {
     String worldSelector = playRequest.worldSelector();
-    if (!StringUtils.hasText(worldSelector)
-        || GameplayWorldCatalog.isOrdinalSelector(worldSelector)) {
+    if (!StringUtils.hasText(worldSelector)) {
       return Optional.empty();
     }
     String secondSelector =
@@ -1152,10 +1149,9 @@ public class PlayCommandHandler {
         catalogSnapshot.resolveWorld(worldSelector);
     if (maybeWorld.isPresent()
         && StringUtils.hasText(secondSelector)
-        && (GameplayWorldCatalog.isOrdinalSelector(secondSelector)
-            || !gameplayWorldCatalog.hasRealmForAdmission(
-                maybeWorld.orElseThrow(), secondSelector))) {
-      // A numeric second argument remains a character name, never an unbound realm ordinal.
+        && !gameplayWorldCatalog.hasRealmForAdmission(maybeWorld.orElseThrow(), secondSelector)) {
+      // If no exact realm slug matches, the two-argument form treats the selector as a character
+      // name. Character resolution remains exact and never indexes a fresh roster.
       return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), null, secondSelector));
     }
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));

@@ -521,8 +521,9 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.VIEW),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertTrue(renderedResponse("WORLDS", interpretation).startsWith("OK WORLDS\n1) Demo World"));
-    assertTrue(renderedResponse("WORLDS", interpretation).contains("Demo World"));
+    String rendered = renderedResponse("WORLDS", interpretation);
+    assertTrue(rendered.startsWith("OK WORLDS\nDemo World (demo)"));
+    assertFalse(rendered.contains("\n1) "));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 

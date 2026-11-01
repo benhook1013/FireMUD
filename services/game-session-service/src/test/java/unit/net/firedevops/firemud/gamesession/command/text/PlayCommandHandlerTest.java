@@ -176,10 +176,30 @@ class PlayCommandHandlerTest {
             });
   }
 
+  @Test
+  void playResolvesAnExactNumericWorldSlugInsteadOfItsListPosition() {
+    gameplayCatalogProperties.getWorlds().get(1).setSlug("1");
+    SessionContext existing = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(existing));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY 1 preview Emberline"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs()))
+        .isEqualTo("Entered world: 1 (preview) as Emberline");
+    Mockito.verify(sessionContextService)
+        .save(
+            Mockito.argThat(
+                saved ->
+                    saved.worldSlug().equals("1")
+                        && saved.realmSlug().equals("preview")
+                        && saved.gameInstanceId() == 41L
+                        && saved.characterName().equals("Emberline")));
+  }
+
   @ParameterizedTest
-  @ValueSource(strings = {"1", "123", "2"})
-  void playRefusesUnboundNumericWorldEvenWhenExactSlugExists(String selector) {
-    gameplayCatalogProperties.getWorlds().getFirst().setSlug(selector);
+  @ValueSource(strings = {"1", "2"})
+  void playRefusesUnmatchedNumericWorldInsteadOfUsingFreshListPosition(String selector) {
     SessionContext existing = previewRealmContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(existing));
 
@@ -199,16 +219,33 @@ class PlayCommandHandlerTest {
         gameplayPresenceLifecycleService);
   }
 
-  @ParameterizedTest
-  @ValueSource(strings = {"1", "123"})
-  void playRefusesUnboundNumericExplicitRealmEvenWhenExactSlugExists(String selector) {
-    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setSlug(selector);
-    SessionContext existing = previewRealmContext();
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(existing));
+  @Test
+  void playResolvesAnExactNumericRealmSlugInsteadOfItsListPosition() {
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setSlug("1");
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
-    var result =
-        handler.handle(
-            "1", new TextCommandParser().parse("PLAY sandbox " + selector + " Emberline"));
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY sandbox 1 Emberline"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs()))
+        .isEqualTo("Entered world: sandbox (1) as Emberline");
+    Mockito.verify(sessionContextService)
+        .save(
+            Mockito.argThat(
+                saved ->
+                    saved.worldSlug().equals("sandbox")
+                        && saved.realmSlug().equals("1")
+                        && saved.gameInstanceId() == 41L
+                        && saved.characterName().equals("Emberline")));
+  }
+
+  @Test
+  void playRefusesUnmatchedNumericRealmInsteadOfUsingFreshListPosition() {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY sandbox 1 Emberline"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
@@ -227,13 +264,7 @@ class PlayCommandHandlerTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"PLAY demo 1", "PLAY demo production 1"})
-  void numericCharacterNameStillResolvesExactlyEvenWhenANumericRealmExists(String command) {
-    // A hidden numeric realm is available to admission lookup but must not steal a character name.
-    gameplayCatalogProperties
-        .getWorlds()
-        .getFirst()
-        .getRealms()
-        .add(realm("1", "Hidden Realm", 22L, 41L, false, true));
+  void numericCharacterSelectorResolvesItsExactNameWithoutRosterIndexing(String command) {
     SessionContext context =
         new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -262,6 +293,77 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString());
+  }
+
+  @Test
+  void twoArgumentNumericSelectorPrefersAnExactKnownRealmSlug() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .add(realm("1", "Hidden Realm", 22L, 41L, false, false));
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.listCharactersByAccount(
+            "22", ACCOUNT_ID, "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            characterRoster(
+                "7002",
+                "Realm Actor",
+                "22",
+                ACCOUNT_ID,
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo 1"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs()))
+        .isEqualTo("Entered world: demo (1) as Realm Actor");
+    Mockito.verify(sessionContextService)
+        .save(
+            Mockito.argThat(
+                saved ->
+                    saved.gameInstanceId() == 41L
+                        && saved.realmSlug().equals("1")
+                        && saved.characterName().equals("Realm Actor")));
+    Mockito.verify(accountClient)
+        .getRealmAccessGrantForRuntime(
+            Mockito.eq(ACCOUNT_ID),
+            Mockito.eq("22"),
+            Mockito.eq("demo"),
+            Mockito.eq("1"),
+            Mockito.anyString());
+  }
+
+  @Test
+  void explicitRealmKeepsNumericCharacterNameUnambiguousWhenSameNumericRealmExists() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .add(realm("1", "Numeric Realm", 22L, 41L, false, false));
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            characterRoster(
+                "7001", "1", "22", ACCOUNT_ID, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo production 1"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as 1");
+    Mockito.verify(sessionContextService)
+        .save(
+            Mockito.argThat(
+                saved ->
+                    saved.gameInstanceId() == 1L
+                        && saved.realmSlug().equals("production")
+                        && saved.characterId() == 7001L
+                        && saved.characterName().equals("1")));
   }
 
   @ParameterizedTest
