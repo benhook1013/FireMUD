@@ -151,6 +151,9 @@ if ((retained)); then
   for filename in "${required_files[@]}"; do
     if [[ ! -f "$CERT_DIR/$filename" ]]; then
       echo "Incomplete retained development certificate bundle; refusing to replace material: $CERT_DIR" >&2
+      echo "Only for disposable generated local material (for example interrupted generation), explicitly clean and retry:" >&2
+      printf '  bash %q %q\n' "$SCRIPT_DIR/clean-dev-certs.sh" "$CERT_DIR" >&2
+      echo "Preserve externally managed material; select a fresh dedicated directory instead." >&2
       exit 1
     fi
   done
