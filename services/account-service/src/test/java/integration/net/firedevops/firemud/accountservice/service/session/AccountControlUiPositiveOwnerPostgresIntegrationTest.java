@@ -70,6 +70,7 @@ import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReserv
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimEvidence;
@@ -758,6 +759,28 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     String password = "test-only-certified-account-password";
     String otp = "test-only-certified-account-otp";
     var account = f.createCertifiedGlobalAccount(password);
+    var policyEvidenceBeforeSecondEnrollment = freshEnrollmentPolicyEvidence(f);
+    var secondCertifiedAccount =
+        f.createCertifiedGlobalAccount("test-only-second-certified-account-password");
+    assertThat(secondCertifiedAccount.getId()).isNotEqualTo(account.getId());
+    assertThat(secondCertifiedAccount.getAccountUuid()).isNotEqualTo(account.getAccountUuid());
+    assertThat(secondCertifiedAccount.getRole()).isNull();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) AS count FROM account_tenant_membership WHERE account_id = ?",
+                    secondCertifiedAccount.getId())
+                .get("count", Long.class))
+        .isZero();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) AS count FROM account_platform_restriction_current_projections"
+                        + " WHERE account_uuid = ?",
+                    secondCertifiedAccount.getAccountUuid())
+                .get("count", Long.class))
+        .isEqualTo(2L);
+    assertThat(freshEnrollmentPolicyEvidence(f)).isEqualTo(policyEvidenceBeforeSecondEnrollment);
     assertThat(account.getRole()).isNull();
     UUID accountId = account.getAccountUuid();
     assertThat(accountId).isNotEqualTo(f.account.getAccountUuid());
@@ -841,10 +864,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     // and an attempted tenant consumption must not cross either verification or scope boundary.
     String altered = passwordCompact.substring(0, passwordCompact.lastIndexOf('.') + 1) + "AA";
     assertThatThrownBy(() -> actors.authenticateAccount(altered))
-        .isInstanceOf(RuntimeException.class);
+        .isExactlyInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
     var environment = f.terms.captureCurrentEnvironmentBoundary();
     assertThatThrownBy(() -> actors.authenticate(passwordCompact, f.tenant, environment))
-        .isInstanceOf(RuntimeException.class);
+        .isExactlyInstanceOf(IllegalStateException.class);
     byte[] callbackSource =
         actors.withCurrentAccount(
             passwordCompact,
@@ -964,7 +987,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         AccountControlUiOwnerSourcesFixture.withPeer(
             "spiffe://firemud/ns/control-ui-owner-proof/sa/game-design-service")) {
       assertThatThrownBy(() -> issuance.issueAccount(otpRequest))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(IllegalStateException.class);
     }
     var generations = new AccountAuthorityGenerationRepository(f.dsl);
     var beforeMutation = f.tx(() -> generations.read(AuthorityScope.account(accountId)));
@@ -1013,7 +1036,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                         invoked.set(true);
                         return actor.accountId();
                       }))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(SourceEvidenceUnavailableException.class);
       assertThat(invoked).isFalse();
     }
     assertThat(
@@ -1023,6 +1046,32 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                     account.getId())
                 .get("count", Long.class))
         .isZero();
+  }
+
+  private static List<String> freshEnrollmentPolicyEvidence(
+      AccountControlUiOwnerSourcesFixture fixture) {
+    var publications =
+        fixture
+            .dsl
+            .fetch(
+                "SELECT category, revision::text AS revision, publication_id::text AS publication_id,"
+                    + " policy_id::text AS policy_id, closure_id::text AS closure_id, policy_rule,"
+                    + " closure_rule, source_identity, source_root, publication_digest,"
+                    + " encode(publication_bytes, 'hex') AS publication_bytes_hex"
+                    + " FROM account_fresh_enrollment_policy_publications ORDER BY category, revision")
+            .stream()
+            .map(record -> Arrays.toString(record.intoArray()))
+            .toList();
+    var current =
+        fixture
+            .dsl
+            .fetch(
+                "SELECT category, publication_id::text AS publication_id, revision::text AS revision"
+                    + " FROM account_fresh_enrollment_policy_current ORDER BY category")
+            .stream()
+            .map(record -> Arrays.toString(record.intoArray()))
+            .toList();
+    return List.of(publications.toString(), current.toString());
   }
 
   private AnnotationConfigApplicationContext operatorAuthorizationContext(

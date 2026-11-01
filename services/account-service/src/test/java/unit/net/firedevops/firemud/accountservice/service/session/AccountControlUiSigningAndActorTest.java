@@ -507,7 +507,13 @@ class AccountControlUiSigningAndActorTest {
                         new byte[] {3})));
       }
       when(snapshot.actor()).thenReturn(actor);
-      when(snapshot.tenant()).thenReturn(tenant);
+      if (accountOnly) {
+        when(snapshot.tenant())
+            .thenThrow(
+                new IllegalStateException("Account-scoped control-ui authority has no tenant"));
+      } else {
+        when(snapshot.tenant()).thenReturn(tenant);
+      }
       when(snapshot.authorityTuple())
           .thenReturn(
               Map.of(

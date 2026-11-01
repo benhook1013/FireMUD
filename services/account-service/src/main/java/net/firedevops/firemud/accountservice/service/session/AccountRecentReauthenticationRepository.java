@@ -50,9 +50,11 @@ public final class AccountRecentReauthenticationRepository {
                 "SELECT * FROM " + EVIDENCE + " WHERE creation_operation_id = ?", operationId)));
   }
 
-  void insert(AccountRecentReauthenticationEvidence evidence, byte[] requestPayload) {
+  void insert(
+      AccountRecentReauthenticationEvidence evidence, byte[] requestPayload, ReplayProof proof) {
     requireWritableTransaction();
     Objects.requireNonNull(evidence);
+    Objects.requireNonNull(proof);
     byte[] exactPayload = Objects.requireNonNull(requestPayload).clone();
     if (!evidence.requestDigest().equals(digest(exactPayload))) {
       throw unavailable();
@@ -91,11 +93,90 @@ public final class AccountRecentReauthenticationRepository {
     if (inserted != 1) {
       throw unavailable();
     }
+    if (dsl.execute(
+            "INSERT INTO account_recent_reauthentication_replay_credentials"
+                + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            evidence.evidenceId(),
+            evidence.requestId(),
+            evidence.accountId(),
+            evidence.purpose(),
+            evidence.creationOperationId(),
+            proof.keyId(),
+            proof.mac())
+        != 1) {
+      throw unavailable();
+    }
+    ReplayProof retained =
+        findReplayProof(evidence).orElseThrow(AccountRecentReauthenticationRepository::unavailable);
+    if (!proof.keyId().equals(retained.keyId())
+        || !MessageDigest.isEqual(
+            proof.mac().getBytes(StandardCharsets.US_ASCII),
+            retained.mac().getBytes(StandardCharsets.US_ASCII))) {
+      throw unavailable();
+    }
     AccountRecentReauthenticationEvidence readback =
         findByRequest(evidence.requestId())
             .orElseThrow(AccountRecentReauthenticationRepository::unavailable);
     if (!sameEvidence(evidence, readback)) {
       throw unavailable();
+    }
+  }
+
+  Optional<ReplayProof> findReplayProof(AccountRecentReauthenticationEvidence evidence) {
+    requireTransaction();
+    Record row =
+        dsl.fetchOne(
+            "SELECT key_id, credential_mac FROM account_recent_reauthentication_replay_credentials"
+                + " WHERE evidence_id = ? AND request_id = ? AND account_uuid = ? AND purpose = ? AND creation_operation_id = ?",
+            evidence.evidenceId(),
+            evidence.requestId(),
+            evidence.accountId(),
+            evidence.purpose(),
+            evidence.creationOperationId());
+    return row == null
+        ? Optional.empty()
+        : Optional.of(
+            new ReplayProof(
+                row.get("key_id", String.class), row.get("credential_mac", String.class)));
+  }
+
+  AccountRecentReauthenticationEvidence readExactOriginal(
+      AccountRecentReauthenticationEvidence expected) {
+    var stored =
+        findByRequest(expected.requestId())
+            .orElseThrow(AccountRecentReauthenticationRepository::unavailable);
+    if (!sameEvidence(expected, stored)) throw unavailable();
+    return stored;
+  }
+
+  /** Retained keyed proof only. Never include credential material or its MAC in diagnostics. */
+  static final class ReplayProof {
+    private final String keyId;
+    private final String mac;
+
+    ReplayProof(String keyId, String mac) {
+      if (keyId == null
+          || !keyId.matches("[A-Za-z0-9_-]{1,32}")
+          || mac == null
+          || !mac.matches("[0-9a-f]{64}")) {
+        throw unavailable();
+      }
+      this.keyId = keyId;
+      this.mac = mac;
+    }
+
+    String keyId() {
+      return keyId;
+    }
+
+    String mac() {
+      return mac;
+    }
+
+    @Override
+    public String toString() {
+      return "AccountRecentReauthenticationRepository.ReplayProof[redacted]";
     }
   }
 

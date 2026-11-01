@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import de.mkammerer.argon2.Argon2Factory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -60,6 +61,23 @@ class AccountFreshEnrollmentRequestTest {
                 .requestDigest(),
             request(id, "player", "person@example.test", "hash", "PASSWORD").requestDigest());
     assertThat(original.toString()).doesNotContain("hash", "person", "Person");
+  }
+
+  @Test
+  void lostResponseRetryMustReuseTheOriginalSaltedVerifier() {
+    UUID enrollmentId = UUID.randomUUID();
+    String firstVerifier = hash("same plaintext password");
+    String saltedRehash = hash("same plaintext password");
+    var original =
+        request(enrollmentId, "player", "person@example.test", firstVerifier, "PASSWORD");
+    var exactRetry =
+        request(enrollmentId, "player", "person@example.test", firstVerifier, "PASSWORD");
+    var rehashedRequest =
+        request(enrollmentId, "player", "person@example.test", saltedRehash, "PASSWORD");
+
+    assertThat(firstVerifier).isNotEqualTo(saltedRehash);
+    assertThat(exactRetry.requestDigest()).isEqualTo(original.requestDigest());
+    assertThat(rehashedRequest.requestDigest()).isNotEqualTo(original.requestDigest());
   }
 
   @Test
@@ -127,5 +145,15 @@ class AccountFreshEnrollmentRequestTest {
         SourceKind.ACCOUNT_FRESH_ENROLLMENT,
         UUID.randomUUID(),
         "sha256:" + "0".repeat(64));
+  }
+
+  private static String hash(String password) {
+    char[] secret = password.toCharArray();
+    var argon = Argon2Factory.create();
+    try {
+      return argon.hash(2, 4096, 1, secret);
+    } finally {
+      argon.wipeArray(secret);
+    }
   }
 }
