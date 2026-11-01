@@ -1348,6 +1348,18 @@ try:
     assert native_gh_calls() == []
     assert "could not read UTF-8 PR body file" in stderr
 
+    for draft_name, draft_text in (("empty-pr-body.md", ""), ("blank-pr-body.md", " \t\n\r\n")):
+        empty_draft = repo.parent / draft_name
+        empty_draft.write_text(draft_text, encoding="utf-8")
+        reset_native_gh("Original remote body must remain untouched")
+        status, _stdout, stderr = run_native_pr(
+            "--update-pr", "--body-file", str(empty_draft)
+        )
+        assert status == 1
+        assert len(native_build_calls) == build_calls_before_invalid_input
+        assert native_gh_calls() == []
+        assert "empty; refusing to replace the PR body" in stderr
+
     invalid_utf8_draft = repo.parent / "invalid-utf8-pr-body.md"
     invalid_utf8_draft.write_bytes(b"\xff\xfe")
     status, _stdout, stderr = run_native_pr(

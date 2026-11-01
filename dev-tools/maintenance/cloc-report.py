@@ -1024,9 +1024,12 @@ def read_pr_body_file(path: Path) -> str:
     if not path.is_absolute():
         raise ReportError("--body-file must be an absolute path")
     try:
-        return path.read_text(encoding="utf-8")
+        body = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise ReportError(f"could not read UTF-8 PR body file {path}: {error}") from error
+    if not body.strip():
+        raise ReportError(f"PR body file {path} is empty; refusing to replace the PR body")
+    return body
 
 
 def replace_pr_report_block(body: str, snippet: str) -> str:
