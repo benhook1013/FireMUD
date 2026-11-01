@@ -8,6 +8,42 @@ import org.junit.jupiter.api.Test;
 
 class RedisScriptDescriptorTest {
   @Test
+  void fullKeyAnchorRequiresExactlyOneOrderedExplicitCompanion() {
+    var anchor =
+        new RedisScriptDescriptor.KeySpec(
+            "token",
+            "session:auth:token:",
+            RedisScriptDescriptor.HashTagDeclaration.FULL_KEY_ANCHOR);
+    var companion =
+        new RedisScriptDescriptor.KeySpec(
+            "receipt",
+            "session:auth:creation-admission:",
+            RedisScriptDescriptor.HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG);
+    assertThat(descriptor(null, null, List.of(anchor, companion), null, null).keys())
+        .containsExactly(anchor, companion);
+    var ordinary =
+        new RedisScriptDescriptor.KeySpec(
+            "ordinary", "session:other:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED);
+    var secondOrdinary =
+        new RedisScriptDescriptor.KeySpec(
+            "other", "session:another:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED);
+    assertThat(descriptor(null, null, List.of(ordinary, secondOrdinary), null, null).keys())
+        .containsExactly(ordinary, secondOrdinary);
+    for (var invalid :
+        List.of(
+            List.of(anchor),
+            List.of(companion),
+            List.of(companion, anchor),
+            List.of(anchor, ordinary),
+            List.of(ordinary, companion),
+            List.of(anchor, companion, ordinary))) {
+      assertThatThrownBy(() -> descriptor(null, null, invalid, null, null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("full-key anchor slot binding");
+    }
+  }
+
+  @Test
   void acceptsValidDescriptorAndReturnsImmutableDeclarationCopies() {
     RedisScriptDescriptor descriptor = descriptor();
 

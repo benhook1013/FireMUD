@@ -411,6 +411,138 @@ class AccountControlUiSigningAndActorTest {
     verify(f.fences, never()).lockProducerSourcesNowait(any());
   }
 
+  @Test
+  void accountSourceCallbacksUseExactOriginalInsideTransactionAndProducerLocks() throws Exception {
+    Fixture f = new Fixture(true);
+    String compact = f.sign(f.claims);
+    f.owner(compact);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new AccountPublicJwksCache.PublicJwksSnapshot(f.pin, f.jwks);
+            })
+        .when(f.source)
+        .load();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new byte[] {12};
+            })
+        .when(f.registry)
+        .readActive(anyString());
+    var currentSources = f.snapshot.sources();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return null;
+            })
+        .when(f.fences)
+        .lockProducerSourcesNowait(currentSources);
+    java.util.function.Function<AccountControlUiActorService.Current, UUID> callback =
+        current -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+          assertThat(current.stored()).isSameAs(f.stored);
+          assertThat(current.stored().optionalTenantId()).isEmpty();
+          assertThat(current.source()).isSameAs(f.snapshot);
+          return current.stored().operationId;
+        };
+
+    assertThat(f.actors.withCurrentAccountSources(compact, callback)).isEqualTo(f.operationId);
+    verify(f.fences).lockProducerSourcesNowait(f.snapshot.sources());
+    assertThat(f.actors.withCurrentAccountCommitted(f.actor, f.jti, callback))
+        .isEqualTo(f.operationId);
+    verify(f.fences, times(2)).lockProducerSourcesNowait(f.snapshot.sources());
+    assertThat(f.actors.authenticateAccount(compact).accountId()).isEqualTo(f.actor);
+    verify(f.fences, times(3)).lockProducerSourcesNowait(f.snapshot.sources());
+    verify(f.authority, never()).capture(any(), any(), any());
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+  }
+
+  @Test
+  void accountOriginalRecoveryRejectsTenantChangedAccountAndExpiredOriginal() throws Exception {
+    Fixture tenant = new Fixture();
+    tenant.owner(tenant.sign(tenant.claims));
+    assertThatThrownBy(
+            () ->
+                tenant.actors.withCurrentAccountCommitted(
+                    tenant.actor,
+                    tenant.jti,
+                    current -> {
+                      throw new AssertionError("callback must not run");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    verify(tenant.authority, never()).captureAccount(any());
+
+    Fixture account = new Fixture(true);
+    account.owner(account.sign(account.claims));
+    assertThatThrownBy(
+            () ->
+                account.actors.withCurrentAccountCommitted(
+                    UUID.randomUUID(),
+                    account.jti,
+                    current -> {
+                      throw new AssertionError("callback must not run");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    verify(account.authority, never()).captureAccount(any());
+
+    Fixture expired = new Fixture(true, NOW.plusSeconds(300));
+    expired.owner(expired.sign(expired.claims));
+    assertThatThrownBy(
+            () ->
+                expired.actors.withCurrentAccountCommitted(
+                    expired.actor,
+                    expired.jti,
+                    current -> {
+                      throw new AssertionError("callback must not run");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    verify(expired.authority, never()).captureAccount(any());
+  }
+
+  @Test
+  void accountOriginalRecoveryRejectsChangedSourcesRegistrySignerAndProducerFence()
+      throws Exception {
+    List<java.util.function.Consumer<Fixture>> changes =
+        List.of(
+            f -> when(f.snapshot.evidence()).thenReturn(new byte[] {99}),
+            f -> when(f.snapshot.issuanceFence()).thenReturn(2L),
+            f -> when(f.snapshot.globalRoles()).thenReturn(List.of()),
+            f ->
+                when(f.operations.findTokenJti(f.jti))
+                    .thenReturn(f.stored)
+                    .thenReturn(f.stored)
+                    .thenReturn(null),
+            f -> when(f.registry.readActive(anyString())).thenReturn(new byte[] {99}),
+            f ->
+                when(f.signers.requireOriginal(any(byte[].class)))
+                    .thenThrow(new IllegalStateException("test-only missing original signer")),
+            f ->
+                doThrow(new IllegalStateException("test-only concurrent source writer"))
+                    .when(f.fences)
+                    .lockProducerSourcesNowait(any()),
+            f ->
+                when(f.source.load())
+                    .thenReturn(
+                        new AccountPublicJwksCache.PublicJwksSnapshot(
+                            f.pin,
+                            AccountControlUiAuthority.canonical(Map.of("keys", List.of())))));
+    for (var change : changes) {
+      Fixture f = new Fixture(true);
+      f.owner(f.sign(f.claims));
+      change.accept(f);
+      assertThatThrownBy(
+              () ->
+                  f.actors.withCurrentAccountCommitted(
+                      f.actor,
+                      f.jti,
+                      current -> {
+                        throw new AssertionError("callback must not run");
+                      }))
+          .isInstanceOf(IllegalStateException.class);
+    }
+  }
+
   private static final class Fixture {
     final UUID actor = UUID.randomUUID(), tenant = UUID.randomUUID(), jti = UUID.randomUUID();
     final UUID operationId = UUID.randomUUID(), requestId = UUID.randomUUID();
@@ -467,6 +599,10 @@ class AccountControlUiSigningAndActorTest {
     }
 
     Fixture(boolean accountOnly) {
+      this(accountOnly, NOW);
+    }
+
+    Fixture(boolean accountOnly, Instant clockNow) {
       when(snapshot.scopeKind())
           .thenReturn(
               accountOnly
@@ -575,7 +711,7 @@ class AccountControlUiSigningAndActorTest {
               source,
               fences,
               transactions,
-              Clock.fixed(NOW, ZoneOffset.UTC));
+              Clock.fixed(clockNow, ZoneOffset.UTC));
     }
 
     void owner(String compact) {

@@ -99,6 +99,23 @@ public final class AccountControlUiActorService {
   public <T> T withCurrentAccount(
       String compactJwt, Function<AccountAuthenticatedActor, T> action) {
     Objects.requireNonNull(action, "current Account action is required");
+    return withCurrentAccountSources(
+        compactJwt,
+        current ->
+            action.apply(
+                new AccountAuthenticatedActor(
+                    current.stored.accountId,
+                    current.stored.operationId,
+                    current.stored.tokenHash)));
+  }
+
+  /**
+   * Fresh authenticated Account sources inside the owner transaction and producer-source locks.
+   * This is a same-transaction observation, not durable multi-owner protection or a promise of
+   * later external registry/JWKS continuity.
+   */
+  <T> T withCurrentAccountSources(String compactJwt, Function<Current, T> action) {
+    Objects.requireNonNull(action, "current Account source action is required");
     return withCurrentScope(
         compactJwt,
         AccountControlUiAuthority.ScopeKind.ACCOUNT,
@@ -107,9 +124,7 @@ public final class AccountControlUiActorService {
         current -> {
           fences.lockProducerSourcesNowait(current.source.sources());
           requireCurrentOriginalToken(current.stored);
-          return action.apply(
-              new AccountAuthenticatedActor(
-                  current.stored.accountId, current.stored.operationId, current.stored.tokenHash));
+          return action.apply(current);
         });
   }
 
@@ -209,22 +224,7 @@ public final class AccountControlUiActorService {
               };
           if (current.scopeKind() != scopeKind) throw denied();
           if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
-            var claims = signed.claims.claims();
-            if (!Arrays.equals(
-                    AccountControlUiAuthority.canonical(current.authorityTuple()),
-                    AccountControlUiAuthority.canonical(claims.get("authorityTuple")))
-                || !Arrays.equals(
-                    AccountControlUiAuthority.canonical(current.membershipVersion()),
-                    AccountControlUiAuthority.canonical(claims.get("membershipVersion")))
-                || !Arrays.equals(
-                    AccountControlUiAuthority.canonical(current.scopedRoles()),
-                    AccountControlUiAuthority.canonical(claims.get("scopedRoles")))
-                || !Arrays.equals(
-                    AccountControlUiAuthority.canonical(current.globalRoles()),
-                    AccountControlUiAuthority.canonical(
-                        claims.getOrDefault("globalRoles", List.of())))
-                || !Long.toString(current.issuanceFence())
-                    .equals(String.valueOf(claims.get("issuanceFence")))) throw denied();
+            requireCurrentAccountClaims(current, signed.claims.claims());
           }
           if (!Arrays.equals(current.evidence(), stored.sources)) {
             throw denied();
@@ -308,9 +308,92 @@ public final class AccountControlUiActorService {
   }
 
   /**
+   * Revalidates one exact original Account-scoped issuance without JWT forwarding or a tenant.
+   * External accepted-key and registry reads precede SQL source capture; the callback observes
+   * current sources under local producer locks only. This is not durable multi-owner protection or
+   * a promise that external registry/JWKS state cannot change after those reads.
+   */
+  <T> T withCurrentAccountCommitted(
+      UUID actorAccountId, UUID tokenJti, Function<Current, T> action) {
+    outsideSql();
+    Objects.requireNonNull(actorAccountId, "actor account is required");
+    Objects.requireNonNull(tokenJti, "control-ui token jti is required");
+    Objects.requireNonNull(action, "current Account source action is required");
+    var original = transaction.execute(ignored -> operations.findTokenJti(tokenJti));
+    if (original == null
+        || !actorAccountId.equals(original.accountId)
+        || original.scopeKind() != AccountControlUiAuthority.ScopeKind.ACCOUNT
+        || original.optionalTenantId().isPresent()
+        || !tokenJti.equals(original.jti)
+        || !"COMMITTED".equals(original.status)
+        || original.tokenHash == null) {
+      throw denied();
+    }
+    requireCurrentOriginalToken(original);
+    Object receiptKeyId =
+        AccountControlUiIssuanceRepository.object(original.signerReceipt).get("kid");
+    if (!(receiptKeyId instanceof String keyId)) throw denied();
+    var acceptedKey = readAcceptedSignerKey(keyId);
+    requireAcceptedSignerKey(original, acceptedKey);
+    byte[] exactRegistry = registry.readActive(original.tokenHash);
+    return transaction.execute(
+        ignored -> {
+          var observed = operations.findTokenJti(tokenJti);
+          if (!sameCommittedOperation(original, observed)
+              || !Arrays.equals(observed.activeRegistry, exactRegistry)) throw denied();
+          Map<String, Object> claims = AccountControlUiIssuanceRepository.object(observed.claims);
+          ControlUiJwtProfileValidator.validateClaims(claims, 1);
+          if (!actorAccountId.toString().equals(claims.get("sub"))
+              || !actorAccountId.toString().equals(claims.get("accountId"))
+              || !tokenJti.toString().equals(claims.get("jti"))
+              || !Long.toString(observed.issuedAt.getEpochSecond())
+                  .equals(String.valueOf(claims.get("iat")))
+              || !Long.toString(observed.issuedAt.getEpochSecond())
+                  .equals(String.valueOf(claims.get("nbf")))
+              || !Long.toString(observed.expiresAt.getEpochSecond())
+                  .equals(String.valueOf(claims.get("exp")))) throw denied();
+          signers.requireOriginal(observed.signerReceipt);
+          var current = authority.captureAccount(actorAccountId);
+          requireCurrentAccountClaims(current, claims);
+          if (!Arrays.equals(current.evidence(), observed.sources)) throw denied();
+          var result = operations.requireCommitted(observed);
+          if (!observed.tokenHash.equals(result.tokenHash())) throw denied();
+          fences.lockProducerSourcesNowait(current.sources());
+          var committed = operations.findTokenJti(tokenJti);
+          if (!sameCommittedOperation(observed, committed)
+              || !Arrays.equals(committed.activeRegistry, exactRegistry)) throw denied();
+          requireCurrentOriginalToken(committed);
+          return action.apply(new Current(committed, current));
+        });
+  }
+
+  private static void requireCurrentAccountClaims(
+      AccountControlUiAuthority.Snapshot current, Map<String, Object> claims) {
+    if (!current.actor().toString().equals(claims.get("accountId"))
+        || current.scopeKind() != AccountControlUiAuthority.ScopeKind.ACCOUNT
+        || current.optionalTenantId().isPresent()
+        || !Map.of().equals(current.scopedRoles())
+        || !Map.of().equals(current.membershipVersion())) throw denied();
+    if (!Arrays.equals(
+            AccountControlUiAuthority.canonical(current.authorityTuple()),
+            AccountControlUiAuthority.canonical(claims.get("authorityTuple")))
+        || !Arrays.equals(
+            AccountControlUiAuthority.canonical(current.membershipVersion()),
+            AccountControlUiAuthority.canonical(claims.get("membershipVersion")))
+        || !Arrays.equals(
+            AccountControlUiAuthority.canonical(current.scopedRoles()),
+            AccountControlUiAuthority.canonical(claims.get("scopedRoles")))
+        || !Arrays.equals(
+            AccountControlUiAuthority.canonical(current.globalRoles()),
+            AccountControlUiAuthority.canonical(claims.getOrDefault("globalRoles", List.of())))
+        || !Long.toString(current.issuanceFence())
+            .equals(String.valueOf(claims.get("issuanceFence")))) throw denied();
+  }
+
+  /**
    * One protected snapshot per fresh call; this does not promise acceptance through later locks.
    */
-  private AcceptedSignerKey readAcceptedSignerKey(String keyId) {
+  AcceptedSignerKey readAcceptedSignerKey(String keyId) {
     outsideSql();
     String fingerprint =
         AccountJwtJwksTrustedSource.publicKeyFingerprint(
@@ -319,7 +402,7 @@ public final class AccountControlUiActorService {
     return new AcceptedSignerKey(keyId, fingerprint);
   }
 
-  private static void requireAcceptedSignerKey(
+  static void requireAcceptedSignerKey(
       AccountControlUiIssuanceRepository.Stored original, AcceptedSignerKey accepted) {
     var receipt = AccountControlUiIssuanceRepository.object(original.signerReceipt);
     if (!accepted.keyId().equals(receipt.get("kid"))
@@ -328,7 +411,7 @@ public final class AccountControlUiActorService {
     }
   }
 
-  private record AcceptedSignerKey(String keyId, String fingerprint) {}
+  record AcceptedSignerKey(String keyId, String fingerprint) {}
 
   private void requireCurrentOriginalToken(AccountControlUiIssuanceRepository.Stored original) {
     var now = clock.instant();

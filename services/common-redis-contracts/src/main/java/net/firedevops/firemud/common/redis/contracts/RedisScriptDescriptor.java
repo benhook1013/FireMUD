@@ -103,7 +103,22 @@ public record RedisScriptDescriptor(
           "legacyPayloadShape is only valid when a legacy payload is supported");
     }
 
-    if (keys.size() > 1
+    boolean fullKeyCompanion =
+        keys.stream()
+            .anyMatch(
+                key ->
+                    key.hashTagDeclaration() == HashTagDeclaration.FULL_KEY_ANCHOR
+                        || key.hashTagDeclaration()
+                            == HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG);
+    if (fullKeyCompanion
+        && (keys.size() != 2
+            || keys.get(0).hashTagDeclaration() != HashTagDeclaration.FULL_KEY_ANCHOR
+            || keys.get(1).hashTagDeclaration() != HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG)) {
+      throw new IllegalArgumentException(
+          "full-key anchor slot binding requires exactly an anchor then its tagged companion");
+    }
+    if (!fullKeyCompanion
+        && keys.size() > 1
         && keys.stream().anyMatch(key -> key.hashTagDeclaration() != HashTagDeclaration.REQUIRED)) {
       throw new IllegalArgumentException(
           "every KEYS declaration in a multi-key script must require a hash tag");
@@ -133,7 +148,11 @@ public record RedisScriptDescriptor(
 
   public enum HashTagDeclaration {
     NOT_REQUIRED,
-    REQUIRED
+    REQUIRED,
+    /** Untagged first key whose complete bytes are the Redis Cluster hash input. */
+    FULL_KEY_ANCHOR,
+    /** Second key whose sole nonempty hash tag equals the complete first key, byte for byte. */
+    EXACT_FULL_KEY_ANCHOR_TAG
   }
 
   public enum ScriptCategory {

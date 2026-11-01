@@ -9,10 +9,11 @@ import org.jooq.Record;
 import org.jooq.impl.DSL;
 
 /**
- * Frozen pre-V1017 TENANT persistence for explicitly selected historical migration fixtures.
- * Authentication, evidence capture, signing, registry, envelope and transaction owners are shared
- * with the current implementation. The extra in-memory scope field describes this old schema's
- * mandatory tenant contract; it is never written to historical storage or retained evidence.
+ * Frozen pre-Account-scope TENANT persistence for explicitly selected historical migration
+ * fixtures. Authentication, evidence capture, signing, registry, envelope and transaction owners
+ * are shared with the current implementation. The extra in-memory scope field describes this old
+ * schema's mandatory tenant contract; it is never written to historical storage or retained
+ * evidence.
  */
 final class AccountHistoricalControlUiIssuanceRepository
     extends AccountControlUiIssuanceRepository {

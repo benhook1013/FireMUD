@@ -1,6 +1,8 @@
 package net.firedevops.firemud.accountservice.service.session;
 
+import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -18,6 +20,11 @@ public final class AccountRecentReauthenticationPolicyRepository {
    * current policy is unavailable; there is no caller-side merge, default, or fallback.
    */
   public AccountRecentReauthenticationPolicy.Effective resolveCurrentForGameCreation() {
+    return resolveCurrentSourcesForGameCreation().effectivePolicy();
+  }
+
+  /** Resolves the exact current policy and its immutable source participation values. */
+  public CurrentSourcesForGameCreation resolveCurrentSourcesForGameCreation() {
     requireTransaction();
     Record row =
         dsl.fetchOne(
@@ -42,17 +49,43 @@ public final class AccountRecentReauthenticationPolicyRepository {
       throw unavailable();
     }
     try {
-      return AccountRecentReauthenticationPolicy.resolve(
+      var platform =
           new AccountRecentReauthenticationPolicy.PlatformValue(
               requiredPositive(row, "platform_version"),
               requiredPositive(row, "platform_age"),
-              requiredNonnegative(row, "platform_skew")),
+              requiredNonnegative(row, "platform_skew"));
+      var deployment =
           new AccountRecentReauthenticationPolicy.DeploymentValue(
               requiredPositive(row, "deployment_version"),
               requiredPositive(row, "deployment_age"),
-              requiredNonnegative(row, "deployment_skew")));
+              requiredNonnegative(row, "deployment_skew"));
+      var effective = AccountRecentReauthenticationPolicy.resolve(platform, deployment);
+      return new CurrentSourcesForGameCreation(
+          effective, AccountRecentReauthenticationPolicy.sourceEvidence(platform, deployment));
     } catch (IllegalArgumentException | IllegalStateException malformed) {
       throw unavailable();
+    }
+  }
+
+  public record CurrentSourcesForGameCreation(
+      AccountRecentReauthenticationPolicy.Effective effectivePolicy, List<SourceEvidence> sources) {
+    public CurrentSourcesForGameCreation {
+      Objects.requireNonNull(
+          effectivePolicy, "Current Account reauthentication policy is required");
+      sources = List.copyOf(Objects.requireNonNull(sources, "Current policy sources are required"));
+      List<String> sourceKeys = sources.stream().map(SourceEvidence::key).toList();
+      if (!sourceKeys.equals(
+          List.of(
+              "RECENT_REAUTH_POLICY:SELF_SERVICE_GAME_CREATION/DEPLOYMENT",
+              "RECENT_REAUTH_POLICY:SELF_SERVICE_GAME_CREATION/PLATFORM"))) {
+        throw new IllegalArgumentException(
+            "Exact current Account reauthentication sources required");
+      }
+    }
+
+    @Override
+    public List<SourceEvidence> sources() {
+      return List.copyOf(sources);
     }
   }
 

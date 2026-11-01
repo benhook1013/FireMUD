@@ -182,6 +182,51 @@ public final class AccountRecentReauthenticationService {
       UUID expectedAccountId,
       String expectedPurpose,
       UUID expectedCreationOperationId) {
+    AccountRecentReauthenticationEvidence evidence =
+        lockExactBinding(
+            presented, expectedAccountId, expectedPurpose, expectedCreationOperationId);
+    Optional<AccountRecentReauthenticationRepository.Consumption> previous =
+        evidenceRepository.findConsumption(evidence.evidenceId());
+    if (previous.isPresent()) {
+      if (!previous.orElseThrow().matches(evidence)) {
+        throw conflict();
+      }
+      return new Validation(Disposition.EXACT_REPLAY, evidence);
+    }
+
+    requireCurrentEvidence(evidence);
+    evidenceRepository.insertConsumption(evidence, clock.instant());
+    return new Validation(Disposition.CONSUMED, evidence);
+  }
+
+  /**
+   * Checks exact unconsumed evidence for pending creation without consuming it. Every call checks
+   * current Account identity, authority, policy and age in the caller's writable owner transaction.
+   * The returned evidence is only a same-transaction current observation, not a durable grant;
+   * producers must still order applicable source changes and revalidate at their commit boundary.
+   * Already consumed evidence is refused even when final-result recovery may replay its
+   * consumption.
+   */
+  public AccountRecentReauthenticationEvidence validatePendingCreationLocked(
+      AccountRecentReauthenticationEvidence presented,
+      UUID expectedAccountId,
+      String expectedPurpose,
+      UUID expectedCreationOperationId) {
+    AccountRecentReauthenticationEvidence evidence =
+        lockExactBinding(
+            presented, expectedAccountId, expectedPurpose, expectedCreationOperationId);
+    if (evidenceRepository.findConsumption(evidence.evidenceId()).isPresent()) {
+      throw unavailable();
+    }
+    requireCurrentEvidence(evidence);
+    return evidence;
+  }
+
+  private AccountRecentReauthenticationEvidence lockExactBinding(
+      AccountRecentReauthenticationEvidence presented,
+      UUID expectedAccountId,
+      String expectedPurpose,
+      UUID expectedCreationOperationId) {
     requireWritableTransaction();
     Objects.requireNonNull(presented, "Typed Account reauthentication evidence is required");
     requireNonNilUuid(expectedAccountId, "expected Account identity");
@@ -196,16 +241,11 @@ public final class AccountRecentReauthenticationService {
         || !expectedCreationOperationId.equals(evidence.creationOperationId())) {
       throw conflict();
     }
-    Optional<AccountRecentReauthenticationRepository.Consumption> previous =
-        evidenceRepository.findConsumption(evidence.evidenceId());
-    if (previous.isPresent()) {
-      if (!previous.orElseThrow().matches(evidence)) {
-        throw conflict();
-      }
-      return new Validation(Disposition.EXACT_REPLAY, evidence);
-    }
+    return evidence;
+  }
 
-    Account account = requireCurrentAccount(expectedAccountId);
+  private void requireCurrentEvidence(AccountRecentReauthenticationEvidence evidence) {
+    Account account = requireCurrentAccount(evidence.accountId());
     if (account.getAccountUuidProvenance() != evidence.identityProvenance()
         || !Objects.equals(
             account.getAccountUuidSourceNumericId(), evidence.identitySourceNumericId())
@@ -213,8 +253,8 @@ public final class AccountRecentReauthenticationService {
         || evidence.lifecycleState() != AccountLifecycleState.ACTIVE) {
       throw unavailable();
     }
-    ScopeState authority = generations.read(AuthorityScope.account(expectedAccountId));
-    requireAccountAuthority(expectedAccountId, authority);
+    ScopeState authority = generations.read(AuthorityScope.account(evidence.accountId()));
+    requireAccountAuthority(evidence.accountId(), authority);
     IssuanceFence fence = Objects.requireNonNull(authority.issuanceFence());
     if (authority.generation() != evidence.accountAuthorityGeneration()
         || authority.sourceVersion() != evidence.accountAuthoritySourceVersion()
@@ -233,9 +273,6 @@ public final class AccountRecentReauthenticationService {
         || !policy.isRecent(evidence.issuedAt(), clock.instant())) {
       throw unavailable();
     }
-
-    evidenceRepository.insertConsumption(evidence, clock.instant());
-    return new Validation(Disposition.CONSUMED, evidence);
   }
 
   private Account requireCurrentAccount(UUID accountId) {

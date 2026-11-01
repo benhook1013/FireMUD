@@ -11,6 +11,12 @@ service TenantIdentityService {
       returns (ResolveFreshTenantCreationResponse);
 }
 
+// Standalone, unregistered read of one committed terminal Account-bound creation outcome.
+service OriginalTenantCreationOutcomeReadService {
+  rpc ResolveOriginalTenantCreationOutcome(ResolveOriginalTenantCreationOutcomeRequest)
+      returns (ResolveOriginalTenantCreationOutcomeResponse);
+}
+
 // Standalone, unregistered exact authored-world source read; no mutation or admission permission.
 service AuthoredWorldSourceReadService {
   rpc ResolveAuthoredWorldSource(ResolveAuthoredWorldSourceRequest)
@@ -33,6 +39,37 @@ message ResolveFreshTenantCreationResponse {
   string source_game_tenant_key = 8;
   string provenance_kind = 9;
   string evidence_digest = 10;
+}
+
+message ResolveOriginalTenantCreationOutcomeRequest {
+  int32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string creation_request_id = 4;
+  string account_authorization_operation_id = 5;
+  string initiating_account_id = 6;
+  string creation_request_digest = 7;
+  string account_authorization_digest = 8;
+}
+
+enum OriginalTenantCreationOutcome {
+  ORIGINAL_TENANT_CREATION_OUTCOME_UNSPECIFIED = 0;
+  ORIGINAL_TENANT_CREATION_OUTCOME_CREATED = 1;
+  ORIGINAL_TENANT_CREATION_OUTCOME_NOT_CREATED = 2;
+}
+
+message ResolveOriginalTenantCreationOutcomeResponse {
+  int32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string creation_request_id = 4;
+  string account_authorization_operation_id = 5;
+  string initiating_account_id = 6;
+  string creation_request_digest = 7;
+  string account_authorization_digest = 8;
+  OriginalTenantCreationOutcome outcome = 9;
+  ResolveFreshTenantCreationResponse created_receipt = 10;
+  string evidence_digest = 11;
 }
 
 message ResolveAuthoredWorldSourceRequest {

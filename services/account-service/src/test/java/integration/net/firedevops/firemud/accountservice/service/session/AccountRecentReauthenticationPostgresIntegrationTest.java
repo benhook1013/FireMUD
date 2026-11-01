@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -44,8 +45,11 @@ import net.firedevops.firemud.accountservice.service.session.AccountRecentReauth
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService.Disposition;
+import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -148,6 +152,11 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   @Test
   void missingCurrentPolicyFailsBeforeValidOtpIsConsumedOrEvidenceIsRetained() {
     Context c = context(false);
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_draft_authorization_source_locks "
+                    + "WHERE source_key LIKE 'RECENT_REAUTH_POLICY:%'"))
+        .isZero();
     Account account = c.account("EMAIL_OTP");
     AccountEmailLoginChallenge challenge = c.challenge(account);
     var request = c.request(account, UUID.randomUUID(), UUID.randomUUID(), OTP);
@@ -160,6 +169,647 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence")).isZero();
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isZero();
+  }
+
+  @Test
+  void currentPolicyResolutionReturnsExactSortedValuesFromBothCurrentPointers() {
+    Context c = context();
+    c.tx(
+        () -> {
+          c.dsl.execute(
+              "INSERT INTO account_recent_reauthentication_policy_values "
+                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                  + "VALUES ('DEPLOYMENT', 2, 100, 10)");
+          c.dsl.execute(
+              "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+                  + "WHERE policy_scope = 'DEPLOYMENT'");
+          return null;
+        });
+
+    var resolved =
+        c.tx(
+            () ->
+                new AccountRecentReauthenticationPolicyRepository(c.dsl)
+                    .resolveCurrentSourcesForGameCreation());
+    var effective = resolved.effectivePolicy();
+    assertThat(effective.platformVersion()).isEqualTo(1L);
+    assertThat(effective.deploymentVersion()).isEqualTo(2L);
+    assertThat(effective.recentAgeSeconds()).isEqualTo(100L);
+    assertThat(effective.maxClockSkewSeconds()).isEqualTo(10L);
+    assertThat(resolved.sources())
+        .extracting(SourceEvidence::key)
+        .containsExactly(
+            "RECENT_REAUTH_POLICY:SELF_SERVICE_GAME_CREATION/DEPLOYMENT",
+            "RECENT_REAUTH_POLICY:SELF_SERVICE_GAME_CREATION/PLATFORM");
+    assertThatThrownBy(() -> resolved.sources().clear())
+        .isInstanceOf(UnsupportedOperationException.class);
+
+    for (String policyScope : List.of("DEPLOYMENT", "PLATFORM")) {
+      Record current =
+          Objects.requireNonNull(
+              c.dsl.fetchOne(
+                  "SELECT value.policy_version, value.recent_age_seconds, "
+                      + "value.max_clock_skew_seconds "
+                      + "FROM account_recent_reauthentication_policy_current current "
+                      + "JOIN account_recent_reauthentication_policy_values value "
+                      + "ON value.policy_scope = current.policy_scope "
+                      + "AND value.policy_version = current.policy_version "
+                      + "WHERE current.policy_scope = ?",
+                  policyScope));
+      String sourceScope = AccountRecentReauthenticationPolicy.PURPOSE + "/" + policyScope;
+      SourceEvidence source =
+          resolved.sources().stream()
+              .filter(candidate -> candidate.scopeId().equals(sourceScope))
+              .findFirst()
+              .orElseThrow();
+      long version = current.get("policy_version", Long.class);
+      long age = current.get("recent_age_seconds", Long.class);
+      long skew = current.get("max_clock_skew_seconds", Long.class);
+      String expectedValue =
+          "account-recent-reauthentication-policy-source/v1\n"
+              + "owner=ACCOUNT\n"
+              + "purpose=SELF_SERVICE_GAME_CREATION\n"
+              + "scope="
+              + sourceScope
+              + "\nversion="
+              + version
+              + "\nrecentAgeSeconds="
+              + age
+              + "\nmaxClockSkewSeconds="
+              + skew
+              + "\n";
+
+      assertThat(source.sourceVersion()).isEqualTo(Long.toString(version));
+      assertThat(source.generation()).isNull();
+      assertThat(source.checkpointStream()).isNull();
+      assertThat(source.checkpointSequence()).isNull();
+      assertThat(new String(source.evidence(), java.nio.charset.StandardCharsets.UTF_8))
+          .isEqualTo(expectedValue);
+    }
+
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_draft_authorization_source_locks "
+                    + "WHERE source_key IN ("
+                    + "'RECENT_REAUTH_POLICY:SELF_SERVICE_GAME_CREATION/DEPLOYMENT', "
+                    + "'RECENT_REAUTH_POLICY:SELF_SERVICE_GAME_CREATION/PLATFORM')"))
+        .isEqualTo(2L);
+  }
+
+  @Test
+  void originalTenantCreationIntentRetryReturnsSameBytesWithoutConsumingReauthentication() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    UUID reauthenticationRequestId = UUID.randomUUID();
+    UUID creationOperationId = UUID.randomUUID();
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, reauthenticationRequestId, creationOperationId, PASSWORD));
+    var repository = new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository);
+    UUID intentRequestId = UUID.randomUUID();
+    var request =
+        intentRequest(
+            account,
+            intentRequestId,
+            creationOperationId,
+            UUID.randomUUID(),
+            evidence.evidenceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1);
+
+    var original = c.tx(() -> repository.claim(request));
+    String originalXmin =
+        Objects.requireNonNull(
+                c.dsl.fetchOne(
+                    "SELECT xmin::text AS xmin FROM account_tenant_creation_original_intents "
+                        + "WHERE request_id = ?",
+                    intentRequestId))
+            .get("xmin", String.class);
+    var retry = c.tx(() -> repository.claim(request));
+
+    assertThat(retry.requestPayload()).containsExactly(original.requestPayload());
+    assertThat(retry.requestDigest()).isEqualTo(original.requestDigest());
+    assertThat(retry.gameDesignRequestDigest()).isEqualTo(original.gameDesignRequestDigest());
+    assertThat(retry.createdAt()).isEqualTo(original.createdAt());
+    assertThat(
+            Objects.requireNonNull(
+                    c.dsl.fetchOne(
+                        "SELECT xmin::text AS xmin FROM account_tenant_creation_original_intents "
+                            + "WHERE request_id = ?",
+                        intentRequestId))
+                .get("xmin", String.class))
+        .isEqualTo(originalXmin);
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_tenant_creation_original_intents "
+                    + "WHERE request_id = ?",
+                intentRequestId))
+        .isEqualTo(1L);
+    assertThat(original.requestId()).isNotEqualTo(evidence.requestId());
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+  }
+
+  @Test
+  void changedTenantCreationConsentAccountAndGameDesignInputConflictOnOriginalRequestId() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    Account otherAccount = c.account("PASSWORD");
+    UUID reauthenticationRequestId = UUID.randomUUID();
+    UUID creationOperationId = UUID.randomUUID();
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, reauthenticationRequestId, creationOperationId, PASSWORD));
+    var repository = new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository);
+    UUID intentRequestId = UUID.randomUUID();
+    var original =
+        intentRequest(
+            account,
+            intentRequestId,
+            creationOperationId,
+            UUID.randomUUID(),
+            evidence.evidenceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1);
+    c.tx(() -> repository.claim(original));
+
+    var changedRequests =
+        List.of(
+            changeIntent(
+                original,
+                otherAccount.getAccountUuid(),
+                original.gameDesignCreationRequestId(),
+                original.targetNamespace(),
+                original.sourceGameTenantKey(),
+                original.name(),
+                original.description(),
+                original.creatorPartyId(),
+                original.consentOperationId(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                UUID.randomUUID(),
+                original.targetNamespace(),
+                original.sourceGameTenantKey(),
+                original.name(),
+                original.description(),
+                original.creatorPartyId(),
+                original.consentOperationId(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                original.gameDesignCreationRequestId(),
+                "other-game",
+                original.sourceGameTenantKey(),
+                original.name(),
+                original.description(),
+                original.creatorPartyId(),
+                original.consentOperationId(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                original.gameDesignCreationRequestId(),
+                original.targetNamespace(),
+                "another-source-key",
+                original.name(),
+                original.description(),
+                original.creatorPartyId(),
+                original.consentOperationId(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                original.gameDesignCreationRequestId(),
+                original.targetNamespace(),
+                original.sourceGameTenantKey(),
+                "Changed game name",
+                original.description(),
+                original.creatorPartyId(),
+                original.consentOperationId(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                original.gameDesignCreationRequestId(),
+                original.targetNamespace(),
+                original.sourceGameTenantKey(),
+                original.name(),
+                "A changed description",
+                original.creatorPartyId(),
+                original.consentOperationId(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                original.gameDesignCreationRequestId(),
+                original.targetNamespace(),
+                original.sourceGameTenantKey(),
+                original.name(),
+                original.description(),
+                UUID.randomUUID(),
+                original.consentOperationId(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                original.gameDesignCreationRequestId(),
+                original.targetNamespace(),
+                original.sourceGameTenantKey(),
+                original.name(),
+                original.description(),
+                original.creatorPartyId(),
+                UUID.randomUUID(),
+                original.consentStatementVersion() + 1));
+
+    for (var changed : changedRequests) {
+      assertThatThrownBy(() -> c.tx(() -> repository.claim(changed)))
+          .isInstanceOf(AccountTenantCreationIntentRepository.IntentConflictException.class);
+    }
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_tenant_creation_original_intents "
+                    + "WHERE request_id = ?",
+                intentRequestId))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void originalIntentSqlGuardRejectsWrongAccountOperationAndConsumedReauthentication() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    Account otherAccount = c.account("PASSWORD");
+    UUID reauthenticationRequestId = UUID.randomUUID();
+    UUID creationOperationId = UUID.randomUUID();
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, reauthenticationRequestId, creationOperationId, PASSWORD));
+    var repository = new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository);
+    var validShape =
+        intentRequest(
+            account,
+            UUID.randomUUID(),
+            creationOperationId,
+            UUID.randomUUID(),
+            evidence.evidenceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1);
+    var wrongAccount =
+        changeIntent(
+            validShape,
+            otherAccount.getAccountUuid(),
+            validShape.gameDesignCreationRequestId(),
+            validShape.targetNamespace(),
+            validShape.sourceGameTenantKey(),
+            validShape.name(),
+            validShape.description(),
+            validShape.creatorPartyId(),
+            validShape.consentOperationId(),
+            validShape.consentStatementVersion());
+    assertThatThrownBy(() -> c.tx(() -> repository.claim(wrongAccount)))
+        .isInstanceOf(DataAccessException.class);
+
+    var wrongOperation =
+        new AccountTenantCreationIntentRepository.Request(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            account.getAccountUuid(),
+            "test-game",
+            "source-game-tenant",
+            "Test game",
+            null,
+            evidence.evidenceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1,
+            true);
+    assertThatThrownBy(() -> c.tx(() -> repository.claim(wrongOperation)))
+        .isInstanceOf(DataAccessException.class);
+
+    Account consumedAccount = c.account("PASSWORD");
+    UUID consumedReauthenticationRequestId = UUID.randomUUID();
+    UUID consumedOperationId = UUID.randomUUID();
+    var consumedEvidence =
+        c.service.reauthenticate(
+            c.request(
+                consumedAccount, consumedReauthenticationRequestId, consumedOperationId, PASSWORD));
+    c.consume(
+        consumedEvidence,
+        consumedAccount.getAccountUuid(),
+        consumedEvidence.purpose(),
+        consumedEvidence.creationOperationId());
+    var consumedIntent =
+        intentRequest(
+            consumedAccount,
+            UUID.randomUUID(),
+            consumedOperationId,
+            UUID.randomUUID(),
+            consumedEvidence.evidenceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1);
+    assertThatThrownBy(() -> c.tx(() -> repository.claim(consumedIntent)))
+        .isInstanceOf(DataAccessException.class);
+
+    assertThat(c.count("SELECT count(*) FROM account_tenant_creation_original_intents")).isZero();
+  }
+
+  @Test
+  void originalTenantCreationIntentRejectsSqlMutationDeletionTruncationAndDigestCorruption() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    UUID reauthenticationRequestId = UUID.randomUUID();
+    UUID creationOperationId = UUID.randomUUID();
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, reauthenticationRequestId, creationOperationId, PASSWORD));
+    var repository = new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository);
+    UUID intentRequestId = UUID.randomUUID();
+    c.tx(
+        () ->
+            repository.claim(
+                intentRequest(
+                    account,
+                    intentRequestId,
+                    creationOperationId,
+                    UUID.randomUUID(),
+                    evidence.evidenceId(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    1)));
+    Record original =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_tenant_creation_original_intents WHERE request_id = ?",
+                intentRequestId));
+
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            "UPDATE account_tenant_creation_original_intents SET name = ? "
+                                + "WHERE request_id = ?",
+                            "Changed game name",
+                            intentRequestId)))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            "UPDATE account_tenant_creation_original_intents SET request_digest = ? "
+                                + "WHERE request_id = ?",
+                            "sha256:" + "0".repeat(64),
+                            intentRequestId)))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            "DELETE FROM account_tenant_creation_original_intents WHERE request_id = ?",
+                            intentRequestId)))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () -> c.tx(() -> c.dsl.execute("TRUNCATE account_tenant_creation_original_intents")))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(
+            Objects.requireNonNull(
+                c.dsl.fetchOne(
+                    "SELECT * FROM account_tenant_creation_original_intents WHERE request_id = ?",
+                    intentRequestId)))
+        .isEqualTo(original);
+  }
+
+  @Test
+  void concurrentExactTenantCreationIntentClaimsReturnOneOriginalRow() throws Exception {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    UUID reauthenticationRequestId = UUID.randomUUID();
+    UUID creationOperationId = UUID.randomUUID();
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, reauthenticationRequestId, creationOperationId, PASSWORD));
+    var repository = new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository);
+    UUID intentRequestId = UUID.randomUUID();
+    var request =
+        intentRequest(
+            account,
+            intentRequestId,
+            creationOperationId,
+            UUID.randomUUID(),
+            evidence.evidenceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1);
+    var ready = new CountDownLatch(2);
+    var start = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var first =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        ready.countDown();
+                        awaitLatch(start);
+                        return repository.claim(request);
+                      }));
+      var second =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        ready.countDown();
+                        awaitLatch(start);
+                        return repository.claim(request);
+                      }));
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      var firstResult = first.get(10, TimeUnit.SECONDS);
+      var secondResult = second.get(10, TimeUnit.SECONDS);
+
+      assertThat(secondResult.requestDigest()).isEqualTo(firstResult.requestDigest());
+      assertThat(secondResult.createdAt()).isEqualTo(firstResult.createdAt());
+      assertThat(secondResult.requestPayload()).containsExactly(firstResult.requestPayload());
+      assertThat(c.count("SELECT count(*) FROM account_tenant_creation_original_intents"))
+          .isEqualTo(1L);
+      assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+          .isZero();
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void currentPolicyPointerWriterUsesOnlyItsExactSourceLock() throws Exception {
+    Context c = context();
+    String platformKey = "RECENT_REAUTH_POLICY:SELF_SERVICE_GAME_CREATION/PLATFORM";
+    var sourceLockHeld = new CountDownLatch(1);
+    var releaseSourceLock = new CountDownLatch(1);
+    var executor = Executors.newSingleThreadExecutor();
+    try {
+      var sourceLockHolder =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        c.dsl.fetchOne(
+                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::TEXT[])",
+                            platformKey);
+                        sourceLockHeld.countDown();
+                        awaitLatch(releaseSourceLock);
+                        return null;
+                      }));
+      assertThat(sourceLockHeld.await(5, TimeUnit.SECONDS)).isTrue();
+
+      c.tx(
+          () -> {
+            c.dsl.execute(
+                "INSERT INTO account_recent_reauthentication_policy_values "
+                    + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                    + "VALUES ('DEPLOYMENT', 2, 100, 10)");
+            c.dsl.execute(
+                "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+                    + "WHERE policy_scope = 'DEPLOYMENT'");
+            return null;
+          });
+
+      assertThatThrownBy(
+              () ->
+                  c.tx(
+                      () -> {
+                        c.dsl.execute(
+                            "INSERT INTO account_recent_reauthentication_policy_values "
+                                + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                                + "VALUES ('PLATFORM', 2, 240, 20)");
+                        c.dsl.execute(
+                            "UPDATE account_recent_reauthentication_policy_current "
+                                + "SET policy_version = 2 WHERE policy_scope = 'PLATFORM'");
+                        return null;
+                      }))
+          .isInstanceOf(DataAccessException.class);
+      assertThat(
+              Objects.requireNonNull(
+                      c.dsl.fetchOne(
+                          "SELECT policy_version FROM account_recent_reauthentication_policy_current "
+                              + "WHERE policy_scope = 'PLATFORM'"))
+                  .get("policy_version", Long.class))
+          .isEqualTo(1L);
+
+      releaseSourceLock.countDown();
+      sourceLockHolder.get(10, TimeUnit.SECONDS);
+
+      c.tx(
+          () -> {
+            c.dsl.execute(
+                "INSERT INTO account_recent_reauthentication_policy_values "
+                    + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                    + "VALUES ('PLATFORM', 2, 240, 20)");
+            c.dsl.execute(
+                "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+                    + "WHERE policy_scope = 'PLATFORM'");
+            return null;
+          });
+      assertThat(
+              c.count(
+                  "SELECT count(*) FROM account_recent_reauthentication_policy_current "
+                      + "WHERE policy_version = 2"))
+          .isEqualTo(2L);
+    } finally {
+      releaseSourceLock.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void forwardSourceOrderingMigrationSeedsOnlyCurrentPointersAndPreservesRetainedBytes() {
+    Context c = contextBeforePolicySourceOrdering();
+    Account account = c.account("PASSWORD");
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    c.consume(
+        evidence, account.getAccountUuid(), evidence.purpose(), evidence.creationOperationId());
+    Record originalEvidence = c.evidenceRow(evidence.evidenceId());
+    Record originalConsumption =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_consumptions WHERE evidence_id = ?",
+                evidence.evidenceId()));
+    Record originalPlatformValue =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_policy_values "
+                    + "WHERE policy_scope = 'PLATFORM' AND policy_version = 1"));
+    Record originalDeploymentValue =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_policy_values "
+                    + "WHERE policy_scope = 'DEPLOYMENT' AND policy_version = 1"));
+    Record originalPlatformCurrent =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_policy_current "
+                    + "WHERE policy_scope = 'PLATFORM'"));
+    Record originalDeploymentCurrent =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_policy_current "
+                    + "WHERE policy_scope = 'DEPLOYMENT'"));
+
+    c.migrateToLatest();
+
+    assertThat(c.evidenceRow(evidence.evidenceId())).isEqualTo(originalEvidence);
+    assertThat(
+            Objects.requireNonNull(
+                c.dsl.fetchOne(
+                    "SELECT * FROM account_recent_reauthentication_consumptions "
+                        + "WHERE evidence_id = ?",
+                    evidence.evidenceId())))
+        .isEqualTo(originalConsumption);
+    assertThat(
+            Objects.requireNonNull(
+                c.dsl.fetchOne(
+                    "SELECT * FROM account_recent_reauthentication_policy_values "
+                        + "WHERE policy_scope = 'PLATFORM' AND policy_version = 1")))
+        .isEqualTo(originalPlatformValue);
+    assertThat(
+            Objects.requireNonNull(
+                c.dsl.fetchOne(
+                    "SELECT * FROM account_recent_reauthentication_policy_values "
+                        + "WHERE policy_scope = 'DEPLOYMENT' AND policy_version = 1")))
+        .isEqualTo(originalDeploymentValue);
+    assertThat(
+            Objects.requireNonNull(
+                c.dsl.fetchOne(
+                    "SELECT * FROM account_recent_reauthentication_policy_current "
+                        + "WHERE policy_scope = 'PLATFORM'")))
+        .isEqualTo(originalPlatformCurrent);
+    assertThat(
+            Objects.requireNonNull(
+                c.dsl.fetchOne(
+                    "SELECT * FROM account_recent_reauthentication_policy_current "
+                        + "WHERE policy_scope = 'DEPLOYMENT'")))
+        .isEqualTo(originalDeploymentCurrent);
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_draft_authorization_source_locks "
+                    + "WHERE source_key LIKE 'RECENT_REAUTH_POLICY:%'"))
+        .isEqualTo(2L);
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_recent_reauthentication_policy_current "
+                    + "WHERE policy_scope IN ('PLATFORM', 'DEPLOYMENT')"))
+        .isEqualTo(2L);
   }
 
   @Test
@@ -440,6 +1090,161 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   }
 
   @Test
+  void pendingCreationValidationReadsCurrentExactEvidenceWithoutConsumption() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    Record original = c.evidenceRow(evidence.evidenceId());
+
+    assertThat(c.validatePending(evidence)).usingRecursiveComparison().isEqualTo(evidence);
+    assertThat(c.validatePending(evidence)).usingRecursiveComparison().isEqualTo(evidence);
+    assertThat(c.evidenceRow(evidence.evidenceId())).isEqualTo(original);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.service.validatePendingCreationLocked(
+                            evidence,
+                            UUID.randomUUID(),
+                            evidence.purpose(),
+                            evidence.creationOperationId())))
+        .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.service.validatePendingCreationLocked(
+                            evidence,
+                            evidence.accountId(),
+                            "ACCOUNT_SECURITY_CHANGE",
+                            evidence.creationOperationId())))
+        .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.service.validatePendingCreationLocked(
+                            evidence, evidence.accountId(), evidence.purpose(), UUID.randomUUID())))
+        .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+    assertThat(c.evidenceRow(evidence.evidenceId())).isEqualTo(original);
+  }
+
+  @Test
+  void pendingCreationRechecksActualAccountAuthorityAfterEarlierSuccessfulValidation() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    assertThat(c.validatePending(evidence)).usingRecursiveComparison().isEqualTo(evidence);
+    ScopeState before =
+        c.tx(() -> c.generations.read(AuthorityScope.account(account.getAccountUuid())));
+
+    c.tx(
+        () -> {
+          account.setEmailVerified(true);
+          return c.accounts.save(account);
+        });
+    ScopeState after =
+        c.tx(() -> c.generations.read(AuthorityScope.account(account.getAccountUuid())));
+
+    assertThat(after.generation()).isGreaterThan(before.generation());
+    assertThatThrownBy(() -> c.validatePending(evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account recent-reauthentication authority is unavailable");
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+  }
+
+  @Test
+  void pendingCreationRechecksCurrentPolicyAfterEarlierSuccessfulValidation() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    assertThat(c.validatePending(evidence)).usingRecursiveComparison().isEqualTo(evidence);
+
+    c.tx(
+        () -> {
+          c.dsl.execute(
+              "INSERT INTO account_recent_reauthentication_policy_values "
+                  + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
+                  + "VALUES ('DEPLOYMENT', 2, 100, 10)");
+          return c.dsl.execute(
+              "UPDATE account_recent_reauthentication_policy_current SET policy_version = 2 "
+                  + "WHERE policy_scope = 'DEPLOYMENT'");
+        });
+
+    assertThatThrownBy(() -> c.validatePending(evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account recent-reauthentication authority is unavailable");
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+  }
+
+  @Test
+  void pendingCreationRechecksAgeAfterEarlierSuccessfulValidation() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    assertThat(c.validatePending(evidence)).usingRecursiveComparison().isEqualTo(evidence);
+
+    c.clock.set(BASE.plusSeconds(270));
+
+    assertThatThrownBy(() -> c.validatePending(evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account recent-reauthentication authority is unavailable");
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+  }
+
+  @Test
+  void pendingCreationRefusesConsumedEvidenceWhileFinalResultRecoveryRetainsExactReplay() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    var consumed =
+        c.consume(
+            evidence, evidence.accountId(), evidence.purpose(), evidence.creationOperationId());
+    Record original = c.evidenceRow(evidence.evidenceId());
+    Record originalConsumption =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_consumptions WHERE evidence_id = ?",
+                evidence.evidenceId()));
+    assertThat(consumed.disposition()).isEqualTo(Disposition.CONSUMED);
+    assertThatThrownBy(() -> c.validatePending(evidence))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account recent-reauthentication authority is unavailable");
+
+    c.clock.set(BASE.plusSeconds(270));
+    var replay =
+        c.consume(
+            evidence, evidence.accountId(), evidence.purpose(), evidence.creationOperationId());
+    assertThat(replay.disposition()).isEqualTo(Disposition.EXACT_REPLAY);
+    assertThat(c.evidenceRow(evidence.evidenceId())).isEqualTo(original);
+    assertThat(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_consumptions WHERE evidence_id = ?",
+                evidence.evidenceId()))
+        .isEqualTo(originalConsumption);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isEqualTo(1L);
+  }
+
+  @Test
   void retainedEvidenceAndConsumptionRejectSqlMutation() {
     Context c = context();
     Account account = c.account("PASSWORD");
@@ -497,6 +1302,58 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .isEqualTo(1L);
   }
 
+  private static AccountTenantCreationIntentRepository.Request intentRequest(
+      Account account,
+      UUID requestId,
+      UUID creationOperationId,
+      UUID gameDesignCreationRequestId,
+      UUID evidenceId,
+      UUID creatorPartyId,
+      UUID consentOperationId,
+      int consentStatementVersion) {
+    return new AccountTenantCreationIntentRepository.Request(
+        requestId,
+        creationOperationId,
+        gameDesignCreationRequestId,
+        account.getAccountUuid(),
+        "test-game",
+        "source-game-tenant",
+        "Test game",
+        null,
+        evidenceId,
+        creatorPartyId,
+        consentOperationId,
+        consentStatementVersion,
+        true);
+  }
+
+  private static AccountTenantCreationIntentRepository.Request changeIntent(
+      AccountTenantCreationIntentRepository.Request original,
+      UUID initiatingAccountId,
+      UUID gameDesignCreationRequestId,
+      String targetNamespace,
+      String sourceGameTenantKey,
+      String name,
+      String description,
+      UUID creatorPartyId,
+      UUID consentOperationId,
+      int consentStatementVersion) {
+    return new AccountTenantCreationIntentRepository.Request(
+        original.requestId(),
+        original.creationOperationId(),
+        gameDesignCreationRequestId,
+        initiatingAccountId,
+        targetNamespace,
+        sourceGameTenantKey,
+        name,
+        description,
+        original.recentReauthenticationEvidenceId(),
+        creatorPartyId,
+        consentOperationId,
+        consentStatementVersion,
+        original.affirmativeConsent());
+  }
+
   private static void awaitLatch(CountDownLatch latch) {
     try {
       if (!latch.await(10, TimeUnit.SECONDS)) {
@@ -528,19 +1385,31 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   }
 
   private static Context context(boolean installApprovedPolicySources) {
+    return context(installApprovedPolicySources, true);
+  }
+
+  private static Context contextBeforePolicySourceOrdering() {
+    return context(true, false);
+  }
+
+  private static Context context(
+      boolean installApprovedPolicySources, boolean installPolicySourceOrdering) {
     String schema = "recent_reauth_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var flywayConfiguration =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (!installPolicySourceOrdering) {
+      flywayConfiguration.target(MigrationVersion.fromVersion("1018"));
+    }
+    flywayConfiguration.load().migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
@@ -603,7 +1472,16 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         new AccountRecentReauthenticationService(
             primary, accounts, generations, evidence, policies, manager, clock);
     return new Context(
-        dsl, accounts, challenges, generations, evidence, service, transaction, clock);
+        dsl,
+        accounts,
+        challenges,
+        generations,
+        evidence,
+        service,
+        transaction,
+        clock,
+        source,
+        schema);
   }
 
   private static String hash(String secret) {
@@ -624,7 +1502,9 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
       AccountRecentReauthenticationRepository evidenceRepository,
       AccountRecentReauthenticationService service,
       TransactionTemplate transaction,
-      MutableClock clock) {
+      MutableClock clock,
+      DriverManagerDataSource source,
+      String schema) {
     <T> T tx(Supplier<T> action) {
       return transaction.execute(ignored -> action.get());
     }
@@ -675,6 +1555,17 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
       return tx(() -> service.validateAndConsumeLocked(evidence, accountId, purpose, operationId));
     }
 
+    AccountRecentReauthenticationEvidence validatePending(
+        AccountRecentReauthenticationEvidence evidence) {
+      return tx(
+          () ->
+              service.validatePendingCreationLocked(
+                  evidence,
+                  evidence.accountId(),
+                  evidence.purpose(),
+                  evidence.creationOperationId()));
+    }
+
     Record evidenceRow(UUID evidenceId) {
       return Objects.requireNonNull(
           dsl.fetchOne(
@@ -682,13 +1573,24 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
               evidenceId));
     }
 
-    long count(String query) {
-      return Objects.requireNonNull(dsl.fetchOne(query)).get(0, Long.class);
+    long count(String query, Object... parameters) {
+      return Objects.requireNonNull(dsl.fetchOne(query, parameters)).get(0, Long.class);
     }
 
     int pid() {
       return Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid() AS pid"))
           .get("pid", Integer.class);
+    }
+
+    void migrateToLatest() {
+      Flyway.configure()
+          .dataSource(source)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(Map.of("serviceSchema", schema))
+          .locations("classpath:db/migration")
+          .load()
+          .migrate();
     }
   }
 
