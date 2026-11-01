@@ -17,6 +17,12 @@ service OriginalTenantCreationOutcomeReadService {
       returns (ResolveOriginalTenantCreationOutcomeResponse);
 }
 
+// Standalone private Account-only dispatch for an exact, currently authorized original.
+service TenantCreationService {
+  rpc CreateAuthorizedTenant(CreateAuthorizedTenantRequest)
+      returns (CreateAuthorizedTenantResponse);
+}
+
 // Standalone, unregistered exact authored-world source read; no mutation or admission permission.
 service AuthoredWorldSourceReadService {
   rpc ResolveAuthoredWorldSource(ResolveAuthoredWorldSourceRequest)
@@ -70,6 +76,33 @@ message ResolveOriginalTenantCreationOutcomeResponse {
   OriginalTenantCreationOutcome outcome = 9;
   ResolveFreshTenantCreationResponse created_receipt = 10;
   string evidence_digest = 11;
+}
+
+message CreateAuthorizedTenantRequest {
+  int32 schema_version = 1;
+  string create_request_id = 2;
+  string target_namespace = 3;
+  string creation_request_id = 4;
+  string account_authorization_operation_id = 5;
+  string initiating_account_id = 6;
+  string creation_request_digest = 7;
+  string account_authorization_digest = 8;
+  string source_game_tenant_key = 9;
+  string name = 10;
+  optional string description = 11;
+}
+
+message CreateAuthorizedTenantResponse {
+  int32 schema_version = 1;
+  string create_request_id = 2;
+  string target_namespace = 3;
+  string creation_request_id = 4;
+  string account_authorization_operation_id = 5;
+  string initiating_account_id = 6;
+  string creation_request_digest = 7;
+  string account_authorization_digest = 8;
+  OriginalTenantCreationOutcome status = 9;
+  ResolveFreshTenantCreationResponse created_receipt = 10;
 }
 
 message ResolveAuthoredWorldSourceRequest {
