@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,13 +35,21 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceCheckpoint;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository.CurrentProjection;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
-import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceSnapshot;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjection;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.CreatorControlCaptureSources;
 import net.firedevops.firemud.accountservice.service.IssuerGenerationProjection;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
+import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
+import net.firedevops.firemud.common.security.ControlUiJwtProfileValidator;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -48,6 +57,50 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountControlUiAuthorityTest {
+  @Test
+  void advancedAccountAndTenantCapturesProduceProfileValidDecimalStringSecurityCutoffs()
+      throws Exception {
+    var context = new AccountCaptureContext(3L);
+    for (var snapshot : List.of(context.capture(), context.captureTenant())) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> cutoff =
+          (Map<String, Object>) snapshot.authorityTuple().get("accountSecurityCutoff");
+      assertThat(cutoff)
+          .containsExactlyInAnyOrderEntriesOf(
+              Map.of(
+                  "accountAuthorityGeneration", "3",
+                  "outboxStreamKey", "account:auth-authority:v1:account/" + context.id,
+                  "outboxSequence", "2"));
+      Map<String, Object> claims =
+          new LinkedHashMap<>(
+              Map.ofEntries(
+                  Map.entry("iss", "firemud-account-service"),
+                  Map.entry("sub", snapshot.actor().toString()),
+                  Map.entry("accountId", snapshot.actor().toString()),
+                  Map.entry("jti", UUID.randomUUID().toString()),
+                  Map.entry("aud", "control-ui"),
+                  Map.entry("iat", 2_000_000_000L),
+                  Map.entry("nbf", 2_000_000_000L),
+                  Map.entry("exp", 2_000_000_300L),
+                  Map.entry("tokenGeneration", 1L),
+                  Map.entry("authorityTuple", snapshot.authorityTuple()),
+                  Map.entry("membershipVersion", snapshot.membershipVersion()),
+                  Map.entry("issuanceFence", snapshot.issuanceFence()),
+                  Map.entry("scopedRoles", snapshot.scopedRoles())));
+      ControlUiJwtProfileValidator.validateClaims(claims, 8);
+      for (String field : List.of("accountAuthorityGeneration", "outboxSequence")) {
+        Map<String, Object> numericCutoff = new LinkedHashMap<>(cutoff);
+        numericCutoff.put(field, Long.parseLong((String) cutoff.get(field)));
+        Map<String, Object> changedTuple = new LinkedHashMap<>(snapshot.authorityTuple());
+        changedTuple.put("accountSecurityCutoff", numericCutoff);
+        Map<String, Object> changedClaims = new LinkedHashMap<>(claims);
+        changedClaims.put("authorityTuple", changedTuple);
+        assertThatThrownBy(() -> ControlUiJwtProfileValidator.validateClaims(changedClaims, 8))
+            .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
+      }
+    }
+  }
+
   @Test
   void accountCaptureRetainsOnlyLockedAccountIssuerRoleAndCurrentRestrictionSources()
       throws Exception {
@@ -141,15 +194,23 @@ class AccountControlUiAuthorityTest {
     final DSLContext dsl = mock(DSLContext.class);
     final Record roleRow = mock(Record.class);
     final AccountControlUiAuthority authority;
+    final IssuerAccountSourceSnapshot current;
 
     AccountCaptureContext() throws Exception {
+      this(1L);
+    }
+
+    AccountCaptureContext(long accountGeneration) throws Exception {
       account.setId(7L);
       account.setAccountUuid(id);
       account.setAccountUuidSourceNumericId(7L);
       account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
       account.setLifecycleState(AccountLifecycleState.ACTIVE);
       when(accounts.findByAccountUuidForUpdate(id)).thenReturn(Optional.of(account));
-      var fence = new IssuanceFence(id, 4L, 12L);
+      var fence =
+          accountGeneration == 1L
+              ? new IssuanceFence(id, 4L, 12L)
+              : new IssuanceFence(id, accountGeneration, accountGeneration);
       var issuer =
           new CurrentSourceEvidence(
               AuthorityScope.issuer("firemud-account-service"),
@@ -167,39 +228,63 @@ class AccountControlUiAuthorityTest {
               null,
               3L,
               null);
+      var event =
+          accountGeneration == 1L
+              ? null
+              : PasswordResetAuthorityEventV1Codec.seal(
+                  Map.ofEntries(
+                      Map.entry("schemaVersion", PasswordResetAuthorityEventV1Codec.SCHEMA_VERSION),
+                      Map.entry("eventType", PasswordResetAuthorityEventV1Codec.EVENT_TYPE),
+                      Map.entry("eventId", "account-password-reset-event-v1:" + "a".repeat(64)),
+                      Map.entry("requestId", UUID.randomUUID().toString()),
+                      Map.entry("accountId", id.toString()),
+                      Map.entry("sourceScope", "account/" + id),
+                      Map.entry("outboxStreamKey", "account:auth-authority:v1:account/" + id),
+                      Map.entry("outboxSequence", Long.toString(accountGeneration - 1L)),
+                      Map.entry("accountAuthorityGeneration", Long.toString(accountGeneration)),
+                      Map.entry("sourceVersion", Long.toString(accountGeneration)),
+                      Map.entry(
+                          "accountSecurityCutoff",
+                          Map.of(
+                              "accountAuthorityGeneration", Long.toString(accountGeneration),
+                              "outboxStreamKey", "account:auth-authority:v1:account/" + id,
+                              "outboxSequence", Long.toString(accountGeneration - 1L)))));
       var source =
           new CurrentSourceEvidence(
               AuthorityScope.account(id),
-              1L,
-              1L,
+              accountGeneration,
+              accountGeneration,
               fence,
               new SourceCheckpoint(
                   "account:auth-authority:v1:account/" + id,
-                  0L,
-                  Optional.empty(),
-                  Optional.empty()),
-              Optional.empty(),
+                  accountGeneration - 1L,
+                  event == null ? Optional.empty() : Optional.of(event.eventId()),
+                  event == null ? Optional.empty() : Optional.of(event.eventDigest())),
+              event == null
+                  ? Optional.empty()
+                  : Optional.of(
+                      new AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff(
+                          event.accountSecurityCutoff().accountAuthorityGeneration(),
+                          event.accountSecurityCutoff().outboxStreamKey(),
+                          event.accountSecurityCutoff().outboxSequence())),
               "ACCOUNT_REPOSITORY_INSERT",
               7L,
               "ACCOUNT_REPOSITORY_INSERT",
               3L,
               3L);
       var projection =
-          AccountGenerationProjection.fromSource(
-              new AccountSourceSnapshot(
-                  id,
-                  new ScopeState(AuthorityScope.account(id), 1L, 1L, fence),
-                  source.checkpoint().outboxStreamKey(),
-                  0L,
-                  Optional.empty()));
+          new AccountGenerationProjection(
+              id.toString(),
+              Long.toString(accountGeneration),
+              Long.toString(accountGeneration),
+              source.checkpoint().outboxStreamKey(),
+              Long.toString(accountGeneration - 1L),
+              event == null ? Optional.empty() : Optional.of(event.canonicalJson()));
+      current =
+          new IssuerAccountSourceSnapshot(
+              issuer, source, fence, projection, IssuerGenerationProjection.fromSource(issuer));
       when(upstream.readCurrentIssuerAccountSources("firemud-account-service", id))
-          .thenReturn(
-              new IssuerAccountSourceSnapshot(
-                  issuer,
-                  source,
-                  fence,
-                  projection,
-                  IssuerGenerationProjection.fromSource(issuer)));
+          .thenReturn(current);
       restriction(Category.ACCOUNT_SECURITY_LOCK, 2L, lockResult, RestrictionState.NONRESTRICTED);
       restriction(
           Category.PLATFORM_ACCESS_BAN, 2L, UUID.randomUUID(), RestrictionState.NONRESTRICTED);
@@ -237,6 +322,93 @@ class AccountControlUiAuthorityTest {
       } finally {
         TransactionSynchronizationManager.clear();
       }
+    }
+
+    AccountControlUiAuthority.Snapshot captureTenant() {
+      UUID tenant = UUID.randomUUID();
+      var pair = mock(PairAuthority.class);
+      when(pair.membershipExists()).thenReturn(true);
+      var roles = mock(RoleSnapshot.class);
+      when(roles.roles()).thenReturn(List.of("tenantAdmin"));
+      when(roles.snapshotVersion()).thenReturn(1L);
+      var event = mock(MembershipAuthorityEventV1Codec.MembershipEvent.class);
+      when(event.canonicalJsonUtf8()).thenReturn("{}".getBytes(StandardCharsets.UTF_8));
+      UUID creationId = UUID.randomUUID();
+      UUID creationOperation = UUID.randomUUID();
+      String digest = "sha256:" + "1".repeat(64);
+      var creation =
+          new FreshTenantCreationEvidence(
+              1,
+              "account-service",
+              creationId,
+              creationOperation,
+              digest,
+              tenant,
+              7L,
+              "tenant-7",
+              "NEW_GAME_ROW",
+              GameTenantCreationDigest.evidenceDigest(
+                  "account-service",
+                  creationId,
+                  creationOperation,
+                  digest,
+                  tenant,
+                  7L,
+                  "tenant-7",
+                  "NEW_GAME_ROW"));
+      var tuple =
+          new MembershipAuthorityEventV1Codec.AuthorityTuple(
+              "1",
+              Long.toString(current.account().generation()),
+              Map.of(tenant.toString(), "1"),
+              Map.of(tenant.toString(), "1"),
+              List.of(),
+              current
+                  .account()
+                  .accountSecurityCutoff()
+                  .map(
+                      cutoff ->
+                          new MembershipAuthorityEventV1Codec.AccountSecurityCutoff(
+                              cutoff.accountAuthorityGeneration(),
+                              cutoff.outboxStreamKey(),
+                              cutoff.outboxSequence())),
+              Optional.empty());
+      var fence = current.issuanceFence();
+      var member =
+          new CreatorControlCaptureSources(
+              id,
+              tenant,
+              new CompositeSnapshot(
+                  new ScopeState(current.issuer().scope(), 1L, 1L, null),
+                  new ScopeState(
+                      current.account().scope(),
+                      current.account().generation(),
+                      current.account().sourceVersion(),
+                      fence),
+                  List.of(new ScopeState(AuthorityScope.tenant(tenant), 1L, 1L, null)),
+                  List.of(new ScopeState(AuthorityScope.membership(id, tenant), 1L, 1L, fence)),
+                  fence),
+              Map.of(tenant.toString(), "1"),
+              tuple,
+              Long.toString(fence.value()),
+              pair,
+              roles,
+              creation,
+              null,
+              event,
+              List.of(),
+              List.of(),
+              Instant.EPOCH);
+      var existing = mock(AccountDraftSourceCompositionService.ExistingSources.class);
+      var hosted = mock(EnvironmentBoundCurrentness.class);
+      when(hosted.terms()).thenReturn(mock(CurrentnessEvidence.class));
+      when(hosted.sourceEvidence()).thenReturn(List.of());
+      when(existing.membership()).thenReturn(member);
+      when(existing.issuerAccount()).thenReturn(current);
+      when(existing.hostedTerms()).thenReturn(hosted);
+      var environment = mock(CapturedEnvironmentBoundary.class);
+      when(drafts.readExistingSources(environment, tenant)).thenReturn(existing);
+      return authority.capture(id, tenant, environment);
     }
   }
 

@@ -159,10 +159,9 @@ public final class AccountControlUiAuthority {
                 authority.put(
                     "accountSecurityCutoff",
                     Map.of(
-                        "accountAuthorityGeneration",
-                            Long.parseLong(cutoff.accountAuthorityGeneration()),
+                        "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
                         "outboxStreamKey", cutoff.outboxStreamKey(),
-                        "outboxSequence", Long.parseLong(cutoff.outboxSequence()))));
+                        "outboxSequence", cutoff.outboxSequence())));
     byte[] issuerBytes =
         current.canonicalIssuerProjection().toJson().getBytes(StandardCharsets.UTF_8);
     byte[] accountBytes =
@@ -344,11 +343,11 @@ public final class AccountControlUiAuthority {
                     "accountSecurityCutoff",
                     Map.of(
                         "accountAuthorityGeneration",
-                        Long.parseLong(cutoff.accountAuthorityGeneration()),
+                        cutoff.accountAuthorityGeneration(),
                         "outboxStreamKey",
                         cutoff.outboxStreamKey(),
                         "outboxSequence",
-                        Long.parseLong(cutoff.outboxSequence()))));
+                        cutoff.outboxSequence())));
     tuple
         .tenantBillingCutoff()
         .ifPresent(

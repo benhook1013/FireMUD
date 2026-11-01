@@ -685,11 +685,11 @@ public final class AccountControlUiCurrentActorVerifier {
                     "accountSecurityCutoff",
                     Map.of(
                         "accountAuthorityGeneration",
-                        Long.parseLong(cutoff.accountAuthorityGeneration()),
+                        cutoff.accountAuthorityGeneration(),
                         "outboxStreamKey",
                         cutoff.outboxStreamKey(),
                         "outboxSequence",
-                        Long.parseLong(cutoff.outboxSequence()))));
+                        cutoff.outboxSequence())));
     if (tenantEvent.tenantBillingSequence() > 0L) {
       expectedTuple.put(
           "tenantBillingCutoff",
