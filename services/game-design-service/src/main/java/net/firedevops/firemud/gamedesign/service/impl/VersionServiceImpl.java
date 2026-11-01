@@ -215,6 +215,12 @@ public class VersionServiceImpl implements VersionService {
           retryableParticipantDependencyFailure
               ? retryableParticipantDependencyFailureMessage()
               : publishFailureMessage(operationFailure);
+      logger.warn(
+          "Script patch publish failed for tenant {} workflow {} with code {}",
+          tenantId,
+          publishWorkflowId,
+          failureCode,
+          operationFailure);
       ScriptPatchFinalization failure;
       try {
         failure =
