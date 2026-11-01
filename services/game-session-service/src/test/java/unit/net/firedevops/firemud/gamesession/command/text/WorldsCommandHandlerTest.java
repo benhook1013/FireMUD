@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -83,6 +84,23 @@ class WorldsCommandHandlerTest {
     assertThat(
             handler.browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", null))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+  }
+
+  @Test
+  void charsRefusalComposesWorldAndDefaultRealmFromOneSnapshot() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    var original =
+        TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties).visibleWorlds();
+    AtomicInteger reads = new AtomicInteger();
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> reads.getAndIncrement() == 0 ? original : List.of());
+
+    assertThat(
+            new WorldsCommandHandler(catalog)
+                .browseCharacters(GameplayCommandTestFixtures.worldBrowseDemo(), "demo", null))
+        .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
+    assertThat(reads).hasValue(1);
   }
 
   @Test

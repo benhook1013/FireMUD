@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -169,6 +170,57 @@ class PlayCommandHandlerTest {
               }
               return characterRoster(characterId, characterName, tenantId, accountId, scope);
             });
+  }
+
+  @Test
+  void playComposesSelectionCardinalityAndSuccessFromOneActualPointerList() {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    var pointer =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "Demo World",
+            "production",
+            "Live Realm",
+            22L,
+            1L,
+            1L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            1L,
+            UUID.fromString("8845d6f0-e260-4ca2-99d7-8ced4387f96b"),
+            UUID.fromString("6c4da6d7-b29d-4a67-a465-b78007868653"));
+    when(authority.listPointers()).thenReturn(List.of(pointer), List.of());
+    var localHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authority),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry);
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.empty());
+
+    var result = localHandler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as demo");
+    verify(authority).listPointers();
+    verify(authority, never()).listPointersByTenant(Mockito.anyLong());
+    verify(authority, never())
+        .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
   }
 
   @Test

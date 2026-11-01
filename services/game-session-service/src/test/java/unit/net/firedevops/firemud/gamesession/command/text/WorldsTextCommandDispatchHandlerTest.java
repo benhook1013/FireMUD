@@ -50,6 +50,30 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
+  void unboundWorldOrdinalReturnsRediscoveryGuidanceWithoutPublishingAnEvent() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
+    var result =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                new TextCommandParser().parse("REALMS 1"),
+                false,
+                Optional.of(GameplayCommandTestFixtures.authoredDispatchEmberline()),
+                Optional.empty()));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output ->
+                assertThat(output.text())
+                    .isEqualTo(
+                        "ERROR INVALID_ARGUMENT REALMS requires a valid world selector. Use WORLDS first."));
+    Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  @Test
   void publishesCommandEventForGameplayScopedWorldsBrowse() {
     SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
 

@@ -757,16 +757,13 @@ public final class GameSessionGrpcService
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
       GameplayAdmissionPointerSnapshot realm =
-          gameplayAdmissionPointerAuthorityService
-              .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
+          gameplayWorldCatalog
+              .findAdmissionPointerFromAuthoritySnapshot(
+                  tenantId,
+                  request.getWorldSlug(),
+                  request.getRealmSlug(),
+                  gameplayAdmissionPointerAuthorityService.listPointersByTenant(tenantId))
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
-      if (realm.visible()) {
-        if (realm.publicProductionRealm()) {
-          gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
-        } else {
-          gameplayWorldCatalog.requireHealthyVisiblePrivateRealm(realm);
-        }
-      }
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setAdmissionPointer(

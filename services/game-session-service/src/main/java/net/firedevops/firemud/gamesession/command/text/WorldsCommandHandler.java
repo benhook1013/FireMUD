@@ -35,8 +35,9 @@ public class WorldsCommandHandler {
     if (!sessionContext.hasAccountIdentity()) {
       return CharacterBrowseResult.unavailable();
     }
+    GameplayWorldCatalog.ReadSnapshot snapshot = worldCatalog.readSnapshot();
     java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        worldCatalog.resolveWorld(worldSelector);
+        snapshot.resolveWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return CharacterBrowseResult.invalidWorld();
     }
@@ -46,7 +47,7 @@ public class WorldsCommandHandler {
             ? worldCatalog.resolveRealm(world, realmSelector)
             : worldCatalog.requiresExplicitRealmSelection(world)
                 ? java.util.Optional.empty()
-                : worldCatalog.resolveDefaultRealm(world);
+                : snapshot.resolveDefaultRealm(world);
     if (StringUtils.hasText(realmSelector) && maybeRealm.isEmpty()) {
       return CharacterBrowseResult.invalidRealm(world.slug());
     }
