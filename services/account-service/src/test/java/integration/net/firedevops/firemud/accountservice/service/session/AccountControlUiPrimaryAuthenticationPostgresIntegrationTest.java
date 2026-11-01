@@ -63,6 +63,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private static final String PASSWORD = "test-only-primary-password";
+  private static final String RESET_PASSWORD = "test-only-reset-password";
   private static final String OTP = "test-only-email-otp";
 
   @Test
@@ -201,6 +202,132 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
       assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
     } finally {
       releaseFirst.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void resetThatOwnsTheAccountLockFirstMakesIssuanceVerifyTheCommittedNewPassword()
+      throws Exception {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var resetLocked = new CountDownLatch(1);
+    var releaseReset = new CountDownLatch(1);
+    var issuerEntered = new CountDownLatch(1);
+    var resetPid = new AtomicInteger();
+    var issuerPid = new AtomicInteger();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var reset =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        resetPid.set(c.pid());
+                        Account locked =
+                            c.accounts.findByIdForUpdate(account.getId()).orElseThrow();
+                        c.accounts.updatePasswordHashForLockedAccount(locked, hash(RESET_PASSWORD));
+                        resetLocked.countDown();
+                        awaitLatch(releaseReset);
+                        return null;
+                      }));
+      awaitLatch(resetLocked);
+      var issuance =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        issuerPid.set(c.pid());
+                        issuerEntered.countDown();
+                        return c.primary
+                            .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
+                            .accountId();
+                      }));
+      awaitLatch(issuerEntered);
+      awaitBlocked(c, issuerPid.get(), resetPid.get());
+      assertThat(issuance.isDone()).isFalse();
+
+      releaseReset.countDown();
+      reset.get(10, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> issuance.get(10, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(AuthenticationException.class);
+      assertThat(
+              c.tx(
+                  () ->
+                      c.primary
+                          .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
+                          .accountId()))
+          .isEqualTo(account.getAccountUuid());
+    } finally {
+      releaseReset.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void issuanceKeepsTheAccountLockUntilItsCallerTransactionCommitsBeforeReset() throws Exception {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var issuanceAuthenticated = new CountDownLatch(1);
+    var releaseIssuance = new CountDownLatch(1);
+    var resetEntered = new CountDownLatch(1);
+    var issuerPid = new AtomicInteger();
+    var resetPid = new AtomicInteger();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var issuance =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        issuerPid.set(c.pid());
+                        UUID actor =
+                            c.primary
+                                .authenticateControlUiPrimaryIdentity(account.getEmail(), PASSWORD)
+                                .accountId();
+                        issuanceAuthenticated.countDown();
+                        awaitLatch(releaseIssuance);
+                        return actor;
+                      }));
+      awaitLatch(issuanceAuthenticated);
+      var reset =
+          executor.submit(
+              () ->
+                  c.tx(
+                      () -> {
+                        resetPid.set(c.pid());
+                        resetEntered.countDown();
+                        Account locked =
+                            c.accounts.findByIdForUpdate(account.getId()).orElseThrow();
+                        return c.accounts.updatePasswordHashForLockedAccount(
+                            locked, hash(RESET_PASSWORD));
+                      }));
+      awaitLatch(resetEntered);
+      awaitBlocked(c, resetPid.get(), issuerPid.get());
+      assertThat(reset.isDone()).isFalse();
+
+      releaseIssuance.countDown();
+      assertThat(issuance.get(10, TimeUnit.SECONDS)).isEqualTo(account.getAccountUuid());
+      reset.get(10, TimeUnit.SECONDS);
+      assertThatThrownBy(
+              () ->
+                  c.tx(
+                      () ->
+                          c.primary.authenticateControlUiPrimaryIdentity(
+                              account.getEmail(), PASSWORD)))
+          .isInstanceOf(AuthenticationException.class);
+      assertThat(
+              c.tx(
+                  () ->
+                      c.primary
+                          .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
+                          .accountId()))
+          .isEqualTo(account.getAccountUuid());
+    } finally {
+      releaseIssuance.countDown();
       executor.shutdownNow();
       assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
     }

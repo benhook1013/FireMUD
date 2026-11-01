@@ -422,7 +422,7 @@ BEGIN
     END LOOP;
 END;
 $$;
--- [jooq ignore end]
+-- [jooq ignore stop]
 
 ALTER TABLE account_platform_restriction_operations DROP CONSTRAINT account_platform_restriction_operation_identity_check;
 ALTER TABLE account_platform_restriction_operations ADD CONSTRAINT account_platform_restriction_operation_identity_check CHECK (
@@ -463,4 +463,4 @@ BEGIN
     EXECUTE replace(replace(definition, old_arm, new_arm), old_return, new_return);
 END;
 $$;
--- [jooq ignore end]
+-- [jooq ignore stop]

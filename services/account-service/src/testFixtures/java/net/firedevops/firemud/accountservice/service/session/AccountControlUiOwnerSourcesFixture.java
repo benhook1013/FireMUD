@@ -464,51 +464,7 @@ final class AccountControlUiOwnerSourcesFixture {
     return tx(
         () -> {
           for (Category category : Category.values()) {
-            UUID publication = UUID.randomUUID(),
-                policy = UUID.randomUUID(),
-                closure = UUID.randomUUID();
-            String owner =
-                category == Category.ACCOUNT_SECURITY_LOCK
-                    ? "account-service/account-security-enrollment-policy/v1"
-                    : "logging-admin-service/platform-access-enrollment-policy/v1";
-            byte[] publicationBytes =
-                AccountControlUiAuthority.canonical(
-                    Map.of(
-                        "schemaVersion",
-                        "account-fresh-enrollment-policy/v1",
-                        "category",
-                        category.storageValue(),
-                        "sourceIdentity",
-                        owner,
-                        "publicationId",
-                        publication.toString(),
-                        "revision",
-                        "1",
-                        "policyId",
-                        policy.toString(),
-                        "policyRule",
-                        "CERTIFY_NEW_ACTIVE_ACCOUNT",
-                        "closureId",
-                        closure.toString(),
-                        "closureRule",
-                        "EXACT_FRESH_INSERT_ONLY"));
-            dsl.execute(
-                "INSERT INTO account_fresh_enrollment_policy_publications"
-                    + " (publication_id, category, revision, policy_id, closure_id, policy_rule, closure_rule,"
-                    + " source_identity, source_root, publication_digest, publication_bytes)"
-                    + " VALUES (?, ?, 1, ?, ?, 'CERTIFY_NEW_ACTIVE_ACCOUNT', 'EXACT_FRESH_INSERT_ONLY', ?, ?, ?, ?)",
-                publication,
-                category.storageValue(),
-                policy,
-                closure,
-                owner,
-                "/controlled-test/owner-protected-mount",
-                "sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes),
-                publicationBytes);
-            dsl.execute(
-                "INSERT INTO account_fresh_enrollment_policy_current (category, publication_id, revision) VALUES (?, ?, 1)",
-                category.storageValue(),
-                publication);
+            ensureControlledFreshEnrollmentPolicy(category);
           }
           String suffix = UUID.randomUUID().toString();
           var result =
@@ -529,6 +485,115 @@ final class AccountControlUiOwnerSourcesFixture {
           assertThat(result.platformAccessBan().receipt()).isPresent();
           return accounts.findById(result.accountId()).orElseThrow();
         });
+  }
+
+  private void ensureControlledFreshEnrollmentPolicy(Category category) {
+    String categoryValue = category.storageValue();
+    String owner =
+        category == Category.ACCOUNT_SECURITY_LOCK
+            ? "account-service/account-security-enrollment-policy/v1"
+            : "logging-admin-service/platform-access-enrollment-policy/v1";
+    var current =
+        dsl.fetchOptional(
+            "SELECT c.publication_id AS current_publication_id, c.revision AS current_revision,"
+                + " p.publication_id AS matched_publication_id, p.category AS publication_category,"
+                + " p.revision AS publication_revision, p.policy_id, p.closure_id, p.policy_rule,"
+                + " p.closure_rule, p.source_identity, p.source_root, p.publication_digest,"
+                + " p.publication_bytes FROM account_fresh_enrollment_policy_current c"
+                + " LEFT JOIN account_fresh_enrollment_policy_publications p"
+                + " ON p.publication_id = c.publication_id WHERE c.category = ?",
+            categoryValue);
+    if (current.isPresent()) {
+      var row = current.orElseThrow();
+      UUID publication = row.get("current_publication_id", UUID.class);
+      UUID policy = row.get("policy_id", UUID.class);
+      UUID closure = row.get("closure_id", UUID.class);
+      assertThat(publication).isNotNull();
+      assertThat(policy).isNotNull();
+      assertThat(closure).isNotNull();
+      assertThat(row.get("matched_publication_id", UUID.class)).isEqualTo(publication);
+      assertThat(row.get("publication_category", String.class)).isEqualTo(categoryValue);
+      assertThat(row.get("current_revision", Long.class)).isEqualTo(1L);
+      assertThat(row.get("publication_revision", Long.class)).isEqualTo(1L);
+      assertThat(row.get("policy_rule", String.class)).isEqualTo("CERTIFY_NEW_ACTIVE_ACCOUNT");
+      assertThat(row.get("closure_rule", String.class)).isEqualTo("EXACT_FRESH_INSERT_ONLY");
+      assertThat(row.get("source_identity", String.class)).isEqualTo(owner);
+      assertThat(row.get("source_root", String.class))
+          .isEqualTo("/controlled-test/owner-protected-mount");
+      byte[] publicationBytes =
+          AccountControlUiAuthority.canonical(
+              Map.of(
+                  "schemaVersion",
+                  "account-fresh-enrollment-policy/v1",
+                  "category",
+                  categoryValue,
+                  "sourceIdentity",
+                  owner,
+                  "publicationId",
+                  publication.toString(),
+                  "revision",
+                  "1",
+                  "policyId",
+                  policy.toString(),
+                  "policyRule",
+                  "CERTIFY_NEW_ACTIVE_ACCOUNT",
+                  "closureId",
+                  closure.toString(),
+                  "closureRule",
+                  "EXACT_FRESH_INSERT_ONLY"));
+      assertThat(row.get("publication_digest", String.class))
+          .isEqualTo("sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes));
+      assertThat(row.get("publication_bytes", byte[].class)).containsExactly(publicationBytes);
+      return;
+    }
+
+    if (dsl.fetchOptional(
+            "SELECT publication_id FROM account_fresh_enrollment_policy_publications"
+                + " WHERE category = ?",
+            categoryValue)
+        .isPresent()) {
+      throw new IllegalStateException(
+          "Controlled fresh-enrollment publication exists without its current policy row");
+    }
+    UUID publication = UUID.randomUUID(), policy = UUID.randomUUID(), closure = UUID.randomUUID();
+    byte[] publicationBytes =
+        AccountControlUiAuthority.canonical(
+            Map.of(
+                "schemaVersion",
+                "account-fresh-enrollment-policy/v1",
+                "category",
+                categoryValue,
+                "sourceIdentity",
+                owner,
+                "publicationId",
+                publication.toString(),
+                "revision",
+                "1",
+                "policyId",
+                policy.toString(),
+                "policyRule",
+                "CERTIFY_NEW_ACTIVE_ACCOUNT",
+                "closureId",
+                closure.toString(),
+                "closureRule",
+                "EXACT_FRESH_INSERT_ONLY"));
+    dsl.execute(
+        "INSERT INTO account_fresh_enrollment_policy_publications"
+            + " (publication_id, category, revision, policy_id, closure_id, policy_rule, closure_rule,"
+            + " source_identity, source_root, publication_digest, publication_bytes)"
+            + " VALUES (?, ?, 1, ?, ?, 'CERTIFY_NEW_ACTIVE_ACCOUNT', 'EXACT_FRESH_INSERT_ONLY', ?, ?, ?, ?)",
+        publication,
+        categoryValue,
+        policy,
+        closure,
+        owner,
+        "/controlled-test/owner-protected-mount",
+        "sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes),
+        publicationBytes);
+    dsl.execute(
+        "INSERT INTO account_fresh_enrollment_policy_current (category, publication_id, revision) VALUES (?, ?, 1)",
+        categoryValue,
+        publication);
   }
 
   /** Stores an actual hashed email-OTP challenge for the separate Account's real primary path. */

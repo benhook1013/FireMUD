@@ -9,9 +9,12 @@ import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.common.EmailCanonicalization;
 
 /**
- * Internal insertion input, never an authorization credential or registration transport DTO. Fresh
- * enrollment has no legacy role input; the Account birth owner creates its explicit-empty global
- * role source from the null legacy role.
+ * Internal insertion input, never an authorization credential or registration transport DTO. The
+ * passwordHash field is an already prepared salted verifier, not plaintext; a producer retrying
+ * after a lost response must retain and reuse this exact request and verifier rather than rehashing
+ * the same plaintext into different verifier bytes. Changed verifier bytes remain a request-digest
+ * conflict. Fresh enrollment has no legacy role input; the Account birth owner creates its
+ * explicit-empty global role source from the null legacy role.
  */
 public final class AccountFreshEnrollmentRequest {
   private final UUID enrollmentId;
