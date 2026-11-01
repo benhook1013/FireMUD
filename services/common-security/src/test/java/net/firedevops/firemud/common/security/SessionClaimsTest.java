@@ -125,4 +125,12 @@ class SessionClaimsTest {
 
     assertTrue(claims.hasPrivilegedRole());
   }
+
+  @Test
+  void hasPrivilegedRoleRejectsNonControlPlaneRoles() {
+    SessionClaims claims =
+        new SessionClaims("11", List.of(), Map.of("7", List.of("player")), false, null, null);
+
+    assertFalse(claims.hasPrivilegedRole());
+  }
 }
