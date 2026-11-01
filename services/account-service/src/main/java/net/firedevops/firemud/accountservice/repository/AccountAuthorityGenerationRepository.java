@@ -65,12 +65,17 @@ public class AccountAuthorityGenerationRepository {
   /**
    * Enrolls the exact Account JWT issuer scope once, preserving any existing durable values.
    *
-   * <p>The partial unique index arbitrates concurrent Account startups. The subsequent locked
-   * readback returns the exact persisted issuer row and rejects missing or malformed state.
+   * <p>An existing issuer is read under its shared owner lock without attempting a source write.
+   * Only absence enters the insert path, where the partial unique index arbitrates concurrent
+   * Account startups. Locked readback rejects missing or malformed persisted state in both paths.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   IssuerEnrollment initializeIssuerIfAbsentForSourceEvidence(String exactIssuerId) {
     AuthorityScope scope = AuthorityScope.issuer(exactIssuerId);
+    Record existing = findIssuerRowShared(scope);
+    if (existing != null) {
+      return new IssuerEnrollment(state(scope, existing, null), false);
+    }
     int inserted =
         dsl.execute(
             "INSERT INTO "
@@ -299,24 +304,27 @@ public class AccountAuthorityGenerationRepository {
 
   /** Reads an issuer generation without excluding other exact-source readers. */
   private ScopeState readIssuerStateShared(AuthorityScope scope) {
-    if (scope.kind() != ScopeKind.ISSUER) {
-      throw new IllegalArgumentException("Shared issuer read requires an exact issuer scope");
-    }
-    Record row =
-        dsl.fetchOne(
-            "SELECT generation, source_version FROM "
-                + GENERATION_TABLE
-                + " WHERE scope_kind = ? AND issuer_id IS NOT DISTINCT FROM ? "
-                + "AND account_uuid IS NOT DISTINCT FROM ? "
-                + "AND tenant_uuid IS NOT DISTINCT FROM ? FOR SHARE",
-            scope.kind().name(),
-            scope.issuerId(),
-            scope.accountId(),
-            scope.tenantId());
+    Record row = findIssuerRowShared(scope);
     if (row == null) {
       throw new IllegalStateException("Account authority generation is missing");
     }
     return state(scope, row, null);
+  }
+
+  private Record findIssuerRowShared(AuthorityScope scope) {
+    if (scope.kind() != ScopeKind.ISSUER) {
+      throw new IllegalArgumentException("Shared issuer read requires an exact issuer scope");
+    }
+    return dsl.fetchOne(
+        "SELECT generation, source_version FROM "
+            + GENERATION_TABLE
+            + " WHERE scope_kind = ? AND issuer_id IS NOT DISTINCT FROM ? "
+            + "AND account_uuid IS NOT DISTINCT FROM ? "
+            + "AND tenant_uuid IS NOT DISTINCT FROM ? FOR SHARE",
+        scope.kind().name(),
+        scope.issuerId(),
+        scope.accountId(),
+        scope.tenantId());
   }
 
   private ScopeState readIssuerStateExclusive(AuthorityScope scope) {

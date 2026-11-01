@@ -1025,7 +1025,8 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         var issued = fixture.issueCreator();
         var f = issued.sources();
         var proof = proof(f, issued.environment());
-        var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+        var repository =
+            new AccountPublicationAuthorizationRepository(f.dsl, fixture.issuanceRepository());
         var order =
             new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
                 .authorize(issued.compact(), proof.selection(), issued.environment());

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.UUID;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -58,7 +59,9 @@ final class AccountHistoricalControlUiIssuanceRepository
   }
 
   private static Object[] copyWithScope(Record row) {
-    Object[] values = Arrays.copyOf(row.intoArray(), row.size() + 1);
+    Object[] original =
+        Objects.requireNonNull(row.intoArray(), "Historical issuance fields required");
+    Object[] values = Arrays.copyOf(original, row.size() + 1);
     values[row.size()] = "TENANT";
     return values;
   }

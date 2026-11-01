@@ -18,12 +18,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class AccountPublicationAuthorizationRepository {
   private final DSLContext dsl;
+  private final AccountControlUiIssuanceRepository issuanceRepository;
 
-  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Internal Account owner persistence collaborator.")
   public AccountPublicationAuthorizationRepository(DSLContext dsl) {
+    this(dsl, new AccountControlUiIssuanceRepository(dsl));
+  }
+
+  AccountPublicationAuthorizationRepository(
+      DSLContext dsl, AccountControlUiIssuanceRepository issuanceRepository) {
     this.dsl = Objects.requireNonNull(dsl);
+    this.issuanceRepository = Objects.requireNonNull(issuanceRepository, "issuanceRepository");
   }
 
   AccountPublicationAuthorizationBinding authorize(
@@ -132,7 +136,7 @@ public final class AccountPublicationAuthorizationRepository {
     if (issuance == null) {
       throw new IllegalArgumentException("Original committed issuance is absent");
     }
-    var originalIssuer = new AccountControlUiIssuanceRepository.Stored(issuance);
+    var originalIssuer = issuanceRepository.decodeStored(issuance);
     var bundle = AccountControlUiIssuanceRepository.object(originalIssuer.bundle);
     var sources = AccountControlUiIssuanceRepository.object(originalIssuer.sources);
     var rawVector = sources.get("sources");
