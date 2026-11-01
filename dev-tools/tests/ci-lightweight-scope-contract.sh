@@ -35,9 +35,131 @@ for expected in \
   'declare -a PREPARE_TASKS=(":${MODULE}:testClasses")' \
   'PREPARE_TASKS+=(":${MODULE}:${task_name}Classes")' \
   'CHECK_ARGS+=("-PslowServiceCiPartitionModule=$MODULE" "-PslowServiceCiPartition=$PARTITION")' \
+  'Account: 1-4; Game Session: 1-4' \
   'bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"'; do
   require_contains "$MODULE_CHECK_WRAPPER" "$expected"
 done
+
+python3 - "$MODULE_CHECK_WRAPPER" "$ROOT_DIR" <<'PY'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+runner = Path(sys.argv[1])
+root = Path(sys.argv[2])
+real_python = sys.executable
+
+with tempfile.TemporaryDirectory(prefix="module-check-entrypoint-") as temporary:
+    temporary_path = Path(temporary)
+    fake_bin = temporary_path / "bin"
+    fake_bin.mkdir()
+    log_path = temporary_path / "invocations.jsonl"
+    stub = f"""#!{real_python}
+import json
+import os
+from pathlib import Path
+import sys
+with open(os.environ["MODULE_CHECK_STUB_LOG"], "a", encoding="utf-8") as log:
+    log.write(json.dumps({{"tool": Path(sys.argv[0]).name, "args": sys.argv[1:]}}) + "\\n")
+raise SystemExit(0)
+"""
+    for tool in ("bash", "python3"):
+        path = fake_bin / tool
+        path.write_text(stub, encoding="utf-8")
+        path.chmod(0o755)
+
+    environment = os.environ.copy()
+    environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+    environment["MODULE_CHECK_STUB_LOG"] = str(log_path)
+    environment["RUNNER_TEMP"] = temporary
+    environment["TMPDIR"] = temporary
+    environment["GITHUB_SHA"] = "a" * 40
+    environment["GITHUB_RUN_ID"] = "70"
+    environment["GITHUB_RUN_ATTEMPT"] = "1"
+
+    def invoke(module, partition):
+        log_path.write_text("", encoding="utf-8")
+        result = subprocess.run(
+            ["/bin/bash", str(runner), module, partition],
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        entries = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+        ]
+        return result, entries
+
+    partitioned_cases = [
+        ("account-service", str(partition)) for partition in range(1, 5)
+    ] + [
+        ("game-session-service", str(partition)) for partition in range(1, 5)
+    ]
+    for module, partition in partitioned_cases:
+        result, entries = invoke(module, partition)
+        if result.returncode != 0:
+            raise SystemExit(
+                f"module check entrypoint rejected {module}/{partition}: {result.stderr}"
+            )
+        bash_calls = [entry["args"] for entry in entries if entry["tool"] == "bash"]
+        python_calls = [entry["args"] for entry in entries if entry["tool"] == "python3"]
+        if len(bash_calls) != 2:
+            raise SystemExit(f"{module}/{partition} did not reach prepare and full-check wrappers")
+        prepare, check = bash_calls
+        wrapper = str(root / "dev-tools/validation/run-gradle-with-dependency-recovery.sh")
+        if prepare[0] != wrapper or ":" + module + ":testClasses" not in prepare:
+            raise SystemExit(f"{module}/{partition} did not prepare the module test classes")
+        if "--max-workers=2" not in prepare:
+            raise SystemExit(f"{module}/{partition} changed the two-worker preparation setting")
+        expected_selector = [
+            str(root / "dev-tools/validation/slow_service_ci_test_partition.py"),
+            "plan", "--module", module, "--partition", partition,
+        ]
+        selectors = [call for call in python_calls if call[:2] == expected_selector[:2]]
+        if len(selectors) != 1 or selectors[0][:6] != expected_selector:
+            raise SystemExit(f"{module}/{partition} did not create its matching whole-class selector")
+        expected_check_properties = [
+            f"-PslowServiceCiPartitionModule={module}",
+            f"-PslowServiceCiPartition={partition}",
+        ]
+        if check[0] != wrapper or f":{module}:check" not in check:
+            raise SystemExit(f"{module}/{partition} did not reach the complete module check")
+        if "-PfullCheck" not in check or any(value not in check for value in expected_check_properties):
+            raise SystemExit(f"{module}/{partition} lost its full-check selector arguments")
+
+    for module in ("account-service", "game-session-service", "common-security"):
+        result, entries = invoke(module, "full")
+        if result.returncode != 0:
+            raise SystemExit(f"full check entrypoint rejected {module}: {result.stderr}")
+        bash_calls = [entry["args"] for entry in entries if entry["tool"] == "bash"]
+        python_calls = [entry["args"] for entry in entries if entry["tool"] == "python3"]
+        if len(bash_calls) != 1 or f":{module}:check" not in bash_calls[0]:
+            raise SystemExit(f"full check entrypoint changed for {module}")
+        if "-PfullCheck" not in bash_calls[0] or any(
+            call[0].endswith("slow_service_ci_test_partition.py") for call in python_calls
+        ):
+            raise SystemExit(f"full check entrypoint partitioned {module}")
+
+    for module, partition in (
+        ("account-service", "0"),
+        ("account-service", "5"),
+        ("game-session-service", "0"),
+        ("game-session-service", "5"),
+        ("common-security", "3"),
+        ("bad_module", "full"),
+    ):
+        result, entries = invoke(module, partition)
+        if result.returncode != 64 or entries:
+            raise SystemExit(f"module check entrypoint accepted invalid input {module}/{partition}")
+
+print("Module check entrypoint partition contract passed without running Gradle")
+PY
 
 python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" "$ROOT_DIR/build.gradle.kts" <<'PY'
 import copy
