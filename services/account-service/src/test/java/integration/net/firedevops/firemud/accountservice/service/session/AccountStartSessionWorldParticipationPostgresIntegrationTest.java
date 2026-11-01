@@ -847,7 +847,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
     var authorizer =
         new AccountStartSessionOperatorAuthorizationService(
             creator.actors(),
-            new AccountControlUiIssuanceRepository(account.dsl),
+            controlUi.issuanceRepository(),
             new AccountStartSessionAuthorityCaptureRepository(account.dsl),
             logging,
             repository,

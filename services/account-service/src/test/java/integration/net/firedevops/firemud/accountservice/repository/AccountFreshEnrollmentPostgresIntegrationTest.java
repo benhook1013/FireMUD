@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -71,15 +72,35 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
     assertThat(context.dsl.fetchCount(DSL.table("account_authority_outbox_events"))).isEqualTo(2);
     context.transaction.executeWithoutResult(
         status -> {
+          var outbox = new AccountAuthorityOutboxRepository(context.dsl);
+          for (var operation :
+              java.util.List.of(result.accountSecurityLock(), result.platformAccessBan())) {
+            var receipt = operation.receipt().orElseThrow();
+            var event = receipt.event();
+            assertThat(outbox.findEvent(event.outboxStreamKey(), event.outboxSequence()))
+                .contains(event);
+            assertThat(event.outboxSequence()).isEqualTo(receipt.sourceState().generation() - 1);
+            assertThat(
+                    context
+                        .dsl
+                        .fetchSingle(
+                            "SELECT expected_generation FROM account_fresh_enrollment_decisions WHERE request_id = ?",
+                            operation.request().requestId())
+                        .get("expected_generation", Long.class))
+                .isEqualTo(receipt.sourceState().generation() - 1);
+          }
           var generations = new AccountAuthorityGenerationRepository(context.dsl);
           var state = generations.read(AuthorityScope.account(result.accountUuid()));
           assertThat(state.generation()).isEqualTo(3);
           assertThat(state.sourceVersion()).isEqualTo(3);
           assertThat(state.issuanceFence().value()).isEqualTo(3);
+          assertThat(state.issuanceFence().sourceVersion()).isEqualTo(3);
           var source = source(context.dsl).readCurrentSource(state.scope(), state);
           assertThat(source.checkpoint().sequence()).isEqualTo(2);
           assertThat(source.checkpoint().sourceEventId().orElseThrow())
               .isEqualTo(result.platformAccessBan().receipt().orElseThrow().event().eventId());
+          assertThat(source.checkpoint().sourceEventDigest().orElseThrow())
+              .isEqualTo(result.platformAccessBan().receipt().orElseThrow().event().eventDigest());
         });
     assertThat(
             context
@@ -90,6 +111,46 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                     result.accountUuid())
                 .get("lifecycle_state", String.class))
         .isEqualTo("active");
+  }
+
+  @Test
+  void sourceGuardsStillRefuseGenerationOrFenceAdvanceWithoutExactSourceEvidenceAtCommit()
+      throws Exception {
+    Context context = context(null);
+    controlledPolicies(context);
+    var result = context.transaction.execute(status -> producer(context).enroll(request()));
+    var scope = AuthorityScope.account(result.accountUuid());
+    var generations = new AccountAuthorityGenerationRepository(context.dsl);
+    var before = context.transaction.execute(status -> generations.read(scope));
+    var originalSource =
+        context.transaction.execute(status -> source(context.dsl).readCurrentSource(scope, before));
+    for (var mutation :
+        Map.of(
+                "UPDATE account_authority_generations SET generation = generation + 1, source_version = source_version + 1 WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                "account_authority_source_generation_required",
+                "UPDATE account_authority_issuance_fences SET issuance_fence = issuance_fence + 1, source_version = source_version + 1 WHERE account_uuid = ?",
+                "account_authority_source_fence_required")
+            .entrySet()) {
+      assertThatThrownBy(
+              () ->
+                  context.transaction.executeWithoutResult(
+                      status -> context.dsl.execute(mutation.getKey(), result.accountUuid())))
+          .rootCause()
+          .isInstanceOf(org.postgresql.util.PSQLException.class)
+          .satisfies(
+              cause -> {
+                var failure = (org.postgresql.util.PSQLException) cause;
+                assertThat(failure.getSQLState()).isEqualTo("23514");
+                assertThat(Objects.requireNonNull(failure.getServerErrorMessage()).getConstraint())
+                    .isEqualTo(mutation.getValue());
+              });
+      context.transaction.executeWithoutResult(
+          status -> {
+            assertThat(generations.read(scope)).isEqualTo(before);
+            assertThat(source(context.dsl).readCurrentSource(scope, before))
+                .isEqualTo(originalSource);
+          });
+    }
   }
 
   @Test
@@ -243,6 +304,7 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                           .insertFreshAndApply(
                               request().newAccount(),
                               proof -> {
+                                checkCompletedSourceBoundary(context);
                                 UUID id = UUID.randomUUID();
                                 insertEnrollment(context, proof, id);
                                 restrictions(context.dsl)
@@ -250,10 +312,14 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                                         proof,
                                         policies.evaluate(
                                             proof, id, Category.ACCOUNT_SECURITY_LOCK));
+                                checkCompletedSourceBoundary(context);
                                 return proof.accountUuid();
                               });
                     }))
-        .isInstanceOf(RuntimeException.class);
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .hasMessageContaining(
+            "Both explicit category certifications and exact enrollment result must commit atomically");
     assertNoEnrollmentState(context);
   }
 
@@ -348,6 +414,7 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                           .insertFreshAndApply(
                               request().newAccount(),
                               proof -> {
+                                checkCompletedSourceBoundary(context);
                                 UUID id = UUID.randomUUID();
                                 insertEnrollment(context, proof, id);
                                 var lockDecision =
@@ -362,6 +429,7 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                                 var lock =
                                     restrictions(context.dsl)
                                         .certifyFreshEnrollment(proof, lockDecision);
+                                checkCompletedSourceBoundary(context);
                                 var ban =
                                     restrictions(context.dsl)
                                         .certifyFreshEnrollment(
@@ -376,7 +444,10 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                                 return id;
                               });
                     }))
-        .isInstanceOf(RuntimeException.class);
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .hasMessageContaining(
+            "Enrollment result does not reciprocate its exact two owner decisions");
     assertNoEnrollmentState(context);
   }
 
@@ -490,6 +561,16 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
         proof.accountUuid(),
         proof.accountId(),
         proof.insertionTransactionId());
+  }
+
+  private static void checkCompletedSourceBoundary(Context context) {
+    // Deliberately incomplete native compositions still check each complete source boundary,
+    // so their final refusal must come from the intended enrollment-completeness constraint.
+    String constraints =
+        "account_authority_source_generation_consistent, "
+            + "account_authority_source_fence_consistent, account_authority_source_record_consistent";
+    context.dsl.execute("SET CONSTRAINTS " + constraints + " IMMEDIATE");
+    context.dsl.execute("SET CONSTRAINTS " + constraints + " DEFERRED");
   }
 
   private static void controlledPolicies(Context context) {

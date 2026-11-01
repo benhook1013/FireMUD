@@ -9,9 +9,15 @@ import org.jooq.Record;
 
 /**
  * Manually composed internal new-Account enrollment. No Spring bean, registration route, issuer or
- * PKI activation. The caller supplies one writable transaction around the complete operation.
+ * PKI activation. The caller supplies one writable transaction around the complete operation with
+ * the owner constraints in their default deferred mode. Completed source boundaries are checked
+ * before the next advance; enrollment completeness remains deferred until the normal commit.
  */
 public final class AccountFreshEnrollmentRepository {
+  private static final String SOURCE_CONSTRAINTS =
+      "account_authority_source_generation_consistent, "
+          + "account_authority_source_fence_consistent, account_authority_source_record_consistent";
+
   private final DSLContext dsl;
   private final AccountRepository accounts;
   private final AccountFreshEnrollmentPolicyRepository policies;
@@ -53,6 +59,7 @@ public final class AccountFreshEnrollmentRepository {
     return accounts.insertFreshAndApply(
         request.newAccount(),
         proof -> {
+          checkCompletedSourceBoundary();
           dsl.execute(
               "INSERT INTO account_fresh_enrollments "
                   + "(enrollment_id, request_digest, account_uuid, account_id, insertion_xid) VALUES (?, ?, ?, ?, ?)",
@@ -65,6 +72,7 @@ public final class AccountFreshEnrollmentRepository {
               restrictions.certifyFreshEnrollment(
                   proof,
                   policies.evaluate(proof, request.enrollmentId(), Category.ACCOUNT_SECURITY_LOCK));
+          checkCompletedSourceBoundary();
           Operation ban =
               restrictions.certifyFreshEnrollment(
                   proof,
@@ -81,6 +89,14 @@ public final class AccountFreshEnrollmentRepository {
                   request.enrollmentId());
           return readResult(Objects.requireNonNull(completed));
         });
+  }
+
+  private void checkCompletedSourceBoundary() {
+    // These guards compare each queued row image to the current source head. Validate the
+    // complete baseline/first result before advancing it, retaining every intermediate check.
+    // Only source constraints run here: both category results must still commit atomically.
+    dsl.execute("SET CONSTRAINTS " + SOURCE_CONSTRAINTS + " IMMEDIATE");
+    dsl.execute("SET CONSTRAINTS " + SOURCE_CONSTRAINTS + " DEFERRED");
   }
 
   private Result readResult(Record enrollment) {

@@ -22,7 +22,7 @@ import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Genuine durable control-ui owner state. No caller-provided registry or evidence is accepted. */
-public final class AccountControlUiIssuanceRepository {
+public class AccountControlUiIssuanceRepository {
   private static final String TABLE = "account_control_ui_issuance_operations";
   static final long MAX_REDIS_SAFE_INTEGER = 9_007_199_254_740_991L;
   private static final JsonMapper JSON =
@@ -34,8 +34,10 @@ public final class AccountControlUiIssuanceRepository {
   private final DSLContext dsl;
 
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected DSLContext is an internal Account transaction collaborator.")
+      value = {"EI_EXPOSE_REP2", "CT_CONSTRUCTOR_THROW"},
+      justification =
+          "Preserve the required internal DSLContext precondition; package-private persistence"
+              + " seams support historical test fixtures without a runtime schema fallback.")
   public AccountControlUiIssuanceRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
   }
@@ -43,20 +45,20 @@ public final class AccountControlUiIssuanceRepository {
   Stored findRequest(UUID requestId) {
     requireTransaction();
     Record row = dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE request_id = ?", requestId);
-    return row == null ? null : new Stored(row);
+    return row == null ? null : decodeStored(row);
   }
 
   Stored findToken(String tokenHash) {
     requireTransaction();
     Record row = dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE token_hash = ?", tokenHash);
-    return row == null ? null : new Stored(row);
+    return row == null ? null : decodeStored(row);
   }
 
   Stored findTokenJti(UUID tokenJti) {
     requireTransaction();
     Objects.requireNonNull(tokenJti, "control-ui token jti is required");
     Record row = dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE token_jti = ?", tokenJti);
-    return row == null ? null : new Stored(row);
+    return row == null ? null : decodeStored(row);
   }
 
   /** Account-owned linearization from the caller's existing current-source transaction. */
@@ -193,34 +195,27 @@ public final class AccountControlUiIssuanceRepository {
             "freshnessSource",
             hash(source.evidence())));
     int inserted =
-        dsl.execute(
-            "INSERT INTO "
-                + TABLE
-                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid,"
-                + " authorization_scope, caller_workload,"
-                + " caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload,"
-                + " bundle_payload, signer_receipt, issued_at_epoch_second, expires_at_epoch_second,"
-                + " registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
-                + " ON CONFLICT (request_id) DO NOTHING",
-            requestId,
-            operationId,
-            jti,
-            source.actor(),
-            optionalTenantId.orElse(null),
-            scopeKind.name(),
-            caller,
-            callerContextId,
-            macKeyId,
-            digest,
-            AccountControlUiAuthority.canonical(spec.claims()),
-            source.evidence(),
-            AccountControlUiAuthority.canonical(bundle),
-            signer.receipt(),
-            issuedAt.getEpochSecond(),
-            expiry.getEpochSecond(),
-            cleanupDeadlineMillis,
-            OffsetDateTime.ofInstant(recovery, java.time.ZoneOffset.UTC));
+        insertPrepared(
+            new Object[] {
+              requestId,
+              operationId,
+              jti,
+              source.actor(),
+              optionalTenantId.orElse(null),
+              scopeKind.name(),
+              caller,
+              callerContextId,
+              macKeyId,
+              digest,
+              AccountControlUiAuthority.canonical(spec.claims()),
+              source.evidence(),
+              AccountControlUiAuthority.canonical(bundle),
+              signer.receipt(),
+              issuedAt.getEpochSecond(),
+              expiry.getEpochSecond(),
+              cleanupDeadlineMillis,
+              OffsetDateTime.ofInstant(recovery, java.time.ZoneOffset.UTC)
+            });
     Stored stored = findRequest(requestId);
     if (inserted != 1 || stored == null || !operationId.equals(stored.operationId)) {
       throw denied();
@@ -230,6 +225,25 @@ public final class AccountControlUiIssuanceRepository {
     registry(stored, signer, "0".repeat(64), false);
     registry(stored, signer, "0".repeat(64), true);
     return stored;
+  }
+
+  // Package-scoped persistence seams keep historical schema fixtures out of the runtime path.
+  int insertPrepared(Object[] values) {
+    return dsl.execute(
+        "INSERT INTO "
+            + TABLE
+            + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid,"
+            + " authorization_scope, caller_workload,"
+            + " caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload,"
+            + " bundle_payload, signer_receipt, issued_at_epoch_second, expires_at_epoch_second,"
+            + " registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
+            + " ON CONFLICT (request_id) DO NOTHING",
+        values);
+  }
+
+  Stored decodeStored(Record row) {
+    return new Stored(row);
   }
 
   private static Map<String, Object> scope(
@@ -437,7 +451,7 @@ public final class AccountControlUiIssuanceRepository {
     if (row == null) {
       throw denied();
     }
-    Stored current = new Stored(row);
+    Stored current = decodeStored(row);
     if (!original.requestId.equals(current.requestId)
         || original.scopeKind != current.scopeKind
         || !Objects.equals(original.tenantId, current.tenantId)

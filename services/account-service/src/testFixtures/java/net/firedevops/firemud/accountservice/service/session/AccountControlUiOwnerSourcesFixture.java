@@ -520,7 +520,7 @@ final class AccountControlUiOwnerSourcesFixture {
                   .enroll(
                       new AccountFreshEnrollmentRequest(
                           UUID.randomUUID(),
-                          "certified-global-" + suffix,
+                          "global-" + suffix,
                           suffix + "@example.test",
                           hash(password),
                           "player",
