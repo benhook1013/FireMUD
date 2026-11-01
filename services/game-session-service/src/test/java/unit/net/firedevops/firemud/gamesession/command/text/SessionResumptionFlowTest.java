@@ -177,6 +177,8 @@ class SessionResumptionFlowTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt(java.time.Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
@@ -192,14 +194,16 @@ class SessionResumptionFlowTest {
                 .setAllowed(true)
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt(java.time.Instant.now().toString())
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                    .setTenantId("22")
+                    .setGameplayAvailable(true)
+                    .setAllowPublicJoin(true)
+                    .setEntitlementVersion(1L)
+                    .setTenantBillingSequence(1L)
+                    .setEvaluatedAt(java.time.Instant.now().toString())
+                    .build());
     when(entityManagementClient.listCharactersByAccount(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -466,6 +470,8 @@ class SessionResumptionFlowTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
+                .setMembershipLifecycleState("INACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt(java.time.Instant.now().toString())
                 .build());
 
@@ -478,7 +484,7 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertFalse(lookAfterDeniedReconnect.commandResult().accepted());
-    assertEquals("LOGIN_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
+    assertEquals("PLAY_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
   }
 
   @Test

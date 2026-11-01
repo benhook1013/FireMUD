@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -56,8 +57,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final Server server;
   private final Clock clock;
   private final List<AuthenticateRequest> authenticateRequests = new CopyOnWriteArrayList<>();
-  private final AtomicBoolean membershipExists = new AtomicBoolean(true);
+  private final AtomicReference<String> membershipLifecycleState = new AtomicReference<>("ACTIVE");
   private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
+  private final AtomicLong membershipVersion = new AtomicLong(1L);
+  private final AtomicLong membershipAuthorityGeneration = new AtomicLong(1L);
   private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
   private final AtomicBoolean allowPublicJoin = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
@@ -122,10 +125,23 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   public void setMembershipExists(boolean exists) {
+    membershipLifecycleState.set(exists ? "ACTIVE" : "MISSING");
     if (!exists) {
       gameplayAdmissionAllowed.set(false);
     }
-    membershipExists.set(exists);
+  }
+
+  public void setMembershipInactive() {
+    membershipLifecycleState.set("INACTIVE");
+    gameplayAdmissionAllowed.set(false);
+  }
+
+  public void setMembershipVersion(long version) {
+    membershipVersion.set(version);
+  }
+
+  public void setMembershipAuthorityGeneration(long generation) {
+    membershipAuthorityGeneration.set(generation);
   }
 
   public void allowGameplayAdmission() {
@@ -152,8 +168,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   public void resetRuntimeState() {
     authenticateRequests.clear();
-    membershipExists.set(true);
+    membershipLifecycleState.set("ACTIVE");
     gameplayAdmissionAllowed.set(true);
+    membershipVersion.set(1L);
+    membershipAuthorityGeneration.set(1L);
     gameplayAvailable.set(true);
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
@@ -192,16 +210,17 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void getTenantMembershipForRuntime(
       GetTenantMembershipForRuntimeRequest request,
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
-    boolean exists = membershipExists.get();
+    String lifecycleState = membershipLifecycleState.get();
+    boolean exists = !lifecycleState.equals("MISSING");
     responseObserver.onNext(
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(request.getAccountId())
             .setTenantId(request.getTenantId())
             .setMembershipExists(exists)
-            .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
-            .setMembershipVersion(exists ? 1L : 0L)
-            .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
-            .setMembershipAuthorityGeneration(exists ? 1L : 0L)
+            .setGameplayAdmissionAllowed(exists && gameplayAdmissionAllowed.get())
+            .setMembershipVersion(exists ? membershipVersion.get() : 0L)
+            .setMembershipLifecycleState(lifecycleState)
+            .setMembershipAuthorityGeneration(exists ? membershipAuthorityGeneration.get() : 0L)
             .setEvaluatedAt(clock.instant().toString())
             .build());
     responseObserver.onCompleted();
@@ -349,7 +368,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .setTenantId(caller.getTenantId())
               .build());
     } else {
-      membershipExists.set(true);
+      membershipLifecycleState.set("ACTIVE");
       gameplayAdmissionAllowed.set(true);
       responseObserver.onNext(
           JoinPublicProductionMembershipResponse.newBuilder()

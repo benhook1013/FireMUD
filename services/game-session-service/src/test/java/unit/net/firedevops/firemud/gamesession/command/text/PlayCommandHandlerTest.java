@@ -119,17 +119,21 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt(Instant.now().toString())
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                    .setTenantId("22")
+                    .setGameplayAvailable(true)
+                    .setAllowPublicJoin(true)
+                    .setEntitlementVersion(1L)
+                    .setTenantBillingSequence(1L)
+                    .setEvaluatedAt(Instant.now().toString())
+                    .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -314,11 +318,11 @@ class PlayCommandHandlerTest {
     var admissionOrder = Mockito.inOrder(accountClient, entityManagementClient);
     admissionOrder
         .verify(accountClient)
-        .getTenantMembershipForRuntime(
-            Mockito.eq(ACCOUNT_ID), Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
     admissionOrder
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantMembershipForRuntime(
+            Mockito.eq(ACCOUNT_ID), Mockito.eq("22"), Mockito.anyString());
     admissionOrder
         .verify(entityManagementClient)
         .listCharactersByAccount(
@@ -1250,6 +1254,8 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
 
@@ -1300,12 +1306,14 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
+                .setMembershipLifecycleState("MISSING")
+                .setMembershipAuthorityGeneration(0L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
-    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+    assertThat(result.commandResult().errorCode()).isEqualTo("NON_PUBLIC_ENROLLMENT_REQUIRED");
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
@@ -1330,7 +1338,9 @@ class PlayCommandHandlerTest {
                 .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(true)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setMembershipAuthorityGeneration(0L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
 
@@ -1344,7 +1354,7 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.NON_PUBLIC_ENROLLMENT_REQUIRED_CODE);
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1394,7 +1404,7 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.REALM_ACCESS_DENIED_CODE);
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq(ACCOUNT_ID),
@@ -1420,7 +1430,7 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.REALM_ACCESS_DENIED_CODE);
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
@@ -1447,7 +1457,7 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.REALM_ACCESS_DENIED_CODE);
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
   }
 
@@ -1559,8 +1569,10 @@ class PlayCommandHandlerTest {
                 .setAccountId(ACCOUNT_ID)
                 .setTenantId("22")
                 .setMembershipExists(false)
-                .setGameplayAdmissionAllowed(true)
+                .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(0L)
+                .setMembershipLifecycleState("MISSING")
+                .setMembershipAuthorityGeneration(0L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
     PlayCommandHandlingResult result =
@@ -1591,6 +1603,8 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(4L)
+                .setMembershipLifecycleState("INACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
 
@@ -1629,6 +1643,8 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt(Instant.now().toString())
                 .build());
 
@@ -1660,6 +1676,355 @@ class PlayCommandHandlerTest {
         .isFalse();
   }
 
+  @Test
+  void entitlementFreshnessExpiresAtConservativeDeadlineAndGuardsFutureSkew() {
+    Instant now = Instant.parse("2026-11-01T00:00:00Z");
+    assertThat(
+            PlayCommandHandler.isWithinEntitlementReplyWindow(
+                now.minusSeconds(10).plusNanos(1), now))
+        .isTrue();
+    assertThat(PlayCommandHandler.isWithinEntitlementReplyWindow(now.minusSeconds(10), now))
+        .isFalse();
+    assertThat(
+            PlayCommandHandler.isWithinEntitlementReplyWindow(
+                now.minusSeconds(10).minusNanos(1), now))
+        .isFalse();
+    assertThat(PlayCommandHandler.isWithinEntitlementReplyWindow(now.plusSeconds(5), now)).isTrue();
+    assertThat(
+            PlayCommandHandler.isWithinEntitlementReplyWindow(now.plusSeconds(5).plusNanos(1), now))
+        .isFalse();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "22,1,1,-9,true", "22,1,1,-11,false", "22,1,1,-299,false",
+    "22,1,1,4,true", "22,1,1,6,false", "23,1,1,0,false",
+    "022,1,1,0,false", "22,0,1,0,false", "22,1,0,0,false",
+    "22,-1,1,0,false", "22,1,-1,0,false"
+  })
+  void entitlementEvidenceHasItsOwnStrictFreshnessAndTenantVersionGuards(
+      String tenantId, long version, long sequence, long secondsFromNow, boolean accepted) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            entitlementResponse(true).toBuilder()
+                .setTenantId(tenantId)
+                .setEntitlementVersion(version)
+                .setTenantBillingSequence(sequence)
+                .setEvaluatedAt(Instant.now().plusSeconds(secondsFromNow).toString())
+                .build());
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isEqualTo(accepted);
+    if (!accepted) {
+      assertThat(result.commandResult().errorCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+      verify(accountClient, never())
+          .getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+      verifyNoGameplayBindingSideEffects();
+      Mockito.verifyNoInteractions(entityManagementClient, moderationPolicyClient);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "not-a-timestamp"})
+  void malformedEntitlementTimestampStopsBeforeMembership(String timestamp) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(entitlementResponse(true).toBuilder().setEvaluatedAt(timestamp).build());
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    verify(accountClient, never())
+        .getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verifyNoInteractions(entityManagementClient, moderationPolicyClient);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "MISSING,false,false,0,0,true,JOIN_REQUIRED",
+    "MISSING,false,false,0,0,false,PUBLIC_PRODUCTION_ADMISSION_DENIED",
+    "INACTIVE,true,false,12,9,true,JOIN_REQUIRED",
+    "INACTIVE,true,false,12,9,false,PUBLIC_PRODUCTION_ADMISSION_DENIED",
+    "ACTIVE,true,false,12,9,true,WORLD_ACCESS_DENIED",
+    "ACTIVE,true,false,12,9,false,WORLD_ACCESS_DENIED",
+    "LEGACY_UNVERIFIED,true,false,12,9,true,WORLD_ACCESS_DENIED",
+    "LEGACY_UNVERIFIED,true,false,12,9,false,WORLD_ACCESS_DENIED",
+    "UNKNOWN,true,false,12,9,true,AUTH_UNAVAILABLE",
+    "'',true,false,12,9,true,AUTH_UNAVAILABLE",
+    "MISSING,false,true,0,0,true,AUTH_UNAVAILABLE",
+    "MISSING,false,false,1,0,true,AUTH_UNAVAILABLE",
+    "MISSING,false,false,0,1,true,AUTH_UNAVAILABLE",
+    "ACTIVE,false,false,0,0,true,AUTH_UNAVAILABLE",
+    "MISSING,true,false,12,9,true,AUTH_UNAVAILABLE",
+    "INACTIVE,true,true,12,9,true,AUTH_UNAVAILABLE",
+    "LEGACY_UNVERIFIED,true,true,12,9,true,AUTH_UNAVAILABLE",
+    "ACTIVE,true,true,0,9,true,AUTH_UNAVAILABLE",
+    "ACTIVE,true,true,12,0,true,AUTH_UNAVAILABLE",
+    "ACTIVE,true,true,-1,9,true,AUTH_UNAVAILABLE",
+    "ACTIVE,true,true,12,-1,true,AUTH_UNAVAILABLE"
+  })
+  void publicMembershipUsesLifecycleAndIndependentVersionGenerationWithoutRepairingDenial(
+      String lifecycle,
+      boolean exists,
+      boolean admitting,
+      long version,
+      long generation,
+      boolean allowPublicJoin,
+      String expectedCode) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(entitlementResponse(allowPublicJoin));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(membershipResponse(lifecycle, exists, admitting, version, generation));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo(expectedCode);
+    verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verifyNoInteractions(entityManagementClient, moderationPolicyClient);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"12,9", "9,12"})
+  void activeMemberRetainsAccessWhenPublicEnrollmentCloses(long version, long generation) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(entitlementResponse(false));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(membershipResponse("ACTIVE", true, true, version, generation));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    verify(moderationPolicyClient).evaluateGameplayAdmission(22L, ACCOUNT_ID);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"MISSING", "INACTIVE", "LEGACY_UNVERIFIED"})
+  void privateNonActiveMembershipRequiresEnrollmentWithoutGrantOrPublicJoin(String lifecycle) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    boolean exists = !"MISSING".equals(lifecycle);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(entitlementResponse(false));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            membershipResponse(lifecycle, exists, false, exists ? 12L : 0L, exists ? 9L : 0L));
+
+    var result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("NON_PUBLIC_ENROLLMENT_REQUIRED");
+    verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verifyNoInteractions(entityManagementClient, moderationPolicyClient);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "MISSING,false,ENTITLEMENT_UNAVAILABLE", "INACTIVE,true,ENTITLEMENT_UNAVAILABLE",
+    "MISSING,false,TENANT_BILLING_BLOCKED", "INACTIVE,true,TENANT_BILLING_BLOCKED"
+  })
+  void entitlementFailureMasksPublicRepairBeforeMembershipRead(
+      String lifecycle, boolean exists, String errorCode) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            membershipResponse(lifecycle, exists, false, exists ? 12L : 0L, exists ? 9L : 0L));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder().setCode(errorCode))
+                .build());
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo(errorCode);
+    verify(accountClient, never())
+        .getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verifyNoInteractions(entityManagementClient, moderationPolicyClient);
+  }
+
+  @Test
+  void sameTargetActiveDenialClearsOnlyGameplayAndRetainsAuthenticatedUuidContext() {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(membershipResponse("ACTIVE", true, false, 12L, 9L));
+
+    var result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+    var saved = org.mockito.ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(saved.capture());
+    assertThat(saved.getValue().accountId()).isEqualTo(ACCOUNT_ID);
+    assertThat(saved.getValue().loginName()).isEqualTo(context.loginName());
+    assertThat(saved.getValue().jwt()).isEqualTo(context.jwt());
+    assertThat(saved.getValue().tenantId()).isEqualTo(context.tenantId());
+    assertThat(saved.getValue().hasGameplayBinding()).isFalse();
+    verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
+    Mockito.verifyNoInteractions(
+        entityManagementClient, moderationPolicyClient, scriptEventPublisher);
+    verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
+  private static GetTenantMembershipForRuntimeResponse membershipResponse(
+      String lifecycle, boolean exists, boolean admitting, long version, long generation) {
+    return GetTenantMembershipForRuntimeResponse.newBuilder()
+        .setAccountId(ACCOUNT_ID)
+        .setTenantId("22")
+        .setMembershipExists(exists)
+        .setGameplayAdmissionAllowed(admitting)
+        .setMembershipLifecycleState(lifecycle)
+        .setMembershipVersion(version)
+        .setMembershipAuthorityGeneration(generation)
+        .setEvaluatedAt(Instant.now().toString())
+        .build();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "denied",
+        "outage",
+        "malformed-error",
+        "account",
+        "tenant",
+        "world",
+        "realm",
+        "timestamp",
+        "version",
+        "negative-version"
+      })
+  void privateGrantOutcomeNeverFallsBackToJoinOrInvokesLaterAdmission(String scenario) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(entitlementResponse(false));
+    var grant = realmGrantResponse(true).toBuilder();
+    switch (scenario) {
+      case "denied" -> grant.setGranted(false).setGrantVersion(0L);
+      case "outage" ->
+          grant.setError(
+              net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                  .setCode("AUTH_UNAVAILABLE"));
+      case "malformed-error" ->
+          grant.setError(
+              net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                  .setMessage("unclassified failure"));
+      case "account" -> grant.setAccountId("00000000-0000-4000-8000-000000000043");
+      case "tenant" -> grant.setTenantId("23");
+      case "world" -> grant.setWorldSlug("other");
+      case "realm" -> grant.setRealmSlug("other");
+      case "timestamp" -> grant.setEvaluatedAt("not-a-timestamp");
+      case "version" -> grant.setGrantVersion(0L);
+      case "negative-version" -> grant.setGranted(false).setGrantVersion(-1L);
+      default -> throw new IllegalArgumentException(scenario);
+    }
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString()))
+        .thenReturn(grant.build());
+
+    var result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo("denied".equals(scenario) ? "REALM_ACCESS_DENIED" : "AUTH_UNAVAILABLE");
+    var order = Mockito.inOrder(accountClient);
+    order
+        .verify(accountClient)
+        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+    order
+        .verify(accountClient)
+        .getTenantMembershipForRuntime(
+            Mockito.eq(ACCOUNT_ID), Mockito.eq("22"), Mockito.anyString());
+    order
+        .verify(accountClient)
+        .getRealmAccessGrantForRuntime(
+            Mockito.eq(ACCOUNT_ID),
+            Mockito.eq("22"),
+            Mockito.eq("sandbox"),
+            Mockito.eq("preview"),
+            Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verifyNoInteractions(entityManagementClient, moderationPolicyClient);
+  }
+
+  @Test
+  void deniedSelectedRealmDoesNotClearUnrelatedSameTenantGameplayBinding() {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(membershipResponse("ACTIVE", true, false, 12L, 9L));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY demo"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+    verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verifyNoInteractions(entityManagementClient, moderationPolicyClient);
+  }
+
+  private static GetTenantEntitlementsForRuntimeResponse entitlementResponse(
+      boolean allowPublicJoin) {
+    return GetTenantEntitlementsForRuntimeResponse.newBuilder()
+        .setTenantId("22")
+        .setGameplayAvailable(true)
+        .setAllowPublicJoin(allowPublicJoin)
+        .setEntitlementVersion(12L)
+        .setTenantBillingSequence(9L)
+        .setEvaluatedAt(Instant.now().toString())
+        .build();
+  }
+
   @ParameterizedTest
   @CsvSource({
     "membership,-301,false", "membership,-299,true", "membership,4,true", "membership,6,false",
@@ -1680,6 +2045,8 @@ class PlayCommandHandlerTest {
                   .setMembershipExists(true)
                   .setGameplayAdmissionAllowed(true)
                   .setMembershipVersion(1L)
+                  .setMembershipLifecycleState("ACTIVE")
+                  .setMembershipAuthorityGeneration(9L)
                   .setEvaluatedAt(evaluatedAt)
                   .build());
     } else {
@@ -1721,6 +2088,8 @@ class PlayCommandHandlerTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt("not-a-timestamp")
                 .build());
 
@@ -1868,8 +2237,17 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
   }
 
-  @Test
-  void playWhenEntitlementAuthorityUnavailablePreservesExistingBinding() {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "ENTITLEMENT_UNAVAILABLE",
+        "AUTH_UNAVAILABLE",
+        "UNAVAILABLE",
+        "DEADLINE_EXCEEDED",
+        "UNKNOWN",
+        ""
+      })
+  void playWhenEntitlementAuthorityUnavailablePreservesExistingBinding(String unavailableCode) {
     SessionContext context =
         new SessionContext(
             1L, 22L, ACCOUNT_ID, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
@@ -1879,7 +2257,7 @@ class PlayCommandHandlerTest {
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
                 .setError(
                     net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                        .setCode(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE)
+                        .setCode(unavailableCode)
                         .setMessage(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE))
                 .build());
 

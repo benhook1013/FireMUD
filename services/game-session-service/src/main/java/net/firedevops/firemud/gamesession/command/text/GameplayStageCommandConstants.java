@@ -22,6 +22,15 @@ public final class GameplayStageCommandConstants {
   public static final String WORLD_ACCESS_DENIED_MESSAGE =
       "You are not allowed to enter that world.";
   public static final String JOIN_REQUIRED_CODE = "JOIN_REQUIRED";
+  public static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_CODE =
+      "PUBLIC_PRODUCTION_ADMISSION_DENIED";
+  public static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_MESSAGE =
+      "Public enrollment is closed for that world.";
+  public static final String NON_PUBLIC_ENROLLMENT_REQUIRED_CODE = "NON_PUBLIC_ENROLLMENT_REQUIRED";
+  public static final String NON_PUBLIC_ENROLLMENT_REQUIRED_MESSAGE =
+      "Active membership is required for that non-public realm.";
+  public static final String REALM_ACCESS_DENIED_CODE = "REALM_ACCESS_DENIED";
+  public static final String REALM_ACCESS_DENIED_MESSAGE = "You do not have access to that realm.";
   public static final String JOIN_REQUIRED_MESSAGE =
       "Membership is required before PLAY; joining this world is not available yet.";
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";

@@ -110,6 +110,7 @@ class AccountRuntimeStubServerTest {
         assertThat(accountUuid).isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(7L));
 
         server.setMembershipExists(false);
+        server.setGameplayAdmissionAllowed(true);
 
         var membership =
             stub.getTenantMembershipForRuntime(
@@ -120,6 +121,11 @@ class AccountRuntimeStubServerTest {
                     .build());
         assertThat(membership.getMembershipExists()).isFalse();
         assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(membership.getMembershipLifecycleState()).isEqualTo("MISSING");
+        assertThat(membership.getMembershipVersion()).isZero();
+        assertThat(membership.getMembershipAuthorityGeneration()).isZero();
+        assertThat(membership.getAccountId()).isEqualTo(accountUuid);
+        assertThat(membership.getTenantId()).isEqualTo("1");
       } finally {
         channel.shutdownNow();
       }

@@ -19,6 +19,8 @@ import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -269,8 +271,10 @@ class LookWebSocketCrossServiceTest {
     }
   }
 
-  @Test
-  void websocketReconnectAfterRevocationFailsClosed() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void websocketReconnectDistinguishesActiveDenialFromInactiveRepair(boolean inactive)
+      throws Exception {
     ensureTestServicesStarted();
     accountStub().allowGameplayAdmission();
     long sessionId = prepareGameInstance();
@@ -284,11 +288,19 @@ class LookWebSocketCrossServiceTest {
                         LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
-    accountStub().denyGameplayAdmission();
-    List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
+    if (inactive) {
+      accountStub().setMembershipInactive();
+    } else {
+      accountStub().denyGameplayAdmission();
+    }
+    accountStub().setMembershipVersion(12L);
+    accountStub().setMembershipAuthorityGeneration(9L);
+    String expectedCode = inactive ? "JOIN_REQUIRED" : "WORLD_ACCESS_DENIED";
+    List<String> reconnectResponses = runPlayAfterReconnect(sessionId, expectedCode);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(2);
     assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(reconnectResponses).anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+    assertThat(reconnectResponses)
+        .anyMatch(response -> response.startsWith("ERROR " + expectedCode));
   }
 
   @Test
@@ -427,7 +439,7 @@ class LookWebSocketCrossServiceTest {
     }
   }
 
-  private List<String> runPlayAfterReconnect(long sessionId) throws Exception {
+  private List<String> runPlayAfterReconnect(long sessionId, String expectedCode) throws Exception {
     try (GameplayWebSocketScenarios.LoginThenPlayScenario scenario =
         GameplayWebSocketScenarios.loginThenAttemptPlay(
             ignored ->
@@ -437,7 +449,7 @@ class LookWebSocketCrossServiceTest {
             READY_LOOK_TEXT,
             client ->
                 client.awaitMatching(
-                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
+                    response -> response.startsWith("ERROR " + expectedCode),
                     "revoked membership admission denial"))) {
       return scenario.responses();
     }

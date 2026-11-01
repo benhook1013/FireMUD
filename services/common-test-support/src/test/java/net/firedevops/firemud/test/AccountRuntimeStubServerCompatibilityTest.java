@@ -350,4 +350,61 @@ class AccountRuntimeStubServerCompatibilityTest {
         .setRequestId("membership-request")
         .build();
   }
+
+  @Test
+  void runtimeMembershipSnapshotsKeepLifecycleAndAuthorityCountersIndependent() throws Exception {
+    Instant evaluatedAt = Instant.parse("2026-10-30T12:34:56Z");
+    String accountId = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+    try (AccountRuntimeStubServer server =
+        new AccountRuntimeStubServer(0, Clock.fixed(evaluatedAt, ZoneOffset.UTC))) {
+      server.mapAccountId("demo@example.com", 7L);
+      server.setMembershipVersion(9L);
+      server.setMembershipAuthorityGeneration(4L);
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        GetTenantMembershipForRuntimeRequest request =
+            GetTenantMembershipForRuntimeRequest.newBuilder()
+                .setAccountId(accountId)
+                .setTenantId("11")
+                .setRequestId("membership-request-1")
+                .build();
+
+        server.denyGameplayAdmission();
+        var activeDenied = stub.getTenantMembershipForRuntime(request);
+        assertThat(activeDenied.getMembershipExists()).isTrue();
+        assertThat(activeDenied.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(activeDenied.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+        assertThat(activeDenied.getMembershipVersion()).isEqualTo(9L);
+        assertThat(activeDenied.getMembershipAuthorityGeneration()).isEqualTo(4L);
+
+        server.setMembershipInactive();
+        var inactive = stub.getTenantMembershipForRuntime(request);
+        assertThat(inactive.getMembershipExists()).isTrue();
+        assertThat(inactive.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(inactive.getMembershipLifecycleState()).isEqualTo("INACTIVE");
+        assertThat(inactive.getMembershipVersion()).isEqualTo(9L);
+        assertThat(inactive.getMembershipAuthorityGeneration()).isEqualTo(4L);
+
+        server.setMembershipExists(false);
+        server.setGameplayAdmissionAllowed(true);
+        var missing = stub.getTenantMembershipForRuntime(request);
+        assertThat(missing.getMembershipExists()).isFalse();
+        assertThat(missing.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(missing.getMembershipLifecycleState()).isEqualTo("MISSING");
+        assertThat(missing.getMembershipVersion()).isZero();
+        assertThat(missing.getMembershipAuthorityGeneration()).isZero();
+
+        for (var response : List.of(activeDenied, inactive, missing)) {
+          assertThat(response.getAccountId()).isEqualTo(accountId);
+          assertThat(response.getTenantId()).isEqualTo("11");
+          assertThat(response.getEvaluatedAt()).isEqualTo(evaluatedAt.toString());
+        }
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
 }

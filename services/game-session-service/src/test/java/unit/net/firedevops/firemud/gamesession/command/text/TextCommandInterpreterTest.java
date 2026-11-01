@@ -175,6 +175,8 @@ class TextCommandInterpreterTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(9L)
                 .setEvaluatedAt(java.time.Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
@@ -190,14 +192,16 @@ class TextCommandInterpreterTest {
                 .setAllowed(true)
                 .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt(java.time.Instant.now().toString())
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                    .setTenantId("22")
+                    .setGameplayAvailable(true)
+                    .setAllowPublicJoin(true)
+                    .setEntitlementVersion(1L)
+                    .setTenantBillingSequence(1L)
+                    .setEvaluatedAt(java.time.Instant.now().toString())
+                    .build());
     when(gameLogicClient.queryInventory(Mockito.any(SessionContext.class)))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
