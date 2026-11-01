@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerConflictException;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -171,6 +173,43 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     assertEquals(
         pointerCaptor.getValue().getPlayableStateNamespaceId(),
         eventCaptor.getValue().getPlayableStateNamespaceId());
+  }
+
+  @Test
+  void upsertPointerPropagatesCreationConflictWithoutAppendingAudit() {
+    AdmissionPointerConflictException conflict =
+        new AdmissionPointerConflictException("duplicate public pointer");
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            7L, "demo", "production"))
+        .thenReturn(Optional.empty());
+    when(pointerRepository.save(any(GameplayAdmissionPointer.class))).thenThrow(conflict);
+
+    AdmissionPointerConflictException thrown =
+        assertThrows(
+            AdmissionPointerConflictException.class,
+            () -> service.upsertPointer(pointerMutation(44L, true, 0L, 0L)));
+
+    assertSame(conflict, thrown);
+    verifyNoInteractions(eventRepository);
+  }
+
+  @Test
+  void upsertPointerPropagatesUpdateConflictWithoutAppendingAudit() {
+    AdmissionPointerConflictException conflict =
+        new AdmissionPointerConflictException("duplicate public pointer");
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            7L, "demo", "production"))
+        .thenReturn(Optional.of(existingPointerForTenant(7L)));
+    when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
+        .thenThrow(conflict);
+
+    AdmissionPointerConflictException thrown =
+        assertThrows(
+            AdmissionPointerConflictException.class,
+            () -> service.upsertPointer(pointerMutation(45L, true, 1L, 1L)));
+
+    assertSame(conflict, thrown);
+    verifyNoInteractions(eventRepository);
   }
 
   @Test

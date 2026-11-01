@@ -6,6 +6,7 @@ import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPo
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayTenantSharedPlayableStateNamespace.GAMEPLAY_TENANT_SHARED_PLAYABLE_STATE_NAMESPACE;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -13,6 +14,7 @@ import java.util.UUID;
 import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerRecord;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerConflictException;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import org.jooq.DSLContext;
@@ -124,7 +126,7 @@ public class GameplayAdmissionPointerRepository {
     }
     lockRuntimeTargetForCreation(entity);
     if (countByRuntimeTarget(entity.getTenantId(), entity.getGameInstanceId()) != 0) {
-      throw new IllegalStateException(
+      throw new AdmissionPointerConflictException(
           "Admission pointer creation conflicted with another route for the runtime target");
     }
     entity.setRealmId(UUID.randomUUID());
@@ -137,6 +139,10 @@ public class GameplayAdmissionPointerRepository {
     try {
       record.store();
     } catch (IntegrityConstraintViolationException ex) {
+      if (isUniqueConstraintViolation(ex)) {
+        throw new AdmissionPointerConflictException(
+            "Admission pointer creation conflicted with another committed pointer", ex);
+      }
       throw new IllegalStateException(
           "Admission pointer creation conflicted with another committed pointer", ex);
     }
@@ -206,7 +212,7 @@ public class GameplayAdmissionPointerRepository {
         countByRuntimeTargetExcludingId(
             entity.getTenantId(), entity.getGameInstanceId(), entity.getId());
     if (destinationCount != 0) {
-      throw new IllegalStateException(
+      throw new AdmissionPointerConflictException(
           "Admission pointer update conflicted with another route for the runtime target");
     }
     int updated;
@@ -244,6 +250,10 @@ public class GameplayAdmissionPointerRepository {
                       .and(GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(expectedCatalogRevision)))
               .execute();
     } catch (IntegrityConstraintViolationException ex) {
+      if (isUniqueConstraintViolation(ex)) {
+        throw new AdmissionPointerConflictException(
+            "Admission pointer update conflicted with another committed pointer", ex);
+      }
       throw new IllegalStateException(
           "Admission pointer update conflicted with another committed pointer", ex);
     }
@@ -268,6 +278,16 @@ public class GameplayAdmissionPointerRepository {
 
   private static boolean isPositive(Long value) {
     return value != null && value > 0L;
+  }
+
+  private static boolean isUniqueConstraintViolation(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException
+          && "23505".equals(sqlException.getSQLState())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   public void deleteAllInBatch() {

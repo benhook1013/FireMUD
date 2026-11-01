@@ -1,17 +1,20 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerConflictException;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -83,6 +86,82 @@ class GameplayAdmissionPointerRepositoryTest {
       assertEquals(99L, replaced.getGameInstanceId());
       assertEquals(sharedRealmId, replaced.getRealmId());
       assertEquals(sharedNamespaceId, replaced.getPlayableStateNamespaceId());
+    }
+  }
+
+  @Test
+  void saveClassifiesOnlyUniqueConstraintViolationsAsPointerConflicts() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-save-conflict;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+
+      AdmissionPointerConflictException duplicateSelector =
+          assertThrows(
+              AdmissionPointerConflictException.class,
+              () -> repository.save(pointer(7L, 45L, "SHARED", "production")));
+
+      assertEquals("23505", sqlState(duplicateSelector));
+      assertNotNull(duplicateSelector.getCause());
+
+      GameplayAdmissionPointer invalid = pointer(8L, 55L, "SHARED", "production");
+      invalid.setCatalogRevision(0L);
+      IllegalStateException checkViolation =
+          assertThrows(IllegalStateException.class, () -> repository.save(invalid));
+
+      assertFalse(checkViolation instanceof AdmissionPointerConflictException);
+      assertEquals(
+          "Admission pointer creation conflicted with another committed pointer",
+          checkViolation.getMessage());
+      assertNotNull(checkViolation.getCause());
+    }
+  }
+
+  @Test
+  void updateClassifiesUniqueConstraintViolationsAsPointerConflicts() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-update-conflict;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+      GameplayAdmissionPointer seasonal = repository.save(pointer(7L, 45L, "SHARED", "seasonal"));
+      seasonal.setRealmSlug("production");
+      seasonal.setCatalogRevision(2L);
+
+      AdmissionPointerConflictException duplicateSelector =
+          assertThrows(
+              AdmissionPointerConflictException.class,
+              () -> repository.updateExisting(seasonal, 1L, 1L));
+
+      assertEquals("23505", sqlState(duplicateSelector));
+      assertNotNull(duplicateSelector.getCause());
+      assertEquals(
+          "seasonal",
+          repository
+              .findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "seasonal")
+              .orElseThrow()
+              .getRealmSlug());
+    }
+  }
+
+  @Test
+  void duplicateRuntimeTargetDetectionUsesPointerConflictException() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-runtime-conflict;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+
+      assertThrows(
+          AdmissionPointerConflictException.class,
+          () -> repository.save(pointer(7L, 44L, "SHARED", "seasonal")));
     }
   }
 
@@ -386,5 +465,14 @@ class GameplayAdmissionPointerRepositoryTest {
           occurred_at TIMESTAMP NOT NULL
         )
         """);
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) {
+        return sqlException.getSQLState();
+      }
+    }
+    return null;
   }
 }

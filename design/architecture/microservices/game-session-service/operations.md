@@ -47,6 +47,21 @@ Before deploying the new Game Session admission validation, Automation must alre
 - Prometheus scrapes metrics from `/actuator/prometheus`.
 - Target state: logs, traces, and control-plane reads expose the active exact `{scriptPatchVersion, scriptPinEpoch}` execution fence so operators can identify the hotfix revision and selection epoch during incident triage without adding either raw value as ordinary high-cardinality metric labels. Current coverage is summarized in [Implementation Status](#implementation-status).
 
+### Visible public-production pointer cardinality preflight
+
+Before applying the existing V1053 cardinality migration, run this read-only query against the deployed Game Session schema:
+
+```sql
+SELECT tenant_id, COUNT(*) AS visible_public_production_pointer_count
+FROM gameplay_admission_pointer
+WHERE visible = true AND public_production_realm = true
+GROUP BY tenant_id
+HAVING COUNT(*) > 1
+ORDER BY tenant_id;
+```
+
+Any returned tenant blocks the migration until the Game Session data owner performs an owner-scoped, audited resolution that preserves pointer rows, audit events, and retained history. Never choose a winner, delete rows, or reset pointer state automatically. A separate-row switch must hide or demote the existing qualifying row before making its replacement qualifying, within the authorized owner's existing atomic/fenced transaction; this is not an ad hoc SQL/operator mutation path. The current `SetAdmissionPointer` and prepared-cutover mutation paths remain held, not implemented. Multi-Tenancy owns the [canonical realm-catalog and admission-pointer contract](../../system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract); the [Realm Routing and Playable State tracker](../../../project-management/implementation-tracking/realm-routing-and-playable-state.md#current-status) records the current pointer and cutover status.
+
 ### Initial region timeline recovery boundary
 
 For an initial region timeline whose durable preparation is `INITIALIZING` after its one-time creation permission was consumed, absent Redis metadata cannot distinguish never-executed initialization from metadata loss. Descriptor, source, connection, principal, `SCRIPT LOAD`, or current-binding/World/incarnation revalidation refusal before the SQL claim does not change the preparation phase or timeline keys. If the preparation is still `PREPARED` and the proved-absent preimage remains valid, a corrected ordinary attempt can still make the first claim; an existing `INITIALIZING` phase remains held. After those checks pass, the owner claims the permission and immediately attempts the sole `EVALSHA`; a process stop between claim and send or an ambiguous send/result leaves the scope held, with no automatic same-scope retry or recovery. Preserve the original SQL preparation and source evidence. Do not delete or reset the affected region keys, recreate metadata, or retry with a fresh create permission or same-epoch rewrite. No same-scope automated or operator repair exists. Stop and quarantine the affected admission scope; use World Management's normal authorized [instance termination lifecycle](../world-management-service/api-contracts.md#instance-termination-contract) and proceed under a new instance scope only when its usual authorization and protection are available. Otherwise keep the scope blocked for owner-scoped reconciliation. This is a safe recovery boundary, not an implemented or proved repair procedure, and does not qualify launch, production activation, or first `OPEN`. Region timeline and lease authority remain with [Tick System](../../system-architecture-ticks.md#region-authority-and-tick-executor), Redis owns the [key projection](../../system-architecture-redis.md#canonical-region-key-projection), and current Game Session recovery gaps are tracked in [runtime and tick coordination](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
