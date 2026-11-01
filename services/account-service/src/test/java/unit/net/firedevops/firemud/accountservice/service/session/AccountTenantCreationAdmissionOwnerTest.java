@@ -693,7 +693,7 @@ class AccountTenantCreationAdmissionOwnerTest {
       doAnswer(
               ignored -> {
                 assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(qualificationHeld).hasValue(true);
+                assertThat(qualificationHeld.get()).isTrue();
                 events.add("source-preparation-readback");
                 return sourceReadback;
               })
@@ -701,7 +701,7 @@ class AccountTenantCreationAdmissionOwnerTest {
           .prepare(operation, environment, reauth);
       doAnswer(
               ignored -> {
-                assertThat(qualificationHeld).hasValue(true);
+                assertThat(qualificationHeld.get()).isTrue();
                 events.add("qualification-check");
                 return null;
               })
