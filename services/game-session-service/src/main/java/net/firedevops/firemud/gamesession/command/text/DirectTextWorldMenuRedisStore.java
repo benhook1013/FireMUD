@@ -81,7 +81,7 @@ public final class DirectTextWorldMenuRedisStore {
     var discovered = selection.browse();
     if (discovered.isEmpty()) return Optional.empty();
     var snapshot = discovered.orElseThrow();
-    var prepared = prepare(transport, snapshot);
+    var prepared = prepareFreshDiscovery(transport, snapshot);
     if (prepared.isEmpty()) return Optional.empty();
     var write = prepared.orElseThrow();
     try (var connection = connections.get()) {
@@ -119,6 +119,21 @@ public final class DirectTextWorldMenuRedisStore {
     byte[] inner = encoded.orElseThrow();
     // Source unavailability deliberately escapes separately from invalid UI state.
     if (selection.restoreSnapshot(inner).isEmpty()) return Optional.empty();
+    return prepareWrite(transport, snapshot, inner);
+  }
+
+  private Optional<MenuWrite> prepareFreshDiscovery(
+      ObservedDirectTextTransport transport, SelectionSnapshot justDiscovered) {
+    // Only discoverAndReplace passes its browse result here. That composition already brackets
+    // the route-owner read with two catalog reads; this is UI evidence, not cached authority.
+    // Keep not-before/expiry on the selection owner's clock, then apply this store's clock bounds.
+    return selection
+        .encodeLiveSnapshot(justDiscovered)
+        .flatMap(inner -> prepareWrite(transport, justDiscovered, inner));
+  }
+
+  private Optional<MenuWrite> prepareWrite(
+      ObservedDirectTextTransport transport, SelectionSnapshot snapshot, byte[] inner) {
     long nowEpochMillis = requirePositiveSafeEpochMillis(clock.millis());
     long expiry = requirePositiveSafeEpochMillis(snapshot.expiresAt().toEpochMilli());
     if (expiry <= nowEpochMillis || expiry - nowEpochMillis > 300_000L) return Optional.empty();
