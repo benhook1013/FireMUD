@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.type.TypeReference;
@@ -55,6 +56,23 @@ public final class AccountAsymmetricJwtVerifier {
 
   /** Verifies a compact RS256 signature and exact route policy without granting authority. */
   public VerifiedClaims verify(String compactJwt, ExplicitRouteProfilePolicy policy) {
+    return verifyWithKeyLookup(compactJwt, policy, keyCache::keyFor);
+  }
+
+  /** Verifies using only a key bound to the caller's exact protected public JWKS snapshot. */
+  public VerifiedClaims verify(
+      String compactJwt,
+      ExplicitRouteProfilePolicy policy,
+      AccountPublicJwksCache.SourceIdentity requiredSource,
+      String requiredJwksSha256) {
+    return verifyWithKeyLookup(
+        compactJwt, policy, kid -> keyCache.keyFor(kid, requiredSource, requiredJwksSha256));
+  }
+
+  private VerifiedClaims verifyWithKeyLookup(
+      String compactJwt,
+      ExplicitRouteProfilePolicy policy,
+      Function<String, RSAPublicKey> keyLookup) {
     Objects.requireNonNull(policy, "explicit route/profile policy is required");
     try {
       CompactParts parts = splitCompact(compactJwt, policy.maxCompactTokenBytes());
@@ -63,7 +81,7 @@ public final class AccountAsymmetricJwtVerifier {
       Map<String, Object> claims = parseObject(parts.claims(), MAX_CLAIMS_BYTES);
       validateClaims(claims, policy, clock.instant());
 
-      RSAPublicKey key = keyCache.keyFor(keyId);
+      RSAPublicKey key = keyLookup.apply(keyId);
       Jws<Claims> verified =
           Jwts.parser()
               .verifyWith(key)

@@ -1371,7 +1371,7 @@ public class AccountJwtReadinessProbeRepository {
     requireLiveInventoryMatches(plan, binding, trust, liveInventory, observationContext(current));
     AccountJwtReadinessProbeOwnerSelector.LocalIdentity local = selector.localIdentity();
     if (!local.sourceInventoryRevision().equals(liveInventory.inventoryBindingRevision())
-        || !local.sourceInventoryDigest().equals(liveInventory.inventoryBindingDigest())) {
+        || !local.sourceInventoryDigest().equals(liveInventory.digest())) {
       throw new ReceiverUnavailableException();
     }
     if (readinessPlanOutOfWindow(plan)) {

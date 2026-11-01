@@ -10,8 +10,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChangeAbortReason;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -228,6 +233,428 @@ class AccountControlUiSourceGuardPostgresIntegrationTest {
     terminal(c, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
     assertThat(c.tx(() -> c.fences.sourceMutationPermitted(intent))).isTrue();
     changePassword(c, binding.actorAccountId(), "test-only-after-aborts");
+  }
+
+  @Test
+  void everyMixedOwnerOutcomePairingRemainsFencedUnderBothOrderings() {
+    for (DraftAuthorizationFenceRepository.Ordering ordering :
+        List.of(
+            DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER,
+            DraftAuthorizationFenceRepository.Ordering.REVOKE_ORDER)) {
+      for (Outcome worldOutcome : Outcome.values()) {
+        for (Outcome gameDesignOutcome : Outcome.values()) {
+          if (worldOutcome == gameDesignOutcome) {
+            continue;
+          }
+          Context c = context();
+          var binding = binding(c);
+          var change = sourceChange(binding);
+          c.tx(
+              () -> {
+                c.fences.reserve(binding);
+                if (ordering == DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER) {
+                  c.fences.claimCommitOrder(binding);
+                } else {
+                  assertThat(c.fences.requestSourceChange(change)).isFalse();
+                }
+                return null;
+              });
+          terminal(c, binding, Owner.WORLD, worldOutcome);
+          terminal(c, binding, Owner.GAME_DESIGN, gameDesignOutcome);
+
+          assertThat(c.tx(() -> c.fences.readSettlement(binding)))
+              .as("%s with WORLD %s and GAME_DESIGN %s", ordering, worldOutcome, gameDesignOutcome)
+              .isEqualTo(DraftAuthorizationFenceRepository.Settlement.PENDING);
+          assertThatThrownBy(
+                  () -> changePassword(c, binding.actorAccountId(), "test-only-mixed-outcome"))
+              .isInstanceOf(DataAccessException.class);
+          if (ordering == DraftAuthorizationFenceRepository.Ordering.REVOKE_ORDER) {
+            assertThat(c.tx(() -> c.fences.sourceMutationPermitted(change))).isFalse();
+            assertThat(c.tx(() -> c.fences.sourceAbortPermitted(change))).isFalse();
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void overlappingSourceChangeClaimsObserveBackendWaitWhileDisjointSourcesProceed()
+      throws Exception {
+    Context c = context();
+    var binding = binding(c);
+    var firstChange = sourceChange(binding);
+    var overlappingChange = sourceChange(binding);
+    c.tx(() -> c.fences.reserve(binding));
+
+    CountDownLatch firstIntentRecorded = new CountDownLatch(1);
+    CountDownLatch releaseFirstIntent = new CountDownLatch(1);
+    AtomicReference<Throwable> firstFailure = new AtomicReference<>();
+    AtomicInteger firstPid = new AtomicInteger();
+    Thread firstClaim =
+        new Thread(
+            () -> {
+              try {
+                c.tx(
+                    () -> {
+                      firstPid.set(
+                          Objects.requireNonNull(c.dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      assertThat(c.fences.requestSourceChange(firstChange)).isFalse();
+                      firstIntentRecorded.countDown();
+                      await(releaseFirstIntent);
+                      return null;
+                    });
+              } catch (Throwable failure) {
+                firstFailure.set(failure);
+                firstIntentRecorded.countDown();
+              }
+            },
+            "draft-source-change-first-claim");
+    firstClaim.start();
+
+    assertThat(firstIntentRecorded.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(firstFailure.get()).isNull();
+
+    CountDownLatch overlappingStarted = new CountDownLatch(1);
+    AtomicInteger overlappingPid = new AtomicInteger();
+    AtomicReference<Throwable> overlappingFailure = new AtomicReference<>();
+    Thread overlappingClaim =
+        startContender(
+            c,
+            overlappingStarted,
+            overlappingPid,
+            overlappingFailure,
+            () -> c.fences.requestSourceChange(overlappingChange));
+    try {
+      assertThat(overlappingStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      awaitBackendLock(c, overlappingPid.get(), List.of(firstPid.get()));
+
+      var disjointBinding = binding(c);
+      var disjointChange = sourceChange(disjointBinding);
+      c.tx(() -> c.fences.reserve(disjointBinding));
+      assertThat(c.tx(() -> c.fences.requestSourceChange(disjointChange))).isFalse();
+      assertThat(c.tx(() -> c.fences.read(disjointBinding)).ordering())
+          .isEqualTo(DraftAuthorizationFenceRepository.Ordering.REVOKE_ORDER);
+      assertThat(c.tx(() -> c.fences.readSourceChange(disjointChange).status()))
+          .isEqualTo("WAITING");
+    } finally {
+      releaseFirstIntent.countDown();
+    }
+
+    join(firstClaim);
+    join(overlappingClaim);
+    assertThat(firstFailure.get()).isNull();
+    assertThat(overlappingFailure.get())
+        .isInstanceOf(DraftAuthorizationFenceRepository.PendingSourceChangeException.class);
+    assertThat(c.tx(() -> c.fences.readSourceChange(firstChange).status())).isEqualTo("WAITING");
+    assertThatThrownBy(() -> c.tx(() -> c.fences.readSourceChange(overlappingChange)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Absent or changed immutable source mutation intent");
+  }
+
+  @Test
+  void commitOrderAndRevocationContendersSerializeBehindObservedPostgresLocks() throws Exception {
+    assertContendedOrderingWins(true);
+    assertContendedOrderingWins(false);
+  }
+
+  @Test
+  void reservationAndSourceChangeIntentRollbackLeavesRowsUnchangedAndAllowsDisjointWork() {
+    Context c = context();
+    var binding = binding(c);
+    var change = sourceChange(binding);
+    Map<String, Integer> before = authorizationRowCounts(c);
+    String passwordBefore = accountPassword(c, binding.actorAccountId());
+
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () -> {
+                      c.fences.reserve(binding);
+                      assertThat(c.fences.requestSourceChange(change)).isFalse();
+                      throw new IllegalStateException("test-only transaction rollback");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test-only transaction rollback");
+
+    assertThat(authorizationRowCounts(c)).isEqualTo(before);
+    assertThat(accountPassword(c, binding.actorAccountId())).isEqualTo(passwordBefore);
+    assertThat(c.tx(() -> c.fences.readOriginalBinding(binding.operationId())))
+        .as("the reservation rolled back with its source-change intent")
+        .isEmpty();
+    assertThatThrownBy(() -> c.tx(() -> c.fences.readSourceChange(change)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Absent or changed immutable source mutation intent");
+
+    var disjointBinding = binding(c);
+    var disjointChange = sourceChange(disjointBinding);
+    c.tx(() -> c.fences.reserve(disjointBinding));
+    assertThat(c.tx(() -> c.fences.requestSourceChange(disjointChange))).isFalse();
+    assertThat(c.tx(() -> c.fences.read(disjointBinding).ordering()))
+        .isEqualTo(DraftAuthorizationFenceRepository.Ordering.REVOKE_ORDER);
+    assertThat(c.tx(() -> c.fences.readSourceChange(disjointChange).status())).isEqualTo("WAITING");
+  }
+
+  @Test
+  void exactSourceAbortRetryPreservesTerminalReadbackAndCannotReopen() {
+    Context c = context();
+    var binding = binding(c);
+    var change = sourceChange(binding);
+    c.tx(
+        () -> {
+          c.fences.reserve(binding);
+          assertThat(c.fences.requestSourceChange(change)).isFalse();
+          return null;
+        });
+    terminal(c, binding, Owner.WORLD, Outcome.DEFINITIVELY_ABORTED);
+    terminal(c, binding, Owner.GAME_DESIGN, Outcome.DEFINITIVELY_ABORTED);
+    assertThat(c.tx(() -> c.fences.sourceAbortPermitted(change))).isTrue();
+
+    c.tx(
+        () -> {
+          c.fences.markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
+          return null;
+        });
+    var aborted = c.tx(() -> c.fences.readSourceChange(change));
+    String abortedRowVersion = sourceChangeRowVersion(c, change.changeId());
+    assertThat(aborted.status()).isEqualTo("SOURCE_ABORTED");
+    assertThat(aborted.requestedAt()).isNotNull();
+    assertThat(aborted.committedAt()).isNull();
+    assertThat(aborted.abortedAt()).isNotNull();
+    assertThat(aborted.abortReason()).isEqualTo(SourceChangeAbortReason.EXPIRED);
+
+    c.tx(
+        () -> {
+          c.fences.markSourceAborted(change, SourceChangeAbortReason.EXPIRED);
+          return null;
+        });
+    assertSourceChangeUnchanged(c.tx(() -> c.fences.readSourceChange(change)), aborted);
+    assertThat(sourceChangeRowVersion(c, change.changeId())).isEqualTo(abortedRowVersion);
+
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () -> {
+                      c.fences.markSourceAborted(change, SourceChangeAbortReason.DEFINITIVE_ABORT);
+                      return null;
+                    }))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Source change abort reason differs from readback");
+    assertSourceChangeUnchanged(c.tx(() -> c.fences.readSourceChange(change)), aborted);
+
+    assertThatThrownBy(() -> c.tx(() -> c.fences.requestSourceChange(change)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Aborted source change cannot be requested again");
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () -> {
+                      c.fences.markSourceCommitted(change);
+                      return null;
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Aborted source change cannot be committed");
+    assertSourceChangeUnchanged(c.tx(() -> c.fences.readSourceChange(change)), aborted);
+    assertThat(sourceChangeRowVersion(c, change.changeId())).isEqualTo(abortedRowVersion);
+  }
+
+  private static void assertContendedOrderingWins(boolean commitOrderWins) throws Exception {
+    Context c = context();
+    var binding = binding(c);
+    var change = sourceChange(binding);
+    c.tx(() -> c.fences.reserve(binding));
+
+    try (Connection blocker = c.source.getConnection()) {
+      blocker.setAutoCommit(false);
+      try (var statement =
+          blocker.prepareStatement(
+              "SELECT source_key FROM account_draft_authorization_source_locks"
+                  + " WHERE source_key = ? FOR UPDATE")) {
+        statement.setString(1, binding.sources().getFirst().key());
+        assertThat(statement.executeQuery().next()).isTrue();
+      }
+
+      int blockerPid;
+      try (var statement = blocker.createStatement();
+          var rows = statement.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(rows.next()).isTrue();
+        blockerPid = rows.getInt(1);
+      }
+      CountDownLatch firstStarted = new CountDownLatch(1);
+      AtomicInteger firstPid = new AtomicInteger();
+      AtomicReference<Throwable> firstFailure = new AtomicReference<>();
+      Thread firstContender =
+          startContender(
+              c,
+              firstStarted,
+              firstPid,
+              firstFailure,
+              () -> {
+                if (commitOrderWins) {
+                  c.fences.claimCommitOrder(binding);
+                } else {
+                  c.fences.requestSourceChange(change);
+                }
+              });
+      Thread secondContender = null;
+      AtomicReference<Throwable> secondFailure = new AtomicReference<>();
+      try {
+        assertThat(firstStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        awaitBackendLock(c, firstPid.get(), List.of(blockerPid));
+
+        CountDownLatch secondStarted = new CountDownLatch(1);
+        AtomicInteger secondPid = new AtomicInteger();
+        secondContender =
+            startContender(
+                c,
+                secondStarted,
+                secondPid,
+                secondFailure,
+                () -> {
+                  if (commitOrderWins) {
+                    c.fences.requestSourceChange(change);
+                  } else {
+                    c.fences.claimCommitOrder(binding);
+                  }
+                });
+        assertThat(secondStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        awaitBackendLock(c, secondPid.get(), List.of(blockerPid, firstPid.get()));
+      } finally {
+        blocker.commit();
+      }
+      join(firstContender);
+      if (secondContender != null) {
+        join(secondContender);
+      }
+      assertThat(firstFailure.get()).isNull();
+      if (commitOrderWins) {
+        assertThat(secondFailure.get()).isNull();
+      } else {
+        assertThat(secondFailure.get())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Revocation precedes this owner commit");
+      }
+    }
+
+    if (commitOrderWins) {
+      assertThat(c.tx(() -> c.fences.read(binding).ordering()))
+          .isEqualTo(DraftAuthorizationFenceRepository.Ordering.COMMIT_ORDER);
+      assertThat(c.tx(() -> c.fences.readSourceChange(change).status())).isEqualTo("WAITING");
+    } else {
+      assertThat(c.tx(() -> c.fences.read(binding).ordering()))
+          .isEqualTo(DraftAuthorizationFenceRepository.Ordering.REVOKE_ORDER);
+      assertThatThrownBy(() -> c.tx(() -> c.fences.claimCommitOrder(binding)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Revocation precedes this owner commit");
+    }
+  }
+
+  private static Thread startContender(
+      Context c,
+      CountDownLatch started,
+      AtomicInteger backendPid,
+      AtomicReference<Throwable> failure,
+      Runnable action) {
+    Thread contender =
+        new Thread(
+            () -> {
+              try {
+                c.tx(
+                    () -> {
+                      backendPid.set(
+                          Objects.requireNonNull(c.dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      started.countDown();
+                      action.run();
+                      return null;
+                    });
+              } catch (Throwable thrown) {
+                failure.set(thrown);
+                started.countDown();
+              }
+            },
+            "draft-fence-postgres-contender");
+    contender.start();
+    return contender;
+  }
+
+  private static void awaitBackendLock(Context c, int backendPid, List<Integer> expectedBlockers)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+    while (System.nanoTime() < deadline) {
+      for (int expectedBlocker : expectedBlockers) {
+        var activity =
+            c.dsl.fetchOne(
+                "SELECT wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid)) "
+                    + "FROM pg_stat_activity WHERE pid = ?",
+                expectedBlocker,
+                backendPid);
+        if (activity != null && Boolean.TRUE.equals(activity.get(0, Boolean.class))) {
+          return;
+        }
+      }
+      Thread.sleep(10);
+    }
+    throw new AssertionError(
+        "PostgreSQL backend " + backendPid + " did not wait behind " + expectedBlockers);
+  }
+
+  private static void join(Thread thread) throws InterruptedException {
+    thread.join(Duration.ofSeconds(10).toMillis());
+    assertThat(thread.isAlive()).as("PostgreSQL contention worker finished").isFalse();
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while holding a test transaction", interrupted);
+    }
+  }
+
+  private static Map<String, Integer> authorizationRowCounts(Context c) {
+    return Map.of(
+        "source_locks", c.dsl.fetchCount(DSL.table("account_draft_authorization_source_locks")),
+        "fences", c.dsl.fetchCount(DSL.table("account_draft_authorization_fences")),
+        "sources", c.dsl.fetchCount(DSL.table("account_draft_authorization_sources")),
+        "owner_readbacks",
+            c.dsl.fetchCount(DSL.table("account_draft_authorization_owner_readbacks")),
+        "source_changes", c.dsl.fetchCount(DSL.table("account_draft_authorization_source_changes")),
+        "changed_scopes",
+            c.dsl.fetchCount(DSL.table("account_draft_authorization_changed_scopes")));
+  }
+
+  private static String accountPassword(Context c, UUID accountId) {
+    return Objects.requireNonNull(
+            c.dsl.fetchOne("SELECT password_hash FROM accounts WHERE account_uuid = ?", accountId))
+        .get("password_hash", String.class);
+  }
+
+  private static DraftAuthorizationFenceRepository.SourceChange sourceChange(
+      DraftAuthorizationFenceBinding binding) {
+    return new DraftAuthorizationFenceRepository.SourceChange(
+        UUID.randomUUID(), binding.sources(), new byte[] {17});
+  }
+
+  private static void assertSourceChangeUnchanged(
+      DraftAuthorizationFenceRepository.SourceChangeSnapshot actual,
+      DraftAuthorizationFenceRepository.SourceChangeSnapshot expected) {
+    assertThat(actual.changeId()).isEqualTo(expected.changeId());
+    assertThat(actual.binding()).containsExactly(expected.binding());
+    assertThat(actual.status()).isEqualTo(expected.status());
+    assertThat(actual.requestedAt()).isEqualTo(expected.requestedAt());
+    assertThat(actual.committedAt()).isEqualTo(expected.committedAt());
+    assertThat(actual.abortedAt()).isEqualTo(expected.abortedAt());
+    assertThat(actual.abortReason()).isEqualTo(expected.abortReason());
+  }
+
+  private static String sourceChangeRowVersion(Context c, UUID changeId) {
+    return Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT xmin::text FROM account_draft_authorization_source_changes WHERE change_id = ?",
+                changeId))
+        .get(0, String.class);
   }
 
   private static void terminal(

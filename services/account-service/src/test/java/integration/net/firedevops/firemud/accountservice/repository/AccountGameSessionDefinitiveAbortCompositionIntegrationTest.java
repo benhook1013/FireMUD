@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1008,7 +1009,7 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
   @Test
   void actualReverseReadRefusesWrongPeerDecisionAndChangedOriginalTupleWithoutAccountAbort()
       throws Exception {
-    try (var session = open()) {
+    try (var session = openWithWrongPeerIdentity()) {
       var before = session.image();
       assertThat(session.reverse.read(session.gs.transitionId(), session.lease).bindingDecisionId())
           .isEqualTo(session.gs.transitionId());
@@ -1327,6 +1328,11 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
     return new Session(prepareMemberRepair);
   }
 
+  private Session openWithWrongPeerIdentity() throws Exception {
+    accountFixtures.temporaryDirectory = temporaryDirectory;
+    return new Session(false, false, false, true);
+  }
+
   private Session openNeverAdmitted() throws Exception {
     return openNeverAdmitted(false);
   }
@@ -1361,6 +1367,15 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
 
     private Session(
         boolean prepareMemberRepair, boolean claimedNeverAdmitted, boolean installedBootstrap)
+        throws Exception {
+      this(prepareMemberRepair, claimedNeverAdmitted, installedBootstrap, false);
+    }
+
+    private Session(
+        boolean prepareMemberRepair,
+        boolean claimedNeverAdmitted,
+        boolean installedBootstrap,
+        boolean includeWrongPeerIdentity)
         throws Exception {
       try {
         accountFixture = accountFixtures.newFixture(redis.client());
@@ -1399,16 +1414,23 @@ class AccountGameSessionDefinitiveAbortCompositionIntegrationTest {
                 installedBootstrap);
         if (prepareMemberRepair) gs.prepareMemberRepairRedis();
         pkiDirectory = Files.createTempDirectory(temporaryDirectory, "actual-abort-mtls-");
+        var identities =
+            new ArrayList<>(
+                List.of(
+                    new LoopbackMtlsTestPki.IdentitySpec("account", ACCOUNT, true),
+                    new LoopbackMtlsTestPki.IdentitySpec("gs", GS, true),
+                    new LoopbackMtlsTestPki.IdentitySpec("gs-client", GS, false),
+                    new LoopbackMtlsTestPki.IdentitySpec("account-client", ACCOUNT, false)));
+        if (includeWrongPeerIdentity) {
+          identities.add(
+              new LoopbackMtlsTestPki.IdentitySpec(
+                  "wrong", "spiffe://firemud/ns/test/sa/world-management-service", false));
+        }
         pki =
             LoopbackMtlsTestPki.create(
                 pkiDirectory,
                 "Account GS abort test CA",
-                new LoopbackMtlsTestPki.IdentitySpec("account", ACCOUNT, true),
-                new LoopbackMtlsTestPki.IdentitySpec("gs", GS, true),
-                new LoopbackMtlsTestPki.IdentitySpec("gs-client", GS, false),
-                new LoopbackMtlsTestPki.IdentitySpec("account-client", ACCOUNT, false),
-                new LoopbackMtlsTestPki.IdentitySpec(
-                    "wrong", "spiffe://firemud/ns/test/sa/world-management-service", false));
+                identities.toArray(LoopbackMtlsTestPki.IdentitySpec[]::new));
         if (claimedNeverAdmitted) {
           gsServer =
               CanonicalGameplayAdmissionAbortManualFactory

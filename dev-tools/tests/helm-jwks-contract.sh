@@ -159,6 +159,12 @@ if jwks_volume is None:
     )
 if jwks_volume.get("configMap", {}).get("name") != "jwt-jwks":
     raise SystemExit(f"Account jwt-jwks volume is not ConfigMap-backed: {jwks_volume}")
+jwks_default_mode = jwks_volume["configMap"].get("defaultMode")
+if type(jwks_default_mode) is not int or jwks_default_mode != 0o444:
+    raise SystemExit(
+        "Account jwt-jwks ConfigMap volume must use numeric defaultMode 0444: "
+        f"{jwks_default_mode!r}"
+    )
 
 for document in documents:
     if document.get("kind") != "Deployment":

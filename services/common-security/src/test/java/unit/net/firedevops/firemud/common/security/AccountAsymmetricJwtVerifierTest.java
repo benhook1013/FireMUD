@@ -85,6 +85,67 @@ class AccountAsymmetricJwtVerifierTest {
   }
 
   @Test
+  void exactSnapshotVerificationRejectsWarmKnownKeyRelabelingAndKeepsOrdinaryVerification()
+      throws Exception {
+    String first = jwks(jwk(KID, (RSAPublicKey) keyPair.getPublic()));
+    String second = first + "\n";
+    AtomicReference<String> current = new AtomicReference<>(first);
+    AtomicInteger loads = new AtomicInteger();
+    AccountPublicJwksCache cache =
+        new AccountPublicJwksCache(
+            () -> {
+              loads.incrementAndGet();
+              return new AccountPublicJwksCache.PublicJwksSnapshot(
+                  PIN, current.get().getBytes(StandardCharsets.UTF_8));
+            },
+            PIN,
+            clock,
+            Duration.ofSeconds(30));
+    AccountAsymmetricJwtVerifier boundVerifier = new AccountAsymmetricJwtVerifier(cache, clock);
+    String token =
+        token(
+            validClaims(NOW.getEpochSecond(), NOW.getEpochSecond(), NOW.getEpochSecond() + 120),
+            "RS256",
+            KID,
+            "JWT",
+            keyPair);
+    String firstHash = sha256(first);
+    String secondHash = sha256(second);
+    assertThat(boundVerifier.verify(token, policy, PIN, firstHash).keyId()).isEqualTo(KID);
+    current.set(second);
+    assertThatThrownBy(() -> boundVerifier.verify(token, policy, PIN, secondHash))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasMessage("Account JWT verification failed")
+        .hasNoCause();
+    for (String malformed : new String[] {null, "", "A".repeat(64)}) {
+      assertThatThrownBy(() -> boundVerifier.verify(token, policy, PIN, malformed))
+          .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+          .hasNoCause();
+    }
+    assertThatThrownBy(() -> boundVerifier.verify(token, policy, null, firstHash))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasNoCause();
+    assertThat(boundVerifier.verify(token, policy).keyId()).isEqualTo(KID);
+    assertThat(loads).hasValue(1);
+    clock.advance(Duration.ofSeconds(31));
+    assertThat(boundVerifier.verify(token, policy, PIN, secondHash).keyId()).isEqualTo(KID);
+    assertThatThrownBy(() -> boundVerifier.verify(corruptSignature(token), policy, PIN, secondHash))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
+    cache.invalidateKid(KID);
+    assertThatThrownBy(() -> boundVerifier.verify(token, policy, PIN, secondHash))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class)
+        .hasNoCause();
+    assertThat(loads).hasValue(2);
+  }
+
+  private static String sha256(String value) throws Exception {
+    return java.util.HexFormat.of()
+        .formatHex(
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  @Test
   void verifiesRealRs256SignatureAndReturnsOnlyImmutableRouteBoundClaims() throws Exception {
     String token =
         token(
