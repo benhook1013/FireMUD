@@ -8,13 +8,16 @@ import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.common.EmailCanonicalization;
 
-/** Internal insertion input, never an authorization credential or registration transport DTO. */
+/**
+ * Internal insertion input, never an authorization credential or registration transport DTO. Fresh
+ * enrollment has no legacy role input; the Account birth owner creates its explicit-empty global
+ * role source from the null legacy role.
+ */
 public final class AccountFreshEnrollmentRequest {
   private final UUID enrollmentId;
   private final String username;
   private final String email;
   private final String passwordHash;
-  private final String role;
   private final boolean emailVerified;
   private final String loginAuthModes;
 
@@ -23,7 +26,6 @@ public final class AccountFreshEnrollmentRequest {
       String username,
       String email,
       String passwordHash,
-      String role,
       boolean emailVerified,
       String loginAuthModes) {
     this.enrollmentId = Objects.requireNonNull(enrollmentId);
@@ -32,7 +34,6 @@ public final class AccountFreshEnrollmentRequest {
     this.username = required(username);
     this.email = required(EmailCanonicalization.normalize(email));
     this.passwordHash = required(passwordHash);
-    this.role = required(role);
     this.emailVerified = emailVerified;
     this.loginAuthModes = AccountLoginAuthModes.normalize(loginAuthModes);
   }
@@ -55,7 +56,6 @@ public final class AccountFreshEnrollmentRequest {
       username,
       email,
       passwordHash,
-      role,
       Boolean.toString(emailVerified),
       loginAuthModes
     };
@@ -73,7 +73,7 @@ public final class AccountFreshEnrollmentRequest {
     account.setUsername(username);
     account.setEmail(email);
     account.setPasswordHash(passwordHash);
-    account.setRole(role);
+    account.setRole(null);
     account.setEmailVerified(emailVerified);
     account.setLoginAuthModes(loginAuthModes);
     return account;

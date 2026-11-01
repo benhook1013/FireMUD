@@ -523,7 +523,6 @@ final class AccountControlUiOwnerSourcesFixture {
                           "global-" + suffix,
                           suffix + "@example.test",
                           hash(password),
-                          "player",
                           true,
                           AccountLoginAuthModes.DEFAULT_SERIALIZED));
           assertThat(result.accountSecurityLock().receipt()).isPresent();

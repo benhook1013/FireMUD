@@ -13,6 +13,7 @@ import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionBirth
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest.RestrictionState;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest.SourceKind;
+import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
@@ -43,7 +44,31 @@ class AccountFreshEnrollmentRequestTest {
         .isNotEqualTo(
             request(id, "player", "person@example.test", "different", "PASSWORD,EMAIL_OTP")
                 .requestDigest());
+    assertThat(original.requestDigest())
+        .isNotIn(
+            request(
+                    UUID.randomUUID(),
+                    "player",
+                    "person@example.test",
+                    "hash",
+                    "PASSWORD,EMAIL_OTP")
+                .requestDigest(),
+            request(id, "player", "other@example.test", "hash", "PASSWORD,EMAIL_OTP")
+                .requestDigest(),
+            new AccountFreshEnrollmentRequest(
+                    id, "player", "person@example.test", "hash", true, "PASSWORD,EMAIL_OTP")
+                .requestDigest(),
+            request(id, "player", "person@example.test", "hash", "PASSWORD").requestDigest());
     assertThat(original.toString()).doesNotContain("hash", "person", "Person");
+  }
+
+  @Test
+  void canonicalInsertionExplicitlyHasNoLegacyRole() throws ReflectiveOperationException {
+    var request = request(UUID.randomUUID(), "player", "person@example.test", "hash", "PASSWORD");
+    var newAccount = AccountFreshEnrollmentRequest.class.getDeclaredMethod("newAccount");
+    newAccount.setAccessible(true);
+    Account account = (Account) newAccount.invoke(request);
+    assertThat(account.getRole()).isNull();
   }
 
   @Test
@@ -84,7 +109,7 @@ class AccountFreshEnrollmentRequestTest {
 
   private static AccountFreshEnrollmentRequest request(
       UUID id, String user, String email, String hash, String modes) {
-    return new AccountFreshEnrollmentRequest(id, user, email, hash, "player", false, modes);
+    return new AccountFreshEnrollmentRequest(id, user, email, hash, false, modes);
   }
 
   private static AccountPlatformRestrictionMutationRequest mutation(

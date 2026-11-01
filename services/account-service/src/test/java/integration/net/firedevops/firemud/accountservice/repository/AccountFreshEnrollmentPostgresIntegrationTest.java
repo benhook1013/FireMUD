@@ -72,6 +72,29 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
     assertThat(context.dsl.fetchCount(DSL.table("account_authority_outbox_events"))).isEqualTo(2);
     context.transaction.executeWithoutResult(
         status -> {
+          var roleSource =
+              context.dsl.fetchSingle(
+                  "SELECT a.id AS account_id, a.role, a.xmin::text AS account_xmin, "
+                      + "a.account_uuid_source_numeric_id AS account_source_numeric_id, "
+                      + "a.account_uuid_provenance AS account_provenance, s.account_uuid, "
+                      + "s.account_uuid_source_numeric_id, s.account_uuid_provenance, "
+                      + "s.global_roles, s.global_role_source_version, s.xmin::text AS source_xmin "
+                      + "FROM accounts a JOIN account_global_role_sources s "
+                      + "ON s.account_uuid = a.account_uuid WHERE a.account_uuid = ?",
+                  result.accountUuid());
+          assertThat(roleSource.get("role", String.class)).isNull();
+          assertThat(roleSource.get("account_id", Long.class)).isEqualTo(result.accountId());
+          assertThat(roleSource.get("account_uuid", UUID.class)).isEqualTo(result.accountUuid());
+          assertThat(roleSource.get("account_uuid_source_numeric_id", Long.class))
+              .isEqualTo(roleSource.get("account_source_numeric_id", Long.class))
+              .isEqualTo(result.accountId());
+          assertThat(roleSource.get("account_uuid_provenance", String.class))
+              .isEqualTo(roleSource.get("account_provenance", String.class))
+              .isEqualTo("ACCOUNT_REPOSITORY_INSERT");
+          assertThat(roleSource.get("global_roles", String[].class)).isEmpty();
+          assertThat(roleSource.get("global_role_source_version", Long.class)).isEqualTo(1L);
+          assertThat(roleSource.get("source_xmin", String.class))
+              .isEqualTo(roleSource.get("account_xmin", String.class));
           var outbox = new AccountAuthorityOutboxRepository(context.dsl);
           for (var operation :
               java.util.List.of(result.accountSecurityLock(), result.platformAccessBan())) {
@@ -171,7 +194,6 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
             "changed",
             "changed@example.test",
             "changed-hash",
-            "player",
             false,
             "PASSWORD");
     assertThatThrownBy(
@@ -541,6 +563,7 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
     for (String table :
         new String[] {
           "accounts",
+          "account_global_role_sources",
           "account_fresh_enrollments",
           "account_fresh_enrollment_decisions",
           "account_fresh_enrollment_results",
@@ -659,7 +682,6 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
         suffix,
         suffix + "@example.test",
         "controlled-password-verifier",
-        "player",
         false,
         "PASSWORD,EMAIL_OTP");
   }
