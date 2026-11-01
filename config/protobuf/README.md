@@ -8,7 +8,7 @@ buf lint protos
 
 The active CI template pins each remote Java generator's upstream version **and** BSR rebuild revision. Renovate queries the public BSR `PluginCurationService/GetLatestCuratedPlugin` Connect GET endpoint, transforms its published versions and revisions with its supported custom datasource, and updates both fields atomically. A version alone would follow later BSR rebuilds. Registry publication can lag upstream Maven releases: the BSR listing, rather than GitHub tags, controls generator availability.
 
-Renovate groups the protobuf generator with the catalog's protobuf runtimes/compiler and the gRPC generator with its gRPC runtimes/compiler. Updates are uncapped; the existing PR Validation Gate generates with the pinned remote plugins and compiles that exact output on Java 21 against the catalog runtimes using `compileBufGeneratedJava`. Service builds continue to use the authoritative Gradle `generateProto` path. Both boundaries must pass before a dependency update can merge.
+Renovate groups the protobuf generator with the catalog's protobuf runtimes/compiler and the gRPC generator with its gRPC runtimes/compiler. Updates are uncapped; the existing PR Validation Gate generates with the pinned remote plugins and compiles that exact output on Java 25 against the catalog runtimes using `compileBufGeneratedJava`. Service builds continue to use the authoritative Gradle `generateProto` path. Both boundaries must pass before a dependency update can merge.
 
 Reproduce the remote generator compatibility proof from the repository root:
 
