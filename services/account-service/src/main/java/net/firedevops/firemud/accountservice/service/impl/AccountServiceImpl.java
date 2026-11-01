@@ -1867,10 +1867,41 @@ public class AccountServiceImpl implements AccountService {
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException("Writable Account issuance transaction required");
     }
-    PrimaryAuthentication result = authenticateAccountIdentity(email, secret, true);
+    String normalizedSelector = EmailCanonicalization.normalize(email);
+    Account selectedAccount =
+        findAccountForAuthentication(email).orElseThrow(this::invalidCredentials);
+    if (selectedAccount.getId() == null || selectedAccount.getId() <= 0L) {
+      throw invalidCredentials();
+    }
+    boolean selectedByEmail =
+        normalizedSelector.equals(EmailCanonicalization.normalize(selectedAccount.getEmail()));
+    boolean selectedByUsername =
+        !selectedByEmail && Objects.equals(email, selectedAccount.getUsername());
+    if (!selectedByEmail && !selectedByUsername) {
+      throw invalidCredentials();
+    }
+    Account account =
+        accountRepository
+            .findByIdForUpdate(selectedAccount.getId())
+            .orElseThrow(this::invalidCredentials);
+    requireAuthenticationPersistedIdentity(selectedAccount);
+    requireAuthenticationPersistedIdentity(account);
+    String selectedEmail = EmailCanonicalization.normalize(selectedAccount.getEmail());
+    String lockedEmail = EmailCanonicalization.normalize(account.getEmail());
+    if (!Objects.equals(selectedAccount.getAccountUuid(), account.getAccountUuid())
+        || selectedAccount.getAccountUuidProvenance() != account.getAccountUuidProvenance()
+        || !Objects.equals(
+            selectedAccount.getAccountUuidSourceNumericId(),
+            account.getAccountUuidSourceNumericId())
+        || !Objects.equals(selectedAccount.getUsername(), account.getUsername())
+        || !selectedEmail.equals(lockedEmail)
+        || (selectedByEmail && !normalizedSelector.equals(lockedEmail))
+        || (selectedByUsername && !Objects.equals(email, account.getUsername()))) {
+      throw invalidCredentials();
+    }
+    PrimaryAuthentication result = authenticateAccountIdentity(account, secret, true);
     result.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
-    Account account = result.account();
-    UUID accountUuid = UUID.fromString(accountMapper.toDto(account).id());
+    UUID accountUuid = UUID.fromString(accountMapper.toDto(result.account()).id());
     return new ControlUiPrimaryIdentity(accountUuid);
   }
 

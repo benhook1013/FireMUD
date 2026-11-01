@@ -56,6 +56,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountTenantCreationAdmissionPostgresIntegrationTest {
+  @org.junit.jupiter.api.io.TempDir static java.nio.file.Path reauthenticationCustody;
+
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
@@ -489,8 +491,34 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
     var clock = Clock.fixed(Instant.now(), ZoneOffset.UTC);
     var service =
         new AccountRecentReauthenticationService(
-            primary, accounts, generations, evidence, policies, manager, clock);
+            primary,
+            accounts,
+            generations,
+            evidence,
+            policies,
+            manager,
+            clock,
+            reauthenticationCryptography(clock));
     return new Context(dsl, accounts, evidence, service, transaction);
+  }
+
+  private static AccountControlUiResponseCryptography reauthenticationCryptography(Clock clock) {
+    var custody = reauthenticationCustody.resolve(UUID.randomUUID().toString());
+    try {
+      for (String purpose : new String[] {"encryption", "request-mac"}) {
+        var directory = java.nio.file.Files.createDirectories(custody.resolve(purpose));
+        byte[] key = new byte[32];
+        java.util.Arrays.fill(key, (byte) (purpose.equals("encryption") ? 11 : 29));
+        java.nio.file.Files.writeString(
+            directory.resolve("keyring"),
+            "firemud-account-response-envelope-keyring-v1\nactive test-key "
+                + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(key)
+                + "\n");
+      }
+    } catch (java.io.IOException failure) {
+      throw new IllegalStateException("Controlled reauthentication custody setup failed", failure);
+    }
+    return new AccountControlUiResponseCryptography(new AccountControlUiKeyring(custody), clock);
   }
 
   private static String hash(String secret) {

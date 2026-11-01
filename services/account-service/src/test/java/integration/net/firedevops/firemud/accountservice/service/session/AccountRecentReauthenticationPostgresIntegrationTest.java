@@ -1,16 +1,22 @@
-package integration.net.firedevops.firemud.accountservice.service.session;
+package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 import de.mkammerer.argon2.Argon2Factory;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -39,13 +45,7 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicyRepository;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationRepository;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService.Disposition;
-import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -56,6 +56,7 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -71,6 +72,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountRecentReauthenticationPostgresIntegrationTest {
+  @TempDir static Path keyRoot;
+
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
@@ -734,9 +737,8 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   void forwardSourceOrderingMigrationSeedsOnlyCurrentPointersAndPreservesRetainedBytes() {
     Context c = contextBeforePolicySourceOrdering();
     Account account = c.account("PASSWORD");
-    var evidence =
-        c.service.reauthenticate(
-            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    UUID evidenceId = insertEvidenceWithoutMac(c, account, UUID.randomUUID(), UUID.randomUUID());
+    var evidence = readHistoricalEvidence(c, evidenceId);
     c.consume(
         evidence, account.getAccountUuid(), evidence.purpose(), evidence.creationOperationId());
     Record originalEvidence = c.evidenceRow(evidence.evidenceId());
@@ -829,6 +831,143 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .isEqualTo(1L);
     assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
     assertThat(challenge.getCodeHash()).isNotBlank();
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void knownPublicIdsCannotRecoverEvidenceWithWrongEmailOrSecret() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    UUID requestId = UUID.randomUUID(), operationId = UUID.randomUUID();
+    var original = c.service.reauthenticate(c.request(account, requestId, operationId, PASSWORD));
+    Record retained = c.evidenceRow(original.evidenceId());
+    assertThatThrownBy(
+            () ->
+                c.service.reauthenticate(
+                    c.request(account, requestId, operationId, "wrong-secret")))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                c.service.reauthenticate(
+                    new AccountRecentReauthenticationService.Request(
+                        requestId,
+                        account.getAccountUuid(),
+                        AccountRecentReauthenticationPolicy.PURPOSE,
+                        operationId,
+                        "different@example.test",
+                        PASSWORD)))
+        .isInstanceOf(IllegalStateException.class);
+    var exact =
+        c.service.reauthenticate(
+            new AccountRecentReauthenticationService.Request(
+                requestId,
+                account.getAccountUuid(),
+                AccountRecentReauthenticationPolicy.PURPOSE,
+                operationId,
+                account.getEmail().toUpperCase(java.util.Locale.ROOT),
+                PASSWORD));
+    assertThat(exact.evidenceId()).isEqualTo(original.evidenceId());
+    assertThat(exact.issuedAt()).isEqualTo(original.issuedAt());
+    assertThat(c.evidenceRow(original.evidenceId())).isEqualTo(retained);
+    Record proof =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_recent_reauthentication_replay_credentials WHERE evidence_id = ?",
+                original.evidenceId()));
+    assertThat(proof.get("key_id", String.class)).isEqualTo("mac1");
+    assertThat(proof.get("credential_mac", String.class))
+        .matches("[0-9a-f]{64}")
+        .doesNotContain(PASSWORD, account.getEmail());
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence"))
+        .isEqualTo(1);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
+        .isEqualTo(1);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
+        .isZero();
+  }
+
+  @Test
+  void replayUsesOriginalMacKeyThroughSupportedOverlapAndDeniesWithdrawal() {
+    Context c = context();
+    Account account = c.account("EMAIL_OTP");
+    c.challenge(account);
+    var request = c.request(account, UUID.randomUUID(), UUID.randomUUID(), OTP);
+    var original = c.service.reauthenticate(request);
+    writeCustody(
+        c.custody.resolve("request-mac"),
+        "active mac2 "
+            + encodedKey(31)
+            + "\nretiring mac1 "
+            + BASE.plusSeconds(3600).toEpochMilli()
+            + " "
+            + encodedKey(29));
+    var replay = c.service.reauthenticate(request);
+    assertThat(replay.evidenceId()).isEqualTo(original.evidenceId());
+    assertThat(replay.issuedAt()).isEqualTo(original.issuedAt());
+    writeCustody(c.custody.resolve("request-mac"), "active mac2 " + encodedKey(31));
+    assertThatThrownBy(() -> c.service.reauthenticate(request))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence"))
+        .isEqualTo(1);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
+        .isEqualTo(1);
+    assertThat(c.challenges.findByAccountId(account.getId())).isEmpty();
+  }
+
+  @Test
+  void migrationPreservesHistoricalEvidenceWithoutGrantingReplayOrAllowingBackfill() {
+    Context c = contextWithHistoricalEvidenceSchema();
+    Account account = c.account("PASSWORD");
+    UUID requestId = UUID.randomUUID(), operationId = UUID.randomUUID();
+    UUID evidenceId = insertEvidenceWithoutMac(c, account, requestId, operationId);
+    Record original = c.evidenceRow(evidenceId);
+    Flyway.configure()
+        .dataSource(c.source)
+        .schemas(c.source.getSchema())
+        .defaultSchema(c.source.getSchema())
+        .placeholders(Map.of("serviceSchema", c.source.getSchema()))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertThatThrownBy(
+            () -> c.service.reauthenticate(c.request(account, requestId, operationId, PASSWORD)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            "INSERT INTO account_recent_reauthentication_replay_credentials"
+                                + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
+                                + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, 'mac1', ?)",
+                            evidenceId,
+                            requestId,
+                            account.getAccountUuid(),
+                            operationId,
+                            "a".repeat(64))))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence"))
+        .isEqualTo(1);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
+        .isZero();
+  }
+
+  @Test
+  void newEvidenceCannotCommitWithoutAtomicReplayProof() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    assertThatThrownBy(
+            () -> insertEvidenceWithoutMac(c, account, UUID.randomUUID(), UUID.randomUUID()))
+        .rootCause()
+        .isInstanceOfSatisfying(
+            java.sql.SQLException.class,
+            failure -> assertThat(failure.getSQLState()).isEqualTo("23514"));
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence")).isZero();
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
+        .isZero();
   }
 
   @Test
@@ -884,6 +1023,8 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     assertThatThrownBy(() -> c.service.reauthenticate(request))
         .isInstanceOf(RuntimeException.class);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence")).isZero();
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
+        .isZero();
     assertThat(c.challenges.findByAccountId(account.getId())).contains(challenge);
   }
 
@@ -1385,31 +1526,33 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   }
 
   private static Context context(boolean installApprovedPolicySources) {
-    return context(installApprovedPolicySources, true);
+    return contextAtVersion(installApprovedPolicySources, MigrationVersion.LATEST);
   }
 
   private static Context contextBeforePolicySourceOrdering() {
-    return context(true, false);
+    return contextAtVersion(true, MigrationVersion.fromVersion("1018"));
   }
 
-  private static Context context(
-      boolean installApprovedPolicySources, boolean installPolicySourceOrdering) {
+  private static Context contextWithHistoricalEvidenceSchema() {
+    return contextAtVersion(true, MigrationVersion.fromVersion("1018"));
+  }
+
+  private static Context contextAtVersion(
+      boolean installApprovedPolicySources, MigrationVersion migrationTarget) {
     String schema = "recent_reauth_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    var flywayConfiguration =
-        Flyway.configure()
-            .dataSource(source)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .placeholders(Map.of("serviceSchema", schema))
-            .locations("classpath:db/migration");
-    if (!installPolicySourceOrdering) {
-      flywayConfiguration.target(MigrationVersion.fromVersion("1018"));
-    }
-    flywayConfiguration.load().migrate();
+    Flyway.configure()
+        .dataSource(source)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .target(migrationTarget)
+        .load()
+        .migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     var manager = new DataSourceTransactionManager(source);
     var transaction = new TransactionTemplate(manager);
@@ -1468,9 +1611,14 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     var evidence = new AccountRecentReauthenticationRepository(dsl);
     var policies = new AccountRecentReauthenticationPolicyRepository(dsl);
     var clock = new MutableClock(BASE);
+    Path custody = keyRoot.resolve(UUID.randomUUID().toString());
+    writeCustody(custody.resolve("encryption"), "active enc1 " + encodedKey(11));
+    writeCustody(custody.resolve("request-mac"), "active mac1 " + encodedKey(29));
+    var crypto =
+        new AccountControlUiResponseCryptography(new AccountControlUiKeyring(custody), clock);
     var service =
         new AccountRecentReauthenticationService(
-            primary, accounts, generations, evidence, policies, manager, clock);
+            primary, accounts, generations, evidence, policies, manager, clock, crypto);
     return new Context(
         dsl,
         accounts,
@@ -1481,7 +1629,109 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         transaction,
         clock,
         source,
-        schema);
+        schema,
+        custody);
+  }
+
+  private static String encodedKey(int value) {
+    byte[] bytes = new byte[32];
+    Arrays.fill(bytes, (byte) value);
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+  }
+
+  /** Exact historical fixture readback before the replay-proof relation exists. */
+  private static AccountRecentReauthenticationEvidence readHistoricalEvidence(
+      Context c, UUID evidenceId) {
+    Record row = c.evidenceRow(evidenceId);
+    return new AccountRecentReauthenticationEvidence(
+        row.get("evidence_id", UUID.class),
+        row.get("request_id", UUID.class),
+        row.get("account_uuid", UUID.class),
+        row.get("purpose", String.class),
+        row.get("creation_operation_id", UUID.class),
+        row.get("request_digest", String.class),
+        net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance.fromStorageValue(
+            row.get("identity_provenance", String.class)),
+        row.get("account_uuid_source_numeric_id", Long.class),
+        AccountLifecycleState.valueOf(row.get("account_lifecycle_state", String.class)),
+        row.get("account_authority_generation", Long.class),
+        row.get("account_authority_source_version", Long.class),
+        row.get("issuance_fence", Long.class),
+        row.get("issuance_fence_source_version", Long.class),
+        row.get("platform_policy_version", Long.class),
+        row.get("deployment_policy_version", Long.class),
+        row.get("effective_policy_version", String.class),
+        row.get("recent_age_seconds", Long.class),
+        row.get("max_clock_skew_seconds", Long.class),
+        row.get("issued_at", java.time.OffsetDateTime.class).toInstant());
+  }
+
+  /** Controlled pre-migration evidence fixture using actual Account and policy source guards. */
+  private static UUID insertEvidenceWithoutMac(
+      Context c, Account account, UUID requestId, UUID operationId) {
+    UUID evidenceId = UUID.randomUUID();
+    String payload =
+        "account-recent-reauthentication-request/v1\nrequestId="
+            + requestId
+            + "\naccountId="
+            + account.getAccountUuid()
+            + "\npurpose=SELF_SERVICE_GAME_CREATION"
+            + "\ncreationOperationId="
+            + operationId
+            + "\n";
+    byte[] bytes = payload.getBytes(StandardCharsets.UTF_8);
+    String digest;
+    try {
+      digest =
+          "sha256:"
+              + java.util.HexFormat.of()
+                  .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException(impossible);
+    }
+    var policy =
+        AccountRecentReauthenticationPolicy.resolve(
+            new AccountRecentReauthenticationPolicy.PlatformValue(1, 300, 30),
+            new AccountRecentReauthenticationPolicy.DeploymentValue(1, 300, 30));
+    c.tx(
+        () -> {
+          var authority = c.generations.read(AuthorityScope.account(account.getAccountUuid()));
+          var fence = authority.issuanceFence();
+          return c.dsl.execute(
+              "INSERT INTO account_recent_reauthentication_evidence"
+                  + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, request_payload, request_digest,"
+                  + " identity_provenance, account_uuid_source_numeric_id, account_lifecycle_state, account_authority_generation,"
+                  + " account_authority_source_version, issuance_fence, issuance_fence_source_version, platform_policy_version,"
+                  + " deployment_policy_version, effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at)"
+                  + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, 300, 30, ?::timestamptz)",
+              evidenceId,
+              requestId,
+              account.getAccountUuid(),
+              operationId,
+              bytes,
+              digest,
+              account.getAccountUuidProvenance().name(),
+              account.getAccountUuidSourceNumericId(),
+              account.getLifecycleState().name(),
+              authority.generation(),
+              authority.sourceVersion(),
+              fence.value(),
+              fence.sourceVersion(),
+              policy.effectivePolicyVersion(),
+              java.time.OffsetDateTime.ofInstant(c.clock.instant(), ZoneOffset.UTC));
+        });
+    return evidenceId;
+  }
+
+  private static void writeCustody(Path directory, String entries) {
+    try {
+      Files.createDirectories(directory);
+      Files.writeString(
+          directory.resolve("keyring"),
+          "firemud-account-response-envelope-keyring-v1\n" + entries + "\n");
+    } catch (IOException failure) {
+      throw new IllegalStateException("Test-only custody creation failed", failure);
+    }
   }
 
   private static String hash(String secret) {
@@ -1504,7 +1754,8 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
       TransactionTemplate transaction,
       MutableClock clock,
       DriverManagerDataSource source,
-      String schema) {
+      String schema,
+      Path custody) {
     <T> T tx(Supplier<T> action) {
       return transaction.execute(ignored -> action.get());
     }

@@ -1,8 +1,15 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -36,6 +43,7 @@ public final class AccountRecentReauthenticationService {
   private final AccountRecentReauthenticationPolicyRepository policyRepository;
   private final TransactionTemplate transaction;
   private final Clock clock;
+  private final AccountControlUiResponseCryptography cryptography;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -48,13 +56,15 @@ public final class AccountRecentReauthenticationService {
       AccountRecentReauthenticationRepository evidenceRepository,
       AccountRecentReauthenticationPolicyRepository policyRepository,
       PlatformTransactionManager transactions,
-      Clock clock) {
+      Clock clock,
+      AccountControlUiResponseCryptography cryptography) {
     this.primaryAuthentication = Objects.requireNonNull(primaryAuthentication);
     this.accounts = Objects.requireNonNull(accounts);
     this.generations = Objects.requireNonNull(generations);
     this.evidenceRepository = Objects.requireNonNull(evidenceRepository);
     this.policyRepository = Objects.requireNonNull(policyRepository);
     this.clock = Objects.requireNonNull(clock);
+    this.cryptography = Objects.requireNonNull(cryptography);
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -72,6 +82,10 @@ public final class AccountRecentReauthenticationService {
     requireNonNilUuid(request.requestId, "stable reauthentication request ID");
     requireNonNilUuid(request.accountId, "expected Account identity");
     requireNonNilUuid(request.creationOperationId, "stable creation operation ID");
+    if (request.requestId.equals(request.creationOperationId)) {
+      throw new IllegalArgumentException(
+          "Distinct reauthentication request and operation IDs are required");
+    }
     if (request.email == null
         || request.email.isBlank()
         || request.email.length() > 254
@@ -81,95 +95,169 @@ public final class AccountRecentReauthenticationService {
       throw new IllegalArgumentException("Bounded Account reauthentication request is required");
     }
 
-    Attempt attempt =
-        transaction.execute(
-            ignored -> {
-              evidenceRepository.lockRequest(request.requestId);
-              Optional<AccountRecentReauthenticationEvidence> existingRequest =
-                  evidenceRepository.findByRequest(request.requestId);
-              if (existingRequest.isPresent()) {
-                AccountRecentReauthenticationEvidence existing = existingRequest.orElseThrow();
-                requireExactRequest(existing, request);
-                return Attempt.success(existing);
-              }
-              if (!PURPOSE.equals(request.purpose)) {
-                throw conflict();
-              }
+    byte[] credentialRequest = credentialRequest(request);
+    Attempt attempt;
+    try {
+      attempt =
+          transaction.execute(
+              ignored -> {
+                evidenceRepository.lockRequest(request.requestId);
+                Optional<AccountRecentReauthenticationEvidence> existingRequest =
+                    evidenceRepository.findByRequest(request.requestId);
+                if (existingRequest.isPresent()) {
+                  AccountRecentReauthenticationEvidence existing = existingRequest.orElseThrow();
+                  requireExactRequest(existing, request);
+                  requireReplayCredentials(existing, credentialRequest);
+                  return Attempt.success(existing);
+                }
+                if (!PURPOSE.equals(request.purpose)) {
+                  throw conflict();
+                }
 
-              evidenceRepository.lockCreationOperation(request.creationOperationId);
-              if (evidenceRepository
-                  .findByCreationOperation(request.creationOperationId)
-                  .isPresent()) {
-                throw conflict();
-              }
+                evidenceRepository.lockCreationOperation(request.creationOperationId);
+                if (evidenceRepository
+                    .findByCreationOperation(request.creationOperationId)
+                    .isPresent()) {
+                  throw conflict();
+                }
 
-              // Resolve and lock the current policy before primary authentication. Missing policy
-              // therefore cannot consume an OTP or commit a new authentication grant.
-              AccountRecentReauthenticationPolicy.Effective policy =
-                  policyRepository.resolveCurrentForGameCreation();
-              Account account = requireCurrentAccount(request.accountId);
-              String email = EmailCanonicalization.normalize(request.email);
-              if (!email.equals(EmailCanonicalization.normalize(account.getEmail()))) {
-                throw conflict();
-              }
+                // Resolve and lock the current policy before primary authentication. Missing policy
+                // therefore cannot consume an OTP or commit a new authentication grant.
+                AccountRecentReauthenticationPolicy.Effective policy =
+                    policyRepository.resolveCurrentForGameCreation();
+                Account account = requireCurrentAccount(request.accountId);
+                String email = EmailCanonicalization.normalize(request.email);
+                if (!email.equals(EmailCanonicalization.normalize(account.getEmail()))) {
+                  throw conflict();
+                }
 
-              ControlUiPrimaryIdentity authenticated;
-              try {
-                authenticated =
-                    primaryAuthentication.authenticateControlUiPrimaryIdentity(
-                        email, request.secret);
-              } catch (AuthenticationException denied) {
-                // Return the denial from the transaction callback so normal failed-attempt
-                // accounting commits. A successful OTP remains rollback-capable with retention.
-                return Attempt.denied(denied.getCode(), denied.getMessage());
-              }
-              if (!request.accountId.equals(authenticated.accountId())
-                  || !request.accountId.equals(account.getAccountUuid())) {
-                throw conflict();
-              }
+                ControlUiPrimaryIdentity authenticated;
+                try {
+                  authenticated =
+                      primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                          email, request.secret);
+                } catch (AuthenticationException denied) {
+                  // Return the denial from the transaction callback so normal failed-attempt
+                  // accounting commits. A successful OTP remains rollback-capable with retention.
+                  return Attempt.denied(denied.getCode(), denied.getMessage());
+                }
+                if (!request.accountId.equals(authenticated.accountId())
+                    || !request.accountId.equals(account.getAccountUuid())) {
+                  throw conflict();
+                }
 
-              ScopeState authority = generations.read(AuthorityScope.account(request.accountId));
-              requireAccountAuthority(request.accountId, authority);
-              IssuanceFence fence = Objects.requireNonNull(authority.issuanceFence());
-              var issuedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
-              byte[] requestPayload =
-                  AccountRecentReauthenticationRepository.requestPayload(
-                      request.requestId,
-                      request.accountId,
-                      request.purpose,
-                      request.creationOperationId);
-              var evidence =
-                  new AccountRecentReauthenticationEvidence(
-                      UUID.randomUUID(),
-                      request.requestId,
-                      request.accountId,
-                      request.purpose,
-                      request.creationOperationId,
-                      AccountRecentReauthenticationRepository.digest(requestPayload),
-                      account.getAccountUuidProvenance(),
-                      account.getAccountUuidSourceNumericId(),
-                      account.getLifecycleState(),
-                      authority.generation(),
-                      authority.sourceVersion(),
-                      fence.value(),
-                      fence.sourceVersion(),
-                      policy.platformVersion(),
-                      policy.deploymentVersion(),
-                      policy.effectivePolicyVersion(),
-                      policy.recentAgeSeconds(),
-                      policy.maxClockSkewSeconds(),
-                      issuedAt);
-              evidenceRepository.insert(evidence, requestPayload);
-              return Attempt.success(
-                  evidenceRepository.findByRequest(request.requestId).orElseThrow());
-            });
-    if (attempt == null) {
-      throw unavailable();
+                ScopeState authority = generations.read(AuthorityScope.account(request.accountId));
+                requireAccountAuthority(request.accountId, authority);
+                IssuanceFence fence = Objects.requireNonNull(authority.issuanceFence());
+                var issuedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
+                byte[] requestPayload =
+                    AccountRecentReauthenticationRepository.requestPayload(
+                        request.requestId,
+                        request.accountId,
+                        request.purpose,
+                        request.creationOperationId);
+                var evidence =
+                    new AccountRecentReauthenticationEvidence(
+                        UUID.randomUUID(),
+                        request.requestId,
+                        request.accountId,
+                        request.purpose,
+                        request.creationOperationId,
+                        AccountRecentReauthenticationRepository.digest(requestPayload),
+                        account.getAccountUuidProvenance(),
+                        account.getAccountUuidSourceNumericId(),
+                        account.getLifecycleState(),
+                        authority.generation(),
+                        authority.sourceVersion(),
+                        fence.value(),
+                        fence.sourceVersion(),
+                        policy.platformVersion(),
+                        policy.deploymentVersion(),
+                        policy.effectivePolicyVersion(),
+                        policy.recentAgeSeconds(),
+                        policy.maxClockSkewSeconds(),
+                        issuedAt);
+                String keyId = cryptography.currentKeyId();
+                var replayProof =
+                    new AccountRecentReauthenticationRepository.ReplayProof(
+                        keyId,
+                        cryptography.recentReauthenticationRequestMac(keyId, credentialRequest));
+                evidenceRepository.insert(evidence, requestPayload, replayProof);
+                return Attempt.success(
+                    evidenceRepository.findByRequest(request.requestId).orElseThrow());
+              });
+      if (attempt == null) {
+        throw unavailable();
+      }
+      if (attempt.denial != null) {
+        throw new AuthenticationException(attempt.denial.code, attempt.denial.message);
+      }
+      var expected = Objects.requireNonNull(attempt.evidence);
+      return Objects.requireNonNull(
+          transaction.execute(
+              ignored -> {
+                var retained = evidenceRepository.readExactOriginal(expected);
+                requireReplayCredentials(retained, credentialRequest);
+                return retained;
+              }));
+    } finally {
+      Arrays.fill(credentialRequest, (byte) 0);
     }
-    if (attempt.denial != null) {
-      throw new AuthenticationException(attempt.denial.code, attempt.denial.message);
+  }
+
+  private void requireReplayCredentials(
+      AccountRecentReauthenticationEvidence evidence, byte[] request) {
+    var proof =
+        evidenceRepository
+            .findReplayProof(evidence)
+            .orElseThrow(AccountRecentReauthenticationService::unavailable);
+    byte[] expected = HexFormat.of().parseHex(proof.mac());
+    byte[] supplied = new byte[0];
+    try {
+      supplied =
+          HexFormat.of()
+              .parseHex(cryptography.recentReauthenticationRequestMac(proof.keyId(), request));
+      if (!MessageDigest.isEqual(expected, supplied)) throw unavailable();
+    } finally {
+      Arrays.fill(expected, (byte) 0);
+      Arrays.fill(supplied, (byte) 0);
     }
-    return Objects.requireNonNull(attempt.evidence);
+  }
+
+  private static byte[] credentialRequest(Request request) {
+    byte[] identity =
+        AccountRecentReauthenticationRepository.requestPayload(
+            request.requestId, request.accountId, request.purpose, request.creationOperationId);
+    byte[] email = new byte[0];
+    byte[] secret = new byte[0];
+    try {
+      email = strictUtf8(EmailCanonicalization.normalize(request.email));
+      secret = strictUtf8(request.secret);
+      return ByteBuffer.allocate(12 + identity.length + email.length + secret.length)
+          .putInt(identity.length)
+          .put(identity)
+          .putInt(email.length)
+          .put(email)
+          .putInt(secret.length)
+          .put(secret)
+          .array();
+    } finally {
+      Arrays.fill(identity, (byte) 0);
+      Arrays.fill(email, (byte) 0);
+      Arrays.fill(secret, (byte) 0);
+    }
+  }
+
+  private static byte[] strictUtf8(String value) {
+    try {
+      ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(value));
+      byte[] bytes = new byte[encoded.remaining()];
+      encoded.get(bytes);
+      if (encoded.hasArray()) Arrays.fill(encoded.array(), (byte) 0);
+      return bytes;
+    } catch (CharacterCodingException invalid) {
+      throw new IllegalArgumentException("Credential request must contain valid Unicode");
+    }
   }
 
   /**

@@ -49,10 +49,15 @@ import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthori
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfiguration;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
 import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -66,6 +71,7 @@ import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReserv
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimEvidence;
@@ -754,6 +760,28 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     String password = "test-only-certified-account-password";
     String otp = "test-only-certified-account-otp";
     var account = f.createCertifiedGlobalAccount(password);
+    var policyEvidenceBeforeSecondEnrollment = freshEnrollmentPolicyEvidence(f);
+    var secondCertifiedAccount =
+        f.createCertifiedGlobalAccount("test-only-second-certified-account-password");
+    assertThat(secondCertifiedAccount.getId()).isNotEqualTo(account.getId());
+    assertThat(secondCertifiedAccount.getAccountUuid()).isNotEqualTo(account.getAccountUuid());
+    assertThat(secondCertifiedAccount.getRole()).isNull();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) AS count FROM account_tenant_membership WHERE account_id = ?",
+                    secondCertifiedAccount.getId())
+                .get("count", Long.class))
+        .isZero();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) AS count FROM account_platform_restriction_current_projections"
+                        + " WHERE account_uuid = ?",
+                    secondCertifiedAccount.getAccountUuid())
+                .get("count", Long.class))
+        .isEqualTo(2L);
+    assertThat(freshEnrollmentPolicyEvidence(f)).isEqualTo(policyEvidenceBeforeSecondEnrollment);
     assertThat(account.getRole()).isNull();
     UUID accountId = account.getAccountUuid();
     assertThat(accountId).isNotEqualTo(f.account.getAccountUuid());
@@ -837,10 +865,10 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     // and an attempted tenant consumption must not cross either verification or scope boundary.
     String altered = passwordCompact.substring(0, passwordCompact.lastIndexOf('.') + 1) + "AA";
     assertThatThrownBy(() -> actors.authenticateAccount(altered))
-        .isInstanceOf(RuntimeException.class);
+        .isExactlyInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
     var environment = f.terms.captureCurrentEnvironmentBoundary();
     assertThatThrownBy(() -> actors.authenticate(passwordCompact, f.tenant, environment))
-        .isInstanceOf(RuntimeException.class);
+        .isExactlyInstanceOf(IllegalStateException.class);
     byte[] callbackSource =
         actors.withCurrentAccount(
             passwordCompact,
@@ -960,17 +988,45 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         AccountControlUiOwnerSourcesFixture.withPeer(
             "spiffe://firemud/ns/control-ui-owner-proof/sa/game-design-service")) {
       assertThatThrownBy(() -> issuance.issueAccount(otpRequest))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(IllegalStateException.class);
     }
+    var generations = new AccountAuthorityGenerationRepository(f.dsl);
+    var beforeMutation = f.tx(() -> generations.read(AuthorityScope.account(accountId)));
     f.tx(
         () -> {
           var mutation = f.accounts.findById(account.getId()).orElseThrow();
           mutation.setRole("admin");
           return f.accounts.save(mutation);
         });
-    var advanced = f.tx(() -> f.authority.captureAccount(accountId));
-    assertThat(advanced.evidence()).isNotEqualTo(originalSource.evidence());
-    assertThat(advanced.issuanceFence()).isGreaterThan(originalSource.issuanceFence());
+    // A generic scalar-role mutation advances the retained owner history, but it is not a
+    // receipt-bearing operation or canonical global-role authority. Current-source use must deny.
+    var advanced = f.tx(() -> generations.read(AuthorityScope.account(accountId)));
+    assertThat(advanced.generation()).isGreaterThan(beforeMutation.generation());
+    assertThat(advanced.sourceVersion()).isGreaterThan(beforeMutation.sourceVersion());
+    assertThat(advanced.issuanceFence().value())
+        .isGreaterThan(beforeMutation.issuanceFence().value());
+    assertThat(advanced.issuanceFence().sourceVersion())
+        .isGreaterThan(beforeMutation.issuanceFence().sourceVersion());
+    var outbox = new AccountAuthorityOutboxRepository(f.dsl);
+    var stream = "account:auth-authority:v1:account/" + accountId;
+    var checkpoint = f.tx(() -> outbox.readCheckpoint(stream).orElseThrow());
+    var event = f.tx(() -> outbox.findEvent(stream, checkpoint.outboxSequence()).orElseThrow());
+    var verified =
+        (AccountAuthoritySourceEventV1Codec.AccountEvent)
+            AccountAuthoritySourceEventV1Codec.verify(
+                new String(event.payload(), StandardCharsets.UTF_8));
+    assertThat(verified.accountState().globalRole()).isEqualTo("admin");
+    assertThat(verified.mutationKinds()).containsExactly("GLOBAL_ROLE_CHANGED");
+    assertThat(verified.accountAuthorityGeneration())
+        .isEqualTo(Long.toString(advanced.generation()));
+    assertThat(verified.sourceVersion()).isEqualTo(Long.toString(advanced.sourceVersion()));
+    assertThat(verified.issuanceFence()).isEqualTo(Long.toString(advanced.issuanceFence().value()));
+    assertThat(verified.issuanceFenceSourceVersion())
+        .isEqualTo(Long.toString(advanced.issuanceFence().sourceVersion()));
+    assertThat(checkpoint.sourceEventId()).isEqualTo(event.eventId());
+    assertThat(checkpoint.sourceEventDigest()).isEqualTo(event.eventDigest());
+    assertThatThrownBy(() -> f.tx(() -> f.authority.captureAccount(accountId)))
+        .isExactlyInstanceOf(SourceEvidenceUnavailableException.class);
     for (String compact : List.of(passwordCompact, otpCompact)) {
       var invoked = new java.util.concurrent.atomic.AtomicBoolean();
       assertThatThrownBy(
@@ -981,7 +1037,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                         invoked.set(true);
                         return actor.accountId();
                       }))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(SourceEvidenceUnavailableException.class);
       assertThat(invoked).isFalse();
     }
     assertThat(
@@ -991,6 +1047,32 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                     account.getId())
                 .get("count", Long.class))
         .isZero();
+  }
+
+  private static List<String> freshEnrollmentPolicyEvidence(
+      AccountControlUiOwnerSourcesFixture fixture) {
+    var publications =
+        fixture
+            .dsl
+            .fetch(
+                "SELECT category, revision::text AS revision, publication_id::text AS publication_id,"
+                    + " policy_id::text AS policy_id, closure_id::text AS closure_id, policy_rule,"
+                    + " closure_rule, source_identity, source_root, publication_digest,"
+                    + " encode(publication_bytes, 'hex') AS publication_bytes_hex"
+                    + " FROM account_fresh_enrollment_policy_publications ORDER BY category, revision")
+            .stream()
+            .map(record -> Arrays.toString(record.intoArray()))
+            .toList();
+    var current =
+        fixture
+            .dsl
+            .fetch(
+                "SELECT category, publication_id::text AS publication_id, revision::text AS revision"
+                    + " FROM account_fresh_enrollment_policy_current ORDER BY category")
+            .stream()
+            .map(record -> Arrays.toString(record.intoArray()))
+            .toList();
+    return List.of(publications.toString(), current.toString());
   }
 
   private AnnotationConfigApplicationContext operatorAuthorizationContext(
