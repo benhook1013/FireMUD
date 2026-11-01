@@ -99,7 +99,6 @@ public class HelpCommandHandler {
           success(
               "WHO\n"
                   + "List currently connected players in this game instance.\n"
-                  + "Gods appear first, then players.\n"
                   + "You must already be in-world with PLAY.");
       case "STATUS" ->
           success(

@@ -1367,6 +1367,33 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void typedNumericSlugsResolveInRealmAndPointerApisWithoutFreshListIndexing() {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    var selected = authorityPointer("123", "456", 7L, 44L, true, true);
+    // A second read within either response would lose the selected target.
+    Mockito.when(authority.listPointers()).thenReturn(List.of(selected), List.of());
+    Mockito.when(authority.listPointersByTenant(7L)).thenReturn(List.of(selected), List.of());
+    var service = catalogService(authority);
+
+    var realms = listGameplayRealms(service, "123");
+    assertEquals("", realms.getError().getCode());
+    assertEquals(1, realms.getRealmsCount());
+    assertEquals("456", realms.getRealms(0).getRealmSlug());
+
+    var pointer = admissionPointer(service, "123", "456");
+    assertFalse(pointer.hasError());
+    assertEquals("123", pointer.getAdmissionPointer().getWorldSlug());
+    assertEquals("456", pointer.getAdmissionPointer().getRealmSlug());
+    assertEquals("44", pointer.getAdmissionPointer().getGameInstanceId());
+    assertEquals(selected.realmId().toString(), pointer.getAdmissionPointer().getRealmId());
+    assertEquals(selected.catalogRevision(), pointer.getAdmissionPointer().getCatalogRevision());
+    Mockito.verify(authority).listPointers();
+    Mockito.verify(authority).listPointersByTenant(7L);
+    Mockito.verify(authority, Mockito.never())
+        .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
   void listGameplayRealmsTrimsWorldSelectorBeforeAuthorityResolution() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);

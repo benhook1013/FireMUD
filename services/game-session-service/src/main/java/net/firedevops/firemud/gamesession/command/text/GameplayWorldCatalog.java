@@ -84,8 +84,8 @@ public final class GameplayWorldCatalog {
   }
 
   private Optional<WorldView> resolveWorld(String selector, CatalogSnapshot snapshot) {
-    // A catalog read has no transport-local menu. Numeric input must be resolved by the
-    // retained selection owner, never against the ordering of a fresh catalog response.
+    // Typed slug lookup never interprets a selector as an index into this fresh snapshot.
+    // Unbound ordinal refusal belongs to the text command entry points.
     return resolveWorldBySlug(selector, visibleWorlds(snapshot));
   }
 
@@ -191,9 +191,6 @@ public final class GameplayWorldCatalog {
   }
 
   private Optional<WorldView> resolveWorldBySlug(String selector, List<WorldView> worlds) {
-    if (isOrdinalSelector(selector)) {
-      return Optional.empty();
-    }
     String normalized = selectorKey(selector);
     List<WorldView> matches =
         worlds.stream().filter(world -> normalized.equals(selectorKey(world.slug()))).toList();
@@ -201,7 +198,7 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmView> resolveRealm(WorldView world, String selector) {
-    if (world == null || selector == null || selector.isBlank() || isOrdinalSelector(selector)) {
+    if (world == null || selector == null || selector.isBlank()) {
       return Optional.empty();
     }
     String normalized = selectorKey(selector);
@@ -215,11 +212,7 @@ public final class GameplayWorldCatalog {
   // Admission may resolve hidden realms, but callers must still perform membership and grant
   // checks.
   Optional<RealmView> resolveRealmForAdmission(WorldView world, String selector) {
-    if (world == null
-        || selector == null
-        || selector.isBlank()
-        || isOrdinalSelector(selector)
-        || world.realms() == null) {
+    if (world == null || selector == null || selector.isBlank() || world.realms() == null) {
       return Optional.empty();
     }
     String normalized = selectorKey(selector);

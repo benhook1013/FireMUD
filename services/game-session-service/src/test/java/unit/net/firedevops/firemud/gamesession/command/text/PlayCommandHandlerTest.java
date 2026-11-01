@@ -176,6 +176,130 @@ class PlayCommandHandlerTest {
             });
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"1", "123", "2"})
+  void playRefusesUnboundNumericWorldEvenWhenExactSlugExists(String selector) {
+    gameplayCatalogProperties.getWorlds().getFirst().setSlug(selector);
+    SessionContext existing = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(existing));
+
+    var result = handler.handle("1", new TextCommandParser().parse("PLAY " + selector));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE);
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verify(sessionContextService, never())
+        .deleteBySessionId(Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        gameplayPresenceLifecycleService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"1", "123"})
+  void playRefusesUnboundNumericExplicitRealmEvenWhenExactSlugExists(String selector) {
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setSlug(selector);
+    SessionContext existing = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(existing));
+
+    var result =
+        handler.handle(
+            "1", new TextCommandParser().parse("PLAY sandbox " + selector + " Emberline"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(
+            "Selection required. Use PLAY sandbox <realm> [character] or browse REALMS first.");
+    verifyNoGameplayBindingSideEffects();
+    Mockito.verify(sessionContextService, never())
+        .deleteBySessionId(Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        gameplayPresenceLifecycleService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"PLAY demo 1", "PLAY demo production 1"})
+  void numericCharacterNameStillResolvesExactlyEvenWhenANumericRealmExists(String command) {
+    // A hidden numeric realm is available to admission lookup but must not steal a character name.
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .add(realm("1", "Hidden Realm", 22L, 41L, false, true));
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.listCharactersByAccount(
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            characterRoster(
+                "7001", "1", "22", ACCOUNT_ID, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    var result = handler.handle("1", new TextCommandParser().parse(command));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as 1");
+    Mockito.verify(sessionContextService)
+        .save(
+            Mockito.argThat(
+                saved ->
+                    saved.gameInstanceId() == 1L
+                        && saved.realmSlug().equals("production")
+                        && saved.characterId() == 7001L
+                        && saved.characterName().equals("1")));
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"PLAY demo 1", "PLAY demo production 1"})
+  void numericCharacterSelectorNeverIndexesAFreshRoster(String command) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    var result = handler.handle("1", new TextCommandParser().parse(command));
+
+    // The sole roster actor is named demo, not 1.
+    assertDemoCharacterSelectionRequired(result);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @ParameterizedTest
+  @CsvSource({"PLAY demo,demo,demo", "PLAY sandbox preview Emberline,sandbox (preview),Emberline"})
+  void localizedEntryNoticePreservesPublicAndPrivateDisplaySelection(
+      String command, String displaySelection, String character) {
+    SessionContext context =
+        new SessionContext(1L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    var result = handler.handle("1", new TextCommandParser().parse(command));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    PlayerOutput notice = result.outputs().getFirst();
+    String suffix = " as " + character;
+    assertThat(notice.text()).isEqualTo("Entered world: " + displaySelection + suffix);
+    var payload = (net.firedevops.firemud.gamesession.presentation.NoticeOutput) notice.payload();
+    assertThat(payload.arguments()).containsEntry("worldName", displaySelection);
+    var renderer = new TextPlayerOutputRenderer(new PresentationProperties());
+    assertThat(renderer.render(notice, "en-NZ")).isEqualTo(notice.text());
+    assertThat(renderer.render(notice, "fr"))
+        .isEqualTo("Entree dans le monde : " + displaySelection + suffix);
+  }
+
   @Test
   void playComposesSelectionCardinalityAndSuccessFromOneActualPointerList() {
     var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);

@@ -79,7 +79,7 @@ class HelpCommandHandlerTest {
             .get(0)
             .text()
             .contains("List currently connected players in this game instance."));
-    assertTrue(result.outputs().get(0).text().contains("Gods appear first, then players."));
+    assertFalse(result.outputs().get(0).text().contains("Gods appear first"));
     assertTrue(result.outputs().get(0).text().contains("You must already be in-world with PLAY."));
   }
 
