@@ -1009,7 +1009,7 @@ class GameplayWorldCatalogTest {
                 "live",
                 11L,
                 3L,
-                "DENY_NEW",
+                "PRESEEDED_ONLY",
                 baselineRealm.realmId(),
                 baselineRealm.playableStateNamespaceId()),
             copyRealmWithStateScope(baselineRealm, "ISOLATED"));
@@ -1017,7 +1017,12 @@ class GameplayWorldCatalogTest {
     for (GameplayWorldCatalog.RealmView changedRealm : changedRealms) {
       source.set(
           List.of(new GameplayWorldCatalog.WorldView("demo", "Demo World", List.of(changedRealm))));
-      assertThat(catalog.discoverySnapshot().fingerprint())
+      GameplayWorldCatalog.DiscoverySnapshot snapshot = catalog.discoverySnapshot();
+      assertThat(snapshot.worlds())
+          .as("changed realm must remain projected for %s", changedRealm)
+          .singleElement()
+          .satisfies(world -> assertThat(world.realms()).containsExactly(changedRealm));
+      assertThat(snapshot.fingerprint())
           .as("changed catalog evidence for %s", changedRealm)
           .isNotEqualTo(baselineFingerprint);
     }

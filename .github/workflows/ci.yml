@@ -146,13 +146,11 @@ jobs:
                 lightweight_only: false,
               };
             }
-            const partitionedSlowServices = new Set(["account-service", "game-session-service"]);
+            const slowServicePartitionCounts = { "account-service": 2, "game-session-service": 4 };
             outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>
-              partitionedSlowServices.has(module)
-                ? [
-                    { module, partition: "1", "java-version": 21 },
-                    { module, partition: "2", "java-version": 21 },
-                  ]
+              slowServicePartitionCounts[module]
+                ? Array.from({ length: slowServicePartitionCounts[module] }, (_, index) =>
+                    ({ module, partition: String(index + 1), "java-version": 21 }))
                 : [{ module, partition: "full", "java-version": 21 }]
             );
             for (const [name, value] of Object.entries(outputs)) {
@@ -1081,6 +1079,10 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: 'Declare Game Session CI partition count: 4'
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: ':'
+
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -1279,7 +1281,7 @@ jobs:
             --selection-json "$SELECTION_PATH" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Download both effective Account partition artifacts
+      - name: Download all effective Account partition artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         continue-on-error: true
         with:
@@ -1390,7 +1392,7 @@ jobs:
             --selection-json "$SELECTION_PATH" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Download both effective Game Session partition artifacts
+      - name: Download all effective Game Session partition artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         continue-on-error: true
         with:

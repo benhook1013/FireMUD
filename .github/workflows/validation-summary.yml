@@ -177,10 +177,10 @@ jobs:
             for (const job of jobs) {
               if (fixedNames.has(job.name)) continue;
               if ([...aggregateNames.values()].includes(job.name)) continue;
-              const match = /^Build and Test \(([a-z0-9-]+)(?: \/ (full|[12]))?\)$/.exec(job.name || "");
+              const match = /^Build and Test \(([a-z0-9-]+)(?: \/ (full|[1-4]))?\)$/.exec(job.name || "");
               if (match && modules.has(match[1])) {
                 const [, module, partition] = match;
-                if (partition && (slowServices.has(module) ? !["1", "2"].includes(partition) : partition !== "full")) {
+                if (partition && (slowServices.has(module) ? !(module === "game-session-service" ? ["1", "2", "3", "4"] : ["1", "2"]).includes(partition) : partition !== "full")) {
                   throw new Error("Invalid module partition: " + job.name);
                 }
                 matrix.push({ job, module, partition: partition || null });
@@ -202,9 +202,32 @@ jobs:
             for (const module of slowServices) {
               const serviceMatrix = matrix.filter(entry => entry.module === module);
               const aggregate = aggregates.get(module);
-              const partitioned = serviceMatrix.length === 2 &&
+              // Bind the selected count to this exact native source attempt, never a mutable branch.
+              // Old complete two-way Game Session jobs have native steps but no count marker.
+              // Empty step inventories cannot establish that historical shape: wholly skipped
+              // new jobs must not turn a truncated four-way matrix into an apparent old pair.
+              let expectedPartitions = "1,2";
+              let invalidPlanMarkers = false;
+              if (module === "game-session-service" && serviceMatrix.some(entry => entry.partition !== null)) {
+                const markers = serviceMatrix.map(entry => {
+                  const steps = entry.job.steps;
+                  if (!Array.isArray(steps) || steps.length === 0 || steps.length > 100 ||
+                      steps.some(step => typeof step?.name !== "string")) return null;
+                  return steps.filter(step => step.name.startsWith("Declare Game Session CI partition count:"));
+                });
+                const fourWay = markers.some(entries => entries?.length > 0);
+                if (fourWay) {
+                  expectedPartitions = "1,2,3,4";
+                  invalidPlanMarkers = markers.some(entries => entries?.length !== 1 ||
+                    entries[0].name !== "Declare Game Session CI partition count: 4");
+                } else {
+                  invalidPlanMarkers = markers.some(entries => entries === null);
+                }
+              }
+              const partitioned = !invalidPlanMarkers &&
+                serviceMatrix.length === expectedPartitions.split(",").length &&
                 serviceMatrix.every(entry => entry.partition !== null) &&
-                serviceMatrix.map(entry => entry.partition).sort().join(",") === "1,2";
+                serviceMatrix.map(entry => entry.partition).sort().join(",") === expectedPartitions;
               const legacy = serviceMatrix.length === 1 && serviceMatrix[0].partition === null;
               if (serviceMatrix.length > 0 && !partitioned && !legacy) invalidSlowServiceMatrix = true;
               if (partitioned && (

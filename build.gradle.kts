@@ -91,7 +91,22 @@ tasks.register<JavaCompile>("compileBufGeneratedJava") {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
-val checkstyleToolVersion = "14.3.0"
+val slowServiceCiPartitionCounts = mapOf("account-service" to 2, "game-session-service" to 4)
+val slowServiceCiModules = slowServiceCiPartitionCounts.keys
+val slowServiceCiPartition = providers.gradleProperty("slowServiceCiPartition").orNull
+val slowServiceCiPartitionModule = providers.gradleProperty("slowServiceCiPartitionModule").orNull
+if ((slowServiceCiPartition == null) != (slowServiceCiPartitionModule == null)) {
+    throw GradleException("slowServiceCiPartition and slowServiceCiPartitionModule must be supplied together")
+}
+if (slowServiceCiPartitionModule != null) {
+    val partitionCount = slowServiceCiPartitionCounts[slowServiceCiPartitionModule]
+        ?: throw GradleException("slowServiceCiPartitionModule must name an allowed slow service")
+    if (slowServiceCiPartition !in (1..partitionCount).map { it.toString() }) {
+        throw GradleException("slowServiceCiPartition is outside the selected module partition range")
+    }
+}
+
+val checkstyleToolVersion = "14.4.0"
 val spotbugsToolVersion = "4.10.5"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
@@ -384,8 +399,6 @@ subprojects {
         if (file("src/test/java/integration").exists()) add("integrationTest")
         if (file("src/test/java/crossservice").exists()) add("crossServiceTest")
     }
-    val slowServiceCiModules = setOf("account-service", "game-session-service")
-    val slowServiceCiPartition = providers.gradleProperty("slowServiceCiPartition").orNull
     val slowServiceCiCoverageAggregate =
         providers.gradleProperty("slowServiceCiCoverageAggregate").orNull
     val slowServiceCiCoverageClassesDirectory =
@@ -414,10 +427,7 @@ subprojects {
         } else {
             null
         }
-    if (project.name in slowServiceCiModules && slowServiceCiPartition != null) {
-        if (slowServiceCiPartition !in setOf("1", "2")) {
-            throw GradleException("slowServiceCiPartition must be 1 or 2")
-        }
+    if (project.name == slowServiceCiPartitionModule) {
         tasks.withType<Test>().configureEach {
             val selectorFile = layout.buildDirectory.file(
                 "slow-service-ci-partition/" + project.name +
