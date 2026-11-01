@@ -63,8 +63,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class VersionServiceImpl implements VersionService {
   private static final int DEFAULT_PLUGIN_VERSION_STATUS_LIMIT = 100;
   private static final int MAX_PLUGIN_VERSION_STATUS_LIMIT = 200;
-  private static final String RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE =
-      "PARTICIPANT_DEPENDENCY_UNAVAILABLE_RETRYABLE";
+  private static final String PARTICIPANT_DEPENDENCY_FAILURE_CODE =
+      "PARTICIPANT_DEPENDENCY_UNAVAILABLE";
 
   private static final Logger logger = LoggingUtil.getLogger(VersionServiceImpl.class);
 
@@ -209,11 +209,11 @@ public class VersionServiceImpl implements VersionService {
       // This newly reserved path never dispatches readiness, even after the participant gate.
       String failureCode =
           retryableParticipantDependencyFailure
-              ? RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE
+              ? PARTICIPANT_DEPENDENCY_FAILURE_CODE
               : publishFailureCode(operationFailure);
       String failureMessage =
           retryableParticipantDependencyFailure
-              ? retryableParticipantDependencyFailureMessage()
+              ? participantDependencyFailureMessage()
               : publishFailureMessage(operationFailure);
       logger.warn(
           "Script patch publish failed for tenant {} workflow {} with code {}",
@@ -844,8 +844,8 @@ public class VersionServiceImpl implements VersionService {
     return ex.getMessage() == null ? publishFailureCode(ex) : ex.getMessage();
   }
 
-  private String retryableParticipantDependencyFailureMessage() {
-    return RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE
+  private String participantDependencyFailureMessage() {
+    return PARTICIPANT_DEPENDENCY_FAILURE_CODE
         + ": participant digest gating encountered a transient dependency failure before notification; exact retries replay this failed receipt; the retained canonical patch tuple requires owner reconciliation before any new request";
   }
 

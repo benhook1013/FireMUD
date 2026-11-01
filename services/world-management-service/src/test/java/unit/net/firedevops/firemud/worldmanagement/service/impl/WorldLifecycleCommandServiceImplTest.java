@@ -3,7 +3,6 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -55,6 +54,9 @@ import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
@@ -504,34 +506,32 @@ class WorldLifecycleCommandServiceImplTest {
         regionInstanceRepository);
   }
 
-  @Test
-  void terminatedWorldInstanceRejectsDifferentOrMissingRetainedRequestIdWithoutEffects() {
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = "term-1")
+  void terminatedWorldInstanceRejectsDifferentOrMissingRetainedRequestIdWithoutEffects(
+      String retainedRequestId) {
     WorldInstance instance = activeWorldInstance();
     instance.setStatus("TERMINATED");
-    instance.setTerminationRequestId("term-1");
+    instance.setTerminationRequestId(retainedRequestId);
     instance.setLifecycleEpoch(4L);
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
+    String requestId = retainedRequestId == null ? "term-1" : "term-2";
 
-    IllegalArgumentException differentRequest =
+    assertTerminationConflictWithoutEffects(instance, retainedRequestId, requestId);
+  }
+
+  private void assertTerminationConflictWithoutEffects(
+      WorldInstance instance, String retainedRequestId, String requestId) {
+    IllegalArgumentException conflict =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-2", "stop"));
-    assertTrue(differentRequest.getMessage().startsWith("IDEMPOTENCY_CONFLICT:"));
+            () -> service.terminateWorldInstance(42L, 101L, 2L, requestId, "stop"));
+    assertTrue(conflict.getMessage().startsWith("IDEMPOTENCY_CONFLICT:"));
     assertEquals("TERMINATED", instance.getStatus());
     assertEquals(4L, instance.getLifecycleEpoch());
-    assertEquals("term-1", instance.getTerminationRequestId());
-
-    instance.setTerminationRequestId(null);
-    IllegalArgumentException missingRetainedRequest =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
-    assertTrue(missingRetainedRequest.getMessage().startsWith("IDEMPOTENCY_CONFLICT:"));
-    assertEquals("TERMINATED", instance.getStatus());
-    assertEquals(4L, instance.getLifecycleEpoch());
-    assertNull(instance.getTerminationRequestId());
-
+    assertEquals(retainedRequestId, instance.getTerminationRequestId());
     verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
     verifyNoInteractions(
         entityManagementClient,
