@@ -28,7 +28,6 @@ RUN set -eu; \
             > "$mirror_list"; \
         mirror_uri="mirror+file:$mirror_list"; \
         sed -i -E "s|^URIs:[[:space:]]*https://archive[.]ubuntu[.]com/ubuntu/?[[:space:]]*\$|URIs: $mirror_uri|" "$sources"; \
-        sed -i -E "s|^URIs:[[:space:]]*https://security[.]ubuntu[.]com/ubuntu/?[[:space:]]*\$|URIs: $mirror_uri|" "$sources"; \
     fi; \
     if grep -Eq '^URIs:[[:space:]]*http://(archive|security)\.ubuntu\.com/ubuntu/?[[:space:]]*$|^URIs:[[:space:]]*http://ports\.ubuntu\.com/ubuntu-ports/?[[:space:]]*$' "$sources"; then \
         echo "Ubuntu sources must use HTTPS." >&2; \

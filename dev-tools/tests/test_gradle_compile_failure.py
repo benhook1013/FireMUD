@@ -478,6 +478,7 @@ class RuntimeBootJarTests(unittest.TestCase):
         launcher.chmod(0o755)
         self.env = {**os.environ, 'TMPDIR': str(self.root), 'RUNNER_TEMP': str(self.root),
                     'GITHUB_OUTPUT': str(self.root / 'step-output')}
+        self.env.pop('FIREMUD_LOCAL_RESOURCE_SESSION_FD', None)
 
     def run_build(self, status=0, output='', producer='', lastpipe=False, signal_number=None):
         runner = self.write('gradlew', f'#!{sys.executable}\n'
