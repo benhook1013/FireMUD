@@ -56,6 +56,37 @@ class DirectTextWorldSelectionServiceTest {
       mock(CanonicalPlayerRouteReadService.class);
   private final MutableClock clock = new MutableClock();
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void historicalEncodingRemainsClockIndependentWhileRestorationAndResolutionRefuseUnliveHandles(
+      boolean expired) {
+    var first = target("");
+    var reads = new AtomicInteger();
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              reads.incrementAndGet();
+              return List.of(world(first));
+            });
+    var source = service(catalog, List.of(first));
+    var menu = source.browse().orElseThrow();
+    byte[] original = source.encodeSnapshot(menu).orElseThrow();
+    var foreignOwner = service(catalog, List.of(first));
+    assertThat(reads.get()).isEqualTo(2);
+    clearInvocations(reader);
+    clock.now = expired ? menu.expiresAt() : NOW.minusNanos(1);
+
+    // The new immediate-discovery helper must not change generic historical encoding semantics.
+    assertThat(source.encodeSnapshot(menu))
+        .hasValueSatisfying(bytes -> assertThat(bytes).isEqualTo(original));
+    assertThat(foreignOwner.encodeSnapshot(menu)).isEmpty();
+    assertThat(source.encodeSnapshot(null)).isEmpty();
+    assertThat(source.restoreSnapshot(original)).isEmpty();
+    assertThat(source.resolve(menu, "1")).isEmpty();
+    assertThat(reads.get()).isEqualTo(2);
+    verifyNoInteractions(reader);
+  }
+
   @Test
   void restoresAcrossInstancesWithOriginalOrderOwnershipAndDeadline() {
     var first = target("");

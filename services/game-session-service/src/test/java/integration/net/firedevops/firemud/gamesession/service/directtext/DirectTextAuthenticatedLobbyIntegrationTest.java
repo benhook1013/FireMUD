@@ -151,7 +151,7 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     source.setUsername(postgres.getUsername());
     source.setPassword(postgres.getPassword());
     source.setSchema(schema);
-    migration("1051").migrate();
+    migration("1051.1").migrate();
     dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     manager = new DataSourceTransactionManager(source);
     tx = new TransactionTemplate(manager);

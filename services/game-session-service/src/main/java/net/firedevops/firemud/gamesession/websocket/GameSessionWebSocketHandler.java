@@ -212,11 +212,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       if (!ensureBootstrapSessionContextIfMissing(session, sessionId)) {
         return;
       }
+      Optional<ObservedDirectTextTransport> observed = resolveObservedDirectTextTransport(session);
       TextCommandInterpretationResult interpretation =
-          resolveObservedDirectTextTransport(session)
-              .map(
-                  observed -> interpreter.interpret(sessionId, command, requiresSoloTick, observed))
-              .orElseGet(() -> interpreter.interpret(sessionId, command, requiresSoloTick));
+          observed.isPresent()
+              ? interpreter.interpret(sessionId, command, requiresSoloTick, observed.orElseThrow())
+              : interpreter.interpret(sessionId, command, requiresSoloTick);
       TextCommand resolvedCommand =
           interpretation.resolvedCommand() == null ? command : interpretation.resolvedCommand();
       recordGameplayActivity(sessionId, interpretation);
