@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -241,11 +242,13 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
   }
 
   private static String rowAndXmin(DSLContext dsl, long pointerId) {
-    return dsl.fetchOne(
-            "SELECT xmin::text || ':' || "
-                + "encode(convert_to(to_jsonb(pointer)::text, 'UTF8'), 'hex') "
-                + "FROM gameplay_admission_pointer AS pointer WHERE id = ?",
-            pointerId)
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT xmin::text || ':' || "
+                    + "encode(convert_to(to_jsonb(pointer)::text, 'UTF8'), 'hex') "
+                    + "FROM gameplay_admission_pointer AS pointer WHERE id = ?",
+                pointerId),
+            "Expected the retained admission pointer row")
         .get(0, String.class);
   }
 
@@ -274,7 +277,10 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
   }
 
   private static long scalarLong(DSLContext dsl, String query, Object... bindings) {
-    return dsl.fetchOne(query, bindings).get(0, Long.class);
+    return Objects.requireNonNull(
+        Objects.requireNonNull(dsl.fetchOne(query, bindings), "Expected one scalar query row")
+            .get(0, Long.class),
+        "Expected a non-null scalar query value");
   }
 
   private static void assertUniqueIndexViolation(Runnable statement) {
