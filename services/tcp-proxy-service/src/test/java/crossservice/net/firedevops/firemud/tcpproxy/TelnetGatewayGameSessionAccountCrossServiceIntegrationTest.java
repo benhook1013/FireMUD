@@ -485,6 +485,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         GameplayTelnetScenarios.reconnectAfterReady(
             this::openTelnetClient,
             READY_LOOK_TEXT,
+            LookTestFixtures.DESTINATION_ROOM_ID,
             firstClient -> {
               firstClient.sendLine("MOVE north");
               assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
