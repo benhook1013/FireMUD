@@ -2,6 +2,8 @@ package integration.net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.nio.file.Path;
 import java.util.Map;
@@ -13,6 +15,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
+import net.firedevops.firemud.gamedesign.client.AccountTenantCreationCurrentAuthorizationClient;
 import net.firedevops.firemud.gamedesign.repository.AccountAuthorizedTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
@@ -20,6 +24,7 @@ import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOu
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.service.impl.AccountAuthorizedTenantCreationService;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -231,6 +236,118 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
         new GameTenantCreationOriginalOutcomeRepository(dsl),
         new AccountAuthorizedTenantCreationRepository(dsl),
         write);
+  }
+
+  @Test
+  void explicitClosureCommitsExactTombstoneAndRefusesChangedBindingAndDelayedCreation() {
+    Fixture fixture = fixture();
+    var authorization = mock(AccountTenantCreationCurrentAuthorizationClient.class);
+    var owner = closureOwner(fixture, authorization);
+    Binding binding = closureBinding();
+    owner.closeOriginal(binding);
+    var original =
+        java.util.Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT *, xmin::text AS original_xmin FROM game_tenant_creation_original_outcomes WHERE target_namespace = ? AND creation_request_id = ?",
+                NAMESPACE,
+                REQUEST_ID));
+    owner.closeOriginal(binding);
+    assertThatThrownBy(
+            () ->
+                owner.closeOriginal(
+                    new Binding(
+                        NAMESPACE,
+                        REQUEST_ID,
+                        ACCOUNT_OPERATION_ID,
+                        UUID.randomUUID(),
+                        REQUEST_DIGEST,
+                        ACCOUNT_DIGEST)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                owner.create(
+                    new AccountAuthorizedTenantCreationService.CandidateRequest(
+                        UUID.randomUUID(), binding, SOURCE_KEY, NAME, DESCRIPTION)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            java.util.Objects.requireNonNull(
+                fixture.dsl.fetchOne(
+                    "SELECT *, xmin::text AS original_xmin FROM game_tenant_creation_original_outcomes WHERE target_namespace = ? AND creation_request_id = ?",
+                    NAMESPACE,
+                    REQUEST_ID)))
+        .isEqualTo(original);
+    assertThat(fixture.outcomes.readCommitted(repositoryBinding()).orElseThrow().status())
+        .isEqualTo(OutcomeStatus.NOT_CREATED);
+    assertThat(fixture.dsl.fetchCount(GAME)).isZero();
+    assertThat(fixture.dsl.fetchCount(OPERATIONS)).isZero();
+    assertThat(fixture.dsl.fetchCount(DISPATCHES)).isZero();
+    verifyNoInteractions(authorization);
+  }
+
+  @Test
+  void creationHoldingOriginalLockWinsAgainstExplicitClosureWithoutOverwritingCreated()
+      throws Exception {
+    Fixture fixture = fixture();
+    var owner = closureOwner(fixture, mock(AccountTenantCreationCurrentAuthorizationClient.class));
+    CountDownLatch created = new CountDownLatch(1), releaseCommit = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<FreshTenantCreationEvidence> creation =
+          executor.submit(
+              () ->
+                  fixture.inTransaction(
+                      () -> {
+                        var binding = repositoryBinding();
+                        fixture.outcomes.claimLocked(binding);
+                        var receipt =
+                            fixture.creation.createCandidate(
+                                NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+                        fixture.outcomes.markCreatedLocked(binding, receipt);
+                        fixture.dispatches.recordAuthorizedDispatch(
+                            binding, AUTHORIZATION_READ_ID, System.currentTimeMillis() + 60000);
+                        created.countDown();
+                        await(releaseCommit);
+                        return receipt;
+                      }));
+      assertThat(created.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<Throwable> closure =
+          executor.submit(
+              () -> {
+                try {
+                  owner.closeOriginal(closureBinding());
+                  return null;
+                } catch (RuntimeException failure) {
+                  return failure;
+                }
+              });
+      waitForAdvisoryWaiter(fixture.dsl);
+      releaseCommit.countDown();
+      var receipt = creation.get(10, TimeUnit.SECONDS);
+      assertThat(closure.get(10, TimeUnit.SECONDS)).isInstanceOf(IllegalStateException.class);
+      assertThat(fixture.outcomes.readCommitted(repositoryBinding()).orElseThrow().status())
+          .isEqualTo(OutcomeStatus.CREATED);
+      assertThat(fixture.creation.read(REQUEST_ID, NAMESPACE)).contains(receipt);
+      assertThat(fixture.dsl.fetchCount(OUTCOMES)).isEqualTo(1);
+      assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
+    } finally {
+      releaseCommit.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private static Binding closureBinding() {
+    return new Binding(
+        NAMESPACE, REQUEST_ID, ACCOUNT_OPERATION_ID, ACCOUNT_ID, REQUEST_DIGEST, ACCOUNT_DIGEST);
+  }
+
+  private static AccountAuthorizedTenantCreationService closureOwner(
+      Fixture fixture, AccountTenantCreationCurrentAuthorizationClient authorization) {
+    return new AccountAuthorizedTenantCreationService(
+        authorization,
+        fixture.creation,
+        fixture.outcomes,
+        fixture.dispatches,
+        java.util.Objects.requireNonNull(fixture.write.getTransactionManager()));
   }
 
   private static OriginalOutcomeBinding repositoryBinding() {

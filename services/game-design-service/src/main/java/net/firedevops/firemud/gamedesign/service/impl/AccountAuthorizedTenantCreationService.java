@@ -160,6 +160,21 @@ public final class AccountAuthorizedTenantCreationService {
     return readAndVerifyReceipt(request, repositoryBinding, terminal);
   }
 
+  /**
+   * Explicit original-bound future-create exclusion, serialized with V30/V1033 creation. If a
+   * creation already won, its immutable CREATED outcome is preserved and this method refuses.
+   * Successful return acknowledges a commit only; the caller independently reads terminal proof.
+   */
+  public void closeOriginal(Binding binding) {
+    requireOutsideSql();
+    Objects.requireNonNull(binding, "binding");
+    ownerWrite.executeWithoutResult(
+        transaction -> {
+          dispatchRepository.applyLocalWriteTimeouts();
+          outcomeRepository.closeNotCreatedLocked(toRepositoryBinding(binding));
+        });
+  }
+
   private FreshTenantCreationEvidence replayTerminal(
       CandidateRequest request, OriginalOutcomeBinding binding, OriginalOutcomeSnapshot snapshot) {
     if (!snapshot.binding().equals(binding)) {

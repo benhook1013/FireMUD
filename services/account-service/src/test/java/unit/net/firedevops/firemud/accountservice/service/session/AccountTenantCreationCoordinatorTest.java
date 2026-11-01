@@ -37,6 +37,7 @@ class AccountTenantCreationCoordinatorTest {
     order.verify(f.creation).create(f.call, f.binding, "fresh", "Game", null, f.deadline);
     order.verify(f.outcomes).readOriginal(f.binding);
     order.verify(f.completion).complete(f.operation, f.terminal, f.environment, f.recent);
+    verify(f.creation, never()).closeOriginal(any());
   }
 
   @Test
@@ -55,7 +56,9 @@ class AccountTenantCreationCoordinatorTest {
     when(f.dispatches.hasClaim(f.operation)).thenReturn(true);
     when(f.outcomes.readOriginal(f.binding)).thenThrow(Status.NOT_FOUND.asRuntimeException());
     assertThat(f.start().state()).isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
-    verifyNoInteractions(f.admission, f.creation, f.completion);
+    verifyNoInteractions(f.admission, f.completion);
+    verify(f.creation).closeOriginal(f.binding);
+    verify(f.creation, never()).create(any(), any(), any(), any(), any(), Mockito.anyLong());
     verify(f.dispatches, never()).claim(any(), any(), any());
   }
 
@@ -63,7 +66,8 @@ class AccountTenantCreationCoordinatorTest {
   void concurrentClaimLoserOnlyReconcilesAndDoesNotInventNoCreate() {
     var f = new Fixture();
     when(f.dispatches.claim(f.prepared, f.environment, f.recent)).thenReturn(Optional.empty());
-    when(f.outcomes.readOriginal(f.binding)).thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException());
+    when(f.outcomes.readOriginal(f.binding))
+        .thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException());
     assertThat(f.start().state()).isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
     verifyNoInteractions(f.creation, f.completion, f.orders);
   }
@@ -71,8 +75,12 @@ class AccountTenantCreationCoordinatorTest {
   @Test
   void definitiveNotCreatedSettlesOnlyExactOriginalWithCommittedReadback() {
     var f = new Fixture();
-    var negative = new GameTenantCreationOriginalOutcomeEvidence(1, f.binding,
-        GameTenantCreationOriginalOutcomeEvidence.Outcome.NOT_CREATED, Optional.empty());
+    var negative =
+        new GameTenantCreationOriginalOutcomeEvidence(
+            1,
+            f.binding,
+            GameTenantCreationOriginalOutcomeEvidence.Outcome.NOT_CREATED,
+            Optional.empty());
     when(f.terminal.evidence()).thenReturn(negative);
     when(f.orders.readOriginal(f.operation)).thenReturn(Optional.of(f.holder));
     when(f.orders.readSettlement(f.operation)).thenReturn(Optional.of(negative));
@@ -89,59 +97,189 @@ class AccountTenantCreationCoordinatorTest {
     when(f.completion.complete(f.operation, f.terminal, f.environment, f.recent))
         .thenThrow(new IllegalStateException("Final authority expired"));
     assertThatThrownBy(() -> f.coordinator.recover(f.operation, f.recent, f.environment))
-        .isInstanceOf(IllegalStateException.class).hasMessage("Final authority expired");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Final authority expired");
     verifyNoInteractions(f.admission, f.creation, f.orders);
   }
 
+  @Test
+  void absentOriginalExplicitlyClosesThenSettlesOnlyPrivateTerminalReadback() {
+    var f = new Fixture();
+    var negative =
+        new GameTenantCreationOriginalOutcomeEvidence(
+            1,
+            f.binding,
+            GameTenantCreationOriginalOutcomeEvidence.Outcome.NOT_CREATED,
+            Optional.empty());
+    when(f.terminal.evidence()).thenReturn(negative);
+    when(f.outcomes.readOriginal(f.binding))
+        .thenThrow(Status.NOT_FOUND.asRuntimeException())
+        .thenReturn(f.terminal);
+    when(f.orders.readOriginal(f.operation)).thenReturn(Optional.of(f.holder));
+    when(f.orders.readSettlement(f.operation)).thenReturn(Optional.of(negative));
+    assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
+        .isEqualTo(AccountTenantCreationCoordinator.State.NOT_CREATED);
+    var order = Mockito.inOrder(f.outcomes, f.creation, f.orders);
+    order.verify(f.outcomes).readOriginal(f.binding);
+    order.verify(f.creation).closeOriginal(f.binding);
+    order.verify(f.outcomes).readOriginal(f.binding);
+    order.verify(f.orders).settleLocked(f.holder, f.terminal);
+    verifyNoInteractions(f.admission, f.completion);
+  }
+
+  @Test
+  void closureLostReplyAndCreationWinningBothUseIndependentTerminalInsteadOfAck() {
+    for (Status failure : new Status[] {Status.DEADLINE_EXCEEDED, Status.FAILED_PRECONDITION}) {
+      var f = new Fixture();
+      when(f.outcomes.readOriginal(f.binding))
+          .thenThrow(Status.FAILED_PRECONDITION.asRuntimeException())
+          .thenReturn(f.terminal);
+      Mockito.doThrow(failure.asRuntimeException()).when(f.creation).closeOriginal(f.binding);
+      assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
+          .isEqualTo(AccountTenantCreationCoordinator.State.COMPLETED);
+      verify(f.creation).closeOriginal(f.binding);
+      verify(f.completion).complete(f.operation, f.terminal, f.environment, f.recent);
+      verifyNoInteractions(f.orders, f.admission);
+    }
+  }
+
+  @Test
+  void closureAckOrFailureWithUncertainReadbackCannotBecomeNegative() {
+    for (boolean lostAck : new boolean[] {false, true}) {
+      var f = new Fixture();
+      when(f.outcomes.readOriginal(f.binding))
+          .thenThrow(
+              Status.NOT_FOUND.asRuntimeException(), Status.UNAVAILABLE.asRuntimeException());
+      if (lostAck)
+        Mockito.doThrow(Status.UNAVAILABLE.asRuntimeException())
+            .when(f.creation)
+            .closeOriginal(f.binding);
+      assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
+          .isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
+      verify(f.creation).closeOriginal(f.binding);
+      verifyNoInteractions(f.orders, f.completion, f.admission);
+    }
+  }
+
   private static final class Fixture {
-    final UUID operation = UUID.randomUUID(), call = UUID.randomUUID(), requestId = UUID.randomUUID(), gdRequest = UUID.randomUUID();
+    final UUID operation = UUID.randomUUID(),
+        call = UUID.randomUUID(),
+        requestId = UUID.randomUUID(),
+        gdRequest = UUID.randomUUID();
     final UUID account = UUID.randomUUID();
     final long deadline = System.currentTimeMillis() + 60000;
-    final AccountTenantCreationIntentRepository.Request request = new AccountTenantCreationIntentRepository.Request(
-        requestId, operation, gdRequest, account, "test", "fresh", "Game", null,
-        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), 1, true);
+    final AccountTenantCreationIntentRepository.Request request =
+        new AccountTenantCreationIntentRepository.Request(
+            requestId,
+            operation,
+            gdRequest,
+            account,
+            "test",
+            "fresh",
+            "Game",
+            null,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1,
+            true);
     final GameTenantCreationOriginalOutcomeEvidence.Binding binding;
-    final AccountTenantCreationSourceOrderBinding holder = mock(AccountTenantCreationSourceOrderBinding.class);
-    final AccountTenantCreationAdmissionOwner admission = mock(AccountTenantCreationAdmissionOwner.class);
-    final AccountTenantCreationDispatchRepository dispatches = mock(AccountTenantCreationDispatchRepository.class);
-    final GameDesignAuthorizedTenantCreationClient creation = mock(GameDesignAuthorizedTenantCreationClient.class);
-    final GameDesignOriginalTenantCreationOutcomeClient outcomes = mock(GameDesignOriginalTenantCreationOutcomeClient.class);
-    final AccountTenantCreationCompletionOwner completion = mock(AccountTenantCreationCompletionOwner.class);
-    final AccountTenantCreationSourceOrderRepository orders = mock(AccountTenantCreationSourceOrderRepository.class);
-    final AccountTenantCreationAdmissionOwner.PreparedResult prepared = mock(AccountTenantCreationAdmissionOwner.PreparedResult.class);
-    final AccountRecentReauthenticationEvidence recent = mock(AccountRecentReauthenticationEvidence.class);
+    final AccountTenantCreationSourceOrderBinding holder =
+        mock(AccountTenantCreationSourceOrderBinding.class);
+    final AccountTenantCreationAdmissionOwner admission =
+        mock(AccountTenantCreationAdmissionOwner.class);
+    final AccountTenantCreationDispatchRepository dispatches =
+        mock(AccountTenantCreationDispatchRepository.class);
+    final GameDesignAuthorizedTenantCreationClient creation =
+        mock(GameDesignAuthorizedTenantCreationClient.class);
+    final GameDesignOriginalTenantCreationOutcomeClient outcomes =
+        mock(GameDesignOriginalTenantCreationOutcomeClient.class);
+    final AccountTenantCreationCompletionOwner completion =
+        mock(AccountTenantCreationCompletionOwner.class);
+    final AccountTenantCreationSourceOrderRepository orders =
+        mock(AccountTenantCreationSourceOrderRepository.class);
+    final AccountTenantCreationAdmissionOwner.PreparedResult prepared =
+        mock(AccountTenantCreationAdmissionOwner.PreparedResult.class);
+    final AccountRecentReauthenticationEvidence recent =
+        mock(AccountRecentReauthenticationEvidence.class);
     final CapturedEnvironmentBoundary environment = mock(CapturedEnvironmentBoundary.class);
     final VerifiedTerminal terminal = mock(VerifiedTerminal.class);
     final AccountTenantCreationCoordinator coordinator;
+
     Fixture() {
-      String digest = GameTenantCreationDigest.requestDigest("test", gdRequest, "fresh", "Game", null);
-      binding = new GameTenantCreationOriginalOutcomeEvidence.Binding("test", gdRequest, operation, account, digest, "sha256:" + "a".repeat(64));
+      String digest =
+          GameTenantCreationDigest.requestDigest("test", gdRequest, "fresh", "Game", null);
+      binding =
+          new GameTenantCreationOriginalOutcomeEvidence.Binding(
+              "test", gdRequest, operation, account, digest, "sha256:" + "a".repeat(64));
       UUID ownerOperation = UUID.randomUUID(), tenant = UUID.randomUUID();
-      var receipt = new FreshTenantCreationEvidence(1, "test", gdRequest, ownerOperation, digest, tenant, 7L,
-          "fresh", "NEW_GAME_ROW", GameTenantCreationDigest.evidenceDigest("test", gdRequest, ownerOperation, digest, tenant, 7L, "fresh", "NEW_GAME_ROW"));
-      var evidence = new GameTenantCreationOriginalOutcomeEvidence(1, binding, GameTenantCreationOriginalOutcomeEvidence.Outcome.CREATED, Optional.of(receipt));
-      var intent = new AccountTenantCreationIntentRepository.OriginalIntent(requestId, operation, gdRequest, account,
-          "test", "fresh", "Game", null, request.recentReauthenticationEvidenceId(), request.creatorPartyId(),
-          request.consentOperationId(), 1, true, digest, new byte[] {1}, "sha256:" + "b".repeat(64), Instant.now());
-      var original = new AccountTenantCreationDispatchRepository.Original(intent,
-          mock(AccountTenantCreationAdmissionRepository.Admitted.class), holder);
+      var receipt =
+          new FreshTenantCreationEvidence(
+              1,
+              "test",
+              gdRequest,
+              ownerOperation,
+              digest,
+              tenant,
+              7L,
+              "fresh",
+              "NEW_GAME_ROW",
+              GameTenantCreationDigest.evidenceDigest(
+                  "test", gdRequest, ownerOperation, digest, tenant, 7L, "fresh", "NEW_GAME_ROW"));
+      var evidence =
+          new GameTenantCreationOriginalOutcomeEvidence(
+              1,
+              binding,
+              GameTenantCreationOriginalOutcomeEvidence.Outcome.CREATED,
+              Optional.of(receipt));
+      var intent =
+          new AccountTenantCreationIntentRepository.OriginalIntent(
+              requestId,
+              operation,
+              gdRequest,
+              account,
+              "test",
+              "fresh",
+              "Game",
+              null,
+              request.recentReauthenticationEvidenceId(),
+              request.creatorPartyId(),
+              request.consentOperationId(),
+              1,
+              true,
+              digest,
+              new byte[] {1},
+              "sha256:" + "b".repeat(64),
+              Instant.now());
+      var original =
+          new AccountTenantCreationDispatchRepository.Original(
+              intent, mock(AccountTenantCreationAdmissionRepository.Admitted.class), holder);
       when(holder.outcomeBinding()).thenReturn(binding);
       when(holder.canonicalBytes()).thenReturn(new byte[] {2});
       when(dispatches.readOriginal(operation)).thenReturn(original);
       var initial = mock(AccountTenantCreationDispatchRepository.InitialDispatch.class);
-      when(initial.original()).thenReturn(original); when(initial.callId()).thenReturn(call); when(initial.validBefore()).thenReturn(deadline);
+      when(initial.original()).thenReturn(original);
+      when(initial.callId()).thenReturn(call);
+      when(initial.validBefore()).thenReturn(deadline);
       when(admission.start("jwt", request, recent, environment)).thenReturn(prepared);
       when(dispatches.claim(prepared, environment, recent)).thenReturn(Optional.of(initial));
       when(creation.create(call, binding, "fresh", "Game", null, deadline)).thenReturn(receipt);
-      when(terminal.binding()).thenReturn(binding); when(terminal.evidence()).thenReturn(evidence);
+      when(terminal.binding()).thenReturn(binding);
+      when(terminal.evidence()).thenReturn(evidence);
       when(outcomes.readOriginal(binding)).thenReturn(terminal);
       var completed = mock(AccountTenantCreationCompletionOwner.Result.class);
-      when(completed.payload()).thenReturn(new byte[] {3}); when(completed.digest()).thenReturn("digest");
+      when(completed.payload()).thenReturn(new byte[] {3});
+      when(completed.digest()).thenReturn("digest");
       when(completion.complete(operation, terminal, environment, recent)).thenReturn(completed);
       var manager = mock(PlatformTransactionManager.class);
       when(manager.getTransaction(any())).thenAnswer(invocation -> mock(TransactionStatus.class));
-      coordinator = new AccountTenantCreationCoordinator(admission, dispatches, creation, outcomes, completion, orders, manager);
+      coordinator =
+          new AccountTenantCreationCoordinator(
+              admission, dispatches, creation, outcomes, completion, orders, manager);
     }
-    AccountTenantCreationCoordinator.Result start() { return coordinator.start("jwt", request, recent, environment); }
+
+    AccountTenantCreationCoordinator.Result start() {
+      return coordinator.start("jwt", request, recent, environment);
+    }
   }
 }

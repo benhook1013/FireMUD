@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package gamedesign.v1;
 
+import "google/protobuf/empty.proto";
+
 option java_package = "net.firedevops.firemud.gamedesign.v1";
 option java_multiple_files = true;
 
@@ -21,6 +23,9 @@ service OriginalTenantCreationOutcomeReadService {
 service TenantCreationService {
   rpc CreateAuthorizedTenant(CreateAuthorizedTenantRequest)
       returns (CreateAuthorizedTenantResponse);
+  // Explicit terminal exclusion of future creation. Acknowledgment is not outcome evidence.
+  rpc CloseOriginalTenantCreation(ResolveOriginalTenantCreationOutcomeRequest)
+      returns (google.protobuf.Empty);
 }
 
 // Standalone, unregistered exact authored-world source read; no mutation or admission permission.

@@ -30,8 +30,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * independently read-back data only; it is not permission to dispatch to Game Design.
  */
 public final class AccountTenantCreationAdmissionOwner {
-  private static final Pattern NAMESPACE =
-      Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
+  private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
 
   private final String configuredNamespace;
   private final DSLContext dsl;
@@ -60,7 +59,8 @@ public final class AccountTenantCreationAdmissionOwner {
       AccountTenantCreationAuthorizationPreparation preparation,
       PlatformTransactionManager transactionManager) {
     if (configuredNamespace == null || !NAMESPACE.matcher(configuredNamespace).matches()) {
-      throw new IllegalArgumentException("One canonical Account tenant-creation namespace is required");
+      throw new IllegalArgumentException(
+          "One canonical Account tenant-creation namespace is required");
     }
     this.configuredNamespace = configuredNamespace;
     this.dsl = Objects.requireNonNull(dsl);
@@ -144,13 +144,14 @@ public final class AccountTenantCreationAdmissionOwner {
           // source-holder readback after SQL commit, while the Redis qualification is still held.
           AccountTenantCreationAuthorizationPreparation.Prepared sourceReadback =
               preparation.prepare(
-                  frozen.binding.creationOperationId(), capturedEnvironment, frozen.reauthentication);
+                  frozen.binding.creationOperationId(),
+                  capturedEnvironment,
+                  frozen.reauthentication);
           qualified.requireCurrent();
 
           Persisted committed =
               Objects.requireNonNull(
-                  readTransaction.execute(
-                      ignored -> readPersisted(frozen.binding, true)));
+                  readTransaction.execute(ignored -> readPersisted(frozen.binding, true)));
           requireSameFrozen(frozen, committed, false);
           if (committed.admitted == null) throw denied();
           requireSameAdmitted(admitted, committed.admitted);
@@ -159,8 +160,8 @@ public final class AccountTenantCreationAdmissionOwner {
   }
 
   /**
-   * Recovers only an already committed exact SQL admission and an already-existing qualified
-   * Redis receipt. It accepts no JWT, does not reauthenticate a revoked token, and has no initial
+   * Recovers only an already committed exact SQL admission and an already-existing qualified Redis
+   * receipt. It accepts no JWT, does not reauthenticate a revoked token, and has no initial
    * receipt, admission-write, alternate-Redis, or negative-outcome branch.
    */
   public PreparedResult recover(
@@ -191,8 +192,7 @@ public final class AccountTenantCreationAdmissionOwner {
         qualified -> {
           qualified.requireCurrent();
           var currentSources =
-              preparation.prepare(
-                  creationOperationId, capturedEnvironment, recentReauthentication);
+              preparation.prepare(creationOperationId, capturedEnvironment, recentReauthentication);
           qualified.requireCurrent();
 
           Persisted committed =
@@ -301,11 +301,11 @@ public final class AccountTenantCreationAdmissionOwner {
       operationDeadline =
           Math.min(
               tokenExpiresAt,
-              Math.addExact(preparedAt, AccountTenantCreationAdmissionBinding.MAX_OPERATION_MILLIS));
+              Math.addExact(
+                  preparedAt, AccountTenantCreationAdmissionBinding.MAX_OPERATION_MILLIS));
       cleanupDeadline =
           Math.addExact(
-              operationDeadline,
-              AccountTenantCreationAdmissionBinding.RECEIPT_RETENTION_MILLIS);
+              operationDeadline, AccountTenantCreationAdmissionBinding.RECEIPT_RETENTION_MILLIS);
     } catch (ArithmeticException overflow) {
       throw denied();
     }
@@ -425,12 +425,15 @@ public final class AccountTenantCreationAdmissionOwner {
         || !binding.gameDesignCreationRequestId().equals(intent.gameDesignCreationRequestId())
         || !binding.gameDesignRequestDigest().equals(intent.gameDesignRequestDigest())
         || !binding.intentDigest().equals(intent.requestDigest())
-        || !binding.reauthenticationEvidenceId().equals(intent.recentReauthenticationEvidenceId())) {
+        || !binding
+            .reauthenticationEvidenceId()
+            .equals(intent.recentReauthenticationEvidenceId())) {
       throw denied();
     }
   }
 
-  private static void requireRequest(OriginalIntent intent, AccountTenantCreationIntentRepository.Request request) {
+  private static void requireRequest(
+      OriginalIntent intent, AccountTenantCreationIntentRepository.Request request) {
     AccountTenantCreationIntentRepository.Request storedRequest =
         new AccountTenantCreationIntentRepository.Request(
             intent.requestId(),
@@ -463,7 +466,8 @@ public final class AccountTenantCreationAdmissionOwner {
       Frozen expected, Persisted actual, boolean requireSameStatus) {
     if (!sameIntent(expected.intent, actual.intent)
         || !Arrays.equals(
-            expected.prepared.binding().canonicalReceipt(), actual.prepared.binding().canonicalReceipt())
+            expected.prepared.binding().canonicalReceipt(),
+            actual.prepared.binding().canonicalReceipt())
         || !sameIssuance(expected.issuance, actual.issuance, requireSameStatus)) {
       throw denied();
     }
@@ -472,7 +476,8 @@ public final class AccountTenantCreationAdmissionOwner {
   private static void requireSamePersisted(Persisted expected, Persisted actual) {
     if (!sameIntent(expected.intent, actual.intent)
         || !Arrays.equals(
-            expected.prepared.binding().canonicalReceipt(), actual.prepared.binding().canonicalReceipt())
+            expected.prepared.binding().canonicalReceipt(),
+            actual.prepared.binding().canonicalReceipt())
         || !sameIssuance(expected.issuance, actual.issuance, false)
         || expected.admitted == null
         || actual.admitted == null) {
@@ -490,7 +495,9 @@ public final class AccountTenantCreationAdmissionOwner {
         && first.sourceGameTenantKey().equals(second.sourceGameTenantKey())
         && first.name().equals(second.name())
         && Objects.equals(first.description(), second.description())
-        && first.recentReauthenticationEvidenceId().equals(second.recentReauthenticationEvidenceId())
+        && first
+            .recentReauthenticationEvidenceId()
+            .equals(second.recentReauthenticationEvidenceId())
         && first.creatorPartyId().equals(second.creatorPartyId())
         && first.consentOperationId().equals(second.consentOperationId())
         && first.consentStatementVersion() == second.consentStatementVersion()
@@ -527,7 +534,8 @@ public final class AccountTenantCreationAdmissionOwner {
         && first.issuedAt.equals(second.issuedAt)
         && first.expiresAt.equals(second.expiresAt)
         && first.recoveryExpiry.equals(second.recoveryExpiry)
-        && Objects.equals(first.registryCleanupDeadlineEpochMillis, second.registryCleanupDeadlineEpochMillis);
+        && Objects.equals(
+            first.registryCleanupDeadlineEpochMillis, second.registryCleanupDeadlineEpochMillis);
   }
 
   private static void requireSameAdmitted(Admitted expected, Admitted actual) {
@@ -546,8 +554,7 @@ public final class AccountTenantCreationAdmissionOwner {
   private static void requireSameBinding(
       AccountTenantCreationAdmissionBinding expected,
       AccountTenantCreationAdmissionBinding actual) {
-    if (actual == null
-        || !Arrays.equals(expected.canonicalReceipt(), actual.canonicalReceipt())) {
+    if (actual == null || !Arrays.equals(expected.canonicalReceipt(), actual.canonicalReceipt())) {
       throw denied();
     }
   }
@@ -601,18 +608,21 @@ public final class AccountTenantCreationAdmissionOwner {
   private static void outsideSql() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw new IllegalStateException("Tenant-creation Redis and signer work must start outside SQL");
+      throw new IllegalStateException(
+          "Tenant-creation Redis and signer work must start outside SQL");
     }
   }
 
   private static void requireNonNil(UUID value, String label) {
-    if (value == null || value.getMostSignificantBits() == 0L && value.getLeastSignificantBits() == 0L) {
+    if (value == null
+        || value.getMostSignificantBits() == 0L && value.getLeastSignificantBits() == 0L) {
       throw new IllegalArgumentException(label + " must be a non-nil UUID");
     }
   }
 
   private static IllegalStateException denied() {
-    return new IllegalStateException("Exact current original Account tenant-creation admission is unavailable");
+    return new IllegalStateException(
+        "Exact current original Account tenant-creation admission is unavailable");
   }
 
   private record Frozen(

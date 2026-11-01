@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import com.google.protobuf.Empty;
 import com.google.protobuf.Message;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeGrp
 import net.firedevops.firemud.gamedesign.v1.CreateAuthorizedTenantRequest;
 import net.firedevops.firemud.gamedesign.v1.CreateAuthorizedTenantResponse;
 import net.firedevops.firemud.gamedesign.v1.OriginalTenantCreationOutcome;
+import net.firedevops.firemud.gamedesign.v1.ResolveOriginalTenantCreationOutcomeRequest;
 import net.firedevops.firemud.gamedesign.v1.TenantCreationServiceGrpc.TenantCreationServiceImplBase;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -112,6 +114,45 @@ public final class AccountAuthorizedTenantCreationGrpcService
       return;
     }
     responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void closeOriginalTenantCreation(
+      ResolveOriginalTenantCreationOutcomeRequest request, StreamObserver<Empty> responseObserver) {
+    if (SessionContext.hasAuthenticatedCallerContext() || !isAccountPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription(
+                  "Verified same-namespace Account workload without caller context is required")
+              .asRuntimeException());
+      return;
+    }
+    final ReadRequest original;
+    try {
+      requireKnownAndWithinBudget(request);
+      original =
+          GameTenantCreationOriginalOutcomeGrpcCodec.fromReadRequest(workloadNamespace, request);
+    } catch (IllegalArgumentException malformed) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical exact original closure request required")
+              .asRuntimeException());
+      return;
+    }
+    try {
+      owner.closeOriginal(original.binding());
+    } catch (IllegalArgumentException | IllegalStateException conflict) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Original creation cannot be closed under the supplied binding")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException failure) {
+      responseObserver.onError(storageFailureStatus(failure).asRuntimeException());
+      return;
+    }
+    responseObserver.onNext(Empty.getDefaultInstance());
     responseObserver.onCompleted();
   }
 

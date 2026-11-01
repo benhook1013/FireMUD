@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.Empty;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
@@ -16,11 +17,14 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeGrpcCodec;
 import net.firedevops.firemud.gamedesign.service.impl.AccountAuthorizedTenantCreationGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AccountAuthorizedTenantCreationService;
 import net.firedevops.firemud.gamedesign.v1.CreateAuthorizedTenantRequest;
 import net.firedevops.firemud.gamedesign.v1.CreateAuthorizedTenantResponse;
 import net.firedevops.firemud.gamedesign.v1.OriginalTenantCreationOutcome;
+import net.firedevops.firemud.gamedesign.v1.ResolveOriginalTenantCreationOutcomeRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -138,6 +142,85 @@ class AccountAuthorizedTenantCreationGrpcServiceTest {
         .setSourceGameTenantKey(SOURCE_KEY)
         .setName(NAME)
         .setDescription(DESCRIPTION);
+  }
+
+  @Test
+  void closureAuthenticatesPeerAndCallerBeforeDecodingAndUsesExistingExactSelector() {
+    var selector = closureRequest();
+    assertThat(close(selector, OTHER_URI)).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(close(selector, null)).isEqualTo(Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(owner);
+    SessionContext.setContext("authenticated-user", java.util.List.of(), java.util.Map.of());
+    assertThat(close(selector, ACCOUNT_URI)).isEqualTo(Status.Code.PERMISSION_DENIED);
+    SessionContext.clear();
+    assertThat(close(selector, ACCOUNT_URI)).isNull();
+    verify(owner)
+        .closeOriginal(
+            GameTenantCreationOriginalOutcomeGrpcCodec.fromReadRequest(NAMESPACE, selector)
+                .binding());
+  }
+
+  @Test
+  void closureRejectsChangedNamespaceUnknownFieldsAndNoncanonicalSelectorBeforeOwner() {
+    var selector = closureRequest();
+    assertThat(close(selector.toBuilder().setTargetNamespace("other").build(), ACCOUNT_URI))
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(
+            close(selector.toBuilder().setCreationRequestId("not-canonical").build(), ACCOUNT_URI))
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(
+            close(
+                selector.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build(),
+                ACCOUNT_URI))
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(owner);
+  }
+
+  private static ResolveOriginalTenantCreationOutcomeRequest closureRequest() {
+    return GameTenantCreationOriginalOutcomeGrpcCodec.toReadRequest(
+        new GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest(
+            UUID.randomUUID(),
+            new Binding(
+                NAMESPACE,
+                REQUEST_ID,
+                ACCOUNT_OPERATION_ID,
+                ACCOUNT_ID,
+                REQUEST_DIGEST,
+                ACCOUNT_DIGEST)));
+  }
+
+  private Status.Code close(ResolveOriginalTenantCreationOutcomeRequest request, String peerUri) {
+    AtomicReference<Status.Code> failure = new AtomicReference<>();
+    AtomicReference<Empty> ack = new AtomicReference<>();
+    var observer =
+        new StreamObserver<Empty>() {
+          @Override
+          public void onNext(Empty response) {
+            ack.set(response);
+          }
+
+          @Override
+          public void onError(Throwable error) {
+            failure.set(Status.fromThrowable(error).getCode());
+          }
+
+          @Override
+          public void onCompleted() {
+            assertThat(ack.get()).isEqualTo(Empty.getDefaultInstance());
+          }
+        };
+    Runnable invocation = () -> service.closeOriginalTenantCreation(request, observer);
+    if (peerUri == null) invocation.run();
+    else
+      Context.current()
+          .withValue(GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(peerUri).orElseThrow())
+          .run(invocation);
+    return failure.get();
   }
 
   private static FreshTenantCreationEvidence receipt(String requestDigest) {

@@ -118,7 +118,9 @@ public class AccountTenantCreationBootstrapService {
   @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
   public AccountTenantCreationBootstrapResult bootstrapForCompletion(
       FreshTenantCreatorEvidence evidence,
-      net.firedevops.firemud.accountservice.service.session.AccountTenantCreationCompletionOwner.CurrentSource source) {
+      net.firedevops.firemud.accountservice.service.session.AccountTenantCreationCompletionOwner
+              .CurrentSource
+          source) {
     return bootstrapWithSource(evidence, Objects.requireNonNull(source));
   }
 

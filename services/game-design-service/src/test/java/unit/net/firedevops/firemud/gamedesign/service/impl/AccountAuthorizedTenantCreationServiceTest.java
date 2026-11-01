@@ -191,6 +191,32 @@ class AccountAuthorizedTenantCreationServiceTest {
         transactionManager);
   }
 
+  @Test
+  void explicitClosureUsesExistingIdentityLockedOwnerWithoutCreationOrCurrentAuthorization() {
+    when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
+    service().closeOriginal(BINDING);
+    verify(transactionManager)
+        .getTransaction(
+            org.mockito.ArgumentMatchers.argThat(
+                definition ->
+                    definition.getIsolationLevel() == TransactionDefinition.ISOLATION_READ_COMMITTED
+                        && !definition.isReadOnly()));
+    verify(dispatchRepository).applyLocalWriteTimeouts();
+    verify(outcomeRepository).closeNotCreatedLocked(REPOSITORY_BINDING);
+    verifyNoInteractions(authorizationClient, creationRepository);
+  }
+
+  @Test
+  void alreadyCreatedClosureRefusalPropagatesWithoutCreation() {
+    when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
+    when(outcomeRepository.closeNotCreatedLocked(REPOSITORY_BINDING))
+        .thenThrow(new IllegalStateException("Created original cannot close"));
+    assertThatThrownBy(() -> service().closeOriginal(BINDING))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(authorizationClient, creationRepository);
+    verify(outcomeRepository, never()).markCreatedLocked(any(), any());
+  }
+
   private static AccountAuthorizedTenantCreationService.CandidateRequest candidate() {
     return new AccountAuthorizedTenantCreationService.CandidateRequest(
         CREATE_ID, BINDING, SOURCE_KEY, NAME, DESCRIPTION);

@@ -18,8 +18,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Unregistered current Account owner for an existing, admitted and source-protected original.
- * The private authenticated transport carries this observation; a stored digest alone never grants
+ * Unregistered current Account owner for an existing, admitted and source-protected original. The
+ * private authenticated transport carries this observation; a stored digest alone never grants
  * creation authority. The durable pending source holder orders writers until definitive settlement.
  */
 public final class AccountTenantCreationCurrentAuthorizationOwner {
@@ -64,49 +64,79 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw denied();
     Objects.requireNonNull(binding);
     Original first = Objects.requireNonNull(transactions.execute(status -> read(binding)));
-    String kid = (String) AccountControlUiIssuanceRepository.object(first.issuance.signerReceipt).get("kid");
+    String kid =
+        (String) AccountControlUiIssuanceRepository.object(first.issuance.signerReceipt).get("kid");
     var accepted = actors.readAcceptedSignerKey(kid);
     AccountControlUiActorService.requireAcceptedSignerKey(first.issuance, accepted);
     var environment = terms.captureCurrentEnvironmentBoundary();
-    Authorization observed = Objects.requireNonNull(transactions.execute(status -> {
-      Original original = read(binding);
-      same(first, original);
-      // Actual Account-first capture precedes issuer/issuance/source locking. No network in SQL.
-      var current = capture.captureLocked(original.intent, original.admitted, environment, original.recent);
-      AccountControlUiActorService.requireAcceptedSignerKey(original.issuance, accepted);
-      if (!Arrays.equals(current.originalClaims(), original.issuance.claims)
-          || !Arrays.equals(current.originalSignerReceipt(), original.issuance.signerReceipt)
-          || !original.issuance.operationId.equals(current.issuanceOperationId())
-          || !original.issuance.jti.equals(current.tokenJti())
-          || !original.issuance.tokenHash.equals(current.tokenHash())) throw denied();
-      var held = orders.lockOriginalForCompletionLocked(original.intent, original.admitted, current.sources());
-      if (!Arrays.equals(held.canonicalBytes(), original.holder.canonicalBytes())) throw denied();
-      Instant deadline = Instant.ofEpochMilli(original.dispatchDeadline);
-      var recent = current.reauthentication();
-      Instant recentDeadline = recent.issuedAt().plusSeconds(recent.recentAgeSeconds() - recent.maxClockSkewSeconds());
-      if (recentDeadline.isBefore(deadline)) deadline = recentDeadline;
-      Instant termsDeadline = current.currentness().terms().validUntil();
-      if (termsDeadline != null && termsDeadline.isBefore(deadline)) deadline = termsDeadline;
-      long validBefore = deadline.toEpochMilli();
-      requireTime(original, validBefore);
-      return new Authorization(binding, validBefore);
-    }));
+    Authorization observed =
+        Objects.requireNonNull(
+            transactions.execute(
+                status -> {
+                  Original original = read(binding);
+                  same(first, original);
+                  // Actual Account-first capture precedes issuer/issuance/source locking. No
+                  // network in SQL.
+                  var current =
+                      capture.captureLocked(
+                          original.intent, original.admitted, environment, original.recent);
+                  AccountControlUiActorService.requireAcceptedSignerKey(
+                      original.issuance, accepted);
+                  if (!Arrays.equals(current.originalClaims(), original.issuance.claims)
+                      || !Arrays.equals(
+                          current.originalSignerReceipt(), original.issuance.signerReceipt)
+                      || !original.issuance.operationId.equals(current.issuanceOperationId())
+                      || !original.issuance.jti.equals(current.tokenJti())
+                      || !original.issuance.tokenHash.equals(current.tokenHash())) throw denied();
+                  var held =
+                      orders.lockOriginalForCompletionLocked(
+                          original.intent, original.admitted, current.sources());
+                  if (!Arrays.equals(held.canonicalBytes(), original.holder.canonicalBytes()))
+                    throw denied();
+                  Instant deadline = Instant.ofEpochMilli(original.dispatchDeadline);
+                  var recent = current.reauthentication();
+                  Instant recentDeadline =
+                      recent
+                          .issuedAt()
+                          .plusSeconds(recent.recentAgeSeconds() - recent.maxClockSkewSeconds());
+                  if (recentDeadline.isBefore(deadline)) deadline = recentDeadline;
+                  Instant termsDeadline = current.currentness().terms().validUntil();
+                  if (termsDeadline != null && termsDeadline.isBefore(deadline))
+                    deadline = termsDeadline;
+                  long validBefore = deadline.toEpochMilli();
+                  requireTime(original, validBefore);
+                  return new Authorization(binding, validBefore);
+                }));
     // Independently read the committed original and still-pending holder before transport reply.
-    return Objects.requireNonNull(transactions.execute(status -> {
-      Original committed = read(binding);
-      same(first, committed);
-      requireTime(committed, observed.validBeforeEpochMillis());
-      return observed;
-    }));
+    return Objects.requireNonNull(
+        transactions.execute(
+            status -> {
+              Original committed = read(binding);
+              same(first, committed);
+              requireTime(committed, observed.validBeforeEpochMillis());
+              return observed;
+            }));
   }
 
   private Original read(Binding binding) {
     requireOwnerTransaction();
     var operation = binding.accountAuthorizationOperationId();
-    var intent = intents.readOriginal(operation).orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
-    var admitted = admissions.readAdmitted(operation).orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
-    var holder = orders.readOriginal(operation).orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
-    var recent = reauthentication.findByCreationOperation(operation).orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
+    var intent =
+        intents
+            .readOriginal(operation)
+            .orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
+    var admitted =
+        admissions
+            .readAdmitted(operation)
+            .orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
+    var holder =
+        orders
+            .readOriginal(operation)
+            .orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
+    var recent =
+        reauthentication
+            .findByCreationOperation(operation)
+            .orElseThrow(AccountTenantCreationCurrentAuthorizationOwner::denied);
     if (!holder.outcomeBinding().equals(binding)
         || !operation.equals(intent.creationOperationId())
         || !operation.equals(admitted.binding().creationOperationId())
@@ -118,25 +148,37 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
         || !recent.evidenceId().equals(intent.recentReauthenticationEvidenceId())
         || !recent.evidenceId().equals(admitted.binding().reauthenticationEvidenceId())
         || orders.readSettlement(operation).isPresent()) throw denied();
-    Record row = dsl.fetchOne("SELECT * FROM account_control_ui_issuance_operations WHERE operation_id = ?",
-        admitted.binding().issuanceOperationId());
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM account_control_ui_issuance_operations WHERE operation_id = ?",
+            admitted.binding().issuanceOperationId());
     if (row == null) throw denied();
     var issuance = issuances.decodeStored(row);
     if (!issuance.operationId.equals(admitted.binding().issuanceOperationId())
         || !issuance.accountId.equals(binding.initiatingAccountId())
         || !issuance.tokenHash.equals(admitted.binding().tokenHash())) throw denied();
-    Record dispatch = dsl.fetchOne(
-        "SELECT * FROM account_tenant_creation_dispatch_intents WHERE creation_operation_id = ?", operation);
+    Record dispatch =
+        dsl.fetchOne(
+            "SELECT * FROM account_tenant_creation_dispatch_intents WHERE creation_operation_id = ?",
+            operation);
     if (dispatch == null
         || !operation.equals(dispatch.get("creation_operation_id", UUID.class))
-        || !Arrays.equals(holder.canonicalBytes(), dispatch.get("authorization_binding_payload", byte[].class))
+        || !Arrays.equals(
+            holder.canonicalBytes(), dispatch.get("authorization_binding_payload", byte[].class))
         || !holder.authorizationDigest().equals(dispatch.get("authorization_digest", String.class))
         || dispatch.get("dispatch_call_id", UUID.class) == null) throw denied();
     Long dispatchDeadline = dispatch.get("valid_before_epoch_millis", Long.class);
-    if (dispatchDeadline == null || dispatchDeadline <= 0
+    if (dispatchDeadline == null
+        || dispatchDeadline <= 0
         || dispatchDeadline > admitted.binding().operationDeadlineEpochMillis()) throw denied();
-    return new Original(intent, admitted, holder, recent, issuance,
-        dispatch.get("dispatch_call_id", UUID.class), dispatchDeadline);
+    return new Original(
+        intent,
+        admitted,
+        holder,
+        recent,
+        issuance,
+        dispatch.get("dispatch_call_id", UUID.class),
+        dispatchDeadline);
   }
 
   private void requireTime(Original original, long validBefore) {
@@ -164,26 +206,36 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
   private void requireOwnerTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) throw denied();
-    dsl.connection(connection -> {
-      if (connection.getAutoCommit() || connection.isReadOnly()
-          || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED) throw denied();
-    });
+    dsl.connection(
+        connection -> {
+          if (connection.getAutoCommit()
+              || connection.isReadOnly()
+              || connection.getTransactionIsolation() != Connection.TRANSACTION_READ_COMMITTED)
+            throw denied();
+        });
   }
 
   private static IllegalStateException denied() {
-    return new IllegalStateException("Current original tenant-creation authorization is unavailable");
+    return new IllegalStateException(
+        "Current original tenant-creation authorization is unavailable");
   }
 
-  private record Original(OriginalIntent intent, Admitted admitted,
-      AccountTenantCreationSourceOrderBinding holder, AccountRecentReauthenticationEvidence recent,
-      AccountControlUiIssuanceRepository.Stored issuance, UUID dispatchCallId, long dispatchDeadline) {}
+  private record Original(
+      OriginalIntent intent,
+      Admitted admitted,
+      AccountTenantCreationSourceOrderBinding holder,
+      AccountRecentReauthenticationEvidence recent,
+      AccountControlUiIssuanceRepository.Stored issuance,
+      UUID dispatchCallId,
+      long dispatchDeadline) {}
 
   /** Transport data minted after genuine owner verification, never an in-process dispatch grant. */
   public record Authorization(Binding binding, long validBeforeEpochMillis) {
     public Authorization {
       Objects.requireNonNull(binding);
       if (validBeforeEpochMillis <= 0
-          || validBeforeEpochMillis > AccountTenantCreationAdmissionBinding.MAX_REDIS_SAFE_INTEGER) throw denied();
+          || validBeforeEpochMillis > AccountTenantCreationAdmissionBinding.MAX_REDIS_SAFE_INTEGER)
+        throw denied();
     }
   }
 }

@@ -25,42 +25,50 @@ public final class TenantCreationCurrentAuthorizationReadGrpcService
 
   private boolean isGameDesignPeer() {
     var peer = GrpcPeerIdentity.current();
-    return peer != null && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
-        && peer.uri().equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service");
+    return peer != null
+        && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        && peer.uri()
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service");
   }
 
   @Override
   public void resolveCurrentTenantCreationAuthorization(
       ResolveCurrentTenantCreationAuthorizationRequest request,
       StreamObserver<ResolveCurrentTenantCreationAuthorizationResponse> responseObserver) {
-    if (SessionContext.hasAuthenticatedCallerContext()
-        || !isGameDesignPeer()) {
-      responseObserver.onError(Status.PERMISSION_DENIED
-          .withDescription("Exact Game Design workload without caller context required")
-          .asRuntimeException());
+    if (SessionContext.hasAuthenticatedCallerContext() || !isGameDesignPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Exact Game Design workload without caller context required")
+              .asRuntimeException());
       return;
     }
     final CurrentTenantCreationAuthorizationGrpcCodec.Request decoded;
     try {
       decoded = CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(request);
-      if (!workloadNamespace.equals(decoded.binding().targetNamespace())) throw new IllegalArgumentException();
+      if (!workloadNamespace.equals(decoded.binding().targetNamespace()))
+        throw new IllegalArgumentException();
     } catch (IllegalArgumentException invalid) {
-      responseObserver.onError(Status.INVALID_ARGUMENT
-          .withDescription("Exact original creation binding required").asRuntimeException());
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Exact original creation binding required")
+              .asRuntimeException());
       return;
     }
     try {
       var authorized = owner.resolve(decoded.binding());
       if (!decoded.binding().equals(authorized.binding())) throw new IllegalStateException();
-      responseObserver.onNext(CurrentTenantCreationAuthorizationGrpcCodec.response(
-          decoded.readRequestId(), authorized.binding(), authorized.validBeforeEpochMillis()));
+      responseObserver.onNext(
+          CurrentTenantCreationAuthorizationGrpcCodec.response(
+              decoded.readRequestId(), authorized.binding(), authorized.validBeforeEpochMillis()));
       responseObserver.onCompleted();
     } catch (IllegalArgumentException | IllegalStateException unavailable) {
-      responseObserver.onError(Status.FAILED_PRECONDITION
-          .withDescription("Current original creation authorization unavailable").asRuntimeException());
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Current original creation authorization unavailable")
+              .asRuntimeException());
     } catch (RuntimeException unavailable) {
-      responseObserver.onError(Status.UNAVAILABLE
-          .withDescription("Account owner unavailable").asRuntimeException());
+      responseObserver.onError(
+          Status.UNAVAILABLE.withDescription("Account owner unavailable").asRuntimeException());
     }
   }
 }

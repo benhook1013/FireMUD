@@ -27,11 +27,11 @@ import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthori
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
-import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService.AccountAuthenticatedActor;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService.AcceptedSignerKey;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService.AccountAuthenticatedActor;
+import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationAdmissionRedisClient.QualifiedReceipt;
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationAdmissionRepository.Admitted;
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationAdmissionRepository.PreparedAdmission;
-import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationAdmissionRedisClient.QualifiedReceipt;
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository.OriginalIntent;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
@@ -46,7 +46,9 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Controlled owner-composition proof only; no external Redis, JWKS, database, or dispatch proof. */
+/**
+ * Controlled owner-composition proof only; no external Redis, JWKS, database, or dispatch proof.
+ */
 class AccountTenantCreationAdmissionOwnerTest {
   private static final String JWT = "controlled-current-account-jwt";
 
@@ -96,8 +98,7 @@ class AccountTenantCreationAdmissionOwnerTest {
     verify(fixture.admissions).admitLocked(fixture.prepared, fixture.qualified);
     verify(fixture.capture)
         .captureLocked(fixture.intent, fixture.admitted, fixture.environment, fixture.reauth);
-    verify(fixture.orders)
-        .acquireLocked(fixture.intent, fixture.admitted, fixture.sources);
+    verify(fixture.orders).acquireLocked(fixture.intent, fixture.admitted, fixture.sources);
     verify(fixture.preparation, never()).prepare(any(), any(), any());
   }
 
@@ -113,7 +114,8 @@ class AccountTenantCreationAdmissionOwnerTest {
     var frozen = first.admission();
     long preparedAt = firstDatabaseTime.toInstant().toEpochMilli();
     assertThat(frozen.preparedAtEpochMillis()).isEqualTo(preparedAt);
-    assertThat(frozen.tokenExpiresAtEpochMillis()).isEqualTo(fixture.issuance.expiresAt.toEpochMilli());
+    assertThat(frozen.tokenExpiresAtEpochMillis())
+        .isEqualTo(fixture.issuance.expiresAt.toEpochMilli());
     assertThat(frozen.tokenCleanupDeadlineEpochMillis()).isEqualTo(fixture.issuance.expiryMillis());
     assertThat(frozen.operationDeadlineEpochMillis())
         .isEqualTo(
@@ -138,8 +140,7 @@ class AccountTenantCreationAdmissionOwnerTest {
     assertThat(fixture.clockReads).isEqualTo(1);
     assertThat(fixture.admitTransactionId).isEqualTo(fixture.ownerCaptureTransactionId);
     assertThat(fixture.admitTransactionId).isEqualTo(fixture.sourceOrderTransactionId);
-    assertThat(fixture.events.indexOf("admit"))
-        .isLessThan(fixture.events.indexOf("owner-capture"));
+    assertThat(fixture.events.indexOf("admit")).isLessThan(fixture.events.indexOf("owner-capture"));
     assertThat(fixture.events.indexOf("owner-capture"))
         .isLessThan(fixture.events.indexOf("source-order-acquire"));
     assertThat(fixture.events.indexOf("qualified-commit:3"))
@@ -189,7 +190,8 @@ class AccountTenantCreationAdmissionOwnerTest {
             fixture.request.affirmativeConsent());
     when(fixture.intents.claim(changedRequest)).thenReturn(fixture.intent);
 
-    assertThatThrownBy(() -> fixture.start(JWT, changedRequest)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> fixture.start(JWT, changedRequest))
+        .isInstanceOf(IllegalStateException.class);
 
     assertThat(fixture.rollbacks).isEqualTo(1);
     verify(fixture.admissions, never()).prepareLocked(any(), any(), any());
@@ -290,8 +292,7 @@ class AccountTenantCreationAdmissionOwnerTest {
             Map.of("kid", "original-kid", "publicKeyFingerprint", "sha256:" + "a".repeat(64)));
     final String gameDesignDigest = "sha256:" + "b".repeat(64);
     final String intentDigest = "sha256:" + "c".repeat(64);
-    final String tokenJwt = JWT;
-    final String namespace = "example";
+    private static final String NAMESPACE = "example";
     final byte[] intentPayload = new byte[] {20, 21};
     final byte[] sourceOrderPayload = new byte[] {8, 9, 10};
     final String sourceOrderDigest = DraftAuthorizationFenceBinding.digest(sourceOrderPayload);
@@ -301,7 +302,7 @@ class AccountTenantCreationAdmissionOwnerTest {
             operation,
             gameDesignRequestId,
             accountId,
-            namespace,
+            NAMESPACE,
             "source-key",
             "Example Game",
             null,
@@ -316,7 +317,7 @@ class AccountTenantCreationAdmissionOwnerTest {
             operation,
             gameDesignRequestId,
             accountId,
-            namespace,
+            NAMESPACE,
             "source-key",
             "Example Game",
             null,
@@ -431,8 +432,7 @@ class AccountTenantCreationAdmissionOwnerTest {
       issuanceRow.put("issued_at_epoch_second", issuedAt);
       issuanceRow.put("expires_at_epoch_second", expiresAt);
       issuanceRow.put("registry_cleanup_deadline_epoch_millis", tokenCleanupDeadline);
-      issuanceRow.put(
-          "recovery_expires_at", now.plusSeconds(600).atOffset(ZoneOffset.UTC));
+      issuanceRow.put("recovery_expires_at", now.plusSeconds(600).atOffset(ZoneOffset.UTC));
       issuance = new AccountControlUiIssuanceRepository.Stored(row(issuanceRow));
       binding =
           new AccountTenantCreationAdmissionBinding(
@@ -440,7 +440,7 @@ class AccountTenantCreationAdmissionOwnerTest {
               operation,
               issuanceId,
               accountId,
-              namespace,
+              NAMESPACE,
               gameDesignRequestId,
               gameDesignDigest,
               intentDigest,
@@ -517,7 +517,7 @@ class AccountTenantCreationAdmissionOwnerTest {
           .when(transactionManager)
           .rollback(any());
 
-      when(actors.withCurrentAccount(eq(tokenJwt), any()))
+      when(actors.withCurrentAccount(eq(JWT), any()))
           .thenAnswer(
               invocation -> {
                 events.add("account-actor");
@@ -545,10 +545,7 @@ class AccountTenantCreationAdmissionOwnerTest {
           .when(intents)
           .readOriginal(operation);
       when(reauthentication.validatePendingCreationLocked(
-              reauth,
-              accountId,
-              AccountRecentReauthenticationPolicy.PURPOSE,
-              operation))
+              reauth, accountId, AccountRecentReauthenticationPolicy.PURPOSE, operation))
           .thenReturn(reauth);
       when(issuances.findToken(tokenHash)).thenReturn(issuance);
       when(admissions.readPrepared(operation)).thenReturn(Optional.of(prepared));
@@ -562,7 +559,7 @@ class AccountTenantCreationAdmissionOwnerTest {
 
       owner =
           new AccountTenantCreationAdmissionOwner(
-              namespace,
+              NAMESPACE,
               dsl,
               intents,
               admissions,
@@ -651,13 +648,11 @@ class AccountTenantCreationAdmissionOwnerTest {
       doAnswer(ignored -> binding.canonicalReceipt()).when(admitted).receiptPayload();
       doAnswer(ignored -> binding.canonicalReceipt()).when(sourceHolder).admissionPayload();
       doAnswer(
-              ignored ->
-                  AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt()))
+              ignored -> AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt()))
           .when(admitted)
           .receiptDigest();
       doAnswer(
-              ignored ->
-                  AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt()))
+              ignored -> AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt()))
           .when(sourceHolder)
           .admissionDigest();
 
@@ -768,7 +763,8 @@ class AccountTenantCreationAdmissionOwnerTest {
       return current.stream().sorted(java.util.Comparator.comparing(SourceEvidence::key)).toList();
     }
 
-    private SourceEvidence source(SourceKind kind, String scope, String generation, String version) {
+    private SourceEvidence source(
+        SourceKind kind, String scope, String generation, String version) {
       return new SourceEvidence(kind, scope, generation, version, null, null, new byte[] {1});
     }
 

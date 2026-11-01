@@ -105,14 +105,18 @@ final class AccountTenantCreationSourceOrderRepository {
     return stored;
   }
 
-  /** Revalidates an existing pending holder under its original source locks; never acquires a new one. */
+  /**
+   * Revalidates an existing pending holder under its original source locks; never acquires a new
+   * one.
+   */
   AccountTenantCreationSourceOrderBinding lockOriginalForCompletionLocked(
       OriginalIntent intent, Admitted admitted, List<SourceEvidence> currentSources) {
     requireWritableTransaction();
     var expected = AccountTenantCreationSourceOrderBinding.from(intent, admitted, currentSources);
     sourceOrdering.lockProducerSourcesNowait(expected.sources());
-    var original = readOriginal(intent.creationOperationId()).orElseThrow(
-        () -> conflict("Original tenant-creation source holder is absent"));
+    var original =
+        readOriginal(intent.creationOperationId())
+            .orElseThrow(() -> conflict("Original tenant-creation source holder is absent"));
     requireSame(original, expected);
     if (readSettlement(intent.creationOperationId()).isPresent()) {
       throw conflict("Settled source holder cannot authorize fresh creator completion");
