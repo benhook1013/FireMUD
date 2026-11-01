@@ -110,6 +110,7 @@ class AccountRuntimeStubServerTest {
         assertThat(accountUuid).isEqualTo(AccountRuntimeStubServer.accountUuidForTestFixture(7L));
 
         server.setMembershipExists(false);
+        server.setGameplayAdmissionAllowed(true);
 
         var membership =
             stub.getTenantMembershipForRuntime(
@@ -119,6 +120,42 @@ class AccountRuntimeStubServerTest {
                     .setRequestId("request-1")
                     .build());
         assertThat(membership.getMembershipExists()).isFalse();
+        assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(membership.getMembershipLifecycleState()).isEqualTo("MISSING");
+        assertThat(membership.getMembershipVersion()).isZero();
+        assertThat(membership.getMembershipAuthorityGeneration()).isZero();
+        assertThat(membership.getAccountId()).isEqualTo(accountUuid);
+        assertThat(membership.getTenantId()).isEqualTo("1");
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void inactiveMembershipCannotBeAdmittedWhenAdmissionFlagIsEnabled() throws Exception {
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        String accountUuid = authenticate(stub);
+        server.setMembershipInactive();
+        server.setGameplayAdmissionAllowed(true);
+
+        var membership =
+            stub.getTenantMembershipForRuntime(
+                GetTenantMembershipForRuntimeRequest.newBuilder()
+                    .setAccountId(accountUuid)
+                    .setTenantId("1")
+                    .setRequestId("inactive-membership-request")
+                    .build());
+
+        assertThat(membership.getMembershipExists()).isTrue();
+        assertThat(membership.getMembershipLifecycleState()).isEqualTo("INACTIVE");
+        assertThat(membership.getMembershipVersion()).isPositive();
+        assertThat(membership.getMembershipAuthorityGeneration()).isPositive();
         assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
       } finally {
         channel.shutdownNow();

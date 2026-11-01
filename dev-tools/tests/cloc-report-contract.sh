@@ -246,6 +246,7 @@ import importlib.util
 import os
 import subprocess
 import sys
+import textwrap
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -1186,6 +1187,238 @@ finally:
     cloc_report.require_tool = original_require_tool
     cloc_report.run_command = original_run_command
 
+native_gh_dir = repo.parent / "native-gh-bin"
+native_gh_dir.mkdir()
+native_gh = native_gh_dir / "gh"
+native_gh.write_text(
+    textwrap.dedent(
+        """\
+        #!/usr/bin/env python3
+        import json
+        import os
+        from pathlib import Path
+        import sys
+
+        args = sys.argv[1:]
+        state_path = Path(os.environ["FAKE_GH_STATE"])
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["calls"].append(args)
+        if args[:2] == ["pr", "view"]:
+            state["views"] += 1
+            if state.get("change_body_on_view") == state["views"]:
+                state["body"] = state["changed_body"]
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            print(json.dumps({
+                "baseRefOid": state["baseRefOid"],
+                "headRefOid": state["headRefOid"],
+                "body": state["body"],
+            }))
+        elif args[:2] == ["pr", "edit"]:
+            body_path = Path(args[args.index("--body-file") + 1])
+            state["edited_body"] = body_path.read_text(encoding="utf-8")
+            state["edits"] += 1
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+        else:
+            raise SystemExit("unexpected fake gh command: " + repr(args))
+        """
+    ),
+    encoding="utf-8",
+)
+native_gh.chmod(0o755)
+native_gh_state = repo.parent / "native-gh-state.json"
+native_gh_env = {
+    "FAKE_GH_STATE": str(native_gh_state),
+}
+previous_path = os.environ["PATH"]
+os.environ.update(native_gh_env)
+os.environ["PATH"] = f"{native_gh_dir}{os.pathsep}{previous_path}"
+
+
+def reset_native_gh(body: str, *, change_body_on_view: int | None = None, changed_body: str | None = None) -> None:
+    native_gh_state.write_text(
+        json.dumps(
+            {
+                "baseRefOid": "a" * 40,
+                "headRefOid": "b" * 40,
+                "body": body,
+                "views": 0,
+                "edits": 0,
+                "calls": [],
+                "change_body_on_view": change_body_on_view,
+                "changed_body": changed_body,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def native_gh_calls() -> list[list[str]]:
+    calls = json.loads(native_gh_state.read_text(encoding="utf-8"))["calls"]
+    for args in calls:
+        assert args[:2] in (["pr", "view"], ["pr", "edit"]), args
+        assert args[2] == "2736", args
+        assert args.count("--repo") == 1, args
+        assert args[args.index("--repo") + 1] == "example/example", args
+    return calls
+
+
+native_draft = repo.parent / "native-pr-body.md"
+native_draft_text = (
+    "Draft title\n\nLiteral shell-shaped text: $(not executed)\n\n"
+    + cloc_report.PR_REPORT_START
+    + "\nold generated LOC\n"
+    + cloc_report.PR_REPORT_END
+    + "\n\nDraft closing."
+)
+native_draft.write_text(native_draft_text, encoding="utf-8")
+native_report_snippet = cloc_report.render_pr_report(impact)
+native_original_functions = (
+    cloc_report.repository_root,
+    cloc_report.build_pr_report,
+    cloc_report.pull_request_merge_base,
+)
+native_build_calls = []
+cloc_report.repository_root = lambda: repo
+
+
+def native_build_pr_report(_root, number, requested_repository):
+    native_build_calls.append((number, requested_repository))
+    return impact
+
+
+cloc_report.build_pr_report = native_build_pr_report
+cloc_report.pull_request_merge_base = lambda _root, _metadata: "c" * 40
+
+
+def run_native_pr(*extra_args: str) -> tuple[int, str, str]:
+    stdout = StringIO()
+    stderr = StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        status = cloc_report.main(["pr", "2736", *extra_args])
+    return status, stdout.getvalue(), stderr.getvalue()
+
+
+try:
+    reset_native_gh("Remote body that must not replace the supplied draft.")
+    status, stdout, stderr = run_native_pr(
+        "--update-pr", "--body-file", str(native_draft)
+    )
+    native_state = json.loads(native_gh_state.read_text(encoding="utf-8"))
+    native_calls = native_gh_calls()
+    expected_native_draft = cloc_report.replace_pr_report_block(
+        native_draft_text, native_report_snippet
+    )
+    assert status == 0
+    assert cloc_report.PR_REPORT_START in stdout and cloc_report.PR_REPORT_END in stdout
+    assert native_state["edited_body"] == expected_native_draft
+    assert "Draft title" in native_state["edited_body"]
+    assert "Literal shell-shaped text: $(not executed)" in native_state["edited_body"]
+    assert "Remote body that must not replace" not in native_state["edited_body"]
+    assert native_state["edits"] == 1
+    assert [call[:2] for call in native_calls] == [
+        ["pr", "view"],
+        ["pr", "view"],
+        ["pr", "edit"],
+    ]
+    assert "Updated the PR body with the marked LOC section" in stderr
+
+    reset_native_gh(expected_native_draft)
+    status, _stdout, stderr = run_native_pr(
+        "--update-pr", "--body-file", str(native_draft)
+    )
+    native_state = json.loads(native_gh_state.read_text(encoding="utf-8"))
+    assert status == 0
+    assert native_state["edits"] == 0
+    assert len(native_gh_calls()) == 1
+    assert "PR body draft and marked LOC section are already up to date" in stderr
+
+    reset_native_gh("Existing remote body")
+    status, _stdout, stderr = run_native_pr("--update-pr")
+    native_state = json.loads(native_gh_state.read_text(encoding="utf-8"))
+    assert status == 0
+    assert native_state["edited_body"] == cloc_report.replace_pr_report_block(
+        "Existing remote body", native_report_snippet
+    )
+    assert native_state["edits"] == 1
+    assert "Updated the marked LOC section" in stderr
+    assert "PR body draft" not in stderr
+
+    build_calls_before_invalid_input = len(native_build_calls)
+    missing_draft = repo.parent / "missing-pr-body.md"
+    reset_native_gh("Must not be read")
+    status, _stdout, stderr = run_native_pr(
+        "--update-pr", "--body-file", str(missing_draft)
+    )
+    assert status == 1
+    assert len(native_build_calls) == build_calls_before_invalid_input
+    assert native_gh_calls() == []
+    assert "could not read UTF-8 PR body file" in stderr
+
+    for draft_name, draft_text in (("empty-pr-body.md", ""), ("blank-pr-body.md", " \t\n\r\n")):
+        empty_draft = repo.parent / draft_name
+        empty_draft.write_text(draft_text, encoding="utf-8")
+        reset_native_gh("Original remote body must remain untouched")
+        status, _stdout, stderr = run_native_pr(
+            "--update-pr", "--body-file", str(empty_draft)
+        )
+        assert status == 1
+        assert len(native_build_calls) == build_calls_before_invalid_input
+        assert native_gh_calls() == []
+        assert "empty; refusing to replace the PR body" in stderr
+
+    invalid_utf8_draft = repo.parent / "invalid-utf8-pr-body.md"
+    invalid_utf8_draft.write_bytes(b"\xff\xfe")
+    status, _stdout, stderr = run_native_pr(
+        "--update-pr", "--body-file", str(invalid_utf8_draft)
+    )
+    assert status == 1
+    assert len(native_build_calls) == build_calls_before_invalid_input
+    assert native_gh_calls() == []
+    assert "could not read UTF-8 PR body file" in stderr
+
+    relative_draft = os.path.relpath(native_draft, repo)
+    reset_native_gh("Must not be read")
+    status, _stdout, stderr = run_native_pr(
+        "--update-pr", "--body-file", relative_draft
+    )
+    assert status == 1
+    assert len(native_build_calls) == build_calls_before_invalid_input
+    assert native_gh_calls() == []
+    assert "--body-file must be an absolute path" in stderr
+
+    status, _stdout, stderr = run_native_pr("--body-file", str(native_draft))
+    assert status == 1
+    assert len(native_build_calls) == build_calls_before_invalid_input
+    assert native_gh_calls() == []
+    assert "--body-file requires --update-pr" in stderr
+
+    reset_native_gh(
+        "Original remote body",
+        change_body_on_view=2,
+        changed_body="Concurrent remote body change",
+    )
+    status, _stdout, stderr = run_native_pr(
+        "--update-pr", "--body-file", str(native_draft)
+    )
+    native_state = json.loads(native_gh_state.read_text(encoding="utf-8"))
+    assert status == 1
+    assert native_state["body"] == "Concurrent remote body change"
+    assert native_state["edits"] == 0
+    assert [call[:2] for call in native_gh_calls()] == [
+        ["pr", "view"],
+        ["pr", "view"],
+    ]
+    assert "PR body, base, or head changed before the LOC report update" in stderr
+finally:
+    (
+        cloc_report.repository_root,
+        cloc_report.build_pr_report,
+        cloc_report.pull_request_merge_base,
+    ) = native_original_functions
+    os.environ["PATH"] = previous_path
+    for variable in native_gh_env:
+        os.environ.pop(variable, None)
+
 real_source = Path(os.environ["REAL_PR_SOURCE"])
 real_caller = Path(os.environ["REAL_PR_CALLER"])
 
@@ -1266,7 +1499,7 @@ pr_help_output = subprocess.check_output(
     [*script, "pr", "--help"], cwd=repo, env=help_env, text=True
 )
 assert cloc_report.PR_COMMAND_DESCRIPTION in pr_help_output
-for pr_argument in ("number", "--repo", "--json", "--update-pr"):
+for pr_argument in ("number", "--repo", "--json", "--update-pr", "--body-file"):
     assert pr_argument in pr_help_output
 
 print("cloc report contract checks passed")

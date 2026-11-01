@@ -395,13 +395,13 @@ matrix_rows = evaluate_module_check_matrix(
     ci_compute_step, ["account-service", "game-session-service", "common-security"]
 )
 expected_matrix_rows = [
-    {"module": "account-service", "partition": "1", "java-version": 21},
-    {"module": "account-service", "partition": "2", "java-version": 21},
-    {"module": "game-session-service", "partition": "1", "java-version": 21},
-    {"module": "game-session-service", "partition": "2", "java-version": 21},
-    {"module": "game-session-service", "partition": "3", "java-version": 21},
-    {"module": "game-session-service", "partition": "4", "java-version": 21},
-    {"module": "common-security", "partition": "full", "java-version": 21},
+    {"module": "account-service", "partition": "1", "java-version": 25},
+    {"module": "account-service", "partition": "2", "java-version": 25},
+    {"module": "game-session-service", "partition": "1", "java-version": 25},
+    {"module": "game-session-service", "partition": "2", "java-version": 25},
+    {"module": "game-session-service", "partition": "3", "java-version": 25},
+    {"module": "game-session-service", "partition": "4", "java-version": 25},
+    {"module": "common-security", "partition": "full", "java-version": 25},
 ]
 expanded_jobs = [dict(row) for row in matrix_rows]
 if expanded_jobs != expected_matrix_rows or len({
@@ -424,7 +424,7 @@ for expected in (
     'Array.from({ length: slowServicePartitionCounts[module] }',
     'partition: String(index + 1)',
     'partition: "full"',
-    '"java-version": 21',
+    '"java-version": 25',
 ):
     require_contains(ci_compute_step, ("with", "script"), expected, "ci workflow")
 java_setup_step = find_step(ci, "build-and-test", "Set Up Java", "ci workflow")
@@ -532,6 +532,9 @@ for module, job_id, display, prefix in (
         "ci workflow",
     )
     require_equal(aggregate_job, ("permissions",), {"actions": "read", "contents": "read"}, "ci workflow")
+    aggregate_java = find_step(ci, job_id, f"Set Up Java for {display} Coverage Aggregation", "ci workflow")
+    require_equal(aggregate_java, ("with", "java-version"), "25", "ci workflow")
+    require_equal(aggregate_java, ("with", "distribution"), "temurin", "ci workflow")
     capture = find_step(ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
     require_equal(capture, ("env", "CI_MODULE"), module, "ci workflow")
     require_equal(
@@ -915,6 +918,12 @@ require_equal(
 
 gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
 root_configuration, subproject_configuration = gradle_build.split("subprojects {", 1)
+if re.findall(r"JavaLanguageVersion\.of\((\d+)\)", gradle_build) != ["25", "25", "25"]:
+    raise SystemExit("build.gradle.kts: root, Buf, and subproject toolchains must all select Java 25")
+if re.findall(r"options\.release\.set\((\d+)\)", gradle_build) != ["25", "25"]:
+    raise SystemExit("build.gradle.kts: Buf and subproject compilation must both target release 25")
+buf_java_setup = find_step(ci, "buf-check", "Set up Java for remote generator compatibility proof", "ci workflow")
+require_equal(buf_java_setup, ("with", "java-version"), "25", "ci workflow")
 for expected in (
     'val slowServiceCiPartitionCounts = mapOf("account-service" to 2, "game-session-service" to 4)',
     'providers.gradleProperty("slowServiceCiPartitionModule").orNull',

@@ -486,7 +486,7 @@ BUILD FAILED in 17s
 LOG
 }
 
-compose_expected="--no-configuration-cache --max-workers=1 --no-parallel -Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8 -PincludeLoadTesting=false :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar"
+compose_expected="--no-configuration-cache --max-workers=1 --no-parallel -Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8 -PincludeLoadTesting=false :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar --info --console=plain"
 new_case runtime-jooq-classpath-resolution
 write_runtime_jooq_captured_cause
 # shellcheck disable=SC2016

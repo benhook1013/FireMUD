@@ -1578,6 +1578,7 @@ jobs:
           cache-read-only: true
 
       - name: Build local PR runtime images
+        id: runtime-images-build
         env:
           MERGE_SHA: ${{ needs.image-meta.outputs.merge_sha }}
         run: |
@@ -1599,6 +1600,16 @@ jobs:
               "ghcr.io/benhook1013/${service}:${MERGE_SHA}" \
               "ghcr.io/benhook1013/${service}:${SMOKE_IMAGE_TAG}"
           done
+
+      - name: Retain runtime bootJar compile-failure evidence
+        if: ${{ failure() && steps.runtime-images-build.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: runtime-bootjar-compile-failure-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ steps.runtime-images-build.outputs.runtime_compile_failure_path || format('build/reports/compile-failure/runtime-bootjar/unavailable-{0}-{1}', github.run_id, github.run_attempt) }}
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Build PR backup verifier image
         run: |

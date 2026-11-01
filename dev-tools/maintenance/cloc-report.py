@@ -1020,6 +1020,18 @@ def validated_pr_body(body: str) -> str:
     return body
 
 
+def read_pr_body_file(path: Path) -> str:
+    if not path.is_absolute():
+        raise ReportError("--body-file must be an absolute path")
+    try:
+        body = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise ReportError(f"could not read UTF-8 PR body file {path}: {error}") from error
+    if not body.strip():
+        raise ReportError(f"PR body file {path} is empty; refusing to replace the PR body")
+    return body
+
+
 def replace_pr_report_block(body: str, snippet: str) -> str:
     start_count = body.count(PR_REPORT_START)
     end_count = body.count(PR_REPORT_END)
@@ -1068,7 +1080,12 @@ def pull_request_update_state(root: Path, number: int, repository: str) -> tuple
     return body, valid_object_id(payload.get("baseRefOid"), "base"), valid_object_id(payload.get("headRefOid"), "head")
 
 
-def update_pull_request_body(root: Path, number: int, report: dict[str, object]) -> bool:
+def update_pull_request_body(
+    root: Path,
+    number: int,
+    report: dict[str, object],
+    body_draft: str | None = None,
+) -> bool:
     repository = report.get("repository")
     base = report.get("base")
     head = report.get("head")
@@ -1082,7 +1099,7 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
     counted_merge_base = valid_object_id(base.get("merge_base"), "merge-base")
     counted_head = valid_object_id(head.get("oid"), "head")
 
-    body, current_base, current_head = pull_request_update_state(root, number, repository)
+    remote_body, current_base, current_head = pull_request_update_state(root, number, repository)
     if current_head != counted_head:
         raise ReportError("PR head changed while the LOC report was being generated; refusing body update")
     current_metadata = PullRequestMetadata(
@@ -1098,8 +1115,9 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
         raise ReportError("PR merge-base changed while the LOC report was being generated; refusing body update")
 
     current_report = {**report, "base": {**base, "oid": current_base}}
-    updated_body = replace_pr_report_block(body, render_pr_report(current_report))
-    if updated_body.replace("\r\n", "\n") == body.replace("\r\n", "\n"):
+    body_base = remote_body if body_draft is None else body_draft
+    updated_body = replace_pr_report_block(body_base, render_pr_report(current_report))
+    if updated_body.replace("\r\n", "\n") == remote_body.replace("\r\n", "\n"):
         return False
     body_path: Path | None = None
     try:
@@ -1107,7 +1125,7 @@ def update_pull_request_body(root: Path, number: int, report: dict[str, object])
             body_path = Path(body_file.name)
             body_file.write(updated_body)
         latest_state = pull_request_update_state(root, number, repository)
-        if latest_state != (body, current_base, current_head):
+        if latest_state != (remote_body, current_base, current_head):
             raise ReportError("PR body, base, or head changed before the LOC report update; refusing body update")
         run_command(
             (
@@ -1333,6 +1351,11 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--repo", help="GitHub repository in owner/name form (defaults to origin)")
     pr.add_argument("--json", action="store_true", help="emit structured JSON")
     pr.add_argument("--update-pr", action="store_true", help="replace the marked LOC section in the PR body")
+    pr.add_argument(
+        "--body-file",
+        type=Path,
+        help="use an absolute UTF-8 file as the complete draft PR body before inserting the marked LOC section",
+    )
 
     classify = commands.add_parser("classify", help="show source/test classification for tracked files")
     classify.add_argument("--json", action="store_true", help="emit structured JSON")
@@ -1372,6 +1395,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     try:
+        body_draft = None
+        if args.command == "pr" and args.body_file is not None:
+            if not args.update_pr:
+                raise ReportError("--body-file requires --update-pr")
+            body_draft = read_pr_body_file(args.body_file)
+
         root = repository_root()
         if args.command == "classify":
             rows = classify_inventory(tracked_inventory(root))
@@ -1389,8 +1418,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             report = build_pr_report(root, args.number, args.repo)
             print_json(report) if args.json else print(render_pr_report(report))
             if args.update_pr:
-                updated = update_pull_request_body(root, args.number, report)
-                status = "Updated the marked LOC section" if updated else "The marked LOC section is already up to date"
+                if args.body_file is not None:
+                    updated = update_pull_request_body(root, args.number, report, body_draft)
+                else:
+                    updated = update_pull_request_body(root, args.number, report)
+                if args.body_file is not None:
+                    status = (
+                        "Updated the PR body with the marked LOC section"
+                        if updated
+                        else "The PR body draft and marked LOC section are already up to date"
+                    )
+                else:
+                    status = (
+                        "Updated the marked LOC section"
+                        if updated
+                        else "The marked LOC section is already up to date"
+                    )
                 print(f"{status} in PR #{args.number}.", file=sys.stderr)
             return 0
 

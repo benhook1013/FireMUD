@@ -48,6 +48,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -912,6 +913,9 @@ class AccountClientTest {
                 .setTenantId("7")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipVersion(12L)
+                .setMembershipAuthorityGeneration(9L)
                 .build());
     AccountClient client = newClient(stub);
     assertThat(
@@ -974,6 +978,8 @@ class AccountClientTest {
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
             .setMembershipVersion(12L)
+            .setMembershipLifecycleState("ACTIVE")
+            .setMembershipAuthorityGeneration(9L)
             .setEvaluatedAt("2026-07-31T00:00:00Z")
             .build();
     when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
@@ -990,6 +996,9 @@ class AccountClientTest {
     assertThat(captor.getValue().getTenantId()).isEqualTo("7");
     assertThat(captor.getValue().getRequestId()).isEmpty();
     assertThat(actual).isEqualTo(expected);
+    assertThat(actual.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+    assertThat(actual.getMembershipVersion()).isEqualTo(12L);
+    assertThat(actual.getMembershipAuthorityGeneration()).isEqualTo(9L);
   }
 
   @Test
@@ -999,6 +1008,37 @@ class AccountClientTest {
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "ACTIVE,true,true,44,9", "ACTIVE,true,false,44,9",
+    "INACTIVE,true,false,23,41", "LEGACY_UNVERIFIED,true,false,7,19",
+    "MISSING,false,false,0,0"
+  })
+  void runtimeMembershipPassesThroughIndependentEmittedFields(
+      String lifecycle, boolean exists, boolean admitting, long version, long generation)
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    var expected =
+        GetTenantMembershipForRuntimeResponse.newBuilder()
+            .setAccountId(ACCOUNT_UUID)
+            .setTenantId("7")
+            .setMembershipExists(exists)
+            .setGameplayAdmissionAllowed(admitting)
+            .setMembershipLifecycleState(lifecycle)
+            .setMembershipVersion(version)
+            .setMembershipAuthorityGeneration(generation)
+            .setEvaluatedAt("2026-11-01T00:00:00Z")
+            .build();
+    when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
+        .thenReturn(expected);
+
+    var actual = newClient(stub).getTenantMembershipForRuntime(ACCOUNT_UUID, "7", "request-1");
+
+    assertThat(actual).isEqualTo(expected);
   }
 
   @Test
@@ -1025,6 +1065,8 @@ class AccountClientTest {
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
             .setMembershipVersion(12L)
+            .setMembershipLifecycleState("ACTIVE")
+            .setMembershipAuthorityGeneration(9L)
             .build();
     when(fixture
             .retryStub()

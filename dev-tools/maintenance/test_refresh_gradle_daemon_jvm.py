@@ -19,17 +19,18 @@ spec.loader.exec_module(refresh_daemon)
 
 
 def metadata():
+    # Synthetic five-platform fixtures exercise the guard, not publisher availability.
     records = []
     for os_name, arch in refresh_daemon.PLATFORMS:
         suffix = ".zip" if os_name == "windows" else ".tar.gz"
         records.append({
-            "vendor": "eclipse", "release_name": "jdk-21.0.12.1+1",
-            "version": {"major": 21, "minor": 0, "security": 12, "patch": 1, "build": 1,
-                        "semver": "21.0.12+101.0.LTS", "openjdk_version": "21.0.12.1+1-LTS"},
+            "vendor": "eclipse", "release_name": "jdk-25.0.12.1+1",
+            "version": {"major": 25, "minor": 0, "security": 12, "patch": 1, "build": 1,
+                        "semver": "25.0.12+101.0.LTS", "openjdk_version": "25.0.12.1+1-LTS"},
             "binary": {"os": os_name, "architecture": arch, "image_type": "jdk",
                        "jvm_impl": "hotspot", "project": "jdk", "package": {
-                           "link": "https://github.com/adoptium/temurin21-binaries/releases/download/"
-                           f"jdk-21.0.12.1%2B1/OpenJDK21U-jdk_{arch}_{os_name}_hotspot_21.0.12.1_1{suffix}"}},
+                            "link": "https://github.com/adoptium/temurin25-binaries/releases/download/"
+                            f"jdk-25.0.12.1%2B1/OpenJDK25U-jdk_{arch}_{os_name}_hotspot_25.0.12.1_1{suffix}"}},
         })
     return records
 
@@ -37,7 +38,7 @@ def metadata():
 def criteria_text(urls=None):
     if urls is None:
         urls = refresh_daemon.select_downloads(metadata())
-    lines = ["toolchainVersion=21", "toolchainVendor=ADOPTIUM"]
+    lines = ["toolchainVersion=25", "toolchainVendor=ADOPTIUM"]
     lines.extend(
         "toolchainUrl.{}={}".format(platform, url.replace(":", r"\:"))
         for platform, url in urls.items()
@@ -79,20 +80,20 @@ class OversizedResponse(JsonResponse):
 def staggered_latest_metadata():
     records = metadata()
     version = {
-        "major": 21, "minor": 0, "security": 13, "build": 9,
-        "semver": "21.0.13+9.0.LTS", "openjdk_version": "21.0.13+9-LTS",
+        "major": 25, "minor": 0, "security": 13, "build": 9,
+        "semver": "25.0.13+9.0.LTS", "openjdk_version": "25.0.13+9-LTS",
     }
     for entry in records:
         binary = entry["binary"]
         if binary["os"] not in {"linux", "mac"}:
             continue
-        entry["release_name"] = "jdk-21.0.13+9"
+        entry["release_name"] = "jdk-25.0.13+9"
         entry["version"] = copy.deepcopy(version)
         suffix = ".zip" if binary["os"] == "windows" else ".tar.gz"
         binary["package"]["link"] = (
-            "https://github.com/adoptium/temurin21-binaries/releases/download/"
-            f"jdk-21.0.13%2B9/OpenJDK21U-jdk_{binary['architecture']}_{binary['os']}_"
-            f"hotspot_21.0.13_9{suffix}"
+            "https://github.com/adoptium/temurin25-binaries/releases/download/"
+            f"jdk-25.0.13%2B9/OpenJDK25U-jdk_{binary['architecture']}_{binary['os']}_"
+            f"hotspot_25.0.13_9{suffix}"
         )
     return records
 
@@ -134,22 +135,22 @@ def generator_download_urls(command):
         raise AssertionError("generator daemon URL metadata file is missing")
     values = json.loads(metadata_path.read_text())
     if not isinstance(values, dict) or set(values) != set(refresh_daemon.PLATFORMS.values()):
-        raise AssertionError("generator daemon URL metadata does not contain exactly six platforms")
+        raise AssertionError("generator daemon URL metadata does not contain exactly five platforms")
     return values
 
 
 class DaemonCriteriaTest(unittest.TestCase):
     def test_accepts_one_release_and_exact_generated_artifact(self):
         urls = refresh_daemon.select_downloads(metadata())
-        criteria = "toolchainVersion=21\ntoolchainVendor=ADOPTIUM\n" + "".join(
+        criteria = "toolchainVersion=25\ntoolchainVendor=ADOPTIUM\n" + "".join(
             "toolchainUrl.{}={}\n".format(platform, url.replace(":", r"\:"))
             for platform, url in urls.items()
         )
         refresh_daemon.validate_criteria(criteria, urls)
-        for mutated in [criteria.replace("Version=21", "Version=25"),
+        for mutated in [criteria.replace("Version=25", "Version=21"),
                         criteria.replace("Vendor=ADOPTIUM", "Vendor=OTHER"),
                         criteria.replace("LINUX.X86_64", "FREE_BSD.X86_64"),
-                        criteria.replace("https", "http"), criteria + "toolchainVersion=21\n",
+                        criteria.replace("https", "http"), criteria + "toolchainVersion=25\n",
                         criteria + "toolchainImplementation=J9\n", criteria.split("toolchainUrl")[0]]:
             with self.subTest(criteria=mutated), self.assertRaises(ValueError):
                 refresh_daemon.validate_criteria(mutated, urls)
@@ -164,11 +165,63 @@ class DaemonCriteriaTest(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises((TypeError, ValueError)):
                 refresh_daemon.select_downloads(case)
 
+    def test_java25_metadata_endpoint_and_exact_supported_platforms(self):
+        records = metadata()
+        with patch.object(refresh_daemon.urllib.request, "urlopen",
+                          return_value=JsonResponse(records)) as urlopen:
+            self.assertEqual(refresh_daemon.fetch_latest_metadata(), records)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://api.adoptium.net/v3/assets/latest/25/hotspot")
+        self.assertEqual(urlopen.call_args.kwargs, {"timeout": 30})
+        self.assertEqual(set(refresh_daemon.PLATFORMS), {
+            ("linux", "x64"), ("linux", "aarch64"),
+            ("mac", "x64"), ("mac", "aarch64"), ("windows", "x64"),
+        })
+        for platform in refresh_daemon.PLATFORMS:
+            incomplete = [entry for entry in records if (
+                entry["binary"]["os"], entry["binary"]["architecture"]
+            ) != platform]
+            with self.subTest(platform=platform), self.assertRaisesRegex(
+                ValueError, "Missing supported Adoptium platform"
+            ):
+                refresh_daemon.select_downloads(incomplete)
+
+    def test_windows_arm_is_not_synthesized_or_accepted_in_criteria(self):
+        urls = refresh_daemon.select_downloads(metadata())
+        self.assertNotIn("WINDOWS.AARCH64", urls)
+        unsupported = {"binary": {
+            "image_type": "jdk", "os": "windows", "architecture": "aarch64",
+            "package": {"link": "https://example.invalid/not-a-qualified-artifact"},
+        }}
+        self.assertEqual(refresh_daemon.select_downloads(metadata() + [unsupported]), urls)
+        text = criteria_text(urls) + "toolchainUrl.WINDOWS.AARCH64=https\\://example.invalid/unsupported\n"
+        with self.assertRaises(ValueError):
+            refresh_daemon.pinned_release_and_urls(text)
+        with self.assertRaises(ValueError):
+            refresh_daemon.validate_criteria(text, urls)
+        with self.assertRaisesRegex(ValueError, "Unsupported automatic"):
+            refresh_daemon.validate_download_url(
+                "https://example.invalid/unsupported", "windows", "aarch64",
+                "jdk-25.0.12.1+1", "25.0.12.1+1"
+            )
+        for expected in [dict(list(urls.items())[:-1]), {**urls, "WINDOWS.AARCH64": "unsupported"}]:
+            with self.subTest(expected=expected), self.assertRaisesRegex(ValueError, "exactly the five"):
+                refresh_daemon.validate_criteria(criteria_text(expected), expected)
+
+    def test_java21_pin_is_not_java25_qualification(self):
+        legacy = criteria_text().replace("Version=25", "Version=21").replace(
+            "temurin25-binaries", "temurin21-binaries"
+        ).replace("jdk-25.", "jdk-21.").replace("OpenJDK25U", "OpenJDK21U").replace(
+            "hotspot_25.", "hotspot_21."
+        )
+        with self.assertRaisesRegex(ValueError, "must select Java 25"):
+            refresh_daemon.pinned_release_and_urls(legacy)
+
     def test_rejects_mixed_major_release_vendor_and_url_authority(self):
         mutations = [
-            ("version", "major", 25), ("version", "major", "21"),
-            ("version", "build", "1"), ("version", "openjdk_version", "25.0.1+1"),
-            (None, "release_name", "jdk-21.0.12.1+2"), (None, "vendor", "other"),
+            ("version", "major", 21), ("version", "major", "25"),
+            ("version", "build", "1"), ("version", "openjdk_version", "21.0.1+1"),
+            (None, "release_name", "jdk-25.0.12.1+2"), (None, "vendor", "other"),
             ("binary", "jvm_impl", "openj9"),
         ]
         for section, key, value in mutations:
@@ -178,14 +231,17 @@ class DaemonCriteriaTest(unittest.TestCase):
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 refresh_daemon.select_downloads(case)
         case = metadata()
-        case[0]["release_name"] = "jdk-21.0.12.1+2"
+        case[0]["release_name"] = "jdk-25.0.12.1+2"
         case[0]["version"]["build"] = 2
-        case[0]["version"]["openjdk_version"] = "21.0.12.1+2-LTS"
+        case[0]["version"]["openjdk_version"] = "25.0.12.1+2-LTS"
         with self.assertRaises(ValueError):
             refresh_daemon.select_downloads(case)
         for old, new in [("github.com", "example.com"), ("adoptium/", "other/"),
-                         ("temurin21-binaries", "temurin25-binaries"),
-                         ("https://", "http://"), ("%2B1/", "%2B2/")]:
+                          ("temurin25-binaries", "temurin21-binaries"),
+                          ("https://", "http://"), ("%2B1/", "%2B2/"),
+                          (".tar.gz", ".zip"), ("_x64_linux_", "_aarch64_linux_"),
+                          (".tar.gz", ".tar.gz?signature=untrusted"),
+                          (".tar.gz", ".tar.gz#fragment")]:
             case = metadata()
             package = case[0]["binary"]["package"]
             package["link"] = package["link"].replace(old, new)
@@ -206,7 +262,7 @@ class DaemonCriteriaTest(unittest.TestCase):
                     patch.object(refresh_daemon, "fetch_latest_metadata",
                                  side_effect=AssertionError("check-only must not query latest")):
                 self.assertEqual(refresh_daemon.select_refresh_downloads(check_only=True), expected_urls)
-            pinned_fetch.assert_called_once_with("jdk-21.0.12.1+1")
+            pinned_fetch.assert_called_once_with("jdk-25.0.12.1+1")
 
         with (
             patch.object(refresh_daemon, "fetch_latest_metadata",
@@ -224,7 +280,7 @@ class DaemonCriteriaTest(unittest.TestCase):
         mixed_pin = text.replace(escaped_pinned_url, escaped_other_release, 1)
         malformed = [
             text.replace("toolchainUrl.WINDOWS.X86_64=", "toolchainUrl.UNKNOWN=", 1),
-            text + "toolchainVersion=21\n",
+            text + "toolchainVersion=25\n",
             text.replace("github.com", "example.com", 1),
             mixed_pin,
             text.replace(".tar.gz", ".zip", 1),
@@ -234,7 +290,7 @@ class DaemonCriteriaTest(unittest.TestCase):
             with self.subTest(candidate=candidate), self.assertRaises((TypeError, ValueError)):
                 refresh_daemon.pinned_release_and_urls(candidate)
 
-    def test_pinned_metadata_must_include_six_exact_official_assets(self):
+    def test_pinned_metadata_must_include_five_exact_official_assets(self):
         text = criteria_text()
         rows = feature_metadata(metadata())
         expected = refresh_daemon.select_downloads(metadata())
@@ -265,19 +321,19 @@ class DaemonCriteriaTest(unittest.TestCase):
             return responses[len(requests) - 1]
 
         with patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=open_request):
-            fetched = refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            fetched = refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
 
         self.assertEqual(
-            refresh_daemon.select_release_downloads(fetched, "jdk-21.0.12.1+1"),
+            refresh_daemon.select_release_downloads(fetched, "jdk-25.0.12.1+1"),
             refresh_daemon.select_downloads(metadata()),
         )
-        self.assertEqual(len(requests), 6)
+        self.assertEqual(len(requests), 5)
         observed_platforms = set()
         for request, (os_name, architecture) in zip(requests, refresh_daemon.PLATFORMS):
             parsed = urlsplit(request.full_url)
             self.assertEqual(parsed.scheme, "https")
             self.assertEqual(parsed.netloc, "api.adoptium.net")
-            self.assertEqual(parsed.path, "/v3/assets/feature_releases/21/ga")
+            self.assertEqual(parsed.path, "/v3/assets/feature_releases/25/ga")
             query = parse_qs(parsed.query)
             self.assertEqual(query, {
                 "architecture": [architecture], "heap_size": ["normal"],
@@ -304,13 +360,13 @@ class DaemonCriteriaTest(unittest.TestCase):
             return responses[len(requests) - 1]
 
         with patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=open_request):
-            fetched = refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            fetched = refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
 
         self.assertEqual(
-            refresh_daemon.select_release_downloads(fetched, "jdk-21.0.12.1+1"),
+            refresh_daemon.select_release_downloads(fetched, "jdk-25.0.12.1+1"),
             refresh_daemon.select_downloads(metadata()),
         )
-        self.assertEqual(len(requests), 12)
+        self.assertEqual(len(requests), 10)
         for offset in range(0, len(requests), 2):
             self.assertEqual(parse_qs(urlsplit(requests[offset].full_url).query)["page"], ["0"])
             self.assertEqual(parse_qs(urlsplit(requests[offset + 1].full_url).query)["page"], ["1"])
@@ -322,7 +378,7 @@ class DaemonCriteriaTest(unittest.TestCase):
             ]),
             self.assertRaisesRegex(ValueError, "within 10 pages"),
         ):
-            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
 
         full_page = [{"release_name": f"unrelated-{index}", "binaries": []}
                      for index in range(refresh_daemon.MAX_FEATURE_RELEASES)]
@@ -332,7 +388,7 @@ class DaemonCriteriaTest(unittest.TestCase):
                                       for _ in range(refresh_daemon.MAX_FEATURE_RELEASE_PAGES)]) as urlopen,
             self.assertRaisesRegex(ValueError, "within 10 pages"),
         ):
-            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
         self.assertEqual(urlopen.call_count, refresh_daemon.MAX_FEATURE_RELEASE_PAGES)
 
         not_found = HTTPError("https://api.adoptium.net/page/1", 404, "Not Found", None, None)
@@ -341,7 +397,7 @@ class DaemonCriteriaTest(unittest.TestCase):
                          side_effect=[JsonResponse(full_page), not_found]) as urlopen,
             self.assertRaisesRegex(ValueError, "within 10 pages"),
         ):
-            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
         self.assertEqual(urlopen.call_count, 2)
 
         server_error = HTTPError("https://api.adoptium.net/page/0", 503, "Unavailable", None, None)
@@ -349,7 +405,7 @@ class DaemonCriteriaTest(unittest.TestCase):
             patch.object(refresh_daemon.urllib.request, "urlopen", side_effect=server_error),
             self.assertRaises(HTTPError) as raised,
         ):
-            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
         self.assertEqual(raised.exception.code, 503)
 
         duplicate = feature_metadata(metadata())[0]
@@ -358,19 +414,19 @@ class DaemonCriteriaTest(unittest.TestCase):
                          return_value=JsonResponse([duplicate, copy.deepcopy(duplicate)])),
             self.assertRaisesRegex(ValueError, "Duplicate Adoptium release metadata"),
         ):
-            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
 
         with (
             patch.object(refresh_daemon.urllib.request, "urlopen", return_value=JsonResponse([None])),
             self.assertRaisesRegex(TypeError, "Malformed Adoptium feature-release metadata"),
         ):
-            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
 
         with (
             patch.object(refresh_daemon.urllib.request, "urlopen", return_value=OversizedResponse([])),
             self.assertRaisesRegex(ValueError, "exceeds the bounded size"),
         ):
-            refresh_daemon.fetch_release_metadata("jdk-21.0.12.1+1")
+            refresh_daemon.fetch_release_metadata("jdk-25.0.12.1+1")
 
     def test_check_only_preserves_preexisting_edits_outside_the_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -401,7 +457,14 @@ class DaemonCriteriaTest(unittest.TestCase):
             self.assertEqual(artifact.read_text(), criteria_text())
             self.assertEqual(len(generator_calls), 1)
             command = generator_calls[0]
-            self.assertEqual(command[2:5], ["updateDaemonJvm", "--jvm-version=21", "--jvm-vendor=adoptium"])
+            self.assertEqual(command[2:5], ["updateDaemonJvm", "--jvm-version=25", "--jvm-vendor=adoptium"])
+
+    def test_publishing_refresh_still_requires_clean_checkout(self):
+        with patch.object(refresh_daemon.subprocess, "check_output", return_value=b" M build.gradle.kts\n"), \
+                patch.object(refresh_daemon, "select_refresh_downloads") as select, \
+                self.assertRaisesRegex(RuntimeError, "requires a clean checkout"):
+            refresh_daemon.refresh(check_only=False)
+        select.assert_not_called()
 
     def test_generator_inherits_only_the_existing_resource_session_descriptor(self):
         with tempfile.TemporaryDirectory() as directory:

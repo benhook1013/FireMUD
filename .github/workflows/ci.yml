@@ -150,8 +150,8 @@ jobs:
             outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>
               slowServicePartitionCounts[module]
                 ? Array.from({ length: slowServicePartitionCounts[module] }, (_, index) =>
-                    ({ module, partition: String(index + 1), "java-version": 21 }))
-                : [{ module, partition: "full", "java-version": 21 }]
+                    ({ module, partition: String(index + 1), "java-version": 25 }))
+                : [{ module, partition: "full", "java-version": 25 }]
             );
             for (const [name, value] of Object.entries(outputs)) {
               core.setOutput(
@@ -1304,7 +1304,7 @@ jobs:
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
-          java-version: 21
+          java-version: 25
 
       - name: ⚙️ Set Up Gradle for Account Coverage Aggregation
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
@@ -1415,7 +1415,7 @@ jobs:
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
-          java-version: 21
+          java-version: 25
 
       - name: ⚙️ Set Up Gradle for Game Session Coverage Aggregation
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
@@ -1466,6 +1466,16 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
+
+      - name: Explain validation lane
+        env:
+          FIREMUD_METADATA_ONLY: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        run: |
+          if [[ "$FIREMUD_METADATA_ONLY" == "true" ]]; then
+            printf '## Metadata-only PR edit\n\nHeavy validation jobs are skipped. Required CI is preserved only from qualified source validation for this comparison.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '## Source validation\n\nThis run executes the applicable source checks for the PR comparison.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Preserve successful required gate on metadata-only edit
         id: preserved_gate

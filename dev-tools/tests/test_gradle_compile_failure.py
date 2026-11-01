@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,8 @@ SPEC.loader.exec_module(CAPTURE)
 
 class CaptureTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        (ROOT / 'build').mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='compile-failure-test-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.log = self.root / 'check.log'
@@ -29,6 +31,9 @@ class CaptureTests(unittest.TestCase):
                             'Compiling with toolchain /jdk21\n'
                             'SECRET=do-not-retain\nBad.java:1: error: bad\n')
         self.output = self.root / 'evidence'
+        self.write('dev-tools/validation/run-locked-gradle.sh', '#!/bin/bash\n'
+                   'printf "%s\\n" "$@" > locked-args\n'
+                   'exec "$(dirname "$0")/../../gradlew" "$@"\n')
 
     def write(self, relative, content='source'):
         path = self.root / relative
@@ -117,11 +122,36 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual('complete', result['status'])
         self.assertEqual({'attribution': 'post-failure'}, json.loads(target.read_text()))
         arguments = (self.root / 'diagnostic-args').read_text().splitlines()
+        self.assertEqual(arguments, (self.root / 'locked-args').read_text().splitlines())
         self.assertIn('--offline', arguments)
         self.assertIn('--no-configuration-cache', arguments)
         self.assertEqual(':common-saga:firemudCompileFailureFacts', arguments[-1])
         self.assertFalse(any(arg.endswith(':check') for arg in arguments))
         self.assertNotIn('--refresh-dependencies', arguments)
+
+    def test_diagnostic_preserves_only_the_inherited_resource_descriptor(self):
+        runner = self.write('gradlew', f'#!{sys.executable}\n'
+                            'import json, os\n'
+                            'fd = int(os.environ["FIREMUD_LOCAL_RESOURCE_SESSION_FD"])\n'
+                            'os.fstat(fd)\n'
+                            'other = int(os.environ["FIXTURE_UNRELATED_FD"])\n'
+                            'try:\n'
+                            '    os.fstat(other)\n'
+                            'except OSError:\n'
+                            '    pass\n'
+                            'else:\n'
+                            '    raise SystemExit("unrelated descriptor inherited")\n'
+                            'print("FIREMUD_COMPILE_FACTS=" + json.dumps({"lease_descriptor_open": True}))\n')
+        runner.chmod(0o755)
+        with (self.root / 'lease').open('w') as lease, (self.root / 'unrelated').open('w') as other:
+            os.set_inheritable(other.fileno(), True)
+            with patch.dict(os.environ, {
+                    'FIREMUD_LOCAL_RESOURCE_SESSION_FD': str(lease.fileno()),
+                    'FIXTURE_UNRELATED_FD': str(other.fileno())}):
+                target = self.root / 'facts.json'
+                result = CAPTURE.diagnostic(self.root, ':common-saga:compileJava', target)
+        self.assertEqual('complete', result['status'])
+        self.assertEqual({'lease_descriptor_open': True}, json.loads(target.read_text()))
 
     def test_output_symlink_escape_rejected(self):
         external = self.root / 'outside'
@@ -424,6 +454,224 @@ class CaptureTests(unittest.TestCase):
                                '.github/scripts/run-gradle-module-checks.sh',
                                'world-management-service'], cwd=root,
                               capture_output=True, text=True, check=False)
+
+
+class RuntimeBootJarTests(unittest.TestCase):
+    """Run the real entrypoint/recovery/collector against inert Gradle launchers."""
+
+    write = CaptureTests.write
+
+    def setUp(self):
+        (ROOT / 'build').mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='runtime-compile-test-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for relative in ['dev-tools/build-compose-service-jars.sh',
+                         'dev-tools/validation/run-gradle-with-dependency-recovery.sh',
+                         'dev-tools/validation/collect-gradle-compile-failure.py']:
+            destination = self.root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / relative, destination)
+        launcher = self.write('dev-tools/validation/run-locked-gradle.sh', '#!/bin/bash\n'
+                              'printf "%s\\n" "$@" >> locked-args\n'
+                              'exec "$(dirname "$0")/../../gradlew" "$@"\n')
+        launcher.chmod(0o755)
+        self.env = {**os.environ, 'TMPDIR': str(self.root), 'RUNNER_TEMP': str(self.root),
+                    'GITHUB_OUTPUT': str(self.root / 'step-output')}
+        self.env.pop('FIREMUD_LOCAL_RESOURCE_SESSION_FD', None)
+
+    def run_build(self, status=0, output='', producer='', lastpipe=False, signal_number=None):
+        runner = self.write('gradlew', f'#!{sys.executable}\n'
+                            'import json, os, sys\nfrom pathlib import Path\n'
+                            'with open("calls", "a") as calls:\n'
+                            '    calls.write(json.dumps(sys.argv[1:]) + "\\n")\n'
+                            'if any(arg.endswith(":firemudCompileFailureFacts") for arg in sys.argv):\n'
+                            '    print(\'SECRET=not-retained\')\n'
+                            '    print(\'FIREMUD_COMPILE_FACTS={"attribution":"post-failure",'
+                            '"gradleVersion":"fixture", "jvm":"fixture",'
+                            '"compiler":"fixture", "classpath":[]}\')\n'
+                            '    raise SystemExit(0)\n'
+                            + producer + '\n'
+                            f'print({output!r}, flush=True)\n'
+                            'Path("producer-ended").write_text("drained")\n'
+                            + (f'os.kill(os.getpid(), {signal_number})\n' if signal_number else '')
+                            + f'raise SystemExit({status})\n')
+        runner.chmod(0o755)
+        return subprocess.run(['bash', *(['-O', 'lastpipe'] if lastpipe else []),
+                               'dev-tools/build-compose-service-jars.sh'], cwd=self.root,
+                              env=self.env, capture_output=True, check=False, start_new_session=True)
+
+    def calls(self):
+        return [json.loads(line) for line in (self.root / 'calls').read_text().splitlines()]
+
+    def evidence(self):
+        return list((self.root / 'build/reports/compile-failure').rglob('manifest.json'))
+
+    def assert_original_command(self, arguments):
+        services = ['account-service', 'automation-scripting-service', 'entity-management-service',
+                    'game-design-service', 'game-logic-service', 'game-session-service',
+                    'logging-admin-service', 'social-groups-service', 'spring-cloud-gateway',
+                    'tcp-proxy-service', 'world-management-service']
+        self.assertEqual(['--no-configuration-cache', '--max-workers=1', '--no-parallel',
+                          '-Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8',
+                          '-PincludeLoadTesting=false',
+                          *[f':{service}:bootJar' for service in services],
+                          '--info', '--console=plain'], arguments)
+
+    def test_success_preserves_all_eleven_tasks_and_flags_once(self):
+        result = self.run_build(output='> Task :common-saga:compileJava FAILED')
+        self.assertEqual(0, result.returncode)
+        self.assertEqual(1, len(self.calls()))
+        self.assert_original_command(self.calls()[0])
+        self.assertEqual([], self.evidence())
+
+    def test_noncompiler_and_signal_exits_never_collect(self):
+        for status, signal_number, output in [(19, None, '> Task :account-service:bootJar FAILED'),
+                                               (130, None, '> Task :common-saga:compileJava FAILED'),
+                                               (143, 15, '> Task :common-saga:compileJava FAILED'),
+                                               (129, 1, '> Task :common-saga:compileJava FAILED')]:
+            with self.subTest(status=status):
+                result = self.run_build(status, output, signal_number=signal_number)
+                self.assertEqual(status, result.returncode)
+                self.assertEqual([], self.evidence())
+        self.assertEqual(4, len(self.calls()))
+        for arguments in self.calls():
+            self.assert_original_command(arguments)
+
+    def test_bounded_useful_compiler_capture_without_compiler_retry(self):
+        self.write('services/common-saga/build/generated/Bad.java', 'bad source')
+        self.write('services/common-saga/build/generated/Huge.java', 'x' * (CAPTURE.MAX_FILE_BYTES + 1))
+        self.write('protos/owner/service.proto', 'schema')
+        self.write('build.gradle.kts', 'build inputs')
+        result = self.run_build(17, '> Task :common-saga:compileJava FAILED\n'
+                                'Compiling with toolchain /jdk25\nBad.java:1: error: bad\n'
+                                'SECRET=not-retained',
+                                'os.write(1, b"x" * (17 * 1024 * 1024) + b"\\n")')
+        self.assertEqual(17, result.returncode)
+        calls = self.calls()
+        self.assertEqual(2, len(calls))
+        self.assert_original_command(calls[0])
+        self.assertEqual(':common-saga:firemudCompileFailureFacts', calls[1][-1])
+        self.assertIn('--offline', calls[1])
+        self.assertIn('--no-daemon', calls[1])
+        self.assertNotIn('--refresh-dependencies', calls[1])
+        self.assertFalse(any(arg.startswith(':') and arg.endswith((':check', ':test', ':compileJava'))
+                             for arg in calls[1]))
+        manifest_path, = self.evidence()
+        manifest = json.loads(manifest_path.read_text())
+        self.assertEqual(17, manifest['check_exit'])
+        self.assertEqual(['Compiling with toolchain /jdk25'], manifest['original_compiler_info'])
+        self.assertIn('post-failure', manifest['attribution'])
+        self.assertTrue(manifest['log_tail_possibly_truncated'])
+        self.assertEqual(1, manifest['omitted'])
+        self.assertLessEqual(manifest['captured_bytes'], CAPTURE.MAX_BYTES)
+        paths = [entry['path'] for entry in manifest['files']]
+        self.assertIn('services/common-saga/build/generated/Bad.java', paths)
+        self.assertIn('protos/owner/service.proto', paths)
+        self.assertIn('build.gradle.kts', paths)
+        diagnostic, = manifest_path.parent.glob('*-diagnostic.json')
+        self.assertEqual('fixture', json.loads(diagnostic.read_text())['gradleVersion'])
+        self.assertNotIn('SECRET', manifest_path.read_text() + diagnostic.read_text())
+        self.assertFalse(list((self.root / 'build').glob('runtime-bootjar.*')))
+
+    def test_wrapper_group_interrupts_preserve_signal_exit_without_diagnostics(self):
+        for signal_number, expected in [(2, 130), (15, 143), (1, 129)]:
+            with self.subTest(signal=signal_number):
+                result = self.run_build(producer='print("> Task :common-saga:compileJava FAILED", flush=True)\n'
+                                        f'os.killpg(os.getpgrp(), {signal_number})')
+                self.assertEqual(expected, result.returncode)
+                self.assertEqual([], self.evidence())
+        self.assertEqual(3, len(self.calls()))
+
+    def test_capture_early_exit_drains_for_all_original_statuses_and_lastpipe(self):
+        collector = self.root / 'dev-tools/validation/collect-gradle-compile-failure.py'
+        collector.write_text('import sys\n'
+                             'if "--capture-log" in sys.argv:\n'
+                             '    sys.stdin.buffer.read(1)\n'
+                             'raise SystemExit(23)\n')
+        for status in [0, 17, 130, 143]:
+            for lastpipe in [False, True]:
+                with self.subTest(status=status, lastpipe=lastpipe):
+                    result = self.run_build(status, producer='os.write(1, b"x" * 1048576)', lastpipe=lastpipe)
+                    self.assertEqual(status, result.returncode)
+                    self.assertEqual('drained', (self.root / 'producer-ended').read_text())
+                    self.assertEqual([], self.evidence())
+        self.assertEqual(8, len(self.calls()))
+
+    def test_capture_write_failure_drains_and_preserves_original_exit(self):
+        collector = self.root / 'dev-tools/validation/collect-gradle-compile-failure.py'
+        collector.write_text(collector.read_text().replace(
+            'return capture_log(sys.stdin.buffer',
+            'args.capture_log.mkdir()\n        return capture_log(sys.stdin.buffer'))
+        for status in [0, 17]:
+            with self.subTest(status=status):
+                result = self.run_build(status, '> Task :common-saga:compileJava FAILED',
+                                        'os.write(1, b"x" * 1048576)')
+                self.assertEqual(status, result.returncode)
+                self.assertIn(b'original output drained', result.stderr)
+                self.assertIn(b'> Task :common-saga:compileJava FAILED', result.stdout)
+                self.assertEqual('drained', (self.root / 'producer-ended').read_text())
+        self.assertEqual(2, len(self.calls()))
+        self.assertEqual([], self.evidence())
+
+    def test_missing_scratch_runs_original_build_once_without_evidence(self):
+        mktemp = self.write('bin/mktemp', '#!/bin/bash\n'
+                            'case "$*" in *runtime-bootjar*) exit 1;; esac\n'
+                            f'exec "{shutil.which("mktemp")}" "$@"\n')
+        mktemp.chmod(0o755)
+        self.env['PATH'] = str(mktemp.parent) + os.pathsep + os.environ['PATH']
+        for status in [0, 17, 143]:
+            with self.subTest(status=status):
+                result = self.run_build(status, '> Task :common-saga:compileJava FAILED')
+                self.assertEqual(status, result.returncode)
+                self.assertIn(b'without capture', result.stderr)
+        self.assertEqual(3, len(self.calls()))
+        self.assertEqual([], self.evidence())
+        self.assertFalse((self.root / 'step-output').exists())
+
+    def test_collection_failure_preserves_original_exit_without_retry(self):
+        collector = self.root / 'dev-tools/validation/collect-gradle-compile-failure.py'
+        collector.write_text(collector.read_text().replace(
+            'collect(args.root, args.log, args.output, args.check_exit)',
+            'raise OSError("fixture collection unavailable")'))
+        result = self.run_build(23, '> Task :common-saga:compileJava FAILED')
+        self.assertEqual(23, result.returncode)
+        self.assertIn(b'preserving build exit 23', result.stderr)
+        self.assertEqual(1, len(self.calls()))
+        self.assertEqual([], self.evidence())
+
+    def test_repeated_invocations_never_select_stale_evidence(self):
+        self.env.update(GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2')
+        paths = []
+        for status in [17, 0, 19, 17]:
+            step_output = self.root / 'step-output'
+            step_output.write_text('')
+            result = self.run_build(status, '> Task :common-saga:compileJava FAILED' if status == 17 else '')
+            self.assertEqual(status, result.returncode)
+            output = step_output.read_text()
+            self.assertEqual(status == 17, bool(output))
+            if output:
+                paths.append(Path(output.strip().split('=', 1)[1]))
+        self.assertEqual(2, len(set(paths)))
+        self.assertTrue(all((path / 'manifest.json').exists() for path in paths))
+        self.assertEqual(6, len(self.calls()))
+
+    def test_reused_scratch_name_never_publishes_existing_evidence(self):
+        stale = self.write('build/reports/compile-failure/runtime-bootjar/runtime-bootjar.reused/manifest.json',
+                           'stale evidence')
+        mktemp = self.write('bin/mktemp', '#!/bin/bash\n'
+                            'case "$*" in *runtime-bootjar*)\n'
+                            f'  mkdir -p "{self.root}/build/runtime-bootjar.reused"\n'
+                            f'  printf "%s\\n" "{self.root}/build/runtime-bootjar.reused"; exit 0;; esac\n'
+                            f'exec "{shutil.which("mktemp")}" "$@"\n')
+        mktemp.chmod(0o755)
+        self.env['PATH'] = str(mktemp.parent) + os.pathsep + os.environ['PATH']
+        result = self.run_build(17, '> Task :common-saga:compileJava FAILED')
+        self.assertEqual(17, result.returncode)
+        self.assertIn(b'preserving build exit 17', result.stderr)
+        self.assertEqual('stale evidence', stale.read_text())
+        self.assertFalse((self.root / 'step-output').exists())
+        self.assertEqual(1, len(self.calls()))
 
 
 if __name__ == '__main__':

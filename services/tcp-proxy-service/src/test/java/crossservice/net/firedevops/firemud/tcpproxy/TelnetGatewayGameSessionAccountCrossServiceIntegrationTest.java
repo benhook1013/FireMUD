@@ -181,16 +181,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             this::openTelnetClient,
             GameplayTelnetScenarios.demoAdmission(READY_LOOK_TEXT),
             client ->
-                assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
-                    .contains("ERROR JOIN_REQUIRED")
-                    .contains(
-                        "Membership is required before PLAY; joining this world is not available yet."))) {
+                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
+                    .contains("ERROR WORLD_ACCESS_DENIED")
+                    .contains("You are not allowed to enter that world."))) {
       assertThat(scenario.responses())
-          .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"))
-          .anyMatch(
-              response ->
-                  response.contains(
-                      "Membership is required before PLAY; joining this world is not available yet."));
+          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"))
+          .anyMatch(response -> response.contains("You are not allowed to enter that world."));
     }
   }
 
@@ -479,23 +475,17 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetReconnectAfterRevocationFailsClosed() throws Exception {
+  void telnetReconnectWithInactiveMembershipRequiresExplicitJoin() throws Exception {
     ensureTestServicesStarted();
-    try (GameplayTelnetScenarios.ReconnectScenario scenario =
-        GameplayTelnetScenarios.reconnectAfterReady(
-            this::openTelnetClient,
-            READY_LOOK_TEXT,
-            LookTestFixtures.DESTINATION_ROOM_ID,
-            firstClient -> {
-              firstClient.sendLine("MOVE north");
-              assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
-                  .contains(LookTestFixtures.DESTINATION_ROOM_ID);
-            })) {
-      assertThat(scenario.firstResponses())
-          .anyMatch(response -> response.contains(LookTestFixtures.DESTINATION_ROOM_ID));
+    try (GameplayTelnetDriver firstClient = openReadyTelnetClient()) {
+      firstClient.sendLine("MOVE north");
+      assertThat(firstClient.readBlockContainingOrTimeout("OK LOOK"))
+          .contains(LookTestFixtures.DESTINATION_ROOM_ID);
     }
 
-    accountStub().setGameplayAdmissionAllowed(false);
+    accountStub().setMembershipInactive();
+    accountStub().setMembershipVersion(12L);
+    accountStub().setMembershipAuthorityGeneration(9L);
 
     try (GameplayTelnetScenarios.LoginThenPlayScenario scenario =
         GameplayTelnetScenarios.loginThenAttemptPlay(

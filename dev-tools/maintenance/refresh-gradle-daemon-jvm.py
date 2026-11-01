@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate Java 21 Adoptium daemon URLs with Gradle's native generator."""
+"""Regenerate Java 25 Adoptium daemon URLs with Gradle's native generator."""
 
 import argparse
 import hashlib
@@ -17,12 +17,12 @@ from urllib.parse import quote, unquote, urlencode, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACT = "gradle/gradle-daemon-jvm.properties"
-LATEST_METADATA_URL = "https://api.adoptium.net/v3/assets/latest/21/hotspot"
-FEATURE_RELEASES_URL = "https://api.adoptium.net/v3/assets/feature_releases/21/ga"
+LATEST_METADATA_URL = "https://api.adoptium.net/v3/assets/latest/25/hotspot"
+FEATURE_RELEASES_URL = "https://api.adoptium.net/v3/assets/feature_releases/25/ga"
 MAX_METADATA_BYTES = 8 * 1024 * 1024
 MAX_FEATURE_RELEASES = 20
 MAX_FEATURE_RELEASE_PAGES = 10
-ADOPTIUM_RELEASE_PREFIX = "/adoptium/temurin21-binaries/releases/download/"
+ADOPTIUM_RELEASE_PREFIX = "/adoptium/temurin25-binaries/releases/download/"
 RESOURCE_SESSION_ENV = (
     "FIREMUD_LOCAL_RESOURCE_SESSION_FD",
     "FIREMUD_LOCAL_RESOURCE_SESSION_PID",
@@ -33,11 +33,13 @@ PLATFORMS = {
     (os, arch): f"{gradle_os}.{gradle_arch}"
     for os, gradle_os in [("linux", "LINUX"), ("mac", "MAC_OS"), ("windows", "WINDOWS")]
     for arch, gradle_arch in [("x64", "X86_64"), ("aarch64", "AARCH64")]
+    # No official matching Windows ARM artifact: never synthesize a download URL.
+    if (os, arch) != ("windows", "aarch64")
 }
 
 
 def select_downloads(metadata):
-    """Require one official Java 21 release across the six supported platforms."""
+    """Require one official Java 25 release across the five supported platforms."""
     if not isinstance(metadata, list):
         raise TypeError("Adoptium metadata must be an array")
     urls = {}
@@ -58,18 +60,18 @@ def select_downloads(metadata):
         package = binary.get("package")
         if (entry.get("vendor") != "eclipse" or binary.get("jvm_impl") != "hotspot"
                 or binary.get("project") != "jdk" or not isinstance(version, dict)
-                or type(version.get("major")) is not int or version["major"] != 21
+                or type(version.get("major")) is not int or version["major"] != 25
                 or not isinstance(release, str)
-                or not re.fullmatch(r"jdk-21\.\d+\.\d+(?:\.\d+)?\+\d+", release)
+                or not re.fullmatch(r"jdk-25\.\d+\.\d+(?:\.\d+)?\+\d+", release)
                 or not isinstance(package, dict) or not isinstance(package.get("link"), str)):
-            raise ValueError("Expected official Java 21 Adoptium HotSpot JDK metadata")
+            raise ValueError("Expected official Java 25 Adoptium HotSpot JDK metadata")
         if (any(type(version.get(field)) is not int or version[field] < 0
                 for field in ["minor", "security", "build"])
                 or type(version.get("patch", 0)) is not int or version.get("patch", 0) < 0
                 or not isinstance(version.get("semver"), str)
                 or not isinstance(version.get("openjdk_version"), str)):
             raise ValueError("Malformed Adoptium version")
-        release_version = f"21.{version['minor']}.{version['security']}"
+        release_version = f"25.{version['minor']}.{version['security']}"
         if version.get("patch", 0):
             release_version += f".{version['patch']}"
         release_version += f"+{version['build']}"
@@ -91,12 +93,14 @@ def select_downloads(metadata):
 
 
 def validate_download_url(url, os_name, architecture, release, release_version):
+    if (os_name, architecture) not in PLATFORMS:
+        raise ValueError("Unsupported automatic daemon provisioning platform")
     parsed = urlsplit(url)
     prefix = f"{ADOPTIUM_RELEASE_PREFIX}{quote(release, safe='')}/"
     expected_suffix = ".zip" if os_name == "windows" else ".tar.gz"
     filename = parsed.path.removeprefix(prefix)
     expected_filename = (
-        f"OpenJDK21U-jdk_{architecture}_{os_name}_hotspot_"
+        f"OpenJDK25U-jdk_{architecture}_{os_name}_hotspot_"
         f"{release_version.replace('+', '_')}{expected_suffix}"
     )
     if (parsed.scheme != "https" or parsed.netloc != "github.com"
@@ -118,22 +122,24 @@ def parse_criteria(text):
 
 
 def validate_criteria(text, expected_urls):
+    if set(expected_urls) != set(PLATFORMS.values()):
+        raise ValueError("Expected exactly the five supported daemon platform URLs")
     properties = parse_criteria(text)
-    expected = {"toolchainVersion": "21", "toolchainVendor": "ADOPTIUM"}
+    expected = {"toolchainVersion": "25", "toolchainVendor": "ADOPTIUM"}
     expected.update({f"toolchainUrl.{platform}": url for platform, url in expected_urls.items()})
     if properties != expected:
-        raise ValueError("Gradle daemon criteria differ from the selected official Java 21 artifacts")
+        raise ValueError("Gradle daemon criteria differ from the selected official Java 25 artifacts")
 
 
 def pinned_release_and_urls(text):
-    """Derive one exact approved release from all six existing daemon criteria URLs."""
+    """Derive one exact approved release from all five existing daemon criteria URLs."""
     properties = parse_criteria(text)
     expected_keys = {"toolchainVersion", "toolchainVendor"}
     expected_keys.update(f"toolchainUrl.{platform}" for platform in PLATFORMS.values())
     if set(properties) != expected_keys:
-        raise ValueError("Pinned daemon criteria must contain exactly the Java 21 properties and six platform URLs")
-    if properties["toolchainVersion"] != "21" or properties["toolchainVendor"] != "ADOPTIUM":
-        raise ValueError("Pinned daemon criteria must select Java 21 from Adoptium")
+        raise ValueError("Pinned daemon criteria must contain exactly the Java 25 properties and five platform URLs")
+    if properties["toolchainVersion"] != "25" or properties["toolchainVendor"] != "ADOPTIUM":
+        raise ValueError("Pinned daemon criteria must select Java 25 from Adoptium")
 
     releases = set()
     urls = {}
@@ -147,7 +153,7 @@ def pinned_release_and_urls(text):
         release_segment, separator, _ = parsed.path[len(ADOPTIUM_RELEASE_PREFIX):].partition("/")
         release = unquote(release_segment)
         if (not separator or quote(release, safe="") != release_segment
-                or not re.fullmatch(r"jdk-21\.\d+\.\d+(?:\.\d+)?\+\d+", release)):
+                or not re.fullmatch(r"jdk-25\.\d+\.\d+(?:\.\d+)?\+\d+", release)):
             raise ValueError("Malformed pinned Adoptium release URL")
         release_version = release.removeprefix("jdk-")
         validate_download_url(url, os_name, architecture, release, release_version)
@@ -351,7 +357,7 @@ def refresh(check_only=False):
         )
         subprocess.run(
             ["bash", str(ROOT / "dev-tools/validation/run-locked-gradle.sh"),
-             "updateDaemonJvm", "--jvm-version=21", "--jvm-vendor=adoptium",
+             "updateDaemonJvm", "--jvm-version=25", "--jvm-vendor=adoptium",
              f"-PdaemonJvmDownloadUrlsFile={metadata_file}"],
             cwd=ROOT,
             check=True,
