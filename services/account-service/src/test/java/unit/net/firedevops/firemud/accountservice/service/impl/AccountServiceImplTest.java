@@ -3914,9 +3914,12 @@ class AccountServiceImplTest {
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
+    AccountTenantMembership activeMembership = membership(account, 7L);
+    activeMembership.setMembershipVersion(17L);
+    activeMembership.setMembershipAuthorityGeneration(29L);
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-        .thenReturn(Optional.of(membership(account, 7L)));
+        .thenReturn(Optional.of(activeMembership));
 
     var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
 
@@ -3924,9 +3927,62 @@ class AccountServiceImplTest {
     assertEquals(7L, dto.tenantId());
     assertTrue(dto.membershipExists());
     assertTrue(dto.gameplayAdmissionAllowed());
-    assertEquals(1L, dto.membershipVersion());
+    assertEquals(17L, dto.membershipVersion());
     assertEquals("ACTIVE", dto.membershipLifecycleState());
-    assertEquals(1L, dto.membershipAuthorityGeneration());
+    assertEquals(29L, dto.membershipAuthorityGeneration());
+    assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeReturnsCoherentMissingMembershipForExistingAccount() {
+    Account account = new Account();
+    account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertFalse(dto.membershipExists());
+    assertFalse(dto.gameplayAdmissionAllowed());
+    assertEquals(0L, dto.membershipVersion());
+    assertEquals("MISSING", dto.membershipLifecycleState());
+    assertEquals(0L, dto.membershipAuthorityGeneration());
+    assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeReturnsInactiveMembershipWithIndependentGenerations() {
+    Account account = new Account();
+    account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    AccountTenantMembership inactiveMembership = membership(account, 7L);
+    inactiveMembership.setGameplayAdmissionAllowed(false);
+    inactiveMembership.setLifecycleState("INACTIVE");
+    inactiveMembership.setMembershipVersion(23L);
+    inactiveMembership.setMembershipAuthorityGeneration(41L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(inactiveMembership));
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertTrue(dto.membershipExists());
+    assertFalse(dto.gameplayAdmissionAllowed());
+    assertEquals(23L, dto.membershipVersion());
+    assertEquals("INACTIVE", dto.membershipLifecycleState());
+    assertEquals(41L, dto.membershipAuthorityGeneration());
     assertNotNull(dto.evaluatedAt());
   }
 
