@@ -319,6 +319,39 @@ public record SessionContext(
     return text.trim();
   }
 
+  /**
+   * Returns the non-secret Redis projection without changing this immutable input.
+   *
+   * <p>Redis reads return this projection with a null JWT. An incoming context may carry a
+   * transient credential, but this method neither retains it in a process-local store nor
+   * reattaches it after a read. Authentication and downstream credentials must not depend on a
+   * stored context JWT.
+   */
+  public SessionContext withoutJwt() {
+    if (jwt == null) {
+      return this;
+    }
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        null,
+        localeTag,
+        bootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        playableStateScope,
+        connectScopeId,
+        connectRequestId,
+        firstPartyConnectContext);
+  }
+
   public boolean hasGameplayIdentity() {
     return gameInstanceId > 0 && characterId > 0;
   }

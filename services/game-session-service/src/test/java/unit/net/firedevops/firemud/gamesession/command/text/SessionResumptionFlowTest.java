@@ -24,7 +24,6 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
@@ -57,6 +56,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -125,8 +125,7 @@ class SessionResumptionFlowTest {
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
-  private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final GameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
@@ -287,7 +286,7 @@ class SessionResumptionFlowTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
-    worldsHandler = new WorldsCommandHandler(worldCatalog, entityManagementClient);
+    worldsHandler = new WorldsCommandHandler(worldCatalog);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
@@ -399,16 +398,8 @@ class SessionResumptionFlowTest {
 
     verify(accountRecentPresenceService)
         .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
-    verify(scriptEventPublisher)
-        .publishRegionExitEvent(
-            Mockito.argThat(
-                context ->
-                    context.sessionId() == 1L
-                        && context.gameInstanceId() == 1L
-                        && context.characterId() == 7001L
-                        && "R-1021".equals(context.roomInstanceId())),
-            Mockito.eq("disconnect:takeover:1:1:7001"),
-            Mockito.eq("TAKEOVER"));
+    verify(scriptEventPublisher, Mockito.never())
+        .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
@@ -533,9 +524,14 @@ class SessionResumptionFlowTest {
     assertFalse(lookAfterCutover.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", lookAfterCutover.commandResult().errorCode());
 
+    TextCommandInterpretationResult realmsAfterCutover =
+        interpreter.interpret("1", "REALMS demo", false);
+    assertTrue(realmsAfterCutover.commandResult().accepted());
+
     TextCommandInterpretationResult charsAfterCutover =
         interpreter.interpret("1", "CHARS demo", false);
-    assertTrue(charsAfterCutover.commandResult().accepted());
+    assertFalse(charsAfterCutover.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", charsAfterCutover.commandResult().errorCode());
   }
 
   @Test
@@ -640,6 +636,22 @@ class SessionResumptionFlowTest {
         "production",
         1L,
         null);
+  }
+
+  @Test
+  void reconnectRestoresPlayerPresenceInTheCommandFlowFixture() {
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
+
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
+    assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

@@ -43,7 +43,7 @@ class RedisGameplayPresenceServiceTest {
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     when(redisTemplate.opsForSet()).thenReturn(setOperations);
-    service = new RedisGameplayPresenceService(redisTemplate, jwtUtil, TTL.toMillis());
+    service = new RedisGameplayPresenceService(redisTemplate, TTL.toMillis());
   }
 
   @Test
@@ -92,7 +92,7 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
-  void registerConnectedClassifiesInvalidJwtAsPlayer() {
+  void registerConnectedStoresPlayerForInvalidJwt() {
     SessionContext context =
         new SessionContext(
             1L, 22L, PLAYER_ACCOUNT_ID, "player@example.com", 202L, "Ben", 7L, "R-1", "not-a-jwt");
@@ -138,22 +138,33 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
-  void listConnectedByGameInstanceSortsGodsFirstAndPrunesMissingSessions() {
-    String godJwt =
+  void registerConnectedDoesNotPromoteScopedJwtRolesWithoutGameplayGrantEvidence() {
+    String token =
         jwtUtil.generateToken(
-            GOD_ACCOUNT_ID,
+            OTHER_ACCOUNT_ID,
             Map.of(
                 "accountId",
-                GOD_ACCOUNT_ID,
-                "globalRoles",
-                List.of("platformAdmin"),
+                OTHER_ACCOUNT_ID,
                 "scopedRoles",
-                Map.of("22", List.of("god"))));
-    SessionContext godContext =
+                Map.of("22", List.of("god", "tenantAdmin", "moderator"))));
+    service.registerConnected(
         new SessionContext(
-            1L, 22L, GOD_ACCOUNT_ID, "god@example.com", 101L, "Aster", 7L, "R-1", godJwt);
-    service.registerConnected(godContext);
+            1L, 22L, OTHER_ACCOUNT_ID, "player@example.com", 202L, "Ben", 7L, "R-1", token));
 
+    verify(valueOperations)
+        .set(
+            org.mockito.Mockito.eq("gameplaypresence:session:1"),
+            argThat(
+                value ->
+                    value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .role()
+                            == GameplayPresenceRole.PLAYER),
+            org.mockito.Mockito.eq(TTL));
+  }
+
+  @Test
+  void listConnectedByGameInstanceDemotesCachedElevationAndPrunesMissingSessions() {
     when(setOperations.members("gameplaypresence:22:7:sessions"))
         .thenReturn(new LinkedHashSet<>(List.of("1", "2")));
     when(valueOperations.get("gameplaypresence:session:1"))
@@ -162,24 +173,35 @@ class RedisGameplayPresenceServiceTest {
                 1L,
                 22L,
                 7L,
+                "SHARED",
                 "demo",
                 "production",
+                17L,
                 GOD_ACCOUNT_ID,
                 101L,
                 "Aster",
                 GameplayPresenceRole.GOD,
                 70L,
-                null,
-                null,
-                null));
+                50L,
+                60L,
+                65L));
     when(valueOperations.get("gameplaypresence:session:2")).thenReturn(null);
 
     var result = service.listConnectedByGameInstance(22L, 7L);
 
     assertEquals(1, result.size());
-    assertEquals(GameplayPresenceRole.GOD, result.get(0).role());
+    assertEquals(GameplayPresenceRole.PLAYER, result.get(0).role());
     assertEquals("Aster", result.get(0).characterName());
+    assertEquals("SHARED", result.get(0).playableStateScope());
+    assertEquals(17L, result.get(0).pointerVersion());
+    assertEquals(50L, result.get(0).explicitAfkSinceEpochMs());
+    assertEquals(60L, result.get(0).lastAcceptedCommandAtEpochMs());
+    assertEquals(65L, result.get(0).lastMeaningfulActivityAtEpochMs());
     verify(setOperations).remove("gameplaypresence:22:7:sessions", "2");
+    Mockito.verify(valueOperations, Mockito.never())
+        .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
+    Mockito.verify(redisTemplate, Mockito.never())
+        .expire(Mockito.anyString(), Mockito.any(Duration.class));
   }
 
   @Test
@@ -197,7 +219,7 @@ class RedisGameplayPresenceServiceTest {
                 GOD_ACCOUNT_ID,
                 101L,
                 "Aster",
-                GameplayPresenceRole.GOD,
+                GameplayPresenceRole.PLAYER,
                 70L,
                 null,
                 null,
@@ -218,8 +240,10 @@ class RedisGameplayPresenceServiceTest {
                 3L,
                 22L,
                 7L,
+                "ISOLATED",
                 "demo",
                 "production",
+                17L,
                 PLAYER_ACCOUNT_ID,
                 202L,
                 "Ben",
@@ -238,50 +262,70 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
-  void findConnectedBySessionIdReadsPresenceRecordDirectly() {
+  void findConnectedBySessionIdProjectsCachedElevationWithoutWritingOrRefreshingTtl() {
     when(valueOperations.get("gameplaypresence:session:4"))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.GameplayPresence(
                 4L,
                 22L,
                 7L,
+                "SHARED",
                 "demo",
                 "production",
+                17L,
                 OTHER_ACCOUNT_ID,
                 102L,
                 "Ben",
-                GameplayPresenceRole.PLAYER,
+                GameplayPresenceRole.ADMIN,
                 70L,
-                null,
-                null,
-                null));
+                50L,
+                60L,
+                65L));
 
     var presence = service.findConnectedBySessionId(4L);
 
     assertEquals(true, presence.isPresent());
     assertEquals(4L, presence.get().sessionId());
+    assertEquals(GameplayPresenceRole.PLAYER, presence.get().role());
+    assertEquals(22L, presence.get().tenantId());
+    assertEquals(7L, presence.get().gameInstanceId());
+    assertEquals("SHARED", presence.get().playableStateScope());
+    assertEquals(OTHER_ACCOUNT_ID, presence.get().accountId());
+    assertEquals(102L, presence.get().characterId());
+    assertEquals("Ben", presence.get().characterName());
+    assertEquals(17L, presence.get().pointerVersion());
+    assertEquals(70L, presence.get().connectedAtEpochMs());
+    assertEquals(50L, presence.get().explicitAfkSinceEpochMs());
+    assertEquals(60L, presence.get().lastAcceptedCommandAtEpochMs());
+    assertEquals(65L, presence.get().lastMeaningfulActivityAtEpochMs());
+    Mockito.verify(valueOperations, Mockito.never())
+        .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
+    Mockito.verify(redisTemplate, Mockito.never())
+        .expire(Mockito.anyString(), Mockito.any(Duration.class));
   }
 
   @Test
   void recordCommandActivityRefreshesPresenceAndMeaningfulTimestampOnlyWhenRequested() {
     AtomicLong now = new AtomicLong(100L);
-    service = new RedisGameplayPresenceService(redisTemplate, jwtUtil, TTL.toMillis(), now::get);
+    service = new RedisGameplayPresenceService(redisTemplate, TTL.toMillis(), now::get);
     when(valueOperations.get("gameplaypresence:session:3"))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.GameplayPresence(
                 3L,
                 22L,
                 7L,
+                "ISOLATED",
                 "demo",
                 "production",
+                17L,
                 PLAYER_ACCOUNT_ID,
                 202L,
                 "Ben",
-                GameplayPresenceRole.PLAYER,
+                GameplayPresenceRole.ADMIN,
                 80L,
-                null,
-                null,
-                null));
+                95L,
+                99L,
+                90L));
 
     now.set(125L);
     service.recordCommandActivity(3L, false);
@@ -292,6 +336,15 @@ class RedisGameplayPresenceServiceTest {
             argThat(
                 value ->
                     value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .accountId()
+                            .equals(PLAYER_ACCOUNT_ID)
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .playableStateScope()
+                            .equals("ISOLATED")
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .pointerVersion()
+                            == 17L
                         && Long.valueOf(125L)
                             .equals(
                                 ((net.firedevops.firemud.gamesession.service.GameplayPresence)
@@ -299,7 +352,10 @@ class RedisGameplayPresenceServiceTest {
                                     .lastAcceptedCommandAtEpochMs())
                         && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
                                 .lastMeaningfulActivityAtEpochMs()
-                            == null),
+                            == 90L
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .role()
+                            == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
     verify(redisTemplate)
@@ -309,23 +365,25 @@ class RedisGameplayPresenceServiceTest {
   @Test
   void setExplicitAfkRefreshesPresenceRecord() {
     AtomicLong now = new AtomicLong(100L);
-    service = new RedisGameplayPresenceService(redisTemplate, jwtUtil, TTL.toMillis(), now::get);
+    service = new RedisGameplayPresenceService(redisTemplate, TTL.toMillis(), now::get);
     when(valueOperations.get("gameplaypresence:session:3"))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.GameplayPresence(
                 3L,
                 22L,
                 7L,
+                "ISOLATED",
                 "demo",
                 "production",
+                17L,
                 PLAYER_ACCOUNT_ID,
                 202L,
                 "Ben",
-                GameplayPresenceRole.PLAYER,
+                GameplayPresenceRole.MODERATOR,
                 80L,
-                null,
-                null,
-                null));
+                85L,
+                90L,
+                95L));
 
     now.set(145L);
     service.setExplicitAfk(3L, true);
@@ -336,11 +394,29 @@ class RedisGameplayPresenceServiceTest {
             argThat(
                 value ->
                     value instanceof net.firedevops.firemud.gamesession.service.GameplayPresence
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .accountId()
+                            .equals(PLAYER_ACCOUNT_ID)
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                            .playableStateScope()
+                            .equals("ISOLATED")
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .pointerVersion()
+                            == 17L
                         && Long.valueOf(145L)
                             .equals(
                                 ((net.firedevops.firemud.gamesession.service.GameplayPresence)
                                         value)
-                                    .explicitAfkSinceEpochMs())),
+                                    .explicitAfkSinceEpochMs())
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .lastAcceptedCommandAtEpochMs()
+                            == 90L
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .lastMeaningfulActivityAtEpochMs()
+                            == 95L
+                        && ((net.firedevops.firemud.gamesession.service.GameplayPresence) value)
+                                .role()
+                            == GameplayPresenceRole.PLAYER),
             org.mockito.Mockito.eq(TTL));
     verify(redisTemplate).expire("gameplaypresence:22:7:sessions", TTL);
     verify(redisTemplate)
@@ -364,7 +440,7 @@ class RedisGameplayPresenceServiceTest {
                 PLAYER_ACCOUNT_ID,
                 202L,
                 "Ben",
-                GameplayPresenceRole.PLAYER,
+                GameplayPresenceRole.ADMIN,
                 80L,
                 null,
                 100L,
@@ -382,7 +458,7 @@ class RedisGameplayPresenceServiceTest {
                 PLAYER_ACCOUNT_ID,
                 202L,
                 "Ben",
-                GameplayPresenceRole.PLAYER,
+                GameplayPresenceRole.GOD,
                 90L,
                 null,
                 110L,
@@ -392,8 +468,16 @@ class RedisGameplayPresenceServiceTest {
 
     assertEquals(1, result.size());
     assertEquals(2, result.get(PLAYER_ACCOUNT_ID).size());
+    assertEquals(
+        true,
+        result.get(PLAYER_ACCOUNT_ID).stream()
+            .allMatch(presence -> presence.role() == GameplayPresenceRole.PLAYER));
     assertEquals(4L, result.get(PLAYER_ACCOUNT_ID).get(0).sessionId());
     assertEquals(3L, result.get(PLAYER_ACCOUNT_ID).get(1).sessionId());
+    Mockito.verify(valueOperations, Mockito.never())
+        .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
+    Mockito.verify(redisTemplate, Mockito.never())
+        .expire(Mockito.anyString(), Mockito.any(Duration.class));
   }
 
   @Test

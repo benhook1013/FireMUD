@@ -1,28 +1,20 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
-import net.firedevops.firemud.test.AccountRuntimeStubServer;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class WorldsTextCommandDispatchHandlerTest {
-  private final EntityManagementClient entityManagementClient =
-      Mockito.mock(EntityManagementClient.class);
   private final GameplayCatalogProperties gameplayCatalogProperties =
       new GameplayCatalogProperties();
   private final ScriptEventPublisher scriptEventPublisher =
@@ -30,8 +22,7 @@ class WorldsTextCommandDispatchHandlerTest {
   private final WorldsTextCommandDispatchHandler handler =
       new WorldsTextCommandDispatchHandler(
           new WorldsCommandHandler(
-              TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-              entityManagementClient),
+              TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties)),
           scriptEventPublisher);
 
   @Test
@@ -55,7 +46,63 @@ class WorldsTextCommandDispatchHandlerTest {
             output ->
                 assertThat(output.text())
                     .isEqualTo("ERROR FEATURE_UNAVAILABLE JOIN is not available."));
-    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
+    Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  @Test
+  void nonmatchingNumericWorldSelectorReturnsRediscoveryGuidanceWithoutPublishingAnEvent() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
+    var result =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                new TextCommandParser().parse("REALMS 1"),
+                false,
+                Optional.of(GameplayCommandTestFixtures.authoredDispatchEmberline()),
+                Optional.empty()));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output ->
+                assertThat(output.text())
+                    .isEqualTo(
+                        "ERROR INVALID_ARGUMENT REALMS requires a valid world selector. Use WORLDS first."));
+    Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  @Test
+  void dispatchAcceptsExactNumericWorldSlugWithoutTreatingItAsAListPosition() {
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("other", 23L, 40L, false), world("1", 22L, 41L, false)));
+    SessionContext context = GameplayCommandTestFixtures.authoredDispatchEmberline();
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommandDispatchRequest(
+                "session-1",
+                new TextCommandParser().parse("REALMS 1"),
+                false,
+                Optional.of(context),
+                Optional.empty()));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(
+            output -> {
+              assertThat(output.payload()).isInstanceOf(RealmBrowseViewOutput.class);
+              assertThat(((RealmBrowseViewOutput) output.payload()).worldSlug()).isEqualTo("1");
+            });
+    Mockito.verify(scriptEventPublisher)
+        .publishCommandEvent(
+            Mockito.eq(context),
+            Mockito.argThat(
+                gameplayCommand ->
+                    "REALMS".equals(gameplayCommand.getCommandName())
+                        && "REALMS 1".equals(gameplayCommand.getCommandText())));
   }
 
   @Test
@@ -116,25 +163,8 @@ class WorldsTextCommandDispatchHandlerTest {
   }
 
   @Test
-  void publishesCommandEventForGameplayScopedCharsBrowse() {
+  void refusesCharacterBrowseWithoutPublishingCommandEvent() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
-    when(entityManagementClient.listCharactersByAccount(
-            "22",
-            AccountRuntimeStubServer.accountUuidForTestFixture(123L),
-            "41",
-            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(
-            ListCharactersByAccountResponse.newBuilder()
-                .addCharacters(
-                    net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                        .setId("7001")
-                        .setTenantId("22")
-                        .setAccountId(AccountRuntimeStubServer.accountUuidForTestFixture(123L))
-                        .setName("Emberline")
-                        .setLevel(12)
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                        .build())
-                .build());
     SessionContext context = GameplayCommandTestFixtures.helpCapabilityEmberline(7L);
 
     TextCommandInterpretationResult result =
@@ -146,24 +176,13 @@ class WorldsTextCommandDispatchHandlerTest {
                 Optional.of(context),
                 Optional.empty()));
 
-    assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(output -> output.payload())
-        .isInstanceOf(CharacterBrowseViewOutput.class);
-    Mockito.verify(entityManagementClient)
-        .listCharactersByAccount(
-            "22",
-            AccountRuntimeStubServer.accountUuidForTestFixture(123L),
-            "41",
-            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
-    Mockito.verify(scriptEventPublisher)
-        .publishCommandEvent(
-            Mockito.eq(context),
-            Mockito.argThat(
-                gameplayCommand ->
-                    "CHARS".equals(gameplayCommand.getCommandName())
-                        && "CHARS demo".equals(gameplayCommand.getCommandText())));
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(
+            "Character browsing is unavailable. Use PLAY <world> [realm] <character> "
+                + "with a known character name.");
+    Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 
   @Test

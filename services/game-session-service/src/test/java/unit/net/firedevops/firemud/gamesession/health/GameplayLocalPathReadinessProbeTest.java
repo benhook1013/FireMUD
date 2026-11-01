@@ -46,7 +46,7 @@ class GameplayLocalPathReadinessProbeTest {
                       PROBE_CHARACTER_ID,
                       0L,
                       "readiness-room-" + probeSequence,
-                      "readiness-probe"));
+                      null));
             });
 
     GameplayLocalPathReadinessProbe probe =
@@ -102,9 +102,35 @@ class GameplayLocalPathReadinessProbeTest {
     assertEquals(UUID.fromString(savedContext.accountId()).toString(), savedContext.accountId());
     assertTrue(savedContext.hasAccountIdentity());
     assertEquals(
-        Optional.of(savedContext),
+        Optional.of(savedContext.withoutJwt()),
         strictLookup.findByTenantAndSessionId(savedContext.tenantId(), savedContext.sessionId()));
     verify(sessionContextService).deleteBySessionId(0L, savedContext.sessionId());
+  }
+
+  @Test
+  void sessionContextProbeRejectsStoredRawJwtAndStillOwnsOnlyItsCanaryCleanup() {
+    SessionContextService sessionContextService = mock(SessionContextService.class);
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
+    doAnswer(
+            invocation -> {
+              SessionContext context = invocation.getArgument(0, SessionContext.class);
+              when(sessionContextService.findByTenantAndSessionId(0L, context.sessionId()))
+                  .thenReturn(Optional.of(context));
+              return null;
+            })
+        .when(sessionContextService)
+        .save(any(SessionContext.class));
+
+    ProbeResult result =
+        new GameplayLocalPathReadinessProbe(sessionContextService, redisTemplate)
+            .probeSessionContextStore();
+
+    assertEquals(false, result.ready());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    verify(sessionContextService).deleteBySessionId(0L, captor.getValue().sessionId());
+    verify(redisTemplate, never()).delete(anyString());
   }
 
   @Test

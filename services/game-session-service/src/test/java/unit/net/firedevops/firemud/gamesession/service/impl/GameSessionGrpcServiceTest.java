@@ -747,13 +747,95 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void admissionPointerResponseUsesOneTenantListForBothPublicAndPrivateTargets() {
+    for (boolean publicProduction : List.of(true, false)) {
+      var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+      var selected = authorityPointer("demo", "selected", 7L, 44L, true, publicProduction);
+      var original =
+          publicProduction
+              ? List.of(selected)
+              : List.of(selected, authorityPointer("live-world", "live", 7L, 55L, true, true));
+      // A second read would observe a different target and different catalog cardinality.
+      Mockito.when(authority.listPointersByTenant(7L))
+          .thenReturn(
+              original, List.of(authorityPointer("demo", "selected", 7L, 99L, true, false)));
+      var service = catalogService(authority);
+
+      var response = admissionPointer(service, "demo", "selected");
+
+      assertFalse(response.hasError());
+      assertEquals("44", response.getAdmissionPointer().getGameInstanceId());
+      assertEquals(selected.pointerVersion(), response.getAdmissionPointer().getPointerVersion());
+      assertEquals(selected.catalogRevision(), response.getAdmissionPointer().getCatalogRevision());
+      assertEquals(selected.realmId().toString(), response.getAdmissionPointer().getRealmId());
+      assertEquals(
+          selected.playableStateNamespaceId().toString(),
+          response.getAdmissionPointer().getPlayableStateNamespaceId());
+      assertEquals(publicProduction, response.getAdmissionPointer().getPublicProductionRealm());
+      Mockito.verify(authority).listPointersByTenant(7L);
+      Mockito.verify(authority, Mockito.never()).listPointers();
+      Mockito.verify(authority, Mockito.never())
+          .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+    }
+  }
+
+  @Test
+  void invalidFirstTenantSnapshotCannotBeReplacedByALaterHealthyRead() {
+    var selected = authorityPointer("demo", "selected", 7L, 44L, true, true);
+    List<List<GameplayAdmissionPointerSnapshot>> invalidSnapshots =
+        List.of(
+            List.of(selected, selected),
+            List.of(selected, authorityPointer("other", "live", 7L, 55L, true, true)),
+            List.of(authorityPointer("demo", "selected", 7L, 44L, true, false)),
+            List.of(selected, authorityPointer("other", "live", 8L, 55L, true, true)),
+            java.util.Arrays.asList(selected, null));
+    for (var invalid : invalidSnapshots) {
+      var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+      Mockito.when(authority.listPointersByTenant(7L)).thenReturn(invalid, List.of(selected));
+
+      var response = admissionPointer(catalogService(authority), "demo", "selected");
+
+      assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
+      assertFalse(response.hasAdmissionPointer());
+      Mockito.verify(authority).listPointersByTenant(7L);
+      Mockito.verify(authority, Mockito.never()).listPointers();
+      Mockito.verify(authority, Mockito.never())
+          .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+    }
+  }
+
+  private static GetAdmissionPointerResponse admissionPointer(
+      GameSessionGrpcService service, String worldSlug, String realmSlug) {
+    AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();
+    service.getAdmissionPointer(
+        GetAdmissionPointerRequest.newBuilder()
+            .setTenantId("7")
+            .setWorldSlug(worldSlug)
+            .setRealmSlug(realmSlug)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetAdmissionPointerResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    return response.get();
+  }
+
+  @Test
   void publicAdmissionRejectsNonUniqueTenantGlobalPublicRealm() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot selectedPublicRealm =
         authorityPointer("alpha", "live", 7L, 44L, true, true);
-    Mockito.when(pointerAuthorityService.findPointer(7L, "alpha", "live"))
-        .thenReturn(java.util.Optional.of(selectedPublicRealm));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(
             List.of(selectedPublicRealm, authorityPointer("beta", "live", 7L, 55L, true, true)));
@@ -795,8 +877,6 @@ class GameSessionGrpcServiceTest {
         authorityPointer("demo", "live", 7L, 44L, true, true);
     GameplayAdmissionPointerSnapshot privateAlias =
         authorityPointer("demo", "LIVE", 7L, 45L, true, false);
-    Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "live"))
-        .thenReturn(java.util.Optional.of(publicRealm));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(List.of(publicRealm, privateAlias));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
@@ -836,8 +916,6 @@ class GameSessionGrpcServiceTest {
         authorityPointer("private", "preview", 7L, 66L, true, false);
     GameplayAdmissionPointerSnapshot publicRealm =
         authorityPointer("demo", "live", 7L, 44L, true, true);
-    Mockito.when(pointerAuthorityService.findPointer(7L, "private", "preview"))
-        .thenReturn(java.util.Optional.of(privateRealm));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(List.of(privateRealm, publicRealm));
     Mockito.when(pointerAuthorityService.listPointers())
@@ -878,8 +956,7 @@ class GameSessionGrpcServiceTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot hiddenRealm =
         authorityPointer("private", "preview", 7L, 66L, false, true);
-    Mockito.when(pointerAuthorityService.findPointer(7L, "private", "preview"))
-        .thenReturn(java.util.Optional.of(hiddenRealm));
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L)).thenReturn(List.of(hiddenRealm));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
     AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();
 
@@ -914,7 +991,8 @@ class GameSessionGrpcServiceTest {
     assertEquals(
         hiddenRealm.playableStateNamespaceId().toString(),
         response.get().getAdmissionPointer().getPlayableStateNamespaceId());
-    Mockito.verify(pointerAuthorityService).findPointer(7L, "private", "preview");
+    Mockito.verify(pointerAuthorityService).listPointersByTenant(7L);
+    Mockito.verify(pointerAuthorityService, Mockito.never()).findPointer(7L, "private", "preview");
     Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
   }
 
@@ -950,8 +1028,6 @@ class GameSessionGrpcServiceTest {
     Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of(authoritativeSnapshot));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(List.of(authoritativeSnapshot));
-    Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
-        .thenReturn(java.util.Optional.of(authoritativeSnapshot));
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -1024,7 +1100,8 @@ class GameSessionGrpcServiceTest {
     assertEquals(
         "2ea958e0-13a2-41d0-9c39-59a96cf31412",
         pointerRef.get().getAdmissionPointer().getPlayableStateNamespaceId());
-    Mockito.verify(pointerAuthorityService).findPointer(7L, "demo", "production");
+    Mockito.verify(pointerAuthorityService).listPointersByTenant(7L);
+    Mockito.verify(pointerAuthorityService, Mockito.never()).findPointer(7L, "demo", "production");
   }
 
   @Test
@@ -1057,8 +1134,6 @@ class GameSessionGrpcServiceTest {
     Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of(missingRevision));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(List.of(missingRevision));
-    Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
-        .thenReturn(java.util.Optional.of(missingRevision));
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -1184,8 +1259,6 @@ class GameSessionGrpcServiceTest {
     Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of(missingIdentity));
     Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(List.of(missingIdentity));
-    Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
-        .thenReturn(java.util.Optional.of(missingIdentity));
     GameSessionGrpcService service =
         newService(
             Mockito.mock(PingService.class),
@@ -1294,6 +1367,33 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void typedNumericSlugsResolveInRealmAndPointerApisWithoutFreshListIndexing() {
+    var authority = Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    var selected = authorityPointer("123", "456", 7L, 44L, true, true);
+    // A second read within either response would lose the selected target.
+    Mockito.when(authority.listPointers()).thenReturn(List.of(selected), List.of());
+    Mockito.when(authority.listPointersByTenant(7L)).thenReturn(List.of(selected), List.of());
+    var service = catalogService(authority);
+
+    var realms = listGameplayRealms(service, "123");
+    assertEquals("", realms.getError().getCode());
+    assertEquals(1, realms.getRealmsCount());
+    assertEquals("456", realms.getRealms(0).getRealmSlug());
+
+    var pointer = admissionPointer(service, "123", "456");
+    assertFalse(pointer.hasError());
+    assertEquals("123", pointer.getAdmissionPointer().getWorldSlug());
+    assertEquals("456", pointer.getAdmissionPointer().getRealmSlug());
+    assertEquals("44", pointer.getAdmissionPointer().getGameInstanceId());
+    assertEquals(selected.realmId().toString(), pointer.getAdmissionPointer().getRealmId());
+    assertEquals(selected.catalogRevision(), pointer.getAdmissionPointer().getCatalogRevision());
+    Mockito.verify(authority).listPointers();
+    Mockito.verify(authority).listPointersByTenant(7L);
+    Mockito.verify(authority, Mockito.never())
+        .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
   void listGameplayRealmsTrimsWorldSelectorBeforeAuthorityResolution() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -1367,7 +1467,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenThrow(new IllegalStateException("pointer store unavailable"));
     GameSessionGrpcService service =
         newService(

@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
@@ -45,6 +46,9 @@ import net.firedevops.firemud.gamesession.service.SessionContextUnavailableExcep
 import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.web.socket.CloseStatus;
@@ -1020,6 +1024,8 @@ class GameSessionWebSocketHandlerTest {
   void handleMessageForcesPromptBurstForGameplayEntryMetadata() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     PlayerOutput output = PlayerOutput.message("Entering Demo World");
+    ScreenBufferService.BufferedEntry bufferedEntry =
+        ScreenBufferService.BufferedEntry.fromText("Entering Demo World\n");
     SessionContext context = GameplayCommandTestFixtures.webSocketEmberline();
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
@@ -1040,13 +1046,23 @@ class GameSessionWebSocketHandlerTest {
             any(PresentationProperties.class),
             any()))
         .thenReturn("OK PLAY");
+    when(outputProjector.renderClassicPlayerOutput(
+            eq(output), eq("en-NZ"), any(PresentationProperties.class)))
+        .thenReturn("Entering Demo World");
     when(outputProjector.toBufferedEntry(any(PlayerOutput.class), any(String.class)))
-        .thenReturn(ScreenBufferService.BufferedEntry.fromText("Entering Demo World\n"));
+        .thenReturn(bufferedEntry);
 
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
     verify(promptBurstCoordinator)
         .applyPromptWindow(eq("41"), eq(context), eq(List.of(output)), eq(true));
+    verify(screenBufferService)
+        .append(
+            context.tenantId(),
+            context.gameInstanceId(),
+            context.characterId(),
+            List.of(bufferedEntry));
+    Mockito.verifyNoInteractions(lookHandler);
   }
 
   @Test
@@ -1140,6 +1156,177 @@ class GameSessionWebSocketHandlerTest {
     verify(session, never()).sendMessage(any(TextMessage.class));
   }
 
+  @ParameterizedTest
+  @CsvSource({
+    "true, true, true", "true, false, true", "false, true, true", "false, false, true",
+    "true, true, false", "true, false, false", "false, true, false", "false, false, false"
+  })
+  void genericReconnectSkipsPrivateBufferAndAlwaysRedrawsWithEffectivePromptPolicy(
+      boolean enabled, boolean emitAfterRestore, boolean bufferAvailable) throws Exception {
+    SessionContext context = reconnectGameplayContext();
+    PresentationProperties presentation =
+        new PresentationProperties(
+            PresentationProperties.ColorMode.NONE,
+            false,
+            new PresentationProperties.Prompt(enabled, emitAfterRestore, 150L));
+    when(settingsResolver.presentation(context)).thenReturn(presentation);
+    when(screenBufferService.get(22L, 1L, 123L))
+        .thenReturn(
+            bufferAvailable
+                ? Optional.of(
+                    new ScreenBufferService.BufferedScreen(
+                        List.of(ScreenBufferService.BufferedEntry.fromText("PRIVATE CONTEXT")),
+                        1,
+                        1,
+                        1L))
+                : Optional.empty());
+    prepareReconnectInterpretation(TextCommandType.PLAY, true, true, context);
+    PlayerOutput look = PlayerOutput.message("Fresh room\n");
+    PlayerOutput prompt = PlayerOutput.prompt("HP: 10> ");
+    when(lookHandler.describePlayerOutput(
+            "41", true, LookViewOutput.RefreshReason.RECONNECT_REFRESH))
+        .thenReturn(look);
+    when(outputProjector.projectPlayerOutput(session, look, "en-NZ", presentation))
+        .thenReturn("Fresh room\n");
+    when(promptComposer.compose(context)).thenReturn(Optional.of(prompt));
+    when(outputProjector.projectPlayerOutput(session, prompt, "en-NZ", presentation))
+        .thenReturn("HP: 10> ");
+
+    handler.handleMessage(session, new TextMessage("PLAY"));
+
+    verify(screenBufferService, never())
+        .get(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    verify(screenBufferService, never())
+        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    verify(lookHandler)
+        .describePlayerOutput("41", true, LookViewOutput.RefreshReason.RECONNECT_REFRESH);
+    int promptCount = enabled && emitAfterRestore ? 1 : 0;
+    verify(promptComposer, Mockito.times(promptCount)).compose(context);
+    verify(promptBurstCoordinator, Mockito.times(promptCount)).recordPromptEmission("41");
+    ArgumentCaptor<TextMessage> messages = ArgumentCaptor.forClass(TextMessage.class);
+    verify(session, Mockito.times(2 + promptCount)).sendMessage(messages.capture());
+    assertThat(messages.getAllValues().stream().map(TextMessage::getPayload).toList())
+        .containsExactlyElementsOf(
+            promptCount == 1
+                ? List.of("OK PLAY\n", "Fresh room\n", "HP: 10> ")
+                : List.of("OK PLAY\n", "Fresh room\n"));
+  }
+
+  @Test
+  void controlledAcceptedFirstPartyInterpretationRedrawsWithoutConnectContextOrRecommendation()
+      throws Exception {
+    // This isolates rendering only: no first-party LOGIN, admission, or bootstrap success is
+    // proved.
+    when(session.getId()).thenReturn("controlled-renderer-session");
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(session));
+    SessionContext context = reconnectGameplayContext();
+    prepareReconnectInterpretation(TextCommandType.PLAY, true, false, context);
+    PlayerOutput look = PlayerOutput.message("Fresh room\n");
+    when(lookHandler.describePlayerOutput(
+            "41", true, LookViewOutput.RefreshReason.RECONNECT_REFRESH))
+        .thenReturn(look);
+    when(outputProjector.projectPlayerOutput(
+            eq(session), eq(look), eq("en-NZ"), any(PresentationProperties.class)))
+        .thenReturn("Fresh room\n");
+
+    handler.handleMessage(session, new TextMessage("PLAY"));
+
+    verify(lookHandler)
+        .describePlayerOutput("41", true, LookViewOutput.RefreshReason.RECONNECT_REFRESH);
+    verify(screenBufferService, never())
+        .get(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    verify(screenBufferService, never())
+        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    InOrder order = Mockito.inOrder(session);
+    order.verify(session).sendMessage(argThat(message -> "OK PLAY\n".equals(message.getPayload())));
+    order
+        .verify(session)
+        .sendMessage(argThat(message -> "Fresh room\n".equals(message.getPayload())));
+    order.verifyNoMoreInteractions();
+  }
+
+  @ParameterizedTest
+  @CsvSource({"PLAY, false, true", "LOGIN, true, true", "PLAY, true, false"})
+  void genericConnectContextAloneAndUnacceptedOrNonPlayCommandsDoNotRestore(
+      TextCommandType type, boolean accepted, boolean redrawRecommended) throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                    "unqualified-context"));
+    prepareReconnectInterpretation(type, accepted, redrawRecommended, reconnectGameplayContext());
+
+    handler.handleMessage(session, new TextMessage(type.name()));
+
+    verify(screenBufferService, never())
+        .get(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    verify(screenBufferService, never())
+        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verifyNoInteractions(lookHandler, promptComposer);
+  }
+
+  @Test
+  void reconnectWithMissingGameplayContextDoesNotRestore() throws Exception {
+    prepareReconnectInterpretation(TextCommandType.PLAY, true, true, null);
+
+    handler.handleMessage(session, new TextMessage("PLAY"));
+
+    verify(screenBufferService, never())
+        .get(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    verify(screenBufferService, never())
+        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verifyNoInteractions(lookHandler, promptComposer);
+  }
+
+  private SessionContext reconnectGameplayContext() {
+    return new SessionContext(
+        41L,
+        22L,
+        GameplayCommandTestFixtures.communicationSenderEmberline().accountId(),
+        "demo@example.com",
+        123L,
+        "Emberline",
+        1L,
+        "R-1",
+        "jwt",
+        "en-NZ",
+        1L);
+  }
+
+  private void prepareReconnectInterpretation(
+      TextCommandType type, boolean accepted, boolean redrawRecommended, SessionContext context) {
+    TextCommand command = new TextCommand(type, List.of(), type.name());
+    when(parser.parse(type.name())).thenReturn(command);
+    when(interpreter.interpret("41", command, false))
+        .thenReturn(
+            new TextCommandInterpretationResult(
+                accepted
+                    ? CommandEnqueueResult.success()
+                    : CommandEnqueueResult.failure("PLAY_REQUIRED", "PLAY required"),
+                List.of(),
+                redrawRecommended,
+                false));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenReturn(Optional.ofNullable(context));
+    when(promptBurstCoordinator.applyPromptWindow(any(), any(), any(), anyBoolean()))
+        .thenReturn(List.of());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            any(TextCommandInterpretationResult.class),
+            eq(List.of()),
+            Mockito.nullable(String.class),
+            any(PresentationProperties.class),
+            Mockito.nullable(SessionContext.class)))
+        .thenReturn(accepted ? "OK " + type.name() + "\n" : "ERROR PLAY_REQUIRED PLAY required\n");
+  }
+
   @Test
   void handleMessageDoesNotReplayReconnectBufferForNormalizedLoggedInShell() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
@@ -1167,6 +1354,9 @@ class GameSessionWebSocketHandlerTest {
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
     verify(screenBufferService, never()).get(any(Long.class), any(Long.class), any(Long.class));
+    verify(screenBufferService, never())
+        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verifyNoInteractions(lookHandler, promptComposer);
   }
 
   @Test
@@ -1198,6 +1388,9 @@ class GameSessionWebSocketHandlerTest {
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
     verify(screenBufferService, never()).get(any(Long.class), any(Long.class), any(Long.class));
+    verify(screenBufferService, never())
+        .clear(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verifyNoInteractions(lookHandler, promptComposer);
   }
 
   @Test

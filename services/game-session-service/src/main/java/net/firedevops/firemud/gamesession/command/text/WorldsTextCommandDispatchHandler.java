@@ -79,29 +79,26 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
         request.command().characterBrowsePayload().orElseThrow();
     return switch (worldsHandler.browseCharacters(
         request.sessionContext().orElseThrow(), payload.worldSelector(), payload.realmSelector())) {
-      case WorldsCommandHandler.CharacterBrowseResult.Success success ->
-          new TextCommandInterpretationResult(
-              net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-              List.of(
-                  net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                      success.output())));
       case WorldsCommandHandler.CharacterBrowseResult.InvalidWorld ignored ->
           errorResult(
               "INVALID_ARGUMENT", "CHARS requires a valid world selector. Use WORLDS first.");
       case WorldsCommandHandler.CharacterBrowseResult.InvalidRealm invalidRealm ->
           errorResult(
               "INVALID_ARGUMENT",
-              "Use REALMS " + invalidRealm.worldSlug() + " to choose a visible realm first.");
+              "Use REALMS " + invalidRealm.worldSlug() + " to choose a visible realm.");
       case WorldsCommandHandler.CharacterBrowseResult.RealmSelectionRequired
               realmSelectionRequired ->
           errorResult(
               "PLAY_SELECTION_REQUIRED",
-              "Selection required. Use REALMS "
+              "Selection required. Choose a visible realm with REALMS "
                   + realmSelectionRequired.worldSlug()
-                  + " before CHARS.");
+                  + ".");
       case WorldsCommandHandler.CharacterBrowseResult.Unavailable ignored ->
           errorResult(
-              "CHARACTER_LIST_UNAVAILABLE", "Character list unavailable. Retry CHARS shortly.");
+              "CHARACTER_LIST_UNAVAILABLE",
+              "Character browsing is unavailable. Use PLAY <world> [realm] <character> "
+                  + "with a known character name.",
+              "error.chars.unavailable");
     };
   }
 
@@ -109,6 +106,15 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
     return new TextCommandInterpretationResult(
         net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(code, message),
         List.of(net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(code, message)));
+  }
+
+  private TextCommandInterpretationResult errorResult(
+      String code, String message, String messageKey) {
+    return new TextCommandInterpretationResult(
+        net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(code, message),
+        List.of(
+            net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
+                code, message, messageKey, java.util.Map.of())));
   }
 
   private void publishCommandEvent(SessionContext context, TextCommand command) {

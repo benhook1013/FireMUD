@@ -434,6 +434,46 @@ class DirectTextWorldSelectionServiceTest {
   }
 
   @Test
+  void bareTenantSelectionNeverFallsBackToAnotherTenantsWorldSlug() {
+    var first = target("");
+    var tenantNamedLikeFirstWorld = target("tenant-world-collision");
+    var service =
+        service(
+            List.of(world(first), world(tenantNamedLikeFirstWorld)),
+            List.of(first, tenantNamedLikeFirstWorld));
+    var menu = service.browse().orElseThrow();
+
+    assertThat(menu.selectors()).containsExactly("studio/forest", "forest/other-world");
+    assertThat(service.resolve(menu, "forest")).containsSame(tenantNamedLikeFirstWorld);
+    assertThat(service.resolve(menu, "studio/forest")).containsSame(first);
+    assertThat(service.resolve(menu, "forest/other-world")).containsSame(tenantNamedLikeFirstWorld);
+    assertThat(service.resolve(menu, "other-world")).isEmpty();
+  }
+
+  @Test
+  void retainedOrdinalCannotBeSilentlyUpgradedToANewCatalogRevision() {
+    var original = target("");
+    var revised = target("revision");
+    AtomicReference<List<WorldView>> worlds = new AtomicReference<>(List.of(world(original)));
+    var service = service(GameplayWorldCatalog.forWorldSupplier(worlds::get), List.of(original));
+    var oldMenu = service.browse().orElseThrow();
+    worlds.set(List.of(world(revised)));
+    when(reader.readCurrentTarget(original)).thenReturn(revised);
+    when(reader.readCurrentTarget(revised)).thenReturn(revised);
+    when(reader.readVisiblePublicProductionTargets()).thenReturn(List.of(revised));
+
+    assertThat(service.resolve(oldMenu, "1")).isEmpty();
+    assertThat(oldMenu.worlds().getFirst().realms().getFirst().catalogRevision()).isEqualTo(1L);
+    var refreshed = service.browse().orElseThrow();
+    assertThat(service.resolve(refreshed, "1")).containsSame(revised);
+    clock.now = NOW.plusSeconds(300);
+    clearInvocations(reader);
+    assertThat(service.resolve(oldMenu, "1")).isEmpty();
+    assertThat(service.resolve(refreshed, "1")).isEmpty();
+    verifyNoInteractions(reader);
+  }
+
+  @Test
   void reorderedCatalogNeverReinterpretsAnOldOrdinal() {
     var first = target("");
     var second = target("second");
@@ -835,11 +875,15 @@ class DirectTextWorldSelectionServiceTest {
 
   /** Controlled owner evidence uses real record invariants, never numeric-to-UUID derivation. */
   private static CanonicalPlayableTarget target(String change) {
-    boolean second = "second".equals(change) || "same-tenant".equals(change);
+    boolean second =
+        "second".equals(change)
+            || "same-tenant".equals(change)
+            || "tenant-world-collision".equals(change);
     boolean otherWorld = second || "duplicate-runtime".equals(change);
     String tenantSlug =
         switch (change) {
           case "second", "duplicate-runtime", "duplicate-world", "tenant-slug" -> "other-tenant";
+          case "tenant-world-collision" -> "forest";
           case "uppercase-tenant" -> "STUDIO";
           case "bad-tenant" -> "bad/tenant";
           default -> "studio";

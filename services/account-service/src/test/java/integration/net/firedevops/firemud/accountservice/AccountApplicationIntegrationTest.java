@@ -107,6 +107,14 @@ class AccountApplicationIntegrationTest {
   private net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository
       joinOperationRepository;
 
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private net.firedevops.firemud.accountservice.repository.SubscriptionRepository
+      subscriptionRepository;
+
+  @Autowired
+  private net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository
+      connectScopeRepository;
+
   @Autowired private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
   @Autowired
@@ -500,6 +508,345 @@ class AccountApplicationIntegrationTest {
 
     assertThat(publicJoinState(fixture)).isEqualTo(committed);
     assertPublicJoinCommittedOnce(fixture);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void publicJoinUnavailableSubscriptionRetainsOriginalAndRecoversOnce(boolean ambiguous) {
+    var fixture = publicJoinFixture();
+    var originalEvidence = publicJoinOriginalEvidence(fixture);
+    if (ambiguous) {
+      var duplicate = new net.firedevops.firemud.accountservice.entity.Subscription();
+      duplicate.setAccount(accountRepository.findById(fixture.accountId()).orElseThrow());
+      duplicate.setTenantId(fixture.tenantId());
+      duplicate.setPlanId("join-proof-duplicate");
+      duplicate.setStatus("active");
+      subscriptionRepository.save(duplicate);
+    } else {
+      subscriptionRepository.deleteByAccountId(fixture.accountId(), fixture.tenantId());
+    }
+    assertThat(subscriptionRepository.findByTenantId(fixture.tenantId()))
+        .hasSize(ambiguous ? 2 : 0);
+
+    var unavailable = publicJoin(fixture);
+
+    assertThat(unavailable.success()).isFalse();
+    assertThat(unavailable.replayed()).isFalse();
+    assertThat(unavailable.accountId()).isEqualTo(fixture.accountUuid());
+    assertThat(unavailable.outcomeCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertPublicJoinUnboundPending(fixture, "ENTITLEMENT_UNAVAILABLE", "UNAVAILABLE");
+    String originalIntent =
+        joinOperationRepository.find(fixture.caller().requestId()).orElseThrow().intentDigest();
+    assertThat(publicJoinOriginalEvidence(fixture)).isEqualTo(originalEvidence);
+
+    var stillUnavailable = publicJoin(fixture);
+    assertThat(stillUnavailable.outcomeCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertPublicJoinUnboundPending(fixture, "ENTITLEMENT_UNAVAILABLE", "UNAVAILABLE");
+    assertThat(
+            joinOperationRepository.find(fixture.caller().requestId()).orElseThrow().intentDigest())
+        .isEqualTo(originalIntent);
+
+    // Restore explicit unique authority through the real repository, not a synthetic read result.
+    subscriptionRepository.deleteByAccountId(fixture.accountId(), fixture.tenantId());
+    var restored = new net.firedevops.firemud.accountservice.entity.Subscription();
+    restored.setAccount(accountRepository.findById(fixture.accountId()).orElseThrow());
+    restored.setTenantId(fixture.tenantId());
+    restored.setPlanId("join-proof-recovered");
+    restored.setStatus("active");
+    subscriptionRepository.save(restored);
+    assertThat(subscriptionRepository.findByTenantId(fixture.tenantId())).hasSize(1);
+
+    var recovered = publicJoin(fixture);
+    assertThat(recovered.success()).isTrue();
+    assertThat(recovered.replayed()).isFalse();
+    assertThat(recovered.accountId()).isEqualTo(fixture.accountUuid());
+    assertPublicJoinCommittedOnce(fixture);
+    assertThat(
+            joinOperationRepository.find(fixture.caller().requestId()).orElseThrow().intentDigest())
+        .isEqualTo(originalIntent);
+    assertThat(publicJoinOriginalEvidence(fixture)).isEqualTo(originalEvidence);
+    var committed = publicJoinState(fixture);
+    assertThat(publicJoin(fixture).replayed()).isTrue();
+    assertPublicJoinCommittedOnce(fixture);
+    assertThat(publicJoinState(fixture)).isEqualTo(committed);
+  }
+
+  @Test
+  void publicJoinActualSqlAbortAtLockedReadRollsBackPolicyAndContinuesOriginalOnce() {
+    var fixture = publicJoinFixture();
+    var originalEvidence = publicJoinOriginalEvidence(fixture);
+    var failOnce = new AtomicBoolean(true);
+    var rolledBack = new AtomicBoolean();
+    var diagnosticWritten = new AtomicBoolean();
+    var originalSqlFailure = new java.util.concurrent.atomic.AtomicReference<RuntimeException>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertThat(rolledBack).isTrue();
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isTrue();
+              invocation.callRealMethod();
+              diagnosticWritten.set(true);
+              return null;
+            })
+        .when(joinOperationRepository)
+        .recordAttemptFailure(
+            fixture.caller().requestId(), "UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE");
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var lockedRows = invocation.callRealMethod();
+              if (failOnce.compareAndSet(true, false)) {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isTrue();
+                // The initial available read and real policy UPDATE have already run in this tx.
+                var transientPolicy =
+                    joinOperationRepository.find(fixture.caller().requestId()).orElseThrow();
+                assertThat(transientPolicy.entitlementAuthorityAvailability())
+                    .isEqualTo("AVAILABLE");
+                assertThat(transientPolicy.allowPublicJoin()).isTrue();
+                assertThat(transientPolicy.entitlementVersion()).isEqualTo(1L);
+                assertThat(transientPolicy.requestDigest()).startsWith("sha256:");
+                var independentRead = new TransactionTemplate(transactionManager);
+                independentRead.setPropagationBehavior(
+                    org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                independentRead.executeWithoutResult(
+                    status -> {
+                      var committedIntent =
+                          joinOperationRepository.find(fixture.caller().requestId()).orElseThrow();
+                      assertThat(committedIntent.status()).isEqualTo("PENDING");
+                      assertThat(committedIntent.requestDigest()).isNull();
+                      assertThat(committedIntent.intentDigest())
+                          .isEqualTo(transientPolicy.intentDigest());
+                    });
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                    .registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                          @Override
+                          public void afterCompletion(int status) {
+                            rolledBack.set(status == STATUS_ROLLED_BACK);
+                          }
+                        });
+                try {
+                  // A real PostgreSQL error poisons this physical owner transaction; no savepoint.
+                  dsl.fetch("SELECT 1 / 0");
+                  throw new AssertionError("PostgreSQL division by zero must fail");
+                } catch (org.jooq.exception.DataAccessException
+                    | org.springframework.dao.DataAccessException ex) {
+                  originalSqlFailure.set(ex);
+                  throw ex;
+                }
+              }
+              return lockedRows;
+            })
+        .when(subscriptionRepository)
+        .findByTenantIdForUpdate(fixture.tenantId());
+
+    var unavailable = publicJoin(fixture);
+
+    assertThat(unavailable.success()).isFalse();
+    assertThat(unavailable.replayed()).isFalse();
+    assertThat(unavailable.outcomeCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(originalSqlFailure.get()).isNotNull();
+    assertThat(sqlState(originalSqlFailure.get())).isEqualTo("22012");
+    assertThat(rolledBack).isTrue();
+    assertThat(diagnosticWritten).isTrue();
+    org.mockito.Mockito.verify(joinOperationRepository)
+        .recordAttemptFailure(
+            fixture.caller().requestId(), "UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE");
+    assertPublicJoinUnboundPending(fixture, "ENTITLEMENT_UNAVAILABLE", "UNAVAILABLE");
+    String originalIntent =
+        joinOperationRepository.find(fixture.caller().requestId()).orElseThrow().intentDigest();
+    assertThat(publicJoinOriginalEvidence(fixture)).isEqualTo(originalEvidence);
+
+    var recovered = publicJoin(fixture);
+    assertThat(recovered.success()).isTrue();
+    assertThat(recovered.replayed()).isFalse();
+    assertThat(recovered.accountId()).isEqualTo(fixture.accountUuid());
+    assertPublicJoinCommittedOnce(fixture);
+    assertThat(
+            joinOperationRepository.find(fixture.caller().requestId()).orElseThrow().intentDigest())
+        .isEqualTo(originalIntent);
+    assertThat(publicJoinOriginalEvidence(fixture)).isEqualTo(originalEvidence);
+    var committed = publicJoinState(fixture);
+    assertThat(publicJoin(fixture).replayed()).isTrue();
+    assertPublicJoinCommittedOnce(fixture);
+    assertThat(publicJoinState(fixture)).isEqualTo(committed);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void publicJoinTerminalEntitlementOutagePreservesOriginalBytes(boolean storageFailure) {
+    var fixture = publicJoinFixture();
+    var originalResult = publicJoin(fixture);
+    assertThat(originalResult.success()).isTrue();
+    assertPublicJoinCommittedOnce(fixture);
+    var committed = publicJoinState(fixture);
+    var originalEvidence = publicJoinOriginalEvidence(fixture);
+    var subscription = subscriptionRepository.findByTenantId(fixture.tenantId()).getFirst();
+    var outage = new AtomicBoolean(true);
+    var sqlFailure = new java.util.concurrent.atomic.AtomicReference<RuntimeException>();
+    if (storageFailure) {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                var rows = invocation.callRealMethod();
+                if (outage.get()) {
+                  assertThat(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive())
+                      .isFalse();
+                  try {
+                    dsl.fetch("SELECT 1 / 0");
+                    throw new AssertionError("PostgreSQL division by zero must fail");
+                  } catch (org.jooq.exception.DataAccessException
+                      | org.springframework.dao.DataAccessException ex) {
+                    sqlFailure.set(ex);
+                    throw ex;
+                  }
+                }
+                return rows;
+              })
+          .when(subscriptionRepository)
+          .findByTenantIdForUpdate(fixture.tenantId());
+    } else {
+      subscriptionRepository.deleteByAccountId(fixture.accountId(), fixture.tenantId());
+    }
+
+    var unavailable = publicJoin(fixture);
+
+    assertThat(unavailable.success()).isFalse();
+    assertThat(unavailable.replayed()).isFalse();
+    assertThat(unavailable.accountId()).isEqualTo(fixture.accountUuid());
+    assertThat(unavailable.outcomeCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    if (storageFailure) {
+      assertThat(sqlFailure.get()).isNotNull();
+      assertThat(sqlState(sqlFailure.get())).isEqualTo("22012");
+    }
+    assertThat(publicJoinState(fixture)).isEqualTo(committed);
+    assertThat(publicJoinOriginalEvidence(fixture)).isEqualTo(originalEvidence);
+    assertPublicJoinCommittedOnce(fixture);
+
+    outage.set(false);
+    if (!storageFailure) {
+      subscription.setId(null);
+      subscriptionRepository.save(subscription);
+    }
+    var replay = publicJoin(fixture);
+    assertThat(replay.success()).isTrue();
+    assertThat(replay.replayed()).isTrue();
+    assertThat(replay.accountId()).isEqualTo(originalResult.accountId());
+    assertThat(replay.membershipId()).isEqualTo(originalResult.membershipId());
+    assertThat(replay.membershipVersion()).isEqualTo(originalResult.membershipVersion());
+    assertThat(replay.membershipAuthorityGeneration())
+        .isEqualTo(originalResult.membershipAuthorityGeneration());
+    assertThat(replay.outcomeCode()).isEqualTo(originalResult.outcomeCode());
+    assertThat(publicJoinState(fixture)).isEqualTo(committed);
+    assertThat(publicJoinOriginalEvidence(fixture)).isEqualTo(originalEvidence);
+    assertPublicJoinCommittedOnce(fixture);
+  }
+
+  @Test
+  void publicJoinChangedAvailablePolicyPreservesTheOriginalTerminalBytes() {
+    var fixture = publicJoinFixture();
+    assertThat(publicJoin(fixture).success()).isTrue();
+    assertPublicJoinCommittedOnce(fixture);
+    var committed = publicJoinState(fixture);
+    var originalEvidence = publicJoinOriginalEvidence(fixture);
+    var original = joinOperationRepository.find(fixture.caller().requestId()).orElseThrow();
+    var subscription = subscriptionRepository.findByTenantId(fixture.tenantId()).getFirst();
+    UUID originalGeneration = subscription.getTenantAuthorityGeneration();
+    subscription.setStatus("trialing");
+    subscriptionRepository.save(subscription);
+    assertThat(subscription.getEntitlementVersion()).isEqualTo(original.entitlementVersion() + 1L);
+    assertThat(subscription.getTenantAuthorityGeneration()).isNotEqualTo(originalGeneration);
+    var available =
+        accountService.getTenantEntitlementsForRuntime(
+            fixture.tenantId(), "changed-policy-" + fixture.caller().requestId());
+    assertThat(available.gameplayAvailable()).isTrue();
+    assertThat(available.allowPublicJoin()).isTrue();
+
+    var conflict = publicJoin(fixture);
+
+    assertThat(conflict.success()).isFalse();
+    assertThat(conflict.replayed()).isFalse();
+    assertThat(conflict.accountId()).isEqualTo(fixture.accountUuid());
+    assertThat(conflict.outcomeCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(publicJoinState(fixture)).isEqualTo(committed);
+    assertThat(publicJoinOriginalEvidence(fixture)).isEqualTo(originalEvidence);
+    assertPublicJoinCommittedOnce(fixture);
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sql) {
+        return sql.getSQLState();
+      }
+    }
+    return null;
+  }
+
+  private void assertPublicJoinUnboundPending(
+      PublicJoinFixture fixture, String failureCode, String availability) {
+    var operation = joinOperationRepository.find(fixture.caller().requestId()).orElseThrow();
+    var scope = connectScopeRepository.find(fixture.connectScopeId()).orElseThrow();
+    assertThat(operation.accountId()).isEqualTo(fixture.accountId());
+    assertThat(operation.tenantId()).isEqualTo(fixture.tenantId());
+    assertThat(operation.callerBinding()).isEqualTo(fixture.caller().sessionId());
+    assertThat(operation.scopeTokenHash())
+        .isEqualTo(
+            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(
+                fixture.connectScopeId()));
+    assertThat(operation.connectScopeDigest()).isEqualTo(scope.snapshotDigest());
+    assertThat(operation.intentDigestVersion()).isEqualTo(1);
+    assertThat(operation.intentDigest())
+        .isEqualTo(
+            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
+                fixture.caller().requestId(), scope, fixture.caller().sessionId()));
+    assertThat(operation.status()).isEqualTo("PENDING");
+    assertThat(operation.outcome()).isNull();
+    assertThat(operation.requestDigest()).isNull();
+    assertThat(operation.requestDigestVersion()).isNull();
+    assertThat(operation.allowPublicJoin()).isNull();
+    assertThat(operation.entitlementVersion()).isNull();
+    assertThat(operation.membershipId()).isNull();
+    assertThat(operation.membershipVersion()).isNull();
+    assertThat(operation.membershipAuthorityGeneration()).isNull();
+    assertThat(operation.entitlementAuthorityAvailability()).isEqualTo(availability);
+    assertThat(operation.lastAttemptAuthorityAvailability()).isEqualTo(availability);
+    assertThat(operation.lastAttemptFailureCode()).isEqualTo(failureCode);
+    assertThat(publicJoinMembershipCount(fixture)).isZero();
+    assertThat(publicJoinAuditCount(fixture)).isZero();
+  }
+
+  private List<String> publicJoinOriginalEvidence(PublicJoinFixture fixture) {
+    assertThat(jwtUtil.parseToken(fixture.connectScopeId()).getPayload().getSubject())
+        .isEqualTo(fixture.accountUuid());
+    var account = accountRepository.findById(fixture.accountId()).orElseThrow();
+    assertThat(account.getAccountUuid().toString()).isEqualTo(fixture.accountUuid());
+    assertThat(account.getAccountUuidSourceNumericId()).isEqualTo(fixture.accountId());
+    assertThat(account.getAccountUuidProvenance())
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    return List.of(
+        dsl.resultQuery(
+                "SELECT row_to_json(a)::text FROM accounts a WHERE id = ?", fixture.accountId())
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT COALESCE(json_agg(s ORDER BY outbox_stream_key)::text, '[]') "
+                    + "FROM account_authority_source_records s WHERE account_uuid = ?",
+                UUID.fromString(fixture.accountUuid()))
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT COALESCE(json_agg(e ORDER BY outbox_sequence)::text, '[]') "
+                    + "FROM account_authority_outbox_events e WHERE outbox_stream_key = ?",
+                "account:auth-authority:v1:account/" + fixture.accountUuid())
+            .fetchOne(0, String.class),
+        dsl.resultQuery(
+                "SELECT row_to_json(s)::text FROM account_connect_scope_records s WHERE scope_token_hash = ?",
+                net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(
+                    fixture.connectScopeId()))
+            .fetchOne(0, String.class));
   }
 
   private AtomicBoolean losePublicJoinTerminalResponse(PublicJoinFixture fixture) {

@@ -43,6 +43,30 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void helpBrowseGuidanceUsesKnownCharacterPlayAndDoesNotRecommendChars() {
+    TextCommandInterpretationResult realms =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("realms"), "HELP realms"));
+    TextCommandInterpretationResult chars =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("chars"), "HELP chars"));
+    TextCommandInterpretationResult play =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("play"), "HELP play"));
+
+    assertTrue(realms.commandResult().accepted());
+    assertTrue(realms.outputs().get(0).text().contains("Use this before PLAY"));
+    assertFalse(realms.outputs().get(0).text().contains("CHARS"));
+
+    assertTrue(chars.commandResult().accepted());
+    assertFalse(chars.outputs().get(0).text().contains("CHARS <world>"));
+    assertTrue(chars.outputs().get(0).text().contains("Character browsing is unavailable."));
+    assertTrue(chars.outputs().get(0).text().contains("PLAY <world> [realm] <character>"));
+    assertTrue(chars.outputs().get(0).text().contains("known character name"));
+    assertFalse(chars.outputs().get(0).text().contains("List visible characters"));
+
+    assertTrue(play.commandResult().accepted());
+    assertTrue(play.outputs().get(0).text().contains("known character name"));
+  }
+
+  @Test
   void helpWhoTopicExplainsGameplayOnlyScope() {
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HELP, List.of("who"), "HELP who"));
@@ -55,7 +79,7 @@ class HelpCommandHandlerTest {
             .get(0)
             .text()
             .contains("List currently connected players in this game instance."));
-    assertTrue(result.outputs().get(0).text().contains("Gods appear first, then players."));
+    assertFalse(result.outputs().get(0).text().contains("Gods appear first"));
     assertTrue(result.outputs().get(0).text().contains("You must already be in-world with PLAY."));
   }
 

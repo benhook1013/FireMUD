@@ -159,6 +159,34 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   }
 
   @Test
+  void recordDisconnectedTakeoverSuppressesExitAndRecordsPresenceBeforeRemoval() {
+    SessionContext context =
+        new SessionContext(
+            41L,
+            22L,
+            net.firedevops.firemud.test.AccountRuntimeStubServer.accountUuidForTestFixture(123L),
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "");
+    whenGameplayContextPresent(context);
+
+    service.recordDisconnected(41L, AccountRecentPresenceDisposition.TAKEOVER);
+
+    verify(scriptEventPublisher, never())
+        .publishRegionExitEvent(Mockito.any(SessionContext.class), anyString(), anyString());
+    verify(sessionRoutingNormalizationService, never()).resolveProjectedSessionContext("41");
+    org.mockito.InOrder inOrder =
+        Mockito.inOrder(accountRecentPresenceService, gameplayPresenceService);
+    inOrder
+        .verify(accountRecentPresenceService)
+        .recordDisconnect(41L, AccountRecentPresenceDisposition.TAKEOVER);
+    inOrder.verify(gameplayPresenceService).removeBySessionId(41L);
+  }
+
+  @Test
   void recordDisconnectedSkipsLifecycleEventWithoutGameplayRegionBinding() {
     whenGameplayContextPresent(
         new SessionContext(41L, 22L, null, "demo@example.com", 7001L, "Emberline", 0L, "", ""));

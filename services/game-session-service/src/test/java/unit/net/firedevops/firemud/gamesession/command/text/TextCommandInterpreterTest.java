@@ -26,7 +26,6 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
@@ -143,8 +142,7 @@ class TextCommandInterpreterTest {
               PresentationProperties.ColorMode.NONE,
               false,
               new PresentationProperties.Prompt(true, true, 150L)));
-  private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final GameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
@@ -418,8 +416,7 @@ class TextCommandInterpreterTest {
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
-    WorldsCommandHandler worldsHandler =
-        new WorldsCommandHandler(worldCatalog, entityManagementClient);
+    WorldsCommandHandler worldsHandler = new WorldsCommandHandler(worldCatalog);
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -520,8 +517,9 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.VIEW),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertTrue(renderedResponse("WORLDS", interpretation).startsWith("OK WORLDS\n1) Demo World"));
-    assertTrue(renderedResponse("WORLDS", interpretation).contains("Demo World"));
+    String rendered = renderedResponse("WORLDS", interpretation);
+    assertTrue(rendered.startsWith("OK WORLDS\nDemo World (demo)"));
+    assertFalse(rendered.contains("\n1) "));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -538,17 +536,20 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void charsAreVisibleAfterLogin() {
+  void charsFailClosedAfterLoginWithoutReturningRoster() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "CHARS demo", false);
 
-    assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("CHARS demo", interpretation).contains("1) demo [lvl 12]"));
-    assertTrue(
-        renderedResponse("CHARS demo", interpretation)
-            .contains("Realm state: shared, creation: allow_new"));
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR CHARACTER_LIST_UNAVAILABLE Character browsing is unavailable. "
+            + "Use PLAY <world> [realm] <character> with a known character name.",
+        renderedResponse("CHARS demo", interpretation));
+    verify(entityManagementClient, never())
+        .listCharactersByAccount(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
   }
 
   @Test

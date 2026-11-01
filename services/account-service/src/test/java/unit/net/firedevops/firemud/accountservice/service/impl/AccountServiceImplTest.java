@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -85,8 +86,10 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
@@ -986,7 +989,7 @@ class AccountServiceImplTest {
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
     assertFalse(unavailableAuthorityReplay.success());
     assertFalse(unavailableAuthorityReplay.replayed());
-    assertEquals("AUTH_UNAVAILABLE", unavailableAuthorityReplay.outcomeCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailableAuthorityReplay.outcomeCode());
     assertEquals(storedDeniedOperation, retainedOperation.get());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
@@ -1066,7 +1069,7 @@ class AccountServiceImplTest {
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
     assertFalse(unavailableAuthorityRetry.success());
     assertFalse(unavailableAuthorityRetry.replayed());
-    assertEquals("AUTH_UNAVAILABLE", unavailableAuthorityRetry.outcomeCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailableAuthorityRetry.outcomeCode());
     assertEquals(committedOperation, retainedOperation.get());
     assertEquals(membership, joinedMembership.get());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
@@ -1083,8 +1086,9 @@ class AccountServiceImplTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"false", "true"})
-  void missingOrAmbiguousEntitlementRetainsUnavailableJoinReceipt(boolean ambiguous) {
+  @MethodSource("unavailableJoinReads")
+  void unavailableEntitlementRetainsJoinReceiptAndRecoversOnce(
+      boolean lockedRead, UnavailableEntitlement failure) {
     Account account = new Account();
     account.setId(11L);
     setPersistedAuthenticationIdentity(account);
@@ -1118,14 +1122,17 @@ class AccountServiceImplTest {
     retainJoinEvidence(retainedScope, retainedOperation);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    AtomicBoolean authorityRecovered = new AtomicBoolean();
     when(subscriptionRepository.findByTenantId(7L))
-        .thenReturn(
-            ambiguous
-                ? java.util.List.of(new Subscription(), new Subscription())
-                : java.util.List.of(),
-            java.util.List.of(recovered));
+        .thenAnswer(
+            invocation ->
+                lockedRead || authorityRecovered.get()
+                    ? java.util.List.of(recovered)
+                    : failure.rows());
     when(subscriptionRepository.findByTenantIdForUpdate(7L))
-        .thenReturn(java.util.List.of(recovered));
+        .thenAnswer(
+            invocation -> authorityRecovered.get() ? java.util.List.of(recovered) : failure.rows());
+    org.mockito.Mockito.clearInvocations(accountConnectScopeRepository);
     JoinPublicProductionRequest request =
         new JoinPublicProductionRequest(connectScopeId, "join-unavailable-1");
 
@@ -1138,11 +1145,39 @@ class AccountServiceImplTest {
     assertEquals("ENTITLEMENT_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
     assertEquals("UNAVAILABLE", retainedOperation.get().lastAttemptAuthorityAvailability());
     assertNotNull(retainedOperation.get().intentDigest());
-    assertEquals(null, retainedOperation.get().requestDigest());
-    assertEquals(null, retainedOperation.get().requestDigestVersion());
-    assertEquals(null, retainedOperation.get().allowPublicJoin());
-    assertEquals(null, retainedOperation.get().entitlementVersion());
+    String intentDigest = retainedOperation.get().intentDigest();
+    String boundDigest = retainedOperation.get().requestDigest();
+    if (lockedRead) {
+      assertEquals(
+          net.firedevops.firemud.accountservice.dto.AccountJoinDigest.request(
+              retainedScope.get(), retainedOperation.get().callerBinding(), true, 1L),
+          boundDigest);
+      assertEquals(1, retainedOperation.get().requestDigestVersion());
+      assertEquals(true, retainedOperation.get().allowPublicJoin());
+      assertEquals(1L, retainedOperation.get().entitlementVersion());
+      assertEquals("AVAILABLE", retainedOperation.get().entitlementAuthorityAvailability());
+    } else {
+      assertNull(boundDigest);
+      assertNull(retainedOperation.get().requestDigestVersion());
+      assertNull(retainedOperation.get().allowPublicJoin());
+      assertNull(retainedOperation.get().entitlementVersion());
+    }
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
 
+    JoinPublicProductionResult stillUnavailable =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+    assertEquals("ENTITLEMENT_UNAVAILABLE", stillUnavailable.outcomeCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(intentDigest, retainedOperation.get().intentDigest());
+    assertEquals(boundDigest, retainedOperation.get().requestDigest());
+    assertEquals(lockedRead ? Boolean.TRUE : null, retainedOperation.get().allowPublicJoin());
+    assertEquals(
+        lockedRead ? Long.valueOf(1L) : null, retainedOperation.get().entitlementVersion());
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
+
+    authorityRecovered.set(true);
     JoinPublicProductionResult retriedAfterRecovery =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
 
@@ -1153,6 +1188,14 @@ class AccountServiceImplTest {
     assertEquals(1L, retainedOperation.get().entitlementVersion());
     assertEquals(true, retainedOperation.get().allowPublicJoin());
     assertNotNull(retainedOperation.get().requestDigest());
+    assertEquals(intentDigest, retainedOperation.get().intentDigest());
+    if (lockedRead) {
+      assertEquals(boundDigest, retainedOperation.get().requestDigest());
+    }
+    JoinPublicProductionResult replay =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+    assertTrue(replay.success());
+    assertTrue(replay.replayed());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
     org.mockito.Mockito.verify(accountAuditOutboxRepository, org.mockito.Mockito.times(1))
@@ -1162,8 +1205,322 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq(7L),
             org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
             org.mockito.ArgumentMatchers.contains("join-unavailable-1"));
-    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
+    org.mockito.Mockito.verify(
+            subscriptionRepository, org.mockito.Mockito.times(lockedRead ? 4 : 2))
         .findByTenantIdForUpdate(7L);
+  }
+
+  private static java.util.stream.Stream<Arguments> unavailableJoinReads() {
+    return java.util.stream.Stream.of(false, true)
+        .flatMap(
+            locked ->
+                java.util.Arrays.stream(UnavailableEntitlement.values())
+                    .filter(failure -> failure.cause == null)
+                    .map(failure -> Arguments.of(locked, failure)));
+  }
+
+  private static java.util.stream.Stream<Arguments> storageJoinReads() {
+    return java.util.stream.Stream.of(false, true)
+        .flatMap(
+            locked ->
+                java.util.Arrays.stream(UnavailableEntitlement.values())
+                    .filter(failure -> failure.cause != null)
+                    .map(failure -> Arguments.of(locked, failure)));
+  }
+
+  @ParameterizedTest
+  @MethodSource("storageJoinReads")
+  void joinStorageOutageRollsBackBeforeRecordingFailureAndRecoversOriginalOnce(
+      boolean lockedRead, UnavailableEntitlement failure) {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String scope =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
+    AtomicBoolean recovered = new AtomicBoolean();
+    Subscription available = new Subscription();
+    available.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenAnswer(
+            invocation -> lockedRead || recovered.get() ? List.of(available) : failure.rows());
+    when(subscriptionRepository.findByTenantIdForUpdate(7L))
+        .thenAnswer(invocation -> recovered.get() ? List.of(available) : failure.rows());
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    when(accountTenantMembershipRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              AccountTenantMembership membership = invocation.getArgument(0);
+              membership.setId(701L);
+              return membership;
+            });
+    org.mockito.Mockito.clearInvocations(
+        transactionManager, accountConnectScopeRepository, accountJoinOperationRepository);
+    var request = new JoinPublicProductionRequest(scope, directTextCaller().requestId());
+
+    var unavailable = service.joinPublicProductionFromGameSession(directTextCaller(), request);
+
+    assertFalse(unavailable.success());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.outcomeCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertNull(retainedOperation.get().outcome());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    assertEquals("UNAVAILABLE", retainedOperation.get().lastAttemptAuthorityAvailability());
+    String originalIntent = retainedOperation.get().intentDigest();
+    assertNotNull(originalIntent);
+    var order = org.mockito.Mockito.inOrder(transactionManager, accountJoinOperationRepository);
+    order.verify(transactionManager).rollback(org.mockito.ArgumentMatchers.any());
+    order
+        .verify(transactionManager)
+        .getTransaction(org.mockito.ArgumentMatchers.any(TransactionDefinition.class));
+    order.verify(accountJoinOperationRepository).findForUpdate(request.requestId());
+    order
+        .verify(accountJoinOperationRepository)
+        .recordAttemptFailure(request.requestId(), "UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE");
+    order.verify(transactionManager).commit(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+    // AtomicReference fixtures do not physically roll back policy writes; PostgreSQL proves that.
+    recovered.set(true);
+    var joined = service.joinPublicProductionFromGameSession(directTextCaller(), request);
+    assertTrue(joined.success());
+    assertFalse(joined.replayed());
+    assertEquals(originalIntent, retainedOperation.get().intentDigest());
+    var committed = retainedOperation.get();
+    assertTrue(service.joinPublicProductionFromGameSession(directTextCaller(), request).replayed());
+    assertEquals(committed, retainedOperation.get());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository)
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verify(accountAuditOutboxRepository)
+        .append(
+            org.mockito.ArgumentMatchers.any(UUID.class),
+            org.mockito.ArgumentMatchers.eq("tenant"),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
+            org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @ParameterizedTest
+  @MethodSource("terminalJoinReadFailures")
+  void terminalJoinEntitlementOutagePreservesCompleteOriginal(
+      UnavailableEntitlement failure, String programmingFault) {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String scope =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
+    Subscription available = new Subscription();
+    available.setStatus("active");
+    when(subscriptionRepository.findByTenantIdForUpdate(7L)).thenReturn(List.of(available));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+    when(accountTenantMembershipRepository.save(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              AccountTenantMembership membership = invocation.getArgument(0);
+              membership.setId(701L);
+              return membership;
+            });
+    var request = new JoinPublicProductionRequest(scope, directTextCaller().requestId());
+    var originalResult = service.joinPublicProductionFromGameSession(directTextCaller(), request);
+    assertTrue(originalResult.success());
+    var original = retainedOperation.get();
+    var originalScope = retainedScope.get();
+    AtomicBoolean recovered = new AtomicBoolean();
+    when(subscriptionRepository.findByTenantIdForUpdate(7L))
+        .thenAnswer(
+            invocation -> {
+              if (recovered.get()) {
+                return List.of(available);
+              }
+              if (programmingFault != null) {
+                throw entitlementProgrammingFault(programmingFault);
+              }
+              return failure.rows();
+            });
+    org.mockito.Mockito.clearInvocations(
+        accountTenantMembershipRepository,
+        accountAuditOutboxRepository,
+        accountJoinOperationRepository,
+        accountConnectScopeRepository);
+
+    var unavailable = service.joinPublicProductionFromGameSession(directTextCaller(), request);
+
+    assertFalse(unavailable.success());
+    assertFalse(unavailable.replayed());
+    assertEquals(
+        programmingFault == null ? "ENTITLEMENT_UNAVAILABLE" : "AUTH_UNAVAILABLE",
+        unavailable.outcomeCode());
+    assertEquals(original, retainedOperation.get());
+    assertEquals(originalScope, retainedScope.get());
+    recovered.set(true);
+    var replay = service.joinPublicProductionFromGameSession(directTextCaller(), request);
+    assertTrue(replay.success());
+    assertTrue(replay.replayed());
+    assertEquals(originalResult.accountId(), replay.accountId());
+    assertEquals(originalResult.membershipId(), replay.membershipId());
+    assertEquals(originalResult.membershipVersion(), replay.membershipVersion());
+    assertEquals(
+        originalResult.membershipAuthorityGeneration(), replay.membershipAuthorityGeneration());
+    assertEquals(originalResult.outcomeCode(), replay.outcomeCode());
+    assertEquals(original, retainedOperation.get());
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .recordAttemptFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .bindPolicyEvidence(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyBoolean());
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+  }
+
+  private static java.util.stream.Stream<Arguments> terminalJoinReadFailures() {
+    return java.util.stream.Stream.concat(
+        java.util.Arrays.stream(UnavailableEntitlement.values())
+            .map(failure -> Arguments.of(failure, null)),
+        java.util.stream.Stream.of("mapping", "configuration")
+            .map(fault -> Arguments.of(null, fault)));
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false,mapping", "true,mapping", "false,configuration", "true,configuration"})
+  void joinMappingAndConfigurationFaultsRetainUnexpectedFailureBoundary(
+      boolean lockedRead, String fault) {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String scope =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
+    RuntimeException cause = entitlementProgrammingFault(fault);
+    if (lockedRead) {
+      when(subscriptionRepository.findByTenantIdForUpdate(7L)).thenThrow(cause);
+    } else {
+      when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
+    }
+    org.mockito.Mockito.clearInvocations(transactionManager, accountConnectScopeRepository);
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProductionFromGameSession(
+                    directTextCaller(),
+                    new JoinPublicProductionRequest(scope, directTextCaller().requestId())));
+
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    assertSame(cause, unavailable.getCause());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertNotNull(retainedOperation.get().intentDigest());
+    assertNull(retainedOperation.get().outcome());
+    assertEquals("AUTH_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    org.mockito.Mockito.verify(transactionManager).rollback(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+  }
+
+  @Test
+  void lateDuplicateRealmKeepsJoinPendingWithoutMembershipEffects() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String scope =
+        service
+            .issueDirectTextConnectScope(directTextCaller(), directTextTarget())
+            .connectScopeId();
+    var realm = gameSessionClient.listGameplayRealms("demo").getFirst();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(List.of(realm), List.of(realm, realm));
+    org.mockito.Mockito.clearInvocations(subscriptionRepository, accountConnectScopeRepository);
+
+    JoinPublicProductionResult result =
+        service.joinPublicProductionFromGameSession(
+            directTextCaller(),
+            new JoinPublicProductionRequest(scope, directTextCaller().requestId()));
+
+    assertFalse(result.success());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", result.outcomeCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(true, retainedOperation.get().allowPublicJoin());
+    assertEquals(1L, retainedOperation.get().entitlementVersion());
+    assertNotNull(retainedOperation.get().requestDigest());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.never())
+        .findByTenantIdForUpdate(7L);
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+  }
+
+  private static RuntimeException entitlementProgrammingFault(String fault) {
+    return "mapping".equals(fault)
+        ? new org.jooq.exception.MappingException("subscription mapping fault")
+        : new org.jooq.exception.ConfigurationException("subscription configuration fault");
+  }
+
+  private enum UnavailableEntitlement {
+    MISSING,
+    AMBIGUOUS,
+    NULL_LIST,
+    NULL_ROW,
+    ZERO_VERSION,
+    NEGATIVE_VERSION,
+    JOOQ_STORAGE(new org.jooq.exception.DataAccessException("subscription store unavailable")),
+    SPRING_STORAGE(new DataAccessResourceFailureException("subscription store unavailable"));
+
+    private final RuntimeException cause;
+
+    UnavailableEntitlement() {
+      this(null);
+    }
+
+    UnavailableEntitlement(RuntimeException cause) {
+      this.cause = cause;
+    }
+
+    private List<Subscription> rows() {
+      if (cause != null) {
+        throw cause;
+      }
+      return switch (this) {
+        case MISSING -> List.of();
+        case AMBIGUOUS -> List.of(new Subscription(), new Subscription());
+        case NULL_LIST -> null;
+        case NULL_ROW -> java.util.Collections.singletonList(null);
+        case ZERO_VERSION, NEGATIVE_VERSION -> {
+          Subscription invalid = new Subscription();
+          invalid.setStatus("active");
+          invalid.setEntitlementVersion(this == ZERO_VERSION ? 0L : -1L);
+          yield List.of(invalid);
+        }
+        default -> throw new IllegalStateException("Storage failure must have a cause");
+      };
+    }
   }
 
   @Test
@@ -1414,7 +1771,7 @@ class AccountServiceImplTest {
 
     assertFalse(unavailableAuthority.success());
     assertFalse(unavailableAuthority.replayed());
-    assertEquals("AUTH_UNAVAILABLE", unavailableAuthority.outcomeCode());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailableAuthority.outcomeCode());
     assertEquals(storedFailure, retainedOperation.get());
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
@@ -3557,9 +3914,12 @@ class AccountServiceImplTest {
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
+    AccountTenantMembership activeMembership = membership(account, 7L);
+    activeMembership.setMembershipVersion(17L);
+    activeMembership.setMembershipAuthorityGeneration(29L);
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-        .thenReturn(Optional.of(membership(account, 7L)));
+        .thenReturn(Optional.of(activeMembership));
 
     var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
 
@@ -3567,9 +3927,62 @@ class AccountServiceImplTest {
     assertEquals(7L, dto.tenantId());
     assertTrue(dto.membershipExists());
     assertTrue(dto.gameplayAdmissionAllowed());
-    assertEquals(1L, dto.membershipVersion());
+    assertEquals(17L, dto.membershipVersion());
     assertEquals("ACTIVE", dto.membershipLifecycleState());
-    assertEquals(1L, dto.membershipAuthorityGeneration());
+    assertEquals(29L, dto.membershipAuthorityGeneration());
+    assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeReturnsCoherentMissingMembershipForExistingAccount() {
+    Account account = new Account();
+    account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.empty());
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertFalse(dto.membershipExists());
+    assertFalse(dto.gameplayAdmissionAllowed());
+    assertEquals(0L, dto.membershipVersion());
+    assertEquals("MISSING", dto.membershipLifecycleState());
+    assertEquals(0L, dto.membershipAuthorityGeneration());
+    assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeReturnsInactiveMembershipWithIndependentGenerations() {
+    Account account = new Account();
+    account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    AccountTenantMembership inactiveMembership = membership(account, 7L);
+    inactiveMembership.setGameplayAdmissionAllowed(false);
+    inactiveMembership.setLifecycleState("INACTIVE");
+    inactiveMembership.setMembershipVersion(23L);
+    inactiveMembership.setMembershipAuthorityGeneration(41L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(inactiveMembership));
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertTrue(dto.membershipExists());
+    assertFalse(dto.gameplayAdmissionAllowed());
+    assertEquals(23L, dto.membershipVersion());
+    assertEquals("INACTIVE", dto.membershipLifecycleState());
+    assertEquals(41L, dto.membershipAuthorityGeneration());
     assertNotNull(dto.evaluatedAt());
   }
 
@@ -3600,21 +4013,31 @@ class AccountServiceImplTest {
     assertTrue(!dto.gameplayAdmissionAllowed());
   }
 
-  @Test
-  void getTenantEntitlementsForRuntimeUsesCurrentSubscriptions() {
+  @ParameterizedTest
+  @CsvSource({
+    "active,true,true",
+    "trialing,true,true",
+    "past_due,true,true",
+    "grace,true,false",
+    "canceled,false,false",
+    "unknown,false,false"
+  })
+  void getTenantEntitlementsForRuntimeUsesCurrentSubscriptions(
+      String status, boolean gameplayAvailable, boolean allowPublicJoin) {
     Subscription active = new Subscription();
     active.setId(31L);
     active.setTenantId(7L);
-    active.setStatus("active");
+    active.setStatus(status);
+    active.setEntitlementVersion(9L);
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
 
     var dto = service.getTenantEntitlementsForRuntime(7L, "req-2");
 
     assertEquals(7L, dto.tenantId());
-    assertTrue(dto.gameplayAvailable());
-    assertTrue(dto.allowPublicJoin());
-    assertEquals(1L, dto.entitlementVersion());
-    assertEquals(1L, dto.tenantBillingSequence());
+    assertEquals(gameplayAvailable, dto.gameplayAvailable());
+    assertEquals(allowPublicJoin, dto.allowPublicJoin());
+    assertEquals(9L, dto.entitlementVersion());
+    assertEquals(9L, dto.tenantBillingSequence());
     assertNotNull(dto.evaluatedAt());
   }
 
@@ -3732,6 +4155,30 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void graceAllowsDirectScopeDiscoveryWithoutPublicJoinAuthority() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    Subscription grace = new Subscription();
+    grace.setTenantId(7L);
+    grace.setStatus("grace");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(List.of(grace));
+
+    var entitlement = service.getTenantEntitlementsForRuntime(7L, "grace-discovery");
+    DirectTextJoinScope scope =
+        service.issueDirectTextConnectScope(directTextCaller(), directTextTarget());
+
+    assertTrue(entitlement.gameplayAvailable());
+    assertFalse(entitlement.allowPublicJoin());
+    assertNotNull(scope.connectScopeId());
+    org.mockito.Mockito.verify(accountConnectScopeRepository)
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+    verifyNoInteractions(
+        accountJoinOperationRepository,
+        accountTenantMembershipRepository,
+        accountAuditOutboxRepository);
+  }
+
+  @Test
   void bothScopeProducersBindPersistedUuidWhileRetainedRowsKeepPrivateAccountKey() {
     Account account = directTextAccount();
     account.setUsername("demo");
@@ -3807,11 +4254,10 @@ class AccountServiceImplTest {
     assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
   }
 
-  @Test
-  void getTenantEntitlementsForRuntimeTreatsStoreFailureAsUnavailable() {
-    DataAccessResourceFailureException cause =
-        new DataAccessResourceFailureException("subscription store unavailable");
-    when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
+  @ParameterizedTest
+  @EnumSource(UnavailableEntitlement.class)
+  void runtimeAndDirectScopeTreatUnsafeEntitlementAsUnavailable(UnavailableEntitlement failure) {
+    when(subscriptionRepository.findByTenantId(7L)).thenAnswer(invocation -> failure.rows());
 
     AuthenticationException exception =
         assertThrows(
@@ -3819,7 +4265,41 @@ class AccountServiceImplTest {
             () -> service.getTenantEntitlementsForRuntime(7L, "req-entitlement-store-failure"));
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
-    assertEquals(cause, exception.getCause());
+    assertSame(failure.cause, exception.getCause());
+
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    AuthenticationException scopeFailure =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueDirectTextConnectScope(directTextCaller(), directTextTarget()));
+    assertEquals("ENTITLEMENT_UNAVAILABLE", scopeFailure.getCode());
+    assertSame(failure.cause, scopeFailure.getCause());
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"mapping", "configuration"})
+  void runtimeAndDirectScopePropagateEntitlementProgrammingFaults(String fault) {
+    RuntimeException cause = entitlementProgrammingFault(fault);
+    when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
+
+    assertSame(
+        cause,
+        assertThrows(
+            cause.getClass(), () -> service.getTenantEntitlementsForRuntime(7L, "req-fault")));
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    assertSame(
+        cause,
+        assertThrows(
+            cause.getClass(),
+            () -> service.issueDirectTextConnectScope(directTextCaller(), directTextTarget())));
+    org.mockito.Mockito.verify(accountConnectScopeRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
   }
 
   @Test

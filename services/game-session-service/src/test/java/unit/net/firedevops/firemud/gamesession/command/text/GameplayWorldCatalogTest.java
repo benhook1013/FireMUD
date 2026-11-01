@@ -863,7 +863,7 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void realmDiscoverySnapshotReadsOneCurrentSourceForTheExactSelectedWorld() {
+  void callerFreeRealmDiscoveryReadsOnceAndDoesNotExposePrivateOrHiddenRealms() {
     AtomicInteger supplierCalls = new AtomicInteger();
     GameplayWorldCatalog.WorldView selectedWorld =
         new GameplayWorldCatalog.WorldView(
@@ -889,10 +889,10 @@ class GameplayWorldCatalogTest {
     assertThat(realms.world().slug()).isEqualTo(discovery.worlds().getFirst().slug());
     assertThat(realms.realms())
         .extracting(GameplayWorldCatalog.RealmView::slug)
-        .containsExactly("live", "preview");
+        .containsExactly("live");
     assertThat(realms.world().realms())
         .extracting(GameplayWorldCatalog.RealmView::slug)
-        .containsExactly("live", "preview");
+        .containsExactly("live");
     assertThat(realms.realms().getFirst())
         .isEqualTo(discovery.worlds().getFirst().realms().getFirst());
     assertThat(realms.fingerprint()).isEqualTo(discovery.fingerprint());
@@ -1127,7 +1127,7 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void numericWorldSelectionUsesTheSameFilteredSetAsWorldBrowsePresentation() {
+  void numericSlugLookupDoesNotIndexFreshCatalogOrdering() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
             List.of(
@@ -1138,8 +1138,80 @@ class GameplayWorldCatalogTest {
         .extracting(
             net.firedevops.firemud.gamesession.presentation.WorldsViewOutput.WorldEntry::slug)
         .containsExactly("demo");
-    assertThat(catalog.resolveWorld("1").orElseThrow().slug()).isEqualTo("demo");
+    assertThat(catalog.resolveWorld("1")).isEmpty();
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("1")).isEmpty();
+    assertThat(catalog.resolvePublicWorldFromAuthoritySnapshot("1")).isEmpty();
+    assertThat(catalog.browseRealms("1")).isEmpty();
     assertThat(catalog.resolveWorld("invalid")).isPresent();
+  }
+
+  @Test
+  void commandReadSnapshotUsesOneActualPointerListForSelectionDefaultAndCardinality() {
+    GameplayAdmissionPointerSnapshot original = publicPointer("demo", "Demo World", 7L, 11L);
+    when(authorityService.listPointers()).thenReturn(List.of(original), List.of());
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    GameplayWorldCatalog.ReadSnapshot snapshot = catalog.readSnapshot();
+    GameplayWorldCatalog.WorldView world = snapshot.resolveWorld("demo").orElseThrow();
+
+    assertThat(snapshot.resolveDefaultRealm(world)).contains(world.realms().getFirst());
+    assertThat(snapshot.hasValidPublicProductionRealm(7L)).isTrue();
+    assertThat(snapshot.resolveWorld("demo")).contains(world);
+    verify(authorityService).listPointers();
+    verify(authorityService, never()).listPointersByTenant(Mockito.anyLong());
+    assertThat(catalog.readSnapshot().resolveWorld("demo")).isEmpty();
+  }
+
+  @Test
+  void typedNumericWorldAndRealmSlugsResolveExactlyRatherThanAsPositions() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                worldWithRealm("123", "456", 7L, true),
+                worldWithRealm("demo", "production", 8L, true)));
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("123").orElseThrow();
+
+    assertThat(world.slug()).isEqualTo("123");
+    assertThat(catalog.readSnapshot().resolveWorld("123")).contains(world);
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("123")).contains(world);
+    assertThat(catalog.resolvePublicWorldFromAuthoritySnapshot("123")).contains(world);
+    assertThat(catalog.browseRealms("123").orElseThrow().realms().getFirst().realmSlug())
+        .isEqualTo("456");
+    assertThat(catalog.resolveRealm(world, "456")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveRealmForAdmission(world, "456")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveWorld("1")).isEmpty();
+    assertThat(catalog.resolveWorld("2")).isEmpty();
+    assertThat(catalog.resolveRealm(world, "1")).isEmpty();
+    assertThat(catalog.resolveRealmForAdmission(world, "1")).isEmpty();
+  }
+
+  @Test
+  void typedNumericRealmSlugResolvesExactlyWithoutOrdinalFallback() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(List.of(worldWithRealm("demo", "1", 7L, true)));
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("demo").orElseThrow();
+
+    assertThat(catalog.resolveRealm(world, "1")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveRealmForAdmission(world, "1")).contains(world.realms().getFirst());
+    assertThat(catalog.resolveRealm(world, "2")).isEmpty();
+    assertThat(catalog.resolveRealmForAdmission(world, "2")).isEmpty();
+  }
+
+  @Test
+  void defaultRealmNeverChoosesTheFirstOfSeveralPrivateRealms() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                worldWithRealm("production-world", "live", 7L, true),
+                new GameplayWorldCatalog.WorldView(
+                    "private-world",
+                    "Private World",
+                    List.of(
+                        realmView("alpha", "Alpha", 7L, 12L, 1L, true, false, "ALLOW_NEW"),
+                        realmView("beta", "Beta", 7L, 13L, 1L, true, false, "ALLOW_NEW")))));
+
+    assertThat(catalog.resolveDefaultRealm(catalog.resolveWorld("private-world").orElseThrow()))
+        .isEmpty();
   }
 
   private static GameplayWorldCatalog.RealmView realmView(

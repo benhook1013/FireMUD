@@ -895,10 +895,16 @@ public class AccountServiceImpl implements AccountService {
     JoinEvaluation evaluation;
     try {
       evaluation = evaluateJoin(scope);
+    } catch (AuthenticationException ex) {
+      return joinRetryFailure(
+          scope, isStorageBackedEntitlementFailure(ex) ? ex.getCode() : "AUTH_UNAVAILABLE");
     } catch (RuntimeException ex) {
       return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
     }
     if (evaluation.failureCode() != null) {
+      if ("ENTITLEMENT_UNAVAILABLE".equals(evaluation.failureCode())) {
+        return joinRetryFailure(scope, evaluation.failureCode());
+      }
       if (isRetryableJoinAuthorityFailure(evaluation)) {
         return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
       }
@@ -1162,10 +1168,20 @@ public class AccountServiceImpl implements AccountService {
           null);
     } catch (AuthenticationException ex) {
       if ("ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
+        if (isStorageBackedEntitlementFailure(ex)) {
+          // Leave a potentially aborted SQL transaction before recording the failed attempt.
+          throw ex;
+        }
         return new JoinEvaluation("UNAVAILABLE", null, null, false, ex.getCode());
       }
       throw ex;
     }
+  }
+
+  private boolean isStorageBackedEntitlementFailure(AuthenticationException failure) {
+    return "ENTITLEMENT_UNAVAILABLE".equals(failure.getCode())
+        && (failure.getCause() instanceof org.jooq.exception.DataAccessException
+            || failure.getCause() instanceof DataAccessException);
   }
 
   private record JoinEvaluation(
@@ -1186,11 +1202,25 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> rows =
-        lockSubscription
-            ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
-            : subscriptionRepository.findByTenantId(tenantId);
-    if (rows.size() != 1) {
+    return readTenantEntitlements(tenantId, lockSubscription);
+  }
+
+  private RuntimeEntitlementsDto readTenantEntitlements(long tenantId, boolean lockSubscription) {
+    List<net.firedevops.firemud.accountservice.entity.Subscription> rows;
+    try {
+      rows =
+          lockSubscription
+              ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
+              : subscriptionRepository.findByTenantId(tenantId);
+    } catch (org.jooq.exception.MappingException | org.jooq.exception.ConfigurationException ex) {
+      throw ex;
+    } catch (org.jooq.exception.DataAccessException | DataAccessException ex) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE",
+          "Tenant entitlement authority is unavailable; retry later",
+          ex);
+    }
+    if (rows == null || rows.size() != 1 || rows.getFirst() == null) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");
     }
@@ -1314,27 +1344,7 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.runtime_entitlements")
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
-    try {
-      subscriptions = subscriptionRepository.findByTenantId(tenantId);
-    } catch (DataAccessException ex) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE",
-          "Tenant entitlement authority is unavailable; retry later",
-          ex);
-    }
-    if (subscriptions.size() != 1) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE",
-          "Tenant entitlement authority is missing or ambiguous; retry later");
-    }
-    net.firedevops.firemud.accountservice.entity.Subscription subscription =
-        subscriptions.getFirst();
-    boolean gameplayAvailable = isGameplayAvailableStatus(subscription.getStatus());
-    boolean allowPublicJoin = isPublicJoinAllowedStatus(subscription.getStatus());
-    long version = subscription.getEntitlementVersion();
-    return new RuntimeEntitlementsDto(
-        tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
+    return readTenantEntitlements(tenantId, false);
   }
 
   private BootstrapContext requireBootstrapContext(String bootstrapToken) {

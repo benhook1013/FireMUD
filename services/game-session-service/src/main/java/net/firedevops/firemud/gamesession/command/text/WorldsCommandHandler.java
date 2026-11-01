@@ -2,10 +2,6 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
-import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -20,13 +16,9 @@ import org.springframework.util.StringUtils;
 @Component
 public class WorldsCommandHandler {
   private final GameplayWorldCatalog worldCatalog;
-  private final EntityManagementClient entityManagementClient;
 
-  public WorldsCommandHandler(
-      GameplayWorldCatalog worldCatalog, EntityManagementClient entityManagementClient) {
+  public WorldsCommandHandler(GameplayWorldCatalog worldCatalog) {
     this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
   }
 
   public WorldsViewOutput browseView() {
@@ -43,8 +35,9 @@ public class WorldsCommandHandler {
     if (!sessionContext.hasAccountIdentity()) {
       return CharacterBrowseResult.unavailable();
     }
+    GameplayWorldCatalog.ReadSnapshot snapshot = worldCatalog.readSnapshot();
     java.util.Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        worldCatalog.resolveWorld(worldSelector);
+        snapshot.resolveWorld(worldSelector);
     if (maybeWorld.isEmpty()) {
       return CharacterBrowseResult.invalidWorld();
     }
@@ -54,7 +47,7 @@ public class WorldsCommandHandler {
             ? worldCatalog.resolveRealm(world, realmSelector)
             : worldCatalog.requiresExplicitRealmSelection(world)
                 ? java.util.Optional.empty()
-                : worldCatalog.resolveDefaultRealm(world);
+                : snapshot.resolveDefaultRealm(world);
     if (StringUtils.hasText(realmSelector) && maybeRealm.isEmpty()) {
       return CharacterBrowseResult.invalidRealm(world.slug());
     }
@@ -62,47 +55,14 @@ public class WorldsCommandHandler {
       return CharacterBrowseResult.realmSelectionRequired(world.slug());
     }
 
-    GameplayWorldCatalog.RealmView realm = maybeRealm.orElseThrow();
-    ListCharactersByAccountResponse response =
-        entityManagementClient.listCharactersByAccount(
-            Long.toString(realm.tenantId()),
-            sessionContext.accountId(),
-            Long.toString(realm.gameInstanceId()),
-            toPlayableStateScope(realm));
-    if (response.hasError()) {
-      return CharacterBrowseResult.unavailable();
-    }
-    java.util.List<CharacterBrowseViewOutput.CharacterEntry> entries =
-        new java.util.ArrayList<>(response.getCharactersCount());
-    for (int i = 0; i < response.getCharactersCount(); i++) {
-      net.firedevops.firemud.entitymanagement.v1.Character character = response.getCharacters(i);
-      if (!sessionContext.accountId().equals(character.getAccountId())
-          || !Long.toString(realm.tenantId()).equals(character.getTenantId())) {
-        return CharacterBrowseResult.unavailable();
-      }
-      entries.add(
-          new CharacterBrowseViewOutput.CharacterEntry(
-              i + 1, character.getId(), character.getName(), character.getLevel()));
-    }
-    return CharacterBrowseResult.success(
-        new CharacterBrowseViewOutput(
-            world.slug(),
-            realm.slug(),
-            realm.stateScope(),
-            realm.characterCreationPolicy(),
-            entries));
+    return CharacterBrowseResult.unavailable();
   }
 
   public sealed interface CharacterBrowseResult
-      permits CharacterBrowseResult.Success,
-          CharacterBrowseResult.InvalidWorld,
+      permits CharacterBrowseResult.InvalidWorld,
           CharacterBrowseResult.InvalidRealm,
           CharacterBrowseResult.RealmSelectionRequired,
           CharacterBrowseResult.Unavailable {
-    static CharacterBrowseResult success(CharacterBrowseViewOutput output) {
-      return new Success(output);
-    }
-
     static CharacterBrowseResult invalidWorld() {
       return new InvalidWorld();
     }
@@ -119,8 +79,6 @@ public class WorldsCommandHandler {
       return new Unavailable();
     }
 
-    record Success(CharacterBrowseViewOutput output) implements CharacterBrowseResult {}
-
     record InvalidWorld() implements CharacterBrowseResult {}
 
     record InvalidRealm(String worldSlug) implements CharacterBrowseResult {}
@@ -128,17 +86,5 @@ public class WorldsCommandHandler {
     record RealmSelectionRequired(String worldSlug) implements CharacterBrowseResult {}
 
     record Unavailable() implements CharacterBrowseResult {}
-  }
-
-  private PlayableStateScope toPlayableStateScope(GameplayWorldCatalog.RealmView realm) {
-    String scope =
-        realm.stateScope() == null
-            ? ""
-            : realm.stateScope().trim().toUpperCase(java.util.Locale.ROOT);
-    return switch (scope) {
-      case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-      case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-      default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
-    };
   }
 }

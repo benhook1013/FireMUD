@@ -30,8 +30,10 @@ import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
+import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.test.GameplayCommandTestFixtures;
 import org.junit.jupiter.api.Test;
@@ -219,6 +221,50 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("text_message");
     assertThat(json.path("outputs").get(0).path("payload").path("messageKey").asText())
         .isEqualTo("communication.whisper.actor");
+  }
+
+  @Test
+  void firstPartyLobbyViewsExposeStableSlugsWithoutListOrdinals() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String worldsPayload =
+        projector.projectPlayerOutput(
+            session,
+            PlayerOutput.view(
+                new WorldsViewOutput(
+                    List.of(new WorldsViewOutput.WorldEntry("123", "Numeric World", 41L, false)))),
+            "en-NZ",
+            presentation);
+    JsonNode worlds = objectMapper.readTree(worldsPayload);
+    JsonNode world = worlds.path("outputs").get(0).path("payload").path("worlds").get(0);
+
+    assertThat(worlds.path("outputs").get(0).path("payloadType").asText()).isEqualTo("worlds_view");
+    assertThat(world.path("slug").asText()).isEqualTo("123");
+    assertThat(world.has("ordinal")).isFalse();
+
+    String realmsPayload =
+        projector.projectPlayerOutput(
+            session,
+            PlayerOutput.view(
+                new RealmBrowseViewOutput(
+                    "123",
+                    List.of(
+                        new RealmBrowseViewOutput.RealmEntry(
+                            "456", "Numeric Realm", 41L, false, "SHARED", "ALLOW_NEW")))),
+            "en-NZ",
+            presentation);
+    JsonNode realms = objectMapper.readTree(realmsPayload);
+    JsonNode realm = realms.path("outputs").get(0).path("payload").path("realms").get(0);
+
+    assertThat(realms.path("outputs").get(0).path("payloadType").asText()).isEqualTo("realms_view");
+    assertThat(realms.path("outputs").get(0).path("payload").path("worldSlug").asText())
+        .isEqualTo("123");
+    assertThat(realm.path("realmSlug").asText()).isEqualTo("456");
+    assertThat(realm.has("ordinal")).isFalse();
   }
 
   @Test

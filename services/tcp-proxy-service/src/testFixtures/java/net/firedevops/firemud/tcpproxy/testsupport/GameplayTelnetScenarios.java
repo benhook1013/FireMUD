@@ -278,14 +278,24 @@ public final class GameplayTelnetScenarios {
   }
 
   public static ReconnectScenario reconnectAfterReady(
-      DriverFactory factory, Admission admission, DriverExercise firstSessionExercise)
+      DriverFactory factory,
+      Admission admission,
+      String reconnectReadyText,
+      DriverExercise firstSessionExercise)
       throws Exception {
     GameplayTelnetDriver first = openReady(factory, admission);
     try {
       firstSessionExercise.accept(first);
       List<String> firstResponses = List.copyOf(first.responses());
       first.close();
-      GameplayTelnetDriver reconnecting = openReady(factory, admission);
+      Admission reconnectAdmission =
+          new Admission(
+              admission.email(),
+              admission.password(),
+              admission.world(),
+              admission.characterName(),
+              reconnectReadyText);
+      GameplayTelnetDriver reconnecting = openReady(factory, reconnectAdmission);
       return new ReconnectScenario(firstResponses, reconnecting);
     } catch (Exception ex) {
       closeQuietly(first, ex);
@@ -294,9 +304,13 @@ public final class GameplayTelnetScenarios {
   }
 
   public static ReconnectScenario reconnectAfterReady(
-      DriverFactory factory, String readyText, DriverExercise firstSessionExercise)
+      DriverFactory factory,
+      String readyText,
+      String reconnectReadyText,
+      DriverExercise firstSessionExercise)
       throws Exception {
-    return reconnectAfterReady(factory, demoAdmission(readyText), firstSessionExercise);
+    return reconnectAfterReady(
+        factory, demoAdmission(readyText), reconnectReadyText, firstSessionExercise);
   }
 
   public static TakeoverScenario takeoverAfterAdmitted(

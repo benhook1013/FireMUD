@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-The repository implements substantial `LOGIN`/`PLAY`, Redis rebinding, bounded semantic recent context, durable command, TCP Proxy advisory-disconnect, and Gateway rebind seams. It does not yet prove the complete authenticated real-service replacement sequence, configured elapsed recovery bounds, lifecycle classification, presence convergence, or all stalled-input outcomes. The effective disconnected-resume window is resolved but not fully enforced, and explicit first-party logout can currently present retained context contrary to ADR 0019 and CMD-04.
+The repository implements substantial `LOGIN`/`PLAY`, Redis rebinding, bounded semantic recent context, durable command, TCP Proxy advisory-disconnect, and Gateway rebind seams. The current WebSocket reconnect path suppresses presentation of retained private context while durable episode/generation eligibility is unqualified; rows remain stored, and this is not proof of logout invalidation or deletion. See [Input, Output, and Presentation](../system-architecture-input-output-and-presentation.md#implemented-status), [Session Behavior](../system-architecture-session-behavior.md#implementation-status), [Reconnection](../system-architecture-reconnection.md#implementation-status), and the [player-access tracker](../../project-management/implementation-tracking/player-access-and-session.md#reconnect-and-continuity) for current status and proof limits. The complete authenticated real-service replacement sequence, configured elapsed recovery bounds, lifecycle classification, presence convergence, and all stalled-input outcomes remain unproved; the effective disconnected-resume window is resolved but not fully enforced.
 
 ## Decision Record
 

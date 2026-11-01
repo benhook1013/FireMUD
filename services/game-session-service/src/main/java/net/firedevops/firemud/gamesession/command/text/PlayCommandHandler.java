@@ -196,7 +196,9 @@ public class PlayCommandHandler {
     SessionContext context = maybeContext.get();
     try (GameplayLoggingContext baseContext =
         GameplayLoggingContext.open(Long.toString(context.tenantId()), null, null, null)) {
-      Optional<ResolvedPlaySelection> maybeSelection = resolveSelection(playRequest);
+      GameplayWorldCatalog.ReadSnapshot catalogSnapshot = gameplayWorldCatalog.readSnapshot();
+      Optional<ResolvedPlaySelection> maybeSelection =
+          resolveSelection(playRequest, catalogSnapshot);
       if (maybeSelection.isEmpty()) {
         return failure(
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
@@ -211,7 +213,7 @@ public class PlayCommandHandler {
 
       ResolvedPlaySelection selection = maybeSelection.orElseThrow();
       Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-          gameplayWorldCatalog.resolveWorld(selection.worldSelector());
+          catalogSnapshot.resolveWorld(selection.worldSelector());
       if (maybeWorld.isEmpty()) {
         return failure(
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
@@ -251,7 +253,7 @@ public class PlayCommandHandler {
           selection.explicitRealmSelector() != null
               ? gameplayWorldCatalog.resolveRealmForAdmission(
                   selectedWorld, selection.explicitRealmSelector())
-              : selectDefaultRealm(selectedWorld);
+              : selectDefaultRealm(selectedWorld, catalogSnapshot);
       if (maybeRealm.isEmpty()) {
         return failure(
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
@@ -266,7 +268,7 @@ public class PlayCommandHandler {
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
       String selectedTenantTag = Long.toString(selectedRealm.tenantId());
-      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(selectedRealm.tenantId())) {
+      if (!catalogSnapshot.hasValidPublicProductionRealm(selectedRealm.tenantId())) {
         return admissionPointerUnavailableFailure(
             selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
       }
@@ -321,7 +323,7 @@ public class PlayCommandHandler {
                 context.sessionId());
             return new PlayCommandHandlingResult(
                 CommandEnqueueResult.success(),
-                List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
+                List.of(successNotice(selectedWorld, selectedRealm, characterName)),
                 true);
           }
 
@@ -375,7 +377,7 @@ public class PlayCommandHandler {
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
-              List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
+              List.of(successNotice(selectedWorld, selectedRealm, characterName)),
               resumedOrTookOver || freshEntryFallback);
         }
       }
@@ -550,19 +552,19 @@ public class PlayCommandHandler {
     return true;
   }
 
-  private String formatSuccessResponse(String world, String realm, String character) {
-    String suffix = StringUtils.hasText(character) ? " as " + character : "";
-    return "Entered world: " + displaySelection(world, realm) + suffix;
-  }
-
-  private PlayerOutput successNotice(String world, String realm, String character) {
+  private PlayerOutput successNotice(
+      GameplayWorldCatalog.WorldView world,
+      GameplayWorldCatalog.RealmView realm,
+      String character) {
     String characterSuffix = StringUtils.hasText(character) ? " as " + character : "";
+    String displaySelection =
+        realm.publicProductionRealm() ? world.slug() : world.slug() + " (" + realm.slug() + ")";
     return PlayerOutput.notice(
-        formatSuccessResponse(world, realm, character),
+        "Entered world: " + displaySelection + characterSuffix,
         "notice.world.entered",
         Map.of(
-            "worldName", world,
-            "realmName", realm == null ? "" : realm,
+            "worldName", displaySelection,
+            "realmName", realm.slug(),
             "characterSuffix", characterSuffix));
   }
 
@@ -1009,7 +1011,8 @@ public class PlayCommandHandler {
   }
 
   private Optional<ResolvedPlaySelection> resolveSelection(
-      TextCommandPayload.PlayRequest playRequest) {
+      TextCommandPayload.PlayRequest playRequest,
+      GameplayWorldCatalog.ReadSnapshot catalogSnapshot) {
     String worldSelector = playRequest.worldSelector();
     if (!StringUtils.hasText(worldSelector)) {
       return Optional.empty();
@@ -1028,21 +1031,24 @@ public class PlayCommandHandler {
     }
 
     Optional<GameplayWorldCatalog.WorldView> maybeWorld =
-        gameplayWorldCatalog.resolveWorld(worldSelector);
+        catalogSnapshot.resolveWorld(worldSelector);
     if (maybeWorld.isPresent()
         && StringUtils.hasText(secondSelector)
         && !gameplayWorldCatalog.hasRealmForAdmission(maybeWorld.orElseThrow(), secondSelector)) {
+      // If no exact realm slug matches, the two-argument form treats the selector as a character
+      // name. Character resolution remains exact and never indexes a fresh roster.
       return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), null, secondSelector));
     }
     return Optional.of(new ResolvedPlaySelection(worldSelector.trim(), secondSelector, null));
   }
 
   private Optional<GameplayWorldCatalog.RealmView> selectDefaultRealm(
-      GameplayWorldCatalog.WorldView selectedWorld) {
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.ReadSnapshot catalogSnapshot) {
     if (gameplayWorldCatalog.requiresExplicitRealmSelection(selectedWorld)) {
       return Optional.empty();
     }
-    return gameplayWorldCatalog.resolveDefaultRealm(selectedWorld);
+    return catalogSnapshot.resolveDefaultRealm(selectedWorld);
   }
 
   private String explicitRealmSelectionMessage(GameplayWorldCatalog.WorldView selectedWorld) {
@@ -1055,9 +1061,7 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
     return "Selection required. Use "
         + playUsage(selectedWorld, selectedRealm)
-        + " or browse "
-        + charsUsage(selectedWorld, selectedRealm)
-        + " first.";
+        + " with a known character name.";
   }
 
   private PlayCommandHandlingResult characterSelectionRequiredFailure(
@@ -1074,25 +1078,11 @@ public class PlayCommandHandler {
             "realmSlug",
             selectedRealm.slug(),
             "playUsage",
-            playUsage(selectedWorld, selectedRealm),
-            "charsUsage",
-            charsUsage(selectedWorld, selectedRealm)),
+            playUsage(selectedWorld, selectedRealm)),
         tenantTag,
         Long.toString(selectedRealm.gameInstanceId()),
         null,
         null);
-  }
-
-  private String displaySelection(String world, String realm) {
-    if (!StringUtils.hasText(realm)
-        || gameplayWorldCatalog
-            .resolveWorld(world)
-            .flatMap(selectedWorld -> gameplayWorldCatalog.resolveRealm(selectedWorld, realm))
-            .map(GameplayWorldCatalog.RealmView::publicProductionRealm)
-            .orElse(false)) {
-      return world;
-    }
-    return world + " (" + realm + ")";
   }
 
   private String playUsage(
@@ -1101,13 +1091,6 @@ public class PlayCommandHandler {
         + selectedWorld.slug()
         + (selectedRealm.publicProductionRealm() ? "" : " " + selectedRealm.slug())
         + " <character>";
-  }
-
-  private String charsUsage(
-      GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
-    return "CHARS "
-        + selectedWorld.slug()
-        + (selectedRealm.publicProductionRealm() ? "" : " " + selectedRealm.slug());
   }
 
   private record ResolvedPlaySelection(

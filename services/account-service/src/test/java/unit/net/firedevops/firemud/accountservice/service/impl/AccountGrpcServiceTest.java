@@ -2037,15 +2037,19 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals(ACCOUNT_UUID, ref.get().getAccountId());
+    assertEquals("1", ref.get().getTenantId());
     assertTrue(ref.get().getMembershipExists());
     assertTrue(ref.get().getGameplayAdmissionAllowed());
     assertEquals(44L, ref.get().getMembershipVersion());
+    assertEquals("ACTIVE", ref.get().getMembershipLifecycleState());
+    assertEquals(9L, ref.get().getMembershipAuthorityGeneration());
+    assertEquals("2026-03-30T00:00:00Z", ref.get().getEvaluatedAt());
     Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
     Mockito.verify(accountService).getTenantMembershipForRuntime(2L, 1L, "req-1");
   }
 
   @Test
-  void getTenantMembershipForRuntimePreservesMissingMembershipAndAdmissionAllowed() {
+  void getTenantMembershipForRuntimePreservesCoherentMissingMembership() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
@@ -2053,7 +2057,7 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getTenantMembershipForRuntime(2L, 1L, "req-1"))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto(
-                2L, 1L, false, true, 44L, "MISSING", 0L, "2026-03-30T00:00:00Z"));
+                2L, 1L, false, false, 0L, "MISSING", 0L, "2026-03-30T00:00:00Z"));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<GetTenantMembershipForRuntimeResponse> observer = new RecordingObserver<>();
@@ -2071,10 +2075,54 @@ class AccountGrpcServiceTest {
 
     assertNotNull(observer.response());
     assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
+    assertEquals("1", observer.response().getTenantId());
     assertFalse(observer.response().getMembershipExists());
-    assertTrue(observer.response().getGameplayAdmissionAllowed());
+    assertFalse(observer.response().getGameplayAdmissionAllowed());
+    assertEquals(0L, observer.response().getMembershipVersion());
+    assertEquals("MISSING", observer.response().getMembershipLifecycleState());
+    assertEquals(0L, observer.response().getMembershipAuthorityGeneration());
+    assertEquals("2026-03-30T00:00:00Z", observer.response().getEvaluatedAt());
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeMapsInactiveMembershipAndIndependentGenerations() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    Mockito.when(accountService.getTenantMembershipForRuntime(2L, 1L, "req-1"))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto(
+                2L, 1L, true, false, 23L, "INACTIVE", 41L, "2026-03-30T00:00:00Z"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetTenantMembershipForRuntimeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.getTenantMembershipForRuntime(
+                GetTenantMembershipForRuntimeRequest.newBuilder()
+                    .setAccountId(ACCOUNT_UUID)
+                    .setTenantId("1")
+                    .setRequestId("req-1")
+                    .build(),
+                observer));
+
+    assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
+    assertEquals("1", observer.response().getTenantId());
+    assertTrue(observer.response().getMembershipExists());
+    assertFalse(observer.response().getGameplayAdmissionAllowed());
+    assertEquals(23L, observer.response().getMembershipVersion());
+    assertEquals("INACTIVE", observer.response().getMembershipLifecycleState());
+    assertEquals(41L, observer.response().getMembershipAuthorityGeneration());
+    assertEquals("2026-03-30T00:00:00Z", observer.response().getEvaluatedAt());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService).getTenantMembershipForRuntime(2L, 1L, "req-1");
   }
 
   @Test

@@ -180,7 +180,8 @@ class LookWebSocketCrossServiceTest {
                         LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
-    List<String> reconnectLook = runLookAfterReconnect(sessionId);
+    List<String> reconnectLook =
+        runLookAfterReconnect(sessionId, LookTestFixtures.DESTINATION_ROOM_ID);
     assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
@@ -305,11 +306,18 @@ class LookWebSocketCrossServiceTest {
                         LookTestFixtures.DESTINATION_ROOM_ID)
                     .test(response.trim()));
 
-    gameSession()
-        .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
-        .deleteBySessionId(TENANT_ID, sessionId);
+    var contexts =
+        gameSession().bean(net.firedevops.firemud.gamesession.service.SessionContextService.class);
+    var staleContext = contexts.findBySessionId(sessionId).orElseThrow();
+    assertThat(staleContext.roomInstanceId()).isEqualTo(LookTestFixtures.DESTINATION_ROOM_ID);
+    contexts.deleteBySessionId(staleContext.tenantId(), staleContext.sessionId());
+    assertThat(contexts.findBySessionId(staleContext.sessionId())).isEmpty();
+    assertThat(
+            contexts.findByGameplayIdentity(
+                staleContext.tenantId(), staleContext.gameInstanceId(), staleContext.characterId()))
+        .isEmpty();
 
-    List<String> reconnectLook = runLookAfterReconnect(sessionId);
+    List<String> reconnectLook = runLookAfterReconnect(sessionId, LookTestFixtures.ROOM_ID);
     assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(3);
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
@@ -391,30 +399,10 @@ class LookWebSocketCrossServiceTest {
   }
 
   private List<String> runMoveThenDisconnect(long sessionId) throws Exception {
-    try (GameplayWebSocketScenarios.ReconnectScenario scenario =
-        GameplayWebSocketScenarios.reconnectAfterReady(
-            ignored ->
-                GameplayWebSocketScenarios.openGameplaySession(
-                    gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
-            "session-" + sessionId + "-first",
-            "session-" + sessionId + "-unused",
-            READY_LOOK_TEXT,
-            GameplayWebSocketScenarios.DisconnectMode.CLOSE,
-            client -> {
-              client.send("north");
-              GameplayAsyncAssertions.assertEventually(
-                  "canonical move transcript before reconnect close",
-                  java.time.Duration.ofSeconds(5),
-                  () -> {
-                    try {
-                      client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
-                      return true;
-                    } catch (Exception ex) {
-                      return false;
-                    }
-                  });
-            })) {
-      return scenario.firstResponses();
+    try (GameplayWebSocketDriver client = openReadySession(sessionId)) {
+      client.send("north");
+      client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
+      return client.responses();
     }
   }
 
@@ -424,33 +412,18 @@ class LookWebSocketCrossServiceTest {
     }
   }
 
-  private List<String> runLookAfterReconnect(long sessionId) throws Exception {
-    try (GameplayWebSocketScenarios.ReconnectScenario scenario =
-        GameplayWebSocketScenarios.reconnectAfterReady(
+  private List<String> runLookAfterReconnect(long sessionId, String expectedRoomId)
+      throws Exception {
+    try (GameplayWebSocketDriver client =
+        GameplayWebSocketScenarios.openAdmitted(
             ignored ->
                 GameplayWebSocketScenarios.openGameplaySession(
                     gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
-            "session-" + sessionId + "-first",
             "session-" + sessionId + "-reconnect",
-            READY_LOOK_TEXT,
-            GameplayWebSocketScenarios.DisconnectMode.CLOSE,
-            client -> {
-              client.send("north");
-              client.awaitCanonicalMoveOrLook(LookTestFixtures.DESTINATION_ROOM_ID);
-            })) {
-      scenario.reconnecting().send("LOOK");
-      scenario
-          .reconnecting()
-          .awaitResponseMatching(
-              response ->
-                  GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
-                              LookTestFixtures.ROOM_ID)
-                          .test(response.trim())
-                      || GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt(
-                              LookTestFixtures.DESTINATION_ROOM_ID)
-                          .test(response.trim()),
-              "reconnect look response");
-      return scenario.reconnecting().responses();
+            READY_LOOK_TEXT)) {
+      client.send("LOOK");
+      client.awaitCanonicalLook(expectedRoomId);
+      return client.responses();
     }
   }
 
@@ -490,7 +463,8 @@ class LookWebSocketCrossServiceTest {
         TENANT_ID,
         sessionId,
         READY_LOOK_TEXT,
-        "session-" + sessionId);
+        "session-" + sessionId,
+        java.util.Map.of("X-Firemud-Transport-Session-Id", Long.toString(sessionId)));
   }
 
   private URI gameSessionWebSocketUrl() {

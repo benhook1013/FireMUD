@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Current implementation uses instance-scoped indexes and does not prove one atomic ABA-safe controller transfer. It deletes and recreates parts of the binding, lacks the target namespace key and durable binding-generation contract end to end, and may emit region-exit lifecycle behavior even though takeover leaves the character in place. These are implementation gaps, not evidence for the old target.
+Current implementation uses instance-scoped indexes and does not prove one atomic ABA-safe controller transfer. It deletes and recreates parts of the binding and lacks the target namespace key and durable binding-generation contract end to end. Local receiving source suppresses takeover region-exit events; its proof and remaining transfer gaps belong to [Player Access and Session](../../project-management/implementation-tracking/player-access-and-session.md#text-protocol-and-credential-policy). These are implementation gaps, not evidence for the old target.
 
 ## Decision Record
 

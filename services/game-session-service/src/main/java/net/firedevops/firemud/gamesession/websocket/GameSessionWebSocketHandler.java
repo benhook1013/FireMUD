@@ -251,8 +251,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           outputs,
           resolveLocaleTag(session, sessionId),
           effectivePresentation);
-      maybeReplayScreenBufferAndRefreshLook(
-          session, sessionId, command, interpretation, maybeContext);
+      maybeRefreshReconnectLook(session, sessionId, command, interpretation, maybeContext);
       maybeCloseAfterSuccessfulLogout(session, command, interpretation);
     } catch (SessionContextUnavailableException unavailable) {
       logger.warn(
@@ -509,7 +508,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                     replayEntries));
   }
 
-  private void maybeReplayScreenBufferAndRefreshLook(
+  private void maybeRefreshReconnectLook(
       WebSocketSession session,
       String sessionId,
       TextCommand command,
@@ -518,7 +517,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       throws IOException {
     boolean reconnectRestoreRequested =
         interpretation.reconnectRedrawRecommended()
-            || StringUtils.hasText(resolveConnectContext(session));
+            || "first_party_web".equals(resolveConnectionMode(session));
     if (command.type() != TextCommandType.PLAY
         || !interpretation.commandResult().accepted()
         || !reconnectRestoreRequested) {
@@ -529,14 +528,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         .ifPresent(
             context -> {
               try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
-                Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
-                    screenBufferService.get(
-                        context.tenantId(), context.gameInstanceId(), context.characterId());
-                if (maybeBuffer.isEmpty()) {
-                  return;
-                }
-                maybeBuffer.ifPresent(
-                    buffer -> sendReplayEntries(session, buffer, "screen buffer"));
+                // Private retained context stays closed until current generation, episode,
+                // and authorization evidence is qualified end to end. Retention is unchanged;
+                // reconnect recommendations and connect contexts alone are not replay authority.
                 String localeTag = resolveLocaleTag(session, sessionId);
                 PresentationProperties effectivePresentation =
                     settingsResolver.presentation(context);
@@ -545,7 +539,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                   sendProjectedOutput(
                       session, look, localeTag, effectivePresentation, "fresh LOOK");
                 }
-                if (effectivePresentation.prompt().emitAfterReconnectRestore()) {
+                if (effectivePresentation.prompt().enabled()
+                    && effectivePresentation.prompt().emitAfterReconnectRestore()) {
                   composePrompt(context)
                       .ifPresent(
                           prompt -> {
@@ -556,37 +551,6 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 }
               }
             });
-  }
-
-  private void sendReplayChunk(WebSocketSession session, String text, String label) {
-    try (CombinedLoggingContext ignored = openLoggingContext(session)) {
-      try {
-        sendProtocolMessage(session, outputProjector.projectTranscriptChunk(session, label, text));
-      } catch (IOException ex) {
-        logger.warn("Failed to send reconnect {}", label, ex);
-      }
-    }
-  }
-
-  private void sendReplayEntries(
-      WebSocketSession session, ScreenBufferService.BufferedScreen buffer, String label) {
-    if (!outputProjector.isFirstPartyWeb(session)
-        || buffer.entries().stream()
-            .noneMatch(ScreenBufferService.BufferedEntry::hasStructuredOutput)) {
-      sendReplayChunk(session, buffer.protocolText(), label);
-      return;
-    }
-    for (ScreenBufferService.BufferedEntry entry : buffer.entries()) {
-      try (CombinedLoggingContext ignored = openLoggingContext(session)) {
-        try {
-          sendProtocolMessage(
-              session, outputProjector.projectTranscriptEntry(session, label, entry));
-        } catch (IOException ex) {
-          logger.warn("Failed to send reconnect {}", label, ex);
-          return;
-        }
-      }
-    }
   }
 
   private void sendProjectedOutput(
