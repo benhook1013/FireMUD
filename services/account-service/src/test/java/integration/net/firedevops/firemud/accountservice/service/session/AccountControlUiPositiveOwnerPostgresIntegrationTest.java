@@ -48,10 +48,15 @@ import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthori
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfiguration;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
 import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -961,15 +966,43 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
       assertThatThrownBy(() -> issuance.issueAccount(otpRequest))
           .isInstanceOf(RuntimeException.class);
     }
+    var generations = new AccountAuthorityGenerationRepository(f.dsl);
+    var beforeMutation = f.tx(() -> generations.read(AuthorityScope.account(accountId)));
     f.tx(
         () -> {
           var mutation = f.accounts.findById(account.getId()).orElseThrow();
           mutation.setRole("admin");
           return f.accounts.save(mutation);
         });
-    var advanced = f.tx(() -> f.authority.captureAccount(accountId));
-    assertThat(advanced.evidence()).isNotEqualTo(originalSource.evidence());
-    assertThat(advanced.issuanceFence()).isGreaterThan(originalSource.issuanceFence());
+    // A generic scalar-role mutation advances the retained owner history, but it is not a
+    // receipt-bearing operation or canonical global-role authority. Current-source use must deny.
+    var advanced = f.tx(() -> generations.read(AuthorityScope.account(accountId)));
+    assertThat(advanced.generation()).isGreaterThan(beforeMutation.generation());
+    assertThat(advanced.sourceVersion()).isGreaterThan(beforeMutation.sourceVersion());
+    assertThat(advanced.issuanceFence().value())
+        .isGreaterThan(beforeMutation.issuanceFence().value());
+    assertThat(advanced.issuanceFence().sourceVersion())
+        .isGreaterThan(beforeMutation.issuanceFence().sourceVersion());
+    var outbox = new AccountAuthorityOutboxRepository(f.dsl);
+    var stream = "account:auth-authority:v1:account/" + accountId;
+    var checkpoint = f.tx(() -> outbox.readCheckpoint(stream).orElseThrow());
+    var event = f.tx(() -> outbox.findEvent(stream, checkpoint.outboxSequence()).orElseThrow());
+    var verified =
+        (AccountAuthoritySourceEventV1Codec.AccountEvent)
+            AccountAuthoritySourceEventV1Codec.verify(
+                new String(event.payload(), StandardCharsets.UTF_8));
+    assertThat(verified.accountState().globalRole()).isEqualTo("admin");
+    assertThat(verified.mutationKinds()).containsExactly("GLOBAL_ROLE_CHANGED");
+    assertThat(verified.accountAuthorityGeneration())
+        .isEqualTo(Long.toString(advanced.generation()));
+    assertThat(verified.sourceVersion()).isEqualTo(Long.toString(advanced.sourceVersion()));
+    assertThat(verified.issuanceFence()).isEqualTo(Long.toString(advanced.issuanceFence().value()));
+    assertThat(verified.issuanceFenceSourceVersion())
+        .isEqualTo(Long.toString(advanced.issuanceFence().sourceVersion()));
+    assertThat(checkpoint.sourceEventId()).isEqualTo(event.eventId());
+    assertThat(checkpoint.sourceEventDigest()).isEqualTo(event.eventDigest());
+    assertThatThrownBy(() -> f.tx(() -> f.authority.captureAccount(accountId)))
+        .isExactlyInstanceOf(SourceEvidenceUnavailableException.class);
     for (String compact : List.of(passwordCompact, otpCompact)) {
       var invoked = new java.util.concurrent.atomic.AtomicBoolean();
       assertThatThrownBy(
