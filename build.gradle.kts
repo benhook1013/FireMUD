@@ -50,7 +50,7 @@ node {
 
 java {
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(25))
     }
 }
 
@@ -79,14 +79,14 @@ dependencies {
 }
 
 tasks.register<JavaCompile>("compileBufGeneratedJava") {
-    description = "Verify remote Buf Java output against the catalog runtimes on Java 21"
+    description = "Verify remote Buf Java output against the catalog runtimes on Java 25"
     group = "verification"
     source(fileTree(providers.gradleProperty("bufGeneratedJavaDir").getOrElse("protos/gen/java")) { include("**/*.java") })
     classpath = bufGeneratedJavaClasspath
     destinationDirectory.set(layout.buildDirectory.dir("buf-generated-classes"))
-    options.release.set(21)
+    options.release.set(25)
     javaCompiler.set(javaToolchains.compilerFor {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(25))
     })
 }
 
@@ -146,7 +146,7 @@ subprojects {
     val libs = rootProject.extensions.getByType<VersionCatalogsExtension>().named("libs")
 
     plugins.withId("java") {
-        the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+        the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(25))
         val sourceSets = the<SourceSetContainer>()
         sourceSets.named("test") {
             compileClasspath += sourceSets.named("main").get().output
@@ -156,7 +156,7 @@ subprojects {
         val crossServiceTestsDir = file("src/test/java/crossservice")
         val categorizedTestRootsExist = integrationTestsDir.exists() || crossServiceTestsDir.exists()
         tasks.withType<JavaCompile>().configureEach {
-            options.release.set(21)
+            options.release.set(25)
             if (name.contains("Test")) {
                 // Ignore the current @MockBean removal warnings until Spring Boot 4.0 lands so tests stay clean.
                 options.compilerArgs.add("-Xlint:-removal")
