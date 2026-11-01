@@ -124,7 +124,7 @@ if [[ "$command" == update ]]; then
   case "$APT_EXPECTED_LAYOUT" in
     archive)
       grep -Fqx "URIs: mirror+file:$FIREMUD_APT_MIRROR_LIST_FILE" "$FIREMUD_APT_SOURCE_FILE"
-      grep -Eq '^URIs:[[:space:]]*https://security\.ubuntu\.com/ubuntu/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+      [[ $(grep -Fc "URIs: mirror+file:$FIREMUD_APT_MIRROR_LIST_FILE" "$FIREMUD_APT_SOURCE_FILE") -eq 2 ]]
       grep -Fqx 'Suites: resolute-security' "$FIREMUD_APT_SOURCE_FILE"
       grep -Fqx 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' "$FIREMUD_APT_SOURCE_FILE"
       test -s "$FIREMUD_APT_MIRROR_LIST_FILE"
@@ -185,7 +185,7 @@ Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 
 Types: deb
-URIs: https://security.ubuntu.com/ubuntu/
+URIs: mirror+file:$FIREMUD_APT_MIRROR_LIST_FILE
 Suites: resolute-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
