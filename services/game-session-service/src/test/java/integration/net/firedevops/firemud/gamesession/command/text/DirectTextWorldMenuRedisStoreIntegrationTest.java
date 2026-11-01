@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -26,12 +27,14 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -189,6 +192,73 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
   }
 
   @Test
+  void physicalScriptCacheLossLoadsOnceWhileWarmAndReadOnlyUsesDoNotLoad() throws Exception {
+    var fixture = fixture(Clock.systemUTC());
+    var selection = fixture.selection();
+    var transport = observation();
+    byte[] source;
+    try (var input =
+        getClass()
+            .getClassLoader()
+            .getResourceAsStream(DirectTextWorldMenuRedisScriptContribution.RESOURCE_PATH)) {
+      source = java.util.Objects.requireNonNull(input).readAllBytes();
+    }
+    String sha1 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(source));
+    List<RedisCommands<byte[], byte[]>> uses = new ArrayList<>();
+    Supplier<StatefulRedisConnection<byte[], byte[]>> observedConnections =
+        () -> {
+          var physical = writer.connect(ByteArrayCodec.INSTANCE);
+          var observed = delegatedCommands(physical.sync());
+          uses.add(observed);
+          return delegatedConnection(physical, observed);
+        };
+    var store =
+        new DirectTextWorldMenuRedisStore(
+            selection, fixture.clock(), observedConnections, installed());
+    flushScripts();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    verify(uses.get(0)).scriptLoad(eq(source));
+    verifyEvaluations(uses.get(0), sha1, 2);
+    byte[] original = admin.get(key(transport));
+    long deadline = admin.pexpiretime(key(transport));
+
+    assertThat(store.reassert(transport, menu)).isTrue();
+    verify(uses.get(1), never()).scriptLoad(any(byte[].class));
+    verifyEvaluations(uses.get(1), sha1, 1);
+
+    var controller = client(null, null);
+    try (var inspection = controller.connect(ByteArrayCodec.INSTANCE)) {
+      long originalPttl = inspection.sync().pttl(key(transport));
+      assertThat(originalPttl).isPositive();
+      flushScripts();
+      // SCRIPT FLUSH discards code only, not the original menu or its physical deadline/PTTL.
+      assertThat(admin.get(key(transport))).isEqualTo(original);
+      assertThat(admin.pexpiretime(key(transport))).isEqualTo(deadline);
+      assertThat(store.find(transport)).isPresent();
+      verify(uses.get(2), never()).scriptLoad(any(byte[].class));
+      verifyEvaluations(uses.get(2), sha1, 0);
+      assertThat(store.reassert(transport, menu)).isTrue();
+      verify(uses.get(3)).scriptLoad(eq(source));
+      verifyEvaluations(uses.get(3), sha1, 2);
+      assertThat(admin.get(key(transport))).isEqualTo(original);
+      assertThat(admin.pexpiretime(key(transport))).isEqualTo(deadline);
+      assertThat(inspection.sync().pttl(key(transport))).isBetween(1L, originalPttl);
+    } finally {
+      controller.shutdown();
+    }
+
+    flushScripts();
+    assertThat(store.clear(transport)).isTrue();
+    verify(uses.get(4)).scriptLoad(eq(source));
+    verifyEvaluations(uses.get(4), sha1, 2);
+    assertThat(admin.get(key(transport))).isNull();
+    assertThat(store.reassert(transport, menu)).isFalse();
+    verify(uses.get(5), never()).scriptLoad(any(byte[].class));
+    verifyEvaluations(uses.get(5), sha1, 0);
+    for (var use : uses) verify(use).aclWhoami();
+  }
+
+  @Test
   void exactTransportBindingRefusesReadReassertDiscoveryAndDeleteWithoutMutating() {
     var fixture = fixture(Clock.systemUTC());
     var selection = fixture.selection();
@@ -230,6 +300,8 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
                     } else {
                       admin.set(key(transport), competitor);
                     }
+                    // Cache loss must not bypass the original preimage on the load/retry path.
+                    flushScripts();
                     return prior;
                   })
               .when(intercepted)
@@ -342,12 +414,14 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
                     return List.of(mismatched);
                   }
                 }));
-    var wrongDigest =
-        new DirectTextWorldMenuRedisStore(
-            selection, fixture.clock(), () -> writer.connect(ByteArrayCodec.INSTANCE), badCatalog);
-    assertThatThrownBy(() -> wrongDigest.discoverAndReplace(transport))
+    assertThatThrownBy(
+            () ->
+                new DirectTextWorldMenuRedisStore(
+                    selection,
+                    fixture.clock(),
+                    () -> writer.connect(ByteArrayCodec.INSTANCE),
+                    badCatalog))
         .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(() -> wrongDigest.find(transport)).isInstanceOf(IllegalStateException.class);
     assertThat(admin.get(key(transport))).isNull();
   }
 
@@ -445,6 +519,31 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
       DirectTextWorldSelectionService selection, Clock clock) {
     return new DirectTextWorldMenuRedisStore(
         selection, clock, () -> writer.connect(ByteArrayCodec.INSTANCE), installed());
+  }
+
+  private static void flushScripts() {
+    // The default fixture controller exists only in this isolated disposable Redis. Application
+    // and scoped administrator ACLs are unchanged; neither receives SCRIPT FLUSH permission.
+    var controller = client(null, null);
+    try (var connection = controller.connect(ByteArrayCodec.INSTANCE)) {
+      assertThat(connection.sync().scriptFlush()).isEqualTo("OK");
+    } finally {
+      controller.shutdown();
+    }
+  }
+
+  private static void verifyEvaluations(
+      RedisCommands<byte[], byte[]> commands, String sha1, int count) {
+    verify(commands, times(count))
+        .evalsha(
+            eq(sha1),
+            eq(ScriptOutputType.STATUS),
+            any(byte[][].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class),
+            any(byte[].class));
   }
 
   private ObservedDirectTextTransport observation() {
