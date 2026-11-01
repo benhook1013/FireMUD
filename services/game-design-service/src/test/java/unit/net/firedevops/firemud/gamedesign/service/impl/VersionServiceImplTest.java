@@ -73,8 +73,8 @@ import org.springframework.data.domain.Pageable;
 
 class VersionServiceImplTest {
   private static final String PUBLISH_REQUEST_ID = "publish-request-1";
-  private static final String RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE =
-      "PARTICIPANT_DEPENDENCY_UNAVAILABLE_RETRYABLE";
+  private static final String PARTICIPANT_DEPENDENCY_FAILURE_CODE =
+      "PARTICIPANT_DEPENDENCY_UNAVAILABLE";
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("12345678-1234-4234-8234-123456789abc");
@@ -759,9 +759,9 @@ class VersionServiceImplTest {
     PublishAttempt pending = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
     PublishAttempt failed = scriptPatchAttempt(binding, PublishAttemptStatus.FAILED, 11L, 8, 3L);
     String failureMessage =
-        RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE
+        PARTICIPANT_DEPENDENCY_FAILURE_CODE
             + ": participant digest gating encountered a transient dependency failure before notification; exact retries replay this failed receipt; the retained canonical patch tuple requires owner reconciliation before any new request";
-    failed.setFailureCode(RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE);
+    failed.setFailureCode(PARTICIPANT_DEPENDENCY_FAILURE_CODE);
     failed.setFailureMessage(failureMessage);
     when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
         .thenReturn(Optional.empty());
@@ -779,13 +779,11 @@ class VersionServiceImplTest {
             () ->
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
-    assertEquals(RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE, first.failureCode());
+    assertEquals(PARTICIPANT_DEPENDENCY_FAILURE_CODE, first.failureCode());
     assertEquals(failureMessage, first.getMessage());
     verify(publishAttemptService)
         .markScriptPatchFailed(
-            binding.derivedWorkflowIdentity(),
-            RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE,
-            failureMessage);
+            binding.derivedWorkflowIdentity(), PARTICIPANT_DEPENDENCY_FAILURE_CODE, failureMessage);
     ScriptPatchPublishFailureException replay =
         assertThrows(
             ScriptPatchPublishFailureException.class,
@@ -856,7 +854,7 @@ class VersionServiceImplTest {
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "original notes", PUBLISH_REQUEST_ID));
 
-    assertEquals(RETRYABLE_PARTICIPANT_DEPENDENCY_FAILURE_CODE, first.failureCode());
+    assertEquals(PARTICIPANT_DEPENDENCY_FAILURE_CODE, first.failureCode());
     assertEquals(dependencyFailure, first.getCause());
     assertEquals(PublishAttemptStatus.FAILED, attempt.getStatus());
     assertEquals(first.failureCode(), attempt.getFailureCode());
