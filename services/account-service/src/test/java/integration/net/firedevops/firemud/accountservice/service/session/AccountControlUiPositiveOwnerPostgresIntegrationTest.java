@@ -753,6 +753,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     String password = "test-only-certified-account-password";
     String otp = "test-only-certified-account-otp";
     var account = f.createCertifiedGlobalAccount(password);
+    assertThat(account.getRole()).isNull();
     UUID accountId = account.getAccountUuid();
     assertThat(accountId).isNotEqualTo(f.account.getAccountUuid());
     assertThat(
@@ -771,6 +772,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         .isEqualTo(2L);
     var originalSource = f.tx(() -> f.authority.captureAccount(accountId));
     assertThat(originalSource.scopeKind()).isEqualTo(AccountControlUiAuthority.ScopeKind.ACCOUNT);
+    assertThat(originalSource.globalRoles()).isEmpty();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);
     int beforeOperations = f.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations"));
     int beforeEnvelopes = f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"));
@@ -864,7 +866,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                     }))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test-only Account callback rollback");
-    assertThat(f.accounts.findById(account.getId()).orElseThrow().getRole()).isEqualTo("player");
+    assertThat(f.accounts.findById(account.getId()).orElseThrow().getRole()).isNull();
     assertThat(f.tx(() -> f.authority.captureAccount(accountId)).evidence())
         .isEqualTo(originalSource.evidence());
     assertThat(actors.authenticateAccount(passwordCompact).accountId()).isEqualTo(accountId);
