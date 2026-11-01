@@ -1,4 +1,4 @@
-package integration.net.firedevops.firemud.accountservice.service.session;
+package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,15 +45,7 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
-import net.firedevops.firemud.accountservice.service.session.AccountControlUiKeyring;
-import net.firedevops.firemud.accountservice.service.session.AccountControlUiResponseCryptography;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicyRepository;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationRepository;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService.Disposition;
-import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -1648,7 +1640,8 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   }
 
   /** Exact historical fixture readback before the replay-proof relation exists. */
-  private static AccountRecentReauthenticationEvidence readHistoricalEvidence(Context c, UUID evidenceId) {
+  private static AccountRecentReauthenticationEvidence readHistoricalEvidence(
+      Context c, UUID evidenceId) {
     Record row = c.evidenceRow(evidenceId);
     return new AccountRecentReauthenticationEvidence(
         row.get("evidence_id", UUID.class),

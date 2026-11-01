@@ -921,7 +921,14 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     var policies = new AccountRecentReauthenticationPolicyRepository(dsl);
     var service =
         new AccountRecentReauthenticationService(
-            primary, accounts, generations, evidence, policies, manager, Clock.systemUTC(), reauthenticationCryptography(Clock.systemUTC()));
+            primary,
+            accounts,
+            generations,
+            evidence,
+            policies,
+            manager,
+            Clock.systemUTC(),
+            reauthenticationCryptography(Clock.systemUTC()));
     return new Context(dsl, accounts, evidence, service, transaction);
   }
 
@@ -932,9 +939,11 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
         var directory = java.nio.file.Files.createDirectories(custody.resolve(purpose));
         byte[] key = new byte[32];
         java.util.Arrays.fill(key, (byte) (purpose.equals("encryption") ? 11 : 29));
-        java.nio.file.Files.writeString(directory.resolve("keyring"),
+        java.nio.file.Files.writeString(
+            directory.resolve("keyring"),
             "firemud-account-response-envelope-keyring-v1\nactive test-key "
-                + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(key) + "\n");
+                + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(key)
+                + "\n");
       }
     } catch (java.io.IOException failure) {
       throw new IllegalStateException("Controlled reauthentication custody setup failed", failure);
