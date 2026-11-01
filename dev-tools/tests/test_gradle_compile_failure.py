@@ -22,6 +22,7 @@ SPEC.loader.exec_module(CAPTURE)
 
 class CaptureTests(unittest.TestCase):
     def setUp(self):
+        (ROOT / 'build').mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='compile-failure-test-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -461,6 +462,7 @@ class RuntimeBootJarTests(unittest.TestCase):
     write = CaptureTests.write
 
     def setUp(self):
+        (ROOT / 'build').mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / 'build', prefix='runtime-compile-test-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
