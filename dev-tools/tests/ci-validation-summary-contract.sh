@@ -32,13 +32,22 @@ script = next(step['with']['script'] for step in steps if step.get('name') == 'ð
 if '${{ needs.' in script or 'downloadArtifact' in script:
     raise SystemExit('Callback must reconstruct native jobs without PR artifacts or unavailable needs outputs')
 # The native name mapping must remain complete when CI adds/removes a job.
-marker_steps = [step for step in ci['jobs']['build-and-test']['steps'] if step.get('name', '').startswith('Declare Game Session CI partition count:')]
-if len(marker_steps) != 1 or marker_steps[0] != {
-    'name': 'Declare Game Session CI partition count: 4',
-    'if': "${{ matrix.module == 'game-session-service' }}",
-    'run': ':',
+expected_markers = {
+    'Declare Account CI partition count: 4': "${{ matrix.module == 'account-service' }}",
+    'Declare Game Session CI partition count: 4': "${{ matrix.module == 'game-session-service' }}",
+}
+marker_steps = [
+    step for step in ci['jobs']['build-and-test']['steps']
+    if step.get('name', '').startswith('Declare ')
+    and 'CI partition count:' in step.get('name', '')
+]
+if len(marker_steps) != len(expected_markers) or {
+    step.get('name'): step for step in marker_steps
+} != {
+    name: {'name': name, 'if': condition, 'run': ':'}
+    for name, condition in expected_markers.items()
 }:
-    raise SystemExit('Four-way Game Session source must declare its native partition-plan marker')
+    raise SystemExit('Four-way slow-service sources must declare their native partition-plan markers')
 names = [job['name'] for job in ci['jobs'].values()]
 for name in names:
     if '${{' not in name and json.dumps(name, ensure_ascii=False) not in script:
@@ -295,6 +304,41 @@ async function noWrites(config, reject = false) {
   await noWrites({ jobs: skippedIncompleteFourWay }, true);
   await noWrites({ jobs: [...clone(fourWay), row('Build and Test (account-service / 3)', 97)] }, true);
   await noWrites({ jobs: [...clone(fourWay), { ...clone(fourWay.find(job => job.name === 'Build and Test (game-session-service / 4)')), id: 97 }] }, true);
+
+  const accountFourWay = clone(jobs);
+  accountFourWay.push(row('Build and Test (account-service / 3)', 97), row('Build and Test (account-service / 4)', 98));
+  for (const job of accountFourWay.filter(job => job.name.startsWith('Build and Test (account-service /'))) {
+    job.steps.push({ name: 'Declare Account CI partition count: 4', status: 'completed', conclusion: 'success' });
+  }
+  const successfulAccountFourWay = harness({ jobs: accountFourWay }); await successfulAccountFourWay.run();
+  assert.match(successfulAccountFourWay.calls.creates[0].body, /Service build\/test matrix: `success`/);
+  const failedAccountFourWay = clone(accountFourWay);
+  failedAccountFourWay.find(job => job.name === 'Build and Test (account-service / 3)').conclusion = 'failure';
+  failedAccountFourWay.find(job => job.name === 'Account Coverage Aggregate').conclusion = 'skipped';
+  const failedAccountFourWayRun = harness({ jobs: failedAccountFourWay }); await failedAccountFourWayRun.run();
+  assert.match(failedAccountFourWayRun.calls.creates[0].body, /Service build\/test matrix: `failure`/);
+  for (const missing of [
+    ['Build and Test (account-service / 3)'],
+    ['Build and Test (account-service / 4)'],
+    ['Build and Test (account-service / 3)', 'Build and Test (account-service / 4)'],
+  ]) await noWrites({ jobs: clone(accountFourWay).filter(job => !missing.includes(job.name)) }, true);
+  for (const mutate of [
+    job => { job.steps = []; },
+    job => { delete job.steps; },
+    job => { job.steps.pop(); },
+    job => { job.steps[1].name = 'Declare Account CI partition count: 2'; },
+    job => { job.steps.push(clone(job.steps[1])); },
+  ]) {
+    const invalid = clone(accountFourWay);
+    mutate(invalid.find(job => job.name === 'Build and Test (account-service / 4)'));
+    await noWrites({ jobs: invalid }, true);
+  }
+  const unmarkedAccountFourWay = clone(accountFourWay);
+  for (const job of unmarkedAccountFourWay) {
+    if (job.name.startsWith('Build and Test (account-service /')) job.steps = [{ name: 'Harden runner' }];
+  }
+  await noWrites({ jobs: unmarkedAccountFourWay }, true);
+  await noWrites({ jobs: [...clone(accountFourWay), row('Build and Test (account-service / 5)', 99)] }, true);
 
   const skipped = clone(jobs).filter(x => !x.name.startsWith('Build and Test ('));
   skipped.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';

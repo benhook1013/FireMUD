@@ -397,6 +397,8 @@ matrix_rows = evaluate_module_check_matrix(
 expected_matrix_rows = [
     {"module": "account-service", "partition": "1", "java-version": 25},
     {"module": "account-service", "partition": "2", "java-version": 25},
+    {"module": "account-service", "partition": "3", "java-version": 25},
+    {"module": "account-service", "partition": "4", "java-version": 25},
     {"module": "game-session-service", "partition": "1", "java-version": 25},
     {"module": "game-session-service", "partition": "2", "java-version": 25},
     {"module": "game-session-service", "partition": "3", "java-version": 25},
@@ -406,7 +408,7 @@ expected_matrix_rows = [
 expanded_jobs = [dict(row) for row in matrix_rows]
 if expanded_jobs != expected_matrix_rows or len({
     (row["module"], row["partition"]) for row in expanded_jobs
-}) != 7:
+}) != 9:
     raise SystemExit(f"ci workflow: matrix expansion lost or duplicated a job: {expanded_jobs!r}")
 require_contains(
     ci_compute_step,
@@ -417,7 +419,7 @@ require_contains(
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    'const slowServicePartitionCounts = { "account-service": 2, "game-session-service": 4 };',
+    'const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4 };',
     "ci workflow",
 )
 for expected in (
@@ -624,7 +626,7 @@ const testedMerge = "a".repeat(40), nativeHead = "b".repeat(40), baseSha = "c".r
 const wrongSha = "d".repeat(40);
 const repositoryFullName = `${owner}/${repository}`;
 const coreJobRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  Array.from({ length: module === "account-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
+  Array.from({ length: 4 }, (_, index) => index + 1).map(partition => ({
     id: 100 + index * 10 + partition, run_id: runId, head_sha: nativeHead,
     name: `Build and Test (${module} / ${partition})`, status: "completed",
     conclusion: "success", started_at: "2026-10-30T01:00:00Z",
@@ -637,7 +639,7 @@ const jobRows = coreJobRows.concat(Array.from({ length: 97 }, (_, index) => ({
   started_at: "2026-10-30T01:00:00Z", completed_at: "2026-10-30T02:00:00Z",
 })));
 const coreArtifactRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  Array.from({ length: module === "account-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
+  Array.from({ length: 4 }, (_, index) => index + 1).map(partition => ({
     id: 700 + index * 10 + partition,
     name: `slow-service-ci-partition-${runId}-${testedMerge}-attempt-1-${module}-partition-${partition}`,
     expired: false, size_in_bytes: 1024, created_at: "2026-10-30T02:00:00Z",
@@ -769,8 +771,8 @@ async function runFor(embedded, options = {}) {
 }
 
 (async () => {
-  assert.equal(jobRows.length, 103);
-  assert.equal(artifactRows.length, 103);
+  assert.equal(jobRows.length, 105);
+  assert.equal(artifactRows.length, 105);
   for (const embedded of input.scripts) {
     assert.ok(embedded.script.includes("capture-slow-service-provenance.cjs"));
     assert.ok(embedded.script.includes("module: process.env.CI_MODULE"));
@@ -925,7 +927,7 @@ if re.findall(r"options\.release\.set\((\d+)\)", gradle_build) != ["25", "25"]:
 buf_java_setup = find_step(ci, "buf-check", "Set up Java for remote generator compatibility proof", "ci workflow")
 require_equal(buf_java_setup, ("with", "java-version"), "25", "ci workflow")
 for expected in (
-    'val slowServiceCiPartitionCounts = mapOf("account-service" to 2, "game-session-service" to 4)',
+    'val slowServiceCiPartitionCounts = mapOf("account-service" to 4, "game-session-service" to 4)',
     'providers.gradleProperty("slowServiceCiPartitionModule").orNull',
     'if ((slowServiceCiPartition == null) != (slowServiceCiPartitionModule == null))',
     'slowServiceCiPartitionCounts[slowServiceCiPartitionModule]',
