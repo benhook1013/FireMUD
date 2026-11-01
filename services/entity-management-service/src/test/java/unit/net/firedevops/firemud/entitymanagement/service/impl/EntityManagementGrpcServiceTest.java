@@ -81,6 +81,8 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 class EntityManagementGrpcServiceTest {
@@ -313,12 +315,19 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(
             service.execute(
                 Mockito.anyLong(),
-                Mockito.anyString(),
+                Mockito.nullable(String.class),
                 Mockito.anyString(),
                 Mockito.any(),
                 Mockito.any()))
         .thenAnswer(
-            invocation -> ((java.util.function.Supplier<?>) invocation.getArgument(3)).get());
+            invocation -> {
+              String effectId = invocation.getArgument(1);
+              if (effectId == null || effectId.isBlank()) {
+                throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Effect id is required for replay-guarded mutations");
+              }
+              return ((java.util.function.Supplier<?>) invocation.getArgument(3)).get();
+            });
     return service;
   }
 
@@ -1061,7 +1070,7 @@ class EntityManagementGrpcServiceTest {
                 null,
                 null,
                 2,
-                null,
+                "effect-put-1",
                 "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
@@ -1088,6 +1097,7 @@ class EntityManagementGrpcServiceTest {
                     .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("11")
             .setQuantity(2)
+            .setEffectId("effect-put-1")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -1135,7 +1145,7 @@ class EntityManagementGrpcServiceTest {
                 44L,
                 null,
                 1,
-                null,
+                "effect-put-2",
                 "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
@@ -1163,6 +1173,7 @@ class EntityManagementGrpcServiceTest {
             .setItemId("11")
             .setQuantity(1)
             .setItemInstanceId("44")
+            .setEffectId("effect-put-2")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -1336,7 +1347,7 @@ class EntityManagementGrpcServiceTest {
                 null,
                 null,
                 1,
-                null,
+                "effect-take-1",
                 "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
@@ -1363,6 +1374,7 @@ class EntityManagementGrpcServiceTest {
                     .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("11")
             .setQuantity(1)
+            .setEffectId("effect-take-1")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -1407,7 +1419,7 @@ class EntityManagementGrpcServiceTest {
                 44L,
                 null,
                 1,
-                null,
+                "effect-take-2",
                 "41"))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
@@ -1435,6 +1447,7 @@ class EntityManagementGrpcServiceTest {
             .setItemId("11")
             .setItemInstanceId("44")
             .setQuantity(1)
+            .setEffectId("effect-take-2")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -3448,7 +3461,7 @@ class EntityManagementGrpcServiceTest {
                     .PLAYABLE_STATE_SCOPE_SHARED,
                 99L,
                 null,
-                null,
+                "effect-wear-1",
                 "41"))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -3477,6 +3490,7 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                     .PLAYABLE_STATE_SCOPE_SHARED)
             .setItemId("99")
+            .setEffectId("effect-wear-1")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -3619,7 +3633,7 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                     .PLAYABLE_STATE_SCOPE_SHARED,
                 "HEAD",
-                null,
+                "effect-remove-1",
                 "41"))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -3648,6 +3662,7 @@ class EntityManagementGrpcServiceTest {
                 net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                     .PLAYABLE_STATE_SCOPE_SHARED)
             .setSlot("HEAD")
+            .setEffectId("effect-remove-1")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -3746,7 +3761,7 @@ class EntityManagementGrpcServiceTest {
                 null,
                 null,
                 1,
-                null,
+                "effect-pickup-1",
                 "41"))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -3777,6 +3792,7 @@ class EntityManagementGrpcServiceTest {
             .setRoomInstanceId("R-1")
             .setItemId("99")
             .setQuantity(1)
+            .setEffectId("effect-pickup-1")
             .setSessionAttestation("attestation")
             .build(),
         new StreamObserver<>() {
@@ -3818,7 +3834,7 @@ class EntityManagementGrpcServiceTest {
                 null,
                 null,
                 1,
-                null,
+                "effect-drop-1",
                 "41"))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -3849,6 +3865,7 @@ class EntityManagementGrpcServiceTest {
             .setRoomInstanceId("R-1")
             .setItemId("99")
             .setQuantity(1)
+            .setEffectId("effect-drop-1")
             .setSessionAttestation("attestation")
             .build(),
         new StreamObserver<>() {
