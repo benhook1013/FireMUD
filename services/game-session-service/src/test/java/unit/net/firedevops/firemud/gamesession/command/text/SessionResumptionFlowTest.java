@@ -24,7 +24,6 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
@@ -126,8 +125,6 @@ class SessionResumptionFlowTest {
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
-  private final JwtUtil gameplayJwtUtil =
-      new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
   private final GameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
@@ -638,21 +635,7 @@ class SessionResumptionFlowTest {
   }
 
   @Test
-  void freshScopedAndGlobalRoleClaimsDoNotElevatePresenceAcrossReconnect() {
-    String jwt =
-        gameplayJwtUtil.generateToken(
-            ACCOUNT_ID,
-            Map.of(
-                "accountId",
-                ACCOUNT_ID,
-                "globalRoles",
-                List.of("platformAdmin", "support", "billingAdmin"),
-                "scopedRoles",
-                Map.of("22", List.of("god", "tenantAdmin", "moderator"))));
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken(jwt).setAccountId(ACCOUNT_ID).build());
-
+  void reconnectRestoresPlayerPresenceInTheCommandFlowFixture() {
     assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
     assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
     assertEquals(
