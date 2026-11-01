@@ -496,12 +496,27 @@ assert len(gradle_setup) == 1 and gradle_setup[0]["with"]["cache-read-only"] == 
 build_step = next(step for step in job["steps"] if step.get("name") == "Build local PR runtime images")
 assert build_step["env"]["MERGE_SHA"] == "${{ needs.image-meta.outputs.merge_sha }}"
 assert 'bash ./dev-tools/build-local-smoke-images.sh "$MERGE_SHA"' in build_step["run"]
+assert build_step["id"] == "runtime-images-build"
+evidence = next(step for step in job["steps"] if step.get("name") == "Retain runtime bootJar compile-failure evidence")
+assert evidence["if"] == "${{ failure() && steps.runtime-images-build.outcome == 'failure' }}"
+assert evidence["continue-on-error"] == "true"
+assert evidence["uses"] == "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+assert evidence["with"]["name"] == "runtime-bootjar-compile-failure-${{ github.run_id }}-attempt-${{ github.run_attempt }}"
+assert "steps.runtime-images-build.outputs.runtime_compile_failure_path" in evidence["with"]["path"]
+assert evidence["with"]["if-no-files-found"] == "warn"
+assert evidence["with"]["retention-days"] == "3"
+for dependency in ("collect-gradle-compile-failure.py", "compile-failure-facts.init.gradle"):
+    path = "dev-tools/validation/" + dependency
+    assert path in workflow["on"]["pull_request"]["paths"]
+    assert (root / ".github/workflows/runtime-images.yml").read_text().count('"' + path + '"') == 2
 
 source_tree = fixture / "stacked-source"
 (source_tree / "dev-tools/validation").mkdir(parents=True)
 (source_tree / "fake-bin").mkdir()
 for name in ("build-local-smoke-images.sh", "build-compose-service-jars.sh"):
     shutil.copyfile(root / "dev-tools" / name, source_tree / "dev-tools" / name)
+for name in ("collect-gradle-compile-failure.py", "compile-failure-facts.init.gradle"):
+    shutil.copyfile(root / "dev-tools/validation" / name, source_tree / "dev-tools/validation" / name)
 services = [
     "account-service", "automation-scripting-service", "entity-management-service",
     "game-design-service", "game-logic-service", "game-session-service",
@@ -534,6 +549,7 @@ if kind == "gradle":
         "--no-configuration-cache", "--max-workers=1", "--no-parallel",
         "-Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8", "-PincludeLoadTesting=false",
         *[f":{service}:bootJar" for service in services],
+        "--info", "--console=plain",
     ], args
     for service in services:
         libs = root / "services" / service / "build/libs"

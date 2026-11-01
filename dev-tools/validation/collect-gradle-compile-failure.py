@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Failure-only, bounded module-CI evidence; never reruns a check or compiler."""
+"""Failure-only, bounded Gradle evidence; never reruns a build or compiler."""
 
 import argparse
 import hashlib
@@ -108,7 +108,8 @@ def diagnostic(root, task, output):
         raise ValueError('Diagnostic compile task path is invalid')
     facts_task = task_match.group(1) + ':firemudCompileFailureFacts'
     process = subprocess.Popen(
-        [str(root / 'gradlew'), '--offline', '--no-daemon', '--no-configuration-cache',
+        ['bash', str(root / 'dev-tools/validation/run-locked-gradle.sh'),
+         '--offline', '--no-daemon', '--no-configuration-cache',
          '--console=plain', '--max-workers=2',
          '-Dorg.gradle.java.installations.auto-download=false',
          '-I', str(root / 'dev-tools/validation/compile-failure-facts.init.gradle'),
