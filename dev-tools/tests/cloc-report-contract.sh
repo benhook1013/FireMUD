@@ -1253,7 +1253,13 @@ def reset_native_gh(body: str, *, change_body_on_view: int | None = None, change
 
 
 def native_gh_calls() -> list[list[str]]:
-    return json.loads(native_gh_state.read_text(encoding="utf-8"))["calls"]
+    calls = json.loads(native_gh_state.read_text(encoding="utf-8"))["calls"]
+    for args in calls:
+        assert args[:2] in (["pr", "view"], ["pr", "edit"]), args
+        assert args[2] == "2736", args
+        assert args.count("--repo") == 1, args
+        assert args[args.index("--repo") + 1] == "example/example", args
+    return calls
 
 
 native_draft = repo.parent / "native-pr-body.md"

@@ -81,11 +81,15 @@ publisher_script="$fixture_dir/publisher.sh"
 runtime_script="$fixture_dir/runtime.sh"
 resolver_script="$fixture_dir/resolver.js"
 dispatch_script="$fixture_dir/dispatch.js"
+smoke_scope_script="$fixture_dir/runtime-smoke-scope.js"
+refresh_selector_script="$fixture_dir/runtime-refresh-selector.js"
 
-python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" <<'PY'
+python3 - "$WORKFLOW" "$RUNTIME_WORKFLOW" "$validation_script" "$publisher_script" "$runtime_script" "$resolver_script" "$dispatch_script" "$smoke_scope_script" "$refresh_selector_script" <<'PY'
 import re
 import sys
 from pathlib import Path
+
+import yaml
 
 workflow_path = Path(sys.argv[1])
 runtime_workflow_path = Path(sys.argv[2])
@@ -131,6 +135,15 @@ def javascript_step(text, name):
 Path(sys.argv[6]).write_text(javascript_step(workflow, "Resolve successful exact source run"))
 runtime_workflow = runtime_workflow_path.read_text(encoding="utf-8")
 Path(sys.argv[7]).write_text(javascript_step(runtime_workflow, "Dispatch exact runtime publication source"))
+runtime_definition = yaml.load(runtime_workflow, Loader=yaml.BaseLoader)
+image_meta = runtime_definition["jobs"]["image-meta"]
+smoke_scope = next(step for step in image_meta["steps"] if step.get("name") == "Detect PR smoke scopes")
+Path(sys.argv[8]).write_text(smoke_scope["with"]["script"], encoding="utf-8")
+refresh_job = runtime_definition["jobs"]["dispatch-pr-base-refreshes"]
+refresh_script = next(step["with"]["script"] for step in refresh_job["steps"] if "with" in step and "script" in step["with"])
+selector_start = refresh_script.index("const runtimePrefixes = [")
+selector_end = refresh_script.index("const dependencyBotAuthors = new Set([", selector_start)
+Path(sys.argv[9]).write_text(refresh_script[selector_start:selector_end], encoding="utf-8")
 handoff = runtime_workflow.split("  dispatch-pr-runtime-publication:\n", 1)[1].split("  smoke-full:\n", 1)[0]
 for required in ["needs: [image-meta, pr-local-smoke, pr-controller-smoke]", "github.event_name == 'repository_dispatch'", "github.event.action == 'pr-runtime-base-refresh'", "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)", "needs.image-meta.result == 'success'", "needs.pr-local-smoke.result == 'success'", "needs.pr-controller-smoke.result == 'success'", "needs.image-meta.outputs.controller_smoke_required == 'false'", "needs.pr-controller-smoke.result == 'skipped'", "contents: write"]:
     if required not in handoff:
@@ -155,12 +168,14 @@ runtime_path.write_text(
 )
 PY
 
-node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" "$WORKFLOW" "$fixture_dir/download-inputs.json" <<'JS'
+node - "$resolver_script" "$dispatch_script" "$RUNTIME_WORKFLOW" "$WORKFLOW" "$fixture_dir/download-inputs.json" "$smoke_scope_script" "$refresh_selector_script" <<'JS'
 const fs = require("fs");
 const assert = require("assert/strict");
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const resolver = new AsyncFunction("github", "context", "core", "Date", "setTimeout", fs.readFileSync(process.argv[2], "utf8"));
 const dispatch = new AsyncFunction("github", "context", fs.readFileSync(process.argv[3], "utf8"));
+const smokeScope = new AsyncFunction("github", "context", "core", fs.readFileSync(process.argv[7], "utf8"));
+const refreshSelector = new AsyncFunction("github", "context", "core", `${fs.readFileSync(process.argv[8], "utf8")}\nreturn hasRuntimeChange;`);
 const sha = character => character.repeat(40);
 const title = `Build Runtime Images secure-pr-artifact pr-42 base-${sha("b")} head-${sha("a")} merge-${sha("c")} mode-required`;
 const repository = { full_name: "benhook1013/FireMUD", default_branch: "develop" };
@@ -180,6 +195,31 @@ async function resolve({ context = baseContext, runs = [source], workflow = { id
   return {reads, output};
 }
 const runtimeWorkflow = fs.readFileSync(process.argv[4], "utf8");
+const diagnosticPaths = [
+  "dev-tools/validation/collect-gradle-compile-failure.py",
+  "dev-tools/validation/compile-failure-facts.init.gradle",
+];
+async function smokeDecision(paths) {
+  const entries = paths.map(filename => ({filename}));
+  const outputs = {};
+  await smokeScope(
+    {rest: {pulls: {listFiles: "listFiles"}}, paginate: async () => entries},
+    {eventName: "pull_request", repo: {}, payload: {pull_request: {number: 42, changed_files: entries.length}}},
+    {warning: () => {}, setOutput: (key, value) => {outputs[key] = value;}},
+  );
+  return outputs.runtime_smoke_required;
+}
+const refreshEntries = [];
+const runtimeSelector = refreshSelector(
+  {rest: {pulls: {listFiles: "listFiles"}}, paginate: async () => refreshEntries},
+  {repo: {}, payload: {}},
+  {warning: () => {}},
+);
+async function refreshDecision(paths) {
+  refreshEntries.splice(0, refreshEntries.length, ...paths.map(filename => ({filename})));
+  const hasRuntimeChange = await runtimeSelector;
+  return hasRuntimeChange({number: 42, changed_files: refreshEntries.length});
+}
 const handoffCondition = runtimeWorkflow.split("  dispatch-pr-runtime-publication:\n")[1].match(/^    if: \$\{\{ (.*) \}\}$/m)[1]
   .replace(/needs\.([a-z-]+)/g, (_, key) => `needs[${JSON.stringify(key)}]`);
 const admitted = new Function("github", "needs", "always", "cancelled", "format", `return ${handoffCondition};`);
@@ -198,6 +238,16 @@ assert.equal(admits(trigger, {...success, "image-meta": {result: "success", outp
 assert.equal(admits(trigger, {...success, "image-meta": {result: "success", outputs: {}}}), false);
 assert.equal(admits(trigger, success, true), false);
 (async () => {
+  for (const path of diagnosticPaths) {
+    assert.equal(await smokeDecision([path]), "false", `${path} must not require runtime smoke`);
+    assert.equal(await refreshDecision([path]), false, `${path} must not select a runtime refresh`);
+  }
+  assert.equal(await smokeDecision(diagnosticPaths), "false", "diagnostics-only changes must not require runtime smoke");
+  assert.equal(await refreshDecision(diagnosticPaths), false, "diagnostics-only changes must not select a runtime refresh");
+  for (const path of ["services/game-session-service/Dockerfile", "dev-tools/build-local-smoke-images.sh"]) {
+    assert.equal(await smokeDecision([path]), "true", `${path} must continue to require runtime smoke`);
+    assert.equal(await refreshDecision([path]), true, `${path} must continue to select a runtime refresh`);
+  }
   let dispatched;
   await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
   assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
@@ -507,8 +557,9 @@ assert evidence["with"]["if-no-files-found"] == "warn"
 assert evidence["with"]["retention-days"] == "3"
 for dependency in ("collect-gradle-compile-failure.py", "compile-failure-facts.init.gradle"):
     path = "dev-tools/validation/" + dependency
-    assert path in workflow["on"]["pull_request"]["paths"]
-    assert (root / ".github/workflows/runtime-images.yml").read_text().count('"' + path + '"') == 2
+    assert path not in workflow["on"]["pull_request"]["paths"]
+for source_path in ("services/**", "dev-tools/build-local-smoke-images.sh", "dev-tools/build-compose-service-jars.sh"):
+    assert source_path in workflow["on"]["pull_request"]["paths"]
 
 source_tree = fixture / "stacked-source"
 (source_tree / "dev-tools/validation").mkdir(parents=True)

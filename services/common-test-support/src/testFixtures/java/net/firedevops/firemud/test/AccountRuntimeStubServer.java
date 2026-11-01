@@ -217,7 +217,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setAccountId(request.getAccountId())
             .setTenantId(request.getTenantId())
             .setMembershipExists(exists)
-            .setGameplayAdmissionAllowed(exists && gameplayAdmissionAllowed.get())
+            .setGameplayAdmissionAllowed(
+                exists && "ACTIVE".equals(lifecycleState) && gameplayAdmissionAllowed.get())
             .setMembershipVersion(exists ? membershipVersion.get() : 0L)
             .setMembershipLifecycleState(lifecycleState)
             .setMembershipAuthorityGeneration(exists ? membershipAuthorityGeneration.get() : 0L)

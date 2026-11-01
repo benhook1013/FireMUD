@@ -133,6 +133,37 @@ class AccountRuntimeStubServerTest {
   }
 
   @Test
+  void inactiveMembershipCannotBeAdmittedWhenAdmissionFlagIsEnabled() throws Exception {
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        String accountUuid = authenticate(stub);
+        server.setMembershipInactive();
+        server.setGameplayAdmissionAllowed(true);
+
+        var membership =
+            stub.getTenantMembershipForRuntime(
+                GetTenantMembershipForRuntimeRequest.newBuilder()
+                    .setAccountId(accountUuid)
+                    .setTenantId("1")
+                    .setRequestId("inactive-membership-request")
+                    .build());
+
+        assertThat(membership.getMembershipExists()).isTrue();
+        assertThat(membership.getMembershipLifecycleState()).isEqualTo("INACTIVE");
+        assertThat(membership.getMembershipVersion()).isPositive();
+        assertThat(membership.getMembershipAuthorityGeneration()).isPositive();
+        assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void profileReadAndWriteSupportVisibilityPolicyRoundTrips() throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =

@@ -161,7 +161,7 @@
               "weight_seconds": 591.433185
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest": {
-              "partition": 1,
+              "partition": 2,
               "weight_seconds": 110.887704
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest": {
@@ -217,7 +217,7 @@
               "weight_seconds": 63.838156
             },
             "net.firedevops.firemud.accountservice.service.session.AccountOriginalDraftOrderPostgresIntegrationTest": {
-              "partition": 1,
+              "partition": 2,
               "weight_seconds": 158.246344
             },
             "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationMtlsPostgresIntegrationTest": {
