@@ -107,6 +107,9 @@ def diagnostic(root, task, output):
     if task_match is None:
         raise ValueError('Diagnostic compile task path is invalid')
     facts_task = task_match.group(1) + ':firemudCompileFailureFacts'
+    # Preserve the existing lease descriptor; the canonical runner verifies its authority.
+    session_fd = os.environ.get('FIREMUD_LOCAL_RESOURCE_SESSION_FD')
+    session_fds = (int(session_fd),) if session_fd is not None else ()
     process = subprocess.Popen(
         ['bash', str(root / 'dev-tools/validation/run-locked-gradle.sh'),
          '--offline', '--no-daemon', '--no-configuration-cache',
@@ -115,7 +118,7 @@ def diagnostic(root, task, output):
          '-I', str(root / 'dev-tools/validation/compile-failure-facts.init.gradle'),
          '-PfiremudFailedCompile=' + task, facts_task],
         cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        start_new_session=True, bufsize=0,
+        start_new_session=True, bufsize=0, pass_fds=session_fds,
     )
     captured = bytearray()
     limited = False

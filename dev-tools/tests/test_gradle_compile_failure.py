@@ -128,6 +128,30 @@ class CaptureTests(unittest.TestCase):
         self.assertFalse(any(arg.endswith(':check') for arg in arguments))
         self.assertNotIn('--refresh-dependencies', arguments)
 
+    def test_diagnostic_preserves_only_the_inherited_resource_descriptor(self):
+        runner = self.write('gradlew', f'#!{sys.executable}\n'
+                            'import json, os\n'
+                            'fd = int(os.environ["FIREMUD_LOCAL_RESOURCE_SESSION_FD"])\n'
+                            'os.fstat(fd)\n'
+                            'other = int(os.environ["FIXTURE_UNRELATED_FD"])\n'
+                            'try:\n'
+                            '    os.fstat(other)\n'
+                            'except OSError:\n'
+                            '    pass\n'
+                            'else:\n'
+                            '    raise SystemExit("unrelated descriptor inherited")\n'
+                            'print("FIREMUD_COMPILE_FACTS=" + json.dumps({"lease_descriptor_open": True}))\n')
+        runner.chmod(0o755)
+        with (self.root / 'lease').open('w') as lease, (self.root / 'unrelated').open('w') as other:
+            os.set_inheritable(other.fileno(), True)
+            with patch.dict(os.environ, {
+                    'FIREMUD_LOCAL_RESOURCE_SESSION_FD': str(lease.fileno()),
+                    'FIXTURE_UNRELATED_FD': str(other.fileno())}):
+                target = self.root / 'facts.json'
+                result = CAPTURE.diagnostic(self.root, ':common-saga:compileJava', target)
+        self.assertEqual('complete', result['status'])
+        self.assertEqual({'lease_descriptor_open': True}, json.loads(target.read_text()))
+
     def test_output_symlink_escape_rejected(self):
         external = self.root / 'outside'
         external.mkdir()
