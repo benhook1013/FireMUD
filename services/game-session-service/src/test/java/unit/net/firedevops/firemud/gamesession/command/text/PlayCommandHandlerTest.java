@@ -1923,7 +1923,7 @@ class PlayCommandHandlerTest {
 
   @ParameterizedTest
   @CsvSource({
-    "22,1,1,-9,true", "22,1,1,-11,false", "22,1,1,-299,false",
+    "22,1,1,-5,true", "22,1,1,-11,false", "22,1,1,-299,false",
     "22,1,1,4,true", "22,1,1,6,false", "23,1,1,0,false",
     "022,1,1,0,false", "22,0,1,0,false", "22,1,0,0,false",
     "22,-1,1,0,false", "22,1,-1,0,false"
