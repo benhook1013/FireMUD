@@ -22,6 +22,14 @@ In player-facing environments, the interim `jwt-signing-keys` private bundle is 
 
 The configurable cleanup margin controls issued-token registry retention only. Gameplay continuity is a separate Game Session policy documented in [Reconnection](../../system-architecture-reconnection.md); Account configuration does not derive or widen that lifetime.
 
+### Kubernetes Workload Namespace
+
+The Account Helm Deployment supplies `FIREMUD_GRPC_WORKLOAD_NAMESPACE` from the pod's `metadata.namespace` through the Kubernetes downward API. The chart reserves this variable and rejects an `extraEnv` entry with the same name; other `extraEnv` entries remain available. Account uses this configured namespace for the workload-peer checks described in the [Account API contract](./api-contracts.md).
+
+### Local Demo Authentication Fixture
+
+The Account receiving flag `FIREMUD_ACCOUNT_LOCAL_DEMO_AUTHENTICATION_ENABLED` defaults to `false`, and `FIREMUD_ACCOUNT_LOCAL_DEMO_AUTHENTICATION_EMAIL` defaults empty. Local/run-owned Compose explicitly enables the flag, configures its demo email and selects `local-fixture` for Account. Active `prod` excludes this fixture even when the flag is set. These settings supply only the Account-local delivery described by the [credential fixture contract](./api-contracts.md#legacy-credential-rpc-and-local-demo-fixture); the Entity seeding flag supplies no receiving authority.
+
 ## Implementation Status
 
 The current runtime still uses the shared-HMAC compatibility profile for issuance and validation and has no asymmetric non-exportable signer delegation. Any Secret-backed asymmetric materialization is the explicit interim fallback/drift, not canonical target custody; the current preflight/manifests still treat signing paths and `jwt-signing-keys` mounts as shared workload configuration rather than enforcing Account as the sole private-material consumer, and the classpath fallback remains permitted when the configured JWKS file is absent. The runtime also retains the legacy creator-share percentage setting and provider-mutating code paths; they are unsupported implementation drift, not an accepted fee policy or product capability. These target-state requirements are not proof of current startup, custody, mount enforcement, or creator-commerce disablement; runtime, preflight, and manifest alignment is outside this documentation slice.

@@ -42,6 +42,9 @@ firemud:
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
     workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
   account:
+    local-demo-authentication:
+      enabled: ${FIREMUD_ACCOUNT_LOCAL_DEMO_AUTHENTICATION_ENABLED:false}
+      email: ${FIREMUD_ACCOUNT_LOCAL_DEMO_AUTHENTICATION_EMAIL:}
     credentials:
       cleanup:
         batch-size: ${FIREMUD_ACCOUNT_CREDENTIAL_CLEANUP_BATCH_SIZE:100}
@@ -86,7 +89,7 @@ firemud:
           path-pattern: /auth/complete-password-reset
         - method: POST
           path-pattern: /auth/request-email-verification
-        - method: GET
+        - method: POST
           path-pattern: /auth/verify-email
         - method: POST
           path-pattern: /auth/recover-username

@@ -1,6 +1,8 @@
 package net.firedevops.firemud.entitymanagement.client;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
@@ -15,6 +17,8 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.security.JwtClaims;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Lazy;
@@ -29,6 +33,10 @@ import org.springframework.stereotype.Component;
 @Lazy
 public final class DemoAccountAuthenticationClient
     extends AbstractReloadingBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
+  private static final Logger logger =
+      LoggerFactory.getLogger(DemoAccountAuthenticationClient.class);
+  private static final int MAX_AUTHENTICATION_ATTEMPTS = 3;
+  private static final long RETRY_DELAY_MILLIS = 250;
   private final String namespace;
   private final String email;
   private final String password;
@@ -79,16 +87,43 @@ public final class DemoAccountAuthenticationClient
   }
 
   public UUID authenticateDemoOwner() {
-    var response =
-        requireInitializedStub("Demo Account client is not initialized")
-            .withDeadlineAfter(5, TimeUnit.SECONDS)
-            .authenticate(
-                AuthenticateRequest.newBuilder().setEmail(email).setPassword(password).build());
-    if (response.hasError() || response.getAuthToken().isBlank()) {
-      throw new IllegalStateException("Account demo authentication is unavailable");
+    var request = AuthenticateRequest.newBuilder().setEmail(email).setPassword(password).build();
+    for (int attempt = 1; ; attempt++) {
+      if (Thread.currentThread().isInterrupted()) {
+        throw new IllegalStateException("Account demo authentication interrupted");
+      }
+      try {
+        var response =
+            requireInitializedStub("Demo Account client is not initialized")
+                .withDeadlineAfter(5, TimeUnit.SECONDS)
+                .authenticate(request);
+        if (response.hasError() || response.getAuthToken().isBlank()) {
+          throw new IllegalStateException("Account demo authentication is unavailable");
+        }
+        return UUID.fromString(
+            JwtClaims.requireCanonicalAccountUuid(response.getAccountId(), "accountId"));
+      } catch (StatusRuntimeException ex) {
+        Status.Code code = ex.getStatus().getCode();
+        if (attempt >= MAX_AUTHENTICATION_ATTEMPTS
+            || (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED)) {
+          throw ex;
+        }
+        if (Thread.currentThread().isInterrupted()) {
+          throw new IllegalStateException("Account demo authentication interrupted", ex);
+        }
+        logger.warn(
+            "Local demo Account authentication transport retry after attempt {}/{} status={}",
+            attempt,
+            MAX_AUTHENTICATION_ATTEMPTS,
+            code);
+        try {
+          Thread.sleep(RETRY_DELAY_MILLIS);
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException("Account demo authentication interrupted", interrupted);
+        }
+      }
     }
-    return UUID.fromString(
-        JwtClaims.requireCanonicalAccountUuid(response.getAccountId(), "accountId"));
   }
 
   @Override

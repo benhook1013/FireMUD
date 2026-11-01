@@ -6316,17 +6316,122 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void verifyEmailSetsFlag() {
+  void verifyEmailClaimsTokenBeforeSavingOnlyTheFreshLockedAccount() {
+    EmailVerificationToken token = emailVerificationToken();
     Account account = new Account();
-    EmailVerificationToken token = new EmailVerificationToken();
-    token.setAccount(account);
-    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
-    when(emailVerificationTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+    account.setId(1L);
+    account.setAccountUuid(UUID.randomUUID());
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(1L);
+    account.setUsername("current-name");
+    account.setEmail("current@example.com");
+    account.setPasswordHash("current-password");
+    account.setRole("player");
+    account.setLoginAuthModes("PASSWORD");
+    Account expected = new Account();
+    org.springframework.beans.BeanUtils.copyProperties(account, expected);
+    expected.setEmailVerified(true);
+    when(accountRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(account));
+    when(emailVerificationTokenRepository.consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
 
     service.verifyEmail(new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok"));
 
-    assertTrue(account.isEmailVerified());
-    org.mockito.Mockito.verify(emailVerificationTokenRepository).delete(token);
+    assertEquals(expected, account);
+    assertFalse(token.getAccount().isEmailVerified());
+    org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(emailVerificationTokenRepository, accountRepository);
+    order.verify(emailVerificationTokenRepository).findByToken("tok");
+    order.verify(accountRepository).findByIdForUpdate(1L);
+    order
+        .verify(emailVerificationTokenRepository)
+        .consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token), org.mockito.ArgumentMatchers.any());
+    order.verify(accountRepository).save(account);
+    org.mockito.Mockito.verify(emailVerificationTokenRepository, org.mockito.Mockito.never())
+        .delete(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void verifyEmailRejectsLostOrChangedTokenClaimBeforeAccountMutation() {
+    EmailVerificationToken token = emailVerificationToken();
+    Account current = new Account();
+    current.setId(1L);
+    when(accountRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(current));
+    when(emailVerificationTokenRepository.consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(false);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.verifyEmail(
+                new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok")));
+
+    assertFalse(current.isEmailVerified());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void verifyEmailRejectsExpiredAndExactlyExpiringTokenAfterAccountLock(boolean equality) {
+    EmailVerificationToken token = emailVerificationToken();
+    java.time.LocalDateTime now = java.time.LocalDateTime.of(2026, 11, 1, 12, 0);
+    token.setExpiresAt(equality ? now : now.minusNanos(1));
+    Account current = new Account();
+    current.setId(1L);
+    when(accountRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(current));
+
+    try (org.mockito.MockedStatic<java.time.LocalDateTime> clock =
+        org.mockito.Mockito.mockStatic(
+            java.time.LocalDateTime.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+      clock.when(java.time.LocalDateTime::now).thenReturn(now);
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              service.verifyEmail(
+                  new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok")));
+    }
+
+    assertFalse(current.isEmailVerified());
+    org.mockito.InOrder order =
+        org.mockito.Mockito.inOrder(emailVerificationTokenRepository, accountRepository);
+    order.verify(emailVerificationTokenRepository).findByToken("tok");
+    order.verify(accountRepository).findByIdForUpdate(1L);
+    org.mockito.Mockito.verify(emailVerificationTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void verifyEmailRejectsMalformedTokenOwnerBeforeLockOrMutation() {
+    EmailVerificationToken token = emailVerificationToken();
+    token.getAccount().setId(null);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.verifyEmail(
+                new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest("tok")));
+
+    verifyNoInteractions(accountRepository);
+    org.mockito.Mockito.verify(emailVerificationTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  private EmailVerificationToken emailVerificationToken() {
+    Account locator = new Account();
+    locator.setId(1L);
+    EmailVerificationToken token = new EmailVerificationToken();
+    token.setId(9L);
+    token.setToken("tok");
+    token.setAccount(locator);
+    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
+    when(emailVerificationTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+    return token;
   }
 
   @Test

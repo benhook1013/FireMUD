@@ -49,6 +49,8 @@ FireController is maintained outside this repository. Use the `firecontroller-us
 - `smoke/` – shared smoke defaults and the run-owned Compose claim/capability helper.
 - `seed/` – local and test data seeding helpers.
 - `tests/` – contract tests for repo-owned tooling.
+- `tests/account-workload-namespace-contract.sh` – offline Helm-render contract for Account's Kubernetes workload namespace binding and reserved environment variable.
+- `tests/dev-certs-retention-contract.sh` – validates retained development certificate bundles and proves refusal/preservation for incomplete material and linked paths.
 - `validation/` – repo policy and static validation scripts used by Gradle and CI.
 
 The documentation lock is sourced from the unpinned direct roots in `config/docs/requirements.in` and generated into `config/docs/requirements.txt` with the repository Python version and `pip-compile --allow-unsafe --generate-hashes --index-url=https://pypi.org/simple --output-file=config/docs/requirements.txt config/docs/requirements.in`. The existing lock seeds compilation and preserves satisfying package pins unless you explicitly request an upgrade. When the installed pip-tools version mis-serializes its default index options into an unsupported header, set `CUSTOM_COMPILE_COMMAND` to that exact command so the generated header remains parseable. Keep the source roots and lock hashes in sync; do not edit lock hashes manually.

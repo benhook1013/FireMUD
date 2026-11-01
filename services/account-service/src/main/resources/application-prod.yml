@@ -54,7 +54,7 @@ firemud:
           path-pattern: /auth/complete-password-reset
         - method: POST
           path-pattern: /auth/request-email-verification
-        - method: GET
+        - method: POST
           path-pattern: /auth/verify-email
         - method: POST
           path-pattern: /auth/recover-username
