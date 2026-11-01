@@ -31,6 +31,7 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
@@ -58,9 +59,16 @@ class DirectTextWorldMenuRedisStoreTest {
           "101", UUID.fromString("aaaaaaaa-1111-4111-8111-111111111111"));
   private final CanonicalPlayerRouteReadService routes =
       mock(CanonicalPlayerRouteReadService.class);
+  private final AtomicInteger catalogReads = new AtomicInteger();
   private final DirectTextWorldSelectionService selection =
       new DirectTextWorldSelectionService(
-          GameplayWorldCatalog.forWorldViews(List.of()), routes, CLOCK);
+          GameplayWorldCatalog.forWorldSupplier(
+              () -> {
+                catalogReads.incrementAndGet();
+                return List.of();
+              }),
+          routes,
+          CLOCK);
   private final StatefulRedisConnection<byte[], byte[]> connection = mockConnection();
   private final RedisCommands<byte[], byte[]> commands = mockCommands();
   private final AtomicReference<byte[]> stored = new AtomicReference<>();
@@ -134,6 +142,89 @@ class DirectTextWorldMenuRedisStoreTest {
   void clearUsesZeroExpiryAndTheSameBoundedClockArgument() {
     outcome.set("MENU_UNCHANGED");
     assertThat(store.clear(transport)).isTrue();
+  }
+
+  @Test
+  void freshDiscoveryComposesOnceButFindAndRetainedReassertEachRestoreFreshSources() {
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    assertThat(catalogReads.get()).isEqualTo(2);
+    verify(routes).readVisiblePublicProductionTargets();
+    byte[] original = stored.get();
+
+    clearInvocations(routes);
+    catalogReads.set(0);
+    var restored = store.find(transport).orElseThrow();
+    assertThat(catalogReads.get()).isEqualTo(2);
+    verify(routes).readVisiblePublicProductionTargets();
+    assertThat(restored.expiresAt()).isEqualTo(menu.expiresAt());
+
+    for (var retained : List.of(menu, restored)) {
+      clearInvocations(routes);
+      catalogReads.set(0);
+      outcome.set("MENU_UNCHANGED");
+      assertThat(store.reassert(transport, retained)).isTrue();
+      assertThat(catalogReads.get()).isEqualTo(2);
+      verify(routes).readVisiblePublicProductionTargets();
+      assertThat(stored.get()).isEqualTo(original);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = {-1L, 300L})
+  void freshDiscoveryStillRejectsFutureOrExpiredLifetimeBeforeRedis(long clockOffsetSeconds) {
+    var bounded =
+        new DirectTextWorldMenuRedisStore(
+            selection,
+            Clock.offset(CLOCK, java.time.Duration.ofSeconds(clockOffsetSeconds)),
+            () -> connection,
+            installed());
+    assertThat(bounded.discoverAndReplace(transport)).isEmpty();
+    assertThat(catalogReads.get()).isEqualTo(2);
+    verify(routes).readVisiblePublicProductionTargets();
+    verifyNoInteractions(commands, connection);
+  }
+
+  @Test
+  void expiredRetainedHandleCannotUseTheFreshDiscoveryPath() {
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(CLOCK.instant());
+    when(clock.millis()).thenReturn(CLOCK.millis());
+    var localSelection =
+        new DirectTextWorldSelectionService(
+            GameplayWorldCatalog.forWorldViews(List.of()), routes, clock);
+    var localStore =
+        new DirectTextWorldMenuRedisStore(localSelection, clock, () -> connection, installed());
+    var menu = localStore.discoverAndReplace(transport).orElseThrow();
+    byte[] original = stored.get();
+    when(clock.instant()).thenReturn(menu.expiresAt());
+    when(clock.millis()).thenReturn(menu.expiresAt().toEpochMilli());
+    clearInvocations(commands, connection, routes);
+
+    assertThat(localStore.reassert(transport, menu)).isFalse();
+    assertThat(localSelection.resolve(menu, "1")).isEmpty();
+    assertThat(stored.get()).isEqualTo(original);
+    verifyNoInteractions(commands, connection, routes);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void selectionOwnerClockMovementRejectsFreshHandleEvenWhenStoreClockRemainsLive(boolean expired) {
+    var clock = mock(Clock.class);
+    var createdAt = CLOCK.instant();
+    // browse sees a live original for both of its own clock reads. The selection owner's next
+    // read sees expiry or sub-millisecond rollback, while the independent store clock stays live.
+    when(clock.instant())
+        .thenReturn(
+            createdAt, createdAt, expired ? createdAt.plusSeconds(300) : createdAt.minusNanos(1));
+    var localSelection =
+        new DirectTextWorldSelectionService(
+            GameplayWorldCatalog.forWorldViews(List.of()), routes, clock);
+    var localStore =
+        new DirectTextWorldMenuRedisStore(localSelection, CLOCK, () -> connection, installed());
+
+    assertThat(localStore.discoverAndReplace(transport)).isEmpty();
+    verify(routes).readVisiblePublicProductionTargets();
+    verifyNoInteractions(commands, connection);
   }
 
   @Test
@@ -456,8 +547,8 @@ class DirectTextWorldMenuRedisStoreTest {
     clearInvocations(routes);
     var fresh = store.discoverAndReplace(transport).orElseThrow();
     assertThat(fresh).isNotSameAs(retained);
-    // One new browse and its existing complete source revalidation, not local reconstruction.
-    verify(routes, times(2)).readVisiblePublicProductionTargets();
+    // One new guarded browse, not local reconstruction or a redundant second composition.
+    verify(routes).readVisiblePublicProductionTargets();
     assertThat(stored.get()).isNotEmpty();
     assertThat(store.find(transport)).isPresent();
   }

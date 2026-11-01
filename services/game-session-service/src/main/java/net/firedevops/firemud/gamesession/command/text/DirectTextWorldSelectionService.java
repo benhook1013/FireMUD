@@ -58,6 +58,16 @@ public final class DirectTextWorldSelectionService {
     }
   }
 
+  /** Owner-clock liveness for the menu store's immediate browse result, without source I/O. */
+  Optional<byte[]> encodeLiveSnapshot(SelectionSnapshot justDiscovered) {
+    if (justDiscovered == null
+        || justDiscovered.owner != this
+        || !isLive(justDiscovered.snapshot)) {
+      return Optional.empty();
+    }
+    return encodeSnapshot(justDiscovered);
+  }
+
   /**
    * Restores the same original observational menu, never authority or a renewed deadline. Parsing
    * refusal is separate from guarded source reads so unavailable sources still escape unchanged.

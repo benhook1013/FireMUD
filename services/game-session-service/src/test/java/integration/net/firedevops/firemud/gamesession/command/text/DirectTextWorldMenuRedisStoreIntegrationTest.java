@@ -37,6 +37,8 @@ import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
@@ -189,6 +191,79 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     assertThat(replacementStore.reassert(transport, restored)).isFalse();
     assertThat(replacementStore.discoverAndReplace(transport)).isEmpty();
     assertThat(admin.get(key(transport))).isEqualTo(original);
+  }
+
+  @Test
+  void oneFreshCompositionRetainsPhysicalMenuWhileLaterUsesRestoreFreshSources() {
+    var fixture = fixture(Clock.systemUTC());
+    var reads = new AtomicInteger();
+    var catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              reads.incrementAndGet();
+              return List.of(world(fixture.targets().get(1)), world(fixture.targets().get(0)));
+            });
+    var selection = new DirectTextWorldSelectionService(catalog, fixture.routes(), fixture.clock());
+    var store = store(selection, fixture.clock());
+    var transport = observation();
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    assertThat(reads.get()).isEqualTo(2);
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
+    byte[] original = admin.get(key(transport));
+    long expiry = admin.pexpiretime(key(transport));
+    assertThat(expiry).isEqualTo(menu.expiresAt().toEpochMilli());
+
+    reads.set(0);
+    clearInvocations(fixture.routes());
+    var restored = store.find(transport).orElseThrow();
+    assertThat(reads.get()).isEqualTo(2);
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
+    reads.set(0);
+    clearInvocations(fixture.routes());
+    assertThat(store.reassert(transport, restored)).isTrue();
+    assertThat(reads.get()).isEqualTo(2);
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
+    assertThat(store.reassert(transport, fixture.selection().browse().orElseThrow())).isFalse();
+    assertThat(admin.get(key(transport))).isEqualTo(original);
+    assertThat(admin.pexpiretime(key(transport))).isEqualTo(expiry);
+  }
+
+  @Test
+  void sourceMovementAfterCompositionLeavesOnlyStaleUiNeverRecoverableAuthority() {
+    var fixture = fixture(Clock.systemUTC());
+    var worlds =
+        new AtomicReference<>(
+            List.of(world(fixture.targets().get(1)), world(fixture.targets().get(0))));
+    var catalog = GameplayWorldCatalog.forWorldSupplier(worlds::get);
+    var selection = new DirectTextWorldSelectionService(catalog, fixture.routes(), fixture.clock());
+    var transport = observation();
+    var store =
+        new DirectTextWorldMenuRedisStore(
+            selection,
+            fixture.clock(),
+            () -> {
+              // Move source only after browse/preparation, immediately before the physical CAS.
+              worlds.set(List.of());
+              return writer.connect(ByteArrayCodec.INSTANCE);
+            },
+            installed());
+    var menu = store.discoverAndReplace(transport).orElseThrow();
+    byte[] original = admin.get(key(transport));
+    long expiry = admin.pexpiretime(key(transport));
+    assertThat(original).isNotEmpty();
+    assertThat(expiry).isEqualTo(menu.expiresAt().toEpochMilli());
+
+    assertThat(selection.resolve(menu, "1")).isEmpty();
+    assertThat(store.find(transport)).isEmpty();
+    assertThat(store.reassert(transport, menu)).isFalse();
+    var replacement =
+        new DirectTextWorldSelectionService(catalog, fixture.routes(), fixture.clock());
+    assertThat(store(replacement, fixture.clock()).find(transport)).isEmpty();
+    assertThat(admin.get(key(transport))).isEqualTo(original);
+    assertThat(admin.pexpiretime(key(transport))).isEqualTo(expiry);
+    admin.del(new byte[][] {key(transport)});
+    assertThat(store.reassert(transport, menu)).isFalse();
+    assertThat(admin.get(key(transport))).isNull();
   }
 
   @Test
@@ -500,7 +575,7 @@ class DirectTextWorldMenuRedisStoreIntegrationTest {
     when(clock.millis()).thenReturn(now.plusSeconds(1).toEpochMilli());
     clearInvocations(fixture.routes());
     var fresh = store.discoverAndReplace(transport).orElseThrow();
-    verify(fixture.routes(), times(2)).readVisiblePublicProductionTargets();
+    verify(fixture.routes()).readVisiblePublicProductionTargets();
     assertThat(fresh).isNotSameAs(retained);
     assertThat(fresh.expiresAt()).isEqualTo(original.expiresAt().plusSeconds(1));
     byte[] freshBytes = admin.get(key(transport));
