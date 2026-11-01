@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import io.lettuce.core.RedisNoScriptException;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -52,7 +53,8 @@ public final class DirectTextWorldMenuRedisStore {
   private final DirectTextWorldSelectionService selection;
   private final Clock clock;
   private final Supplier<StatefulRedisConnection<byte[], byte[]>> connections;
-  private final RedisScriptCatalog catalog;
+  private final byte[] verifiedSource;
+  private final String verifiedSha1;
 
   /**
    * The supplier must own protected Coordination endpoint/credential custody and return a dedicated
@@ -68,7 +70,9 @@ public final class DirectTextWorldMenuRedisStore {
     this.clock = Objects.requireNonNull(clock, "clock");
     this.connections =
         Objects.requireNonNull(protectedPinnedCoordinationConnections, "protected connections");
-    this.catalog = Objects.requireNonNull(installedCatalog, "installed catalog");
+    this.verifiedSource =
+        requireSource(Objects.requireNonNull(installedCatalog, "installed catalog"));
+    this.verifiedSha1 = digest("SHA-1", verifiedSource);
   }
 
   /** Explicit fresh WORLDS discovery; returns its new handle only after an acknowledged CAS. */
@@ -77,17 +81,15 @@ public final class DirectTextWorldMenuRedisStore {
     var discovered = selection.browse();
     if (discovered.isEmpty()) return Optional.empty();
     var snapshot = discovered.orElseThrow();
-    var prepared = prepare(transport, snapshot);
+    var prepared = prepareFreshDiscovery(transport, snapshot);
     if (prepared.isEmpty()) return Optional.empty();
     var write = prepared.orElseThrow();
-    byte[] source = requireSource();
     try (var connection = connections.get()) {
       var commands = requireConnection(connection);
       byte[] key = key(transport);
       byte[] prior = readBounded(commands, key);
       if (prior != null && decode(transport, prior).isEmpty()) return Optional.empty();
-      return mutate(
-              commands, source, key, "REPLACE", prior, write.desired(), write.expiry(), write.now())
+      return mutate(commands, key, "REPLACE", prior, write.desired(), write.expiry(), write.now())
           ? discovered
           : Optional.empty();
     }
@@ -99,7 +101,6 @@ public final class DirectTextWorldMenuRedisStore {
     var prepared = prepare(transport, snapshot);
     if (prepared.isEmpty()) return false;
     var write = prepared.orElseThrow();
-    byte[] source = requireSource();
     try (var connection = connections.get()) {
       var commands = requireConnection(connection);
       byte[] key = key(transport);
@@ -107,8 +108,7 @@ public final class DirectTextWorldMenuRedisStore {
       if (prior == null || !Arrays.equals(prior, write.desired())) return false;
       // The same nonempty preimage must survive until Lua. An unchanged value is not rewritten,
       // so its original physical deadline/PTTL is retained without extension.
-      return mutate(
-          commands, source, key, "REPLACE", prior, write.desired(), write.expiry(), write.now());
+      return mutate(commands, key, "REPLACE", prior, write.desired(), write.expiry(), write.now());
     }
   }
 
@@ -119,6 +119,21 @@ public final class DirectTextWorldMenuRedisStore {
     byte[] inner = encoded.orElseThrow();
     // Source unavailability deliberately escapes separately from invalid UI state.
     if (selection.restoreSnapshot(inner).isEmpty()) return Optional.empty();
+    return prepareWrite(transport, snapshot, inner);
+  }
+
+  private Optional<MenuWrite> prepareFreshDiscovery(
+      ObservedDirectTextTransport transport, SelectionSnapshot justDiscovered) {
+    // Only discoverAndReplace passes its browse result here. That composition already brackets
+    // the route-owner read with two catalog reads; this is UI evidence, not cached authority.
+    // Keep not-before/expiry on the selection owner's clock, then apply this store's clock bounds.
+    return selection
+        .encodeLiveSnapshot(justDiscovered)
+        .flatMap(inner -> prepareWrite(transport, justDiscovered, inner));
+  }
+
+  private Optional<MenuWrite> prepareWrite(
+      ObservedDirectTextTransport transport, SelectionSnapshot snapshot, byte[] inner) {
     long nowEpochMillis = requirePositiveSafeEpochMillis(clock.millis());
     long expiry = requirePositiveSafeEpochMillis(snapshot.expiresAt().toEpochMilli());
     if (expiry <= nowEpochMillis || expiry - nowEpochMillis > 300_000L) return Optional.empty();
@@ -132,8 +147,6 @@ public final class DirectTextWorldMenuRedisStore {
    */
   public Optional<SelectionSnapshot> find(ObservedDirectTextTransport transport) {
     requireTransport(transport);
-    // Deny a mismatched installed descriptor/digest even on read-only use of this owner.
-    requireSource();
     Optional<byte[]> inner;
     try (var connection = connections.get()) {
       inner = decode(transport, readBounded(requireConnection(connection), key(transport)));
@@ -145,37 +158,40 @@ public final class DirectTextWorldMenuRedisStore {
   public boolean clear(ObservedDirectTextTransport transport) {
     requireTransport(transport);
     long nowEpochMillis = requirePositiveSafeEpochMillis(clock.millis());
-    byte[] source = requireSource();
     try (var connection = connections.get()) {
       var commands = requireConnection(connection);
       byte[] key = key(transport);
       byte[] prior = readBounded(commands, key);
       if (prior != null && decode(transport, prior).isEmpty()) return false;
-      return mutate(commands, source, key, "CLEAR", prior, EMPTY, 0L, nowEpochMillis);
+      return mutate(commands, key, "CLEAR", prior, EMPTY, 0L, nowEpochMillis);
     }
   }
 
-  private static boolean mutate(
+  private boolean mutate(
       RedisCommands<byte[], byte[]> commands,
-      byte[] source,
       byte[] key,
       String operation,
       byte[] prior,
       byte[] desired,
       long expiry,
       long nowEpochMillis) {
-    String loaded = commands.scriptLoad(source);
-    if (!digest("SHA-1", source).equals(loaded)) throw unavailable();
-    String result =
-        commands.evalsha(
-            loaded,
-            ScriptOutputType.STATUS,
-            new byte[][] {key},
-            ascii(operation),
-            prior == null ? EMPTY : prior,
-            desired,
-            ascii(Long.toString(expiry)),
-            ascii(Long.toString(nowEpochMillis)));
+    byte[][] keys = {key};
+    byte[][] arguments = {
+      ascii(operation),
+      prior == null ? EMPTY : prior,
+      desired,
+      ascii(Long.toString(expiry)),
+      ascii(Long.toString(nowEpochMillis))
+    };
+    String result;
+    try {
+      result = commands.evalsha(verifiedSha1, ScriptOutputType.STATUS, keys, arguments);
+    } catch (RedisNoScriptException missing) {
+      // Only NOSCRIPT proves the first attempt did not execute. Unknown writes are never retried.
+      if (!verifiedSha1.equals(commands.scriptLoad(verifiedSource))) throw unavailable();
+      // One retry on this same physical connection; a second NOSCRIPT escapes without looping.
+      result = commands.evalsha(verifiedSha1, ScriptOutputType.STATUS, keys, arguments);
+    }
     if ("MENU_WRITTEN".equals(result)
         || "MENU_CLEARED".equals(result)
         || "MENU_UNCHANGED".equals(result)) return true;
@@ -230,7 +246,7 @@ public final class DirectTextWorldMenuRedisStore {
     return bytes;
   }
 
-  private byte[] requireSource() {
+  private static byte[] requireSource(RedisScriptCatalog catalog) {
     var descriptor = catalog.require(DirectTextWorldMenuRedisScriptContribution.SCRIPT_ID);
     var expected = new DirectTextWorldMenuRedisScriptContribution().descriptors().iterator().next();
     if (!expected.equals(descriptor)

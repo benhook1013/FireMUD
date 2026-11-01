@@ -69,8 +69,12 @@ bash "$ENSURE" "$fresh" >/dev/null
 partial="$TEST_ROOT/partial"
 mkdir "$partial"
 printf 'retained CA\n' >"$partial/ca.crt"
-expect_unchanged_failure "$partial" "Incomplete retained development certificate bundle" bash "$GENERATOR" "$partial"
-expect_unchanged_failure "$partial" "Incomplete retained development certificate bundle" bash "$ENSURE" "$partial"
+for command in "$GENERATOR" "$ENSURE"; do
+  expect_unchanged_failure "$partial" "Incomplete retained development certificate bundle" bash "$command" "$partial"
+  grep -Fq 'Only for disposable generated local material' "$TEST_ROOT/failure-stderr"
+  grep -Fq 'clean-dev-certs.sh ' "$TEST_ROOT/failure-stderr"
+  grep -Fq 'Preserve externally managed material' "$TEST_ROOT/failure-stderr"
+done
 
 other="$TEST_ROOT/other"
 bash "$GENERATOR" "$other" >"$TEST_ROOT/other-output" 2>&1
