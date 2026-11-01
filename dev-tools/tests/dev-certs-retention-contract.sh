@@ -49,6 +49,47 @@ expect_unchanged_failure() {
   fi
 }
 
+expired_ca="$TEST_ROOT/expired-ca"
+mkdir -p "$expired_ca/new-certs"
+: >"$expired_ca/index.txt"
+printf '1000\n' >"$expired_ca/serial"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$expired_ca/ca.key" >/dev/null 2>&1
+openssl req -new -key "$expired_ca/ca.key" -subj '/CN=Expired-Workload-CA' -out "$expired_ca/ca.csr"
+cat >"$expired_ca/openssl.cnf" <<EOF
+[ ca ]
+default_ca = CA_default
+
+[ CA_default ]
+dir = $expired_ca
+database = \$dir/index.txt
+new_certs_dir = \$dir/new-certs
+serial = \$dir/serial
+default_md = sha256
+policy = policy_any
+x509_extensions = v3_ca
+
+[ policy_any ]
+commonName = supplied
+
+[ v3_ca ]
+basicConstraints = critical,CA:true
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+EOF
+openssl ca -selfsign -batch -config "$expired_ca/openssl.cnf" \
+  -keyfile "$expired_ca/ca.key" -in "$expired_ca/ca.csr" -out "$expired_ca/ca.crt" \
+  -startdate 20000101000000Z -enddate 20000102000000Z -extensions v3_ca -notext \
+  >/dev/null 2>&1
+openssl verify -no_check_time -check_ss_sig -CAfile "$expired_ca/ca.crt" "$expired_ca/ca.crt" >/dev/null
+if openssl verify -check_ss_sig -CAfile "$expired_ca/ca.crt" "$expired_ca/ca.crt" >/dev/null 2>&1; then
+  echo 'Expired workload CA fixture unexpectedly verifies at the current time.' >&2
+  exit 1
+fi
+expect_unchanged_failure "$expired_ca" "Invalid or expired workload certificate authority" bash "$GENERATOR" --workload \
+  "$expired_ca/ca.crt" "$expired_ca/ca.key" "$expired_ca/output/nested/client.crt" \
+  "$expired_ca/output/nested/client.key" dev world-management-service
+[[ ! -e "$expired_ca/output" ]]
+
 fresh="$TEST_ROOT/fresh"
 mkdir "$fresh"
 printf 'foreign material\n' >"$fresh/foreign.pem"
