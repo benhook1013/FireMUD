@@ -100,6 +100,27 @@ if ! grep -Fq 'GH_TOKEN: ${{ github.token }}' "$ACTION" ||
   exit 1
 fi
 
+python3 - "$ROOT_DIR/.github/workflows/ci.yml" <<'PY_LANE'
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import yaml
+
+workflow = yaml.safe_load(Path(sys.argv[1]).read_text())
+step = next(step for step in workflow["jobs"]["validation-gate"]["steps"] if step["name"] == "Explain validation lane")
+assert step["env"]["FIREMUD_METADATA_ONLY"] == "${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}"
+with tempfile.TemporaryDirectory(prefix="firemud-ci-lane-") as directory:
+    for value, heading in [("true", "## Metadata-only PR edit"), ("false", "## Source validation")]:
+        summary = Path(directory) / f"summary-{value}.md"
+        environment = dict(os.environ, FIREMUD_METADATA_ONLY=value, GITHUB_STEP_SUMMARY=str(summary))
+        subprocess.run(["bash", "-e", "-c", step["run"]], check=True, env=environment)
+        text = summary.read_text()
+        assert text.startswith(heading + "\n"), text
+        assert "qualified source validation" in text if value == "true" else "applicable source checks" in text
+PY_LANE
+
 while IFS='|' read -r workflow gate_job_id gate workflow_name workflow_file workflow_path; do
   [[ -n "$workflow" ]] || continue
   path="$ROOT_DIR/.github/workflows/$workflow"

@@ -1467,6 +1467,16 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
+      - name: Explain validation lane
+        env:
+          FIREMUD_METADATA_ONLY: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        run: |
+          if [[ "$FIREMUD_METADATA_ONLY" == "true" ]]; then
+            printf '## Metadata-only PR edit\n\nHeavy validation jobs are skipped. Required CI is preserved only from qualified source validation for this comparison.\n' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '## Source validation\n\nThis run executes the applicable source checks for the PR comparison.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Preserve successful required gate on metadata-only edit
         id: preserved_gate
         if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
