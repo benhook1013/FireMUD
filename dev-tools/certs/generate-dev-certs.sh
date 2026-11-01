@@ -62,6 +62,10 @@ if [[ "${1:-}" == "--workload" ]]; then
     echo "Invalid workload certificate authority or mismatched key." >&2
     exit 1
   }
+  openssl verify -check_ss_sig -CAfile "$ca_cert" "$ca_cert" >/dev/null 2>&1 || {
+    echo "Invalid or expired workload certificate authority; refusing to sign workload certificate." >&2
+    exit 1
+  }
   for required_file in "$ca_cert" "$ca_key"; do
     [[ -f "$required_file" ]] || {
       echo "missing certificate authority file: $required_file" >&2

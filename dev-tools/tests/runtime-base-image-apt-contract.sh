@@ -8,6 +8,7 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 
 RUN_SCRIPT="$TEMP_DIR/docker-run.sh"
 FAKE_BIN="$TEMP_DIR/bin"
+FIREMUD_APT_MIRROR_LIST_FILE="$TEMP_DIR/ubuntu-archive-mirrors.txt"
 mkdir -p "$FAKE_BIN"
 
 python3 - "$DOCKERFILE" "$RUN_SCRIPT" <<'PY'
@@ -57,16 +58,22 @@ if len(instructions) != 1:
     )
 
 canonical_source_path = "/etc/apt/sources.list.d/ubuntu.sources"
+mirror_list_path = "/etc/apt/ubuntu-archive-mirrors.txt"
 instruction = instructions[0]
 if instruction.count(canonical_source_path) != 1:
     raise SystemExit("Dockerfile must use the canonical Ubuntu deb822 source path once")
+if instruction.count(mirror_list_path) != 1:
+    raise SystemExit("Dockerfile must use the canonical Ubuntu mirror-list path once")
 
-# The fixture redirects only the source-file path; the extracted APT logic stays intact.
+# The fixture redirects the source and local mirror-list paths; APT logic stays intact.
 instruction = instruction.replace(
     canonical_source_path, "$FIREMUD_APT_SOURCE_FILE", 1
 )
-if canonical_source_path in instruction:
-    raise SystemExit("fixture scratch RUN still contains the production source path")
+instruction = instruction.replace(
+    mirror_list_path, "$FIREMUD_APT_MIRROR_LIST_FILE", 1
+)
+if canonical_source_path in instruction or mirror_list_path in instruction:
+    raise SystemExit("fixture scratch RUN still contains a production APT path")
 
 output.write_text("#!/bin/sh\n" + instruction + "\n", encoding="utf-8")
 PY
@@ -116,11 +123,18 @@ if [[ "$command" == update ]]; then
   }
   case "$APT_EXPECTED_LAYOUT" in
     archive)
-      grep -Eq '^URIs:[[:space:]]*https://archive\.ubuntu\.com/ubuntu/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+      grep -Fqx "URIs: mirror+file:$FIREMUD_APT_MIRROR_LIST_FILE" "$FIREMUD_APT_SOURCE_FILE"
       grep -Eq '^URIs:[[:space:]]*https://security\.ubuntu\.com/ubuntu/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+      grep -Fqx 'Suites: resolute-security' "$FIREMUD_APT_SOURCE_FILE"
+      grep -Fqx 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' "$FIREMUD_APT_SOURCE_FILE"
+      test -s "$FIREMUD_APT_MIRROR_LIST_FILE"
+      grep -Fqx $'https://archive.ubuntu.com/ubuntu/\tpriority:1' "$FIREMUD_APT_MIRROR_LIST_FILE"
+      grep -Fqx $'https://mirror.math.princeton.edu/pub/ubuntu/\tpriority:2' "$FIREMUD_APT_MIRROR_LIST_FILE"
       ;;
     ports)
       grep -Eq '^URIs:[[:space:]]*https://ports\.ubuntu\.com/ubuntu-ports/?[[:space:]]*$' "$FIREMUD_APT_SOURCE_FILE"
+      grep -Fqx 'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' "$FIREMUD_APT_SOURCE_FILE"
+      test ! -e "$FIREMUD_APT_MIRROR_LIST_FILE"
       ;;
     *)
       echo "fixture has an unexpected APT source layout: $APT_EXPECTED_LAYOUT" >&2
@@ -163,9 +177,9 @@ Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 SOURCES
 
-cat > "$TEMP_DIR/sources.expected" <<'SOURCES'
+cat > "$TEMP_DIR/sources.expected" <<SOURCES
 Types: deb
-URIs: https://archive.ubuntu.com/ubuntu/
+URIs: mirror+file:$FIREMUD_APT_MIRROR_LIST_FILE
 Suites: resolute resolute-updates resolute-backports
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
@@ -219,6 +233,7 @@ run_dockerfile_instruction() {
     APT_EXPECTED_LAYOUT="$expected_layout" \
     APT_CALL_LOG="$apt_call_log" \
     AUX_CALL_LOG="$aux_call_log" \
+    FIREMUD_APT_MIRROR_LIST_FILE="$FIREMUD_APT_MIRROR_LIST_FILE" \
     PATH="$FAKE_BIN:$PATH" \
     /bin/sh "$RUN_SCRIPT"
 }
@@ -230,12 +245,40 @@ run_dockerfile_instruction \
   "$TEMP_DIR/sources.success" 0 0 \
   "$TEMP_DIR/success-apt.log" "$TEMP_DIR/success-aux.log" archive
 cmp "$TEMP_DIR/sources.expected" "$TEMP_DIR/sources.success"
+printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1\nhttps://mirror.math.princeton.edu/pub/ubuntu/\tpriority:2\n' \
+  > "$TEMP_DIR/mirrorlist.expected"
+cmp "$TEMP_DIR/mirrorlist.expected" "$FIREMUD_APT_MIRROR_LIST_FILE"
 printf 'update\ninstall\n' > "$TEMP_DIR/calls.expected"
-cmp "$TEMP_DIR/calls.expected" "$TEMP_DIR/success-apt.log"
 printf 'rm\ngroupadd\nuseradd\n' > "$TEMP_DIR/aux-calls.expected"
+
+python3 - "$TEMP_DIR/sources.input" "$TEMP_DIR/sources.whitespace.input" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+source = source.replace(
+    "URIs: http://archive.ubuntu.com/ubuntu/",
+    "URIs:\t  http://archive.ubuntu.com/ubuntu/ \t  ",
+    1,
+)
+Path(sys.argv[2]).write_text(source, encoding="utf-8")
+PY
+cp "$TEMP_DIR/sources.whitespace.input" "$TEMP_DIR/sources.whitespace.success"
+: > "$TEMP_DIR/whitespace-success-apt.log"
+: > "$TEMP_DIR/whitespace-success-aux.log"
+run_dockerfile_instruction \
+  "$TEMP_DIR/sources.whitespace.success" 0 0 \
+  "$TEMP_DIR/whitespace-success-apt.log" "$TEMP_DIR/whitespace-success-aux.log" archive
+cmp "$TEMP_DIR/sources.expected" "$TEMP_DIR/sources.whitespace.success"
+cmp "$TEMP_DIR/mirrorlist.expected" "$FIREMUD_APT_MIRROR_LIST_FILE"
+cmp "$TEMP_DIR/calls.expected" "$TEMP_DIR/whitespace-success-apt.log"
+cmp "$TEMP_DIR/aux-calls.expected" "$TEMP_DIR/whitespace-success-aux.log"
+
+cmp "$TEMP_DIR/calls.expected" "$TEMP_DIR/success-apt.log"
 cmp "$TEMP_DIR/aux-calls.expected" "$TEMP_DIR/success-aux.log"
 
 cp "$TEMP_DIR/sources.ports.input" "$TEMP_DIR/sources.ports.success"
+rm -f "$FIREMUD_APT_MIRROR_LIST_FILE"
 : > "$TEMP_DIR/ports-success-apt.log"
 : > "$TEMP_DIR/ports-success-aux.log"
 run_dockerfile_instruction \
