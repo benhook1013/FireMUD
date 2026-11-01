@@ -553,8 +553,7 @@ class TextCommandInterpreterTest {
             + "Use PLAY <world> [realm] <character> with a known character name.",
         renderedResponse("CHARS demo", interpretation));
     verify(entityManagementClient, never())
-        .listCharactersByAccount(
-            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
   }
 
   @Test
