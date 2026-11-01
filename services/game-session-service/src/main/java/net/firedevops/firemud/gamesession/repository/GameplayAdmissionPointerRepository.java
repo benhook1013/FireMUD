@@ -21,6 +21,7 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -138,7 +139,7 @@ public class GameplayAdmissionPointerRepository {
     populate(record, entity);
     try {
       record.store();
-    } catch (IntegrityConstraintViolationException ex) {
+    } catch (IntegrityConstraintViolationException | DataIntegrityViolationException ex) {
       if (isUniqueConstraintViolation(ex)) {
         throw new AdmissionPointerConflictException(
             "Admission pointer creation conflicted with another committed pointer", ex);
@@ -249,7 +250,7 @@ public class GameplayAdmissionPointerRepository {
                       .and(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(expectedPointerVersion))
                       .and(GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(expectedCatalogRevision)))
               .execute();
-    } catch (IntegrityConstraintViolationException ex) {
+    } catch (IntegrityConstraintViolationException | DataIntegrityViolationException ex) {
       if (isUniqueConstraintViolation(ex)) {
         throw new AdmissionPointerConflictException(
             "Admission pointer update conflicted with another committed pointer", ex);
