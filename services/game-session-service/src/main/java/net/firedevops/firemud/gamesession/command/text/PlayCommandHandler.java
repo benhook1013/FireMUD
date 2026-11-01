@@ -59,6 +59,7 @@ public class PlayCommandHandler {
       "gamesession.session.fresh_entry_fallback";
   private static final Duration AUTHORITY_REPLY_MAX_FUTURE_SKEW = Duration.ofSeconds(5);
   private static final Duration AUTHORITY_REPLY_MAX_AGE = Duration.ofMinutes(5);
+  // The five-second skew subtraction leaves a conservative 10-second reply-age limit.
   private static final Duration ENTITLEMENT_REPLY_MAX_AGE = Duration.ofSeconds(15);
 
   private final SessionAuthenticationService sessionAuthenticationService;
