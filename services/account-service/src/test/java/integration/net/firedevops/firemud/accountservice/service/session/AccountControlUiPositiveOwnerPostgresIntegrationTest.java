@@ -44,6 +44,7 @@ import net.firedevops.firemud.account.v1.ReadRedeemedOperationProjectionRequest;
 import net.firedevops.firemud.account.v1.RecoverOperatorAuthorizationReferenceRequest;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfiguration;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
@@ -733,7 +734,260 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           assertThat(exactRetry).isEqualTo(projection);
         }
       }
+      assertCertifiedAccountSignIn(f, lifecycle, registry, operations, actors, issuance);
     }
+  }
+
+  /**
+   * Reuses the complete signer/physical Redis composition above. Category publications and the
+   * inbound issuer peer context are controlled fixtures, not deployed policy custody or mTLS.
+   */
+  private static void assertCertifiedAccountSignIn(
+      AccountControlUiOwnerSourcesFixture f,
+      AccountControlUiSignerFixture lifecycle,
+      AccountControlUiCoordination registry,
+      AccountControlUiIssuanceRepository operations,
+      AccountControlUiActorService actors,
+      AccountControlUiIssuanceService issuance)
+      throws Exception {
+    String password = "test-only-certified-account-password";
+    String otp = "test-only-certified-account-otp";
+    var account = f.createCertifiedGlobalAccount(password);
+    UUID accountId = account.getAccountUuid();
+    assertThat(accountId).isNotEqualTo(f.account.getAccountUuid());
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) AS count FROM account_tenant_membership WHERE account_id = ?",
+                    account.getId())
+                .get("count", Long.class))
+        .isZero();
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) AS count FROM account_platform_restriction_current_projections WHERE account_uuid = ?",
+                    accountId)
+                .get("count", Long.class))
+        .isEqualTo(2L);
+    var originalSource = f.tx(() -> f.authority.captureAccount(accountId));
+    assertThat(originalSource.scopeKind()).isEqualTo(AccountControlUiAuthority.ScopeKind.ACCOUNT);
+    var originalSigner = f.tx(lifecycle.signer::captureCurrent);
+    int beforeOperations = f.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations"));
+    int beforeEnvelopes = f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"));
+    var passwordRequest =
+        new AccountControlUiIssuanceService.AccountSignInRequest(
+            UUID.randomUUID(), account.getEmail(), password, UUID.randomUUID());
+    String passwordCompact;
+    try (var peer =
+            AccountControlUiOwnerSourcesFixture.withPeer(
+                AccountControlUiOwnerSourcesFixture.CALLER);
+        var issued = issuance.issueAccount(passwordRequest)) {
+      passwordCompact = new String(issued.compactBytes(), StandardCharsets.US_ASCII);
+    }
+    var passwordOperation = f.tx(() -> operations.findRequest(passwordRequest.requestId()));
+    assertThat(passwordOperation.scopeKind())
+        .isEqualTo(AccountControlUiAuthority.ScopeKind.ACCOUNT);
+    assertThat(passwordOperation.optionalTenantId()).isEmpty();
+    assertThat(passwordOperation.accountId).isEqualTo(accountId);
+    assertThat(passwordOperation.status).isEqualTo("COMMITTED");
+    assertThat(passwordOperation.sources).isEqualTo(originalSource.evidence());
+    assertThat(passwordOperation.signerReceipt).isEqualTo(originalSigner.receipt());
+    assertThat(registry.readActive(passwordOperation.tokenHash))
+        .isEqualTo(passwordOperation.activeRegistry);
+    var activeRegistry =
+        AccountControlUiIssuanceRepository.object(passwordOperation.activeRegistry);
+    assertThat(activeRegistry)
+        .containsEntry("profile", "control-ui")
+        .containsEntry("type", "control-ui")
+        .containsEntry("audience", "control-ui")
+        .containsEntry("state", "active")
+        .containsEntry("accountId", accountId.toString())
+        .containsEntry("operationId", passwordOperation.operationId.toString());
+    assertThat(AccountControlUiAuthority.canonical(activeRegistry))
+        .isEqualTo(passwordOperation.activeRegistry);
+    var claims = AccountControlUiIssuanceRepository.object(passwordOperation.claims);
+    var header =
+        AccountControlUiIssuanceRepository.object(
+            Base64.getUrlDecoder().decode(passwordCompact.split("\\.")[0]));
+    assertThat(header).containsEntry("typ", "JWT").containsEntry("alg", "RS256");
+    assertThat(claims)
+        .containsEntry("iss", "firemud-account-service")
+        .containsEntry("aud", "control-ui")
+        .containsEntry("accountId", accountId.toString())
+        .containsEntry("sub", accountId.toString())
+        .containsEntry("membershipVersion", Map.of())
+        .containsEntry("scopedRoles", Map.of());
+    var authority = (Map<?, ?>) claims.get("authorityTuple");
+    assertThat(authority.get("tenantAuthorityGeneration")).isEqualTo(Map.of());
+    assertThat(authority.get("membershipAuthorityGeneration")).isEqualTo(Map.of());
+    assertThat(authority.get("privateRealmGrantVersions")).isEqualTo(List.of());
+    assertThat(AccountControlUiIssuanceRepository.object(passwordOperation.bundle))
+        .containsEntry("profile", "control-ui")
+        .containsEntry(
+            "scope",
+            Map.of("kind", "ACCOUNT", "accountId", accountId.toString(), "tenantIds", List.of()));
+    var current = actors.authenticateAccount(passwordCompact);
+    assertThat(current.accountId()).isEqualTo(accountId);
+    assertThat(current.issuanceOperationId()).isEqualTo(passwordOperation.operationId);
+    assertThat(current.tokenHash()).isEqualTo(passwordOperation.tokenHash);
+    // Actual asymmetric signature verification is exercised by authenticateAccount; altered bytes
+    // and an attempted tenant consumption must not cross either verification or scope boundary.
+    String altered = passwordCompact.substring(0, passwordCompact.lastIndexOf('.') + 1) + "AA";
+    assertThatThrownBy(() -> actors.authenticateAccount(altered))
+        .isInstanceOf(RuntimeException.class);
+    var environment = f.terms.captureCurrentEnvironmentBoundary();
+    assertThatThrownBy(() -> actors.authenticate(passwordCompact, f.tenant, environment))
+        .isInstanceOf(RuntimeException.class);
+    byte[] callbackSource =
+        actors.withCurrentAccount(
+            passwordCompact,
+            actor -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isTrue();
+              assertThat(actor.accountId()).isEqualTo(accountId);
+              return f.authority.captureAccount(actor.accountId()).evidence();
+            });
+    assertThat(callbackSource).isEqualTo(originalSource.evidence());
+    // A mutation through the real Account owner shares the consumer transaction and rolls back
+    // together with its generation, source, fence and outbox effects when the callback fails.
+    assertThatThrownBy(
+            () ->
+                actors.withCurrentAccount(
+                    passwordCompact,
+                    actor -> {
+                      var mutation = f.accounts.findByAccountUuid(actor.accountId()).orElseThrow();
+                      mutation.setRole("admin");
+                      f.accounts.save(mutation);
+                      throw new IllegalStateException("test-only Account callback rollback");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test-only Account callback rollback");
+    assertThat(f.accounts.findById(account.getId()).orElseThrow().getRole()).isEqualTo("player");
+    assertThat(f.tx(() -> f.authority.captureAccount(accountId)).evidence())
+        .isEqualTo(originalSource.evidence());
+    assertThat(actors.authenticateAccount(passwordCompact).accountId()).isEqualTo(accountId);
+
+    f.installGlobalOtp(account, otp);
+    var otpRequest =
+        new AccountControlUiIssuanceService.AccountSignInRequest(
+            UUID.randomUUID(), account.getEmail(), otp, UUID.randomUUID());
+    byte[] originalCompact;
+    Instant expiry, recoveryExpiry;
+    try (var peer =
+            AccountControlUiOwnerSourcesFixture.withPeer(
+                AccountControlUiOwnerSourcesFixture.CALLER);
+        var issued = issuance.issueAccount(otpRequest)) {
+      originalCompact = issued.compactBytes();
+      expiry = issued.expiresAt();
+      recoveryExpiry = issued.recoveryExpiresAt();
+    }
+    assertThat(f.challenges.findByAccountId(account.getId())).isEmpty();
+    var otpOperation = f.tx(() -> operations.findRequest(otpRequest.requestId()));
+    var envelope = f.tx(() -> operations.envelope(otpOperation));
+    try (var peer =
+            AccountControlUiOwnerSourcesFixture.withPeer(
+                AccountControlUiOwnerSourcesFixture.CALLER);
+        var retry = issuance.issueAccount(otpRequest)) {
+      assertThat(retry.compactBytes()).isEqualTo(originalCompact);
+      assertThat(retry.expiresAt()).isEqualTo(expiry);
+      assertThat(retry.recoveryExpiresAt()).isEqualTo(recoveryExpiry);
+      assertThatThrownBy(
+              () ->
+                  issuance.issueAccount(
+                      new AccountControlUiIssuanceService.AccountSignInRequest(
+                          otpRequest.requestId(),
+                          account.getEmail(),
+                          "changed-secret",
+                          otpRequest.callerContextId())))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Control-ui issuance idempotency conflict");
+      assertThatThrownBy(
+              () ->
+                  issuance.issueAccount(
+                      new AccountControlUiIssuanceService.AccountSignInRequest(
+                          otpRequest.requestId(),
+                          "changed@example.test",
+                          otp,
+                          otpRequest.callerContextId())))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Control-ui issuance idempotency conflict");
+      assertThatThrownBy(
+              () ->
+                  issuance.issueAccount(
+                      new AccountControlUiIssuanceService.AccountSignInRequest(
+                          otpRequest.requestId(), account.getEmail(), otp, UUID.randomUUID())))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Control-ui issuance idempotency conflict");
+      assertThatThrownBy(
+              () ->
+                  issuance.issue(
+                      new AccountControlUiIssuanceService.Request(
+                          otpRequest.requestId(),
+                          account.getEmail(),
+                          otp,
+                          f.tenant,
+                          otpRequest.callerContextId()),
+                      environment))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Control-ui issuance idempotency conflict");
+    }
+    assertThat(f.challenges.findByAccountId(account.getId())).isEmpty();
+    var retryOperation = f.tx(() -> operations.findRequest(otpRequest.requestId()));
+    assertThat(retryOperation.operationId).isEqualTo(otpOperation.operationId);
+    assertThat(retryOperation.jti).isEqualTo(otpOperation.jti);
+    assertThat(retryOperation.claims).isEqualTo(otpOperation.claims);
+    assertThat(retryOperation.bundle).isEqualTo(otpOperation.bundle);
+    assertThat(retryOperation.sources).isEqualTo(otpOperation.sources);
+    assertThat(retryOperation.signerReceipt).isEqualTo(otpOperation.signerReceipt);
+    assertThat(retryOperation.activeRegistry).isEqualTo(otpOperation.activeRegistry);
+    assertThat(registry.readActive(retryOperation.tokenHash))
+        .isEqualTo(retryOperation.activeRegistry);
+    var retryEnvelope = f.tx(() -> operations.envelope(retryOperation));
+    assertThat(retryEnvelope.encrypted()).isEqualTo(envelope.encrypted());
+    assertThat(retryEnvelope.binding()).isEqualTo(envelope.binding());
+    assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations")))
+        .isEqualTo(beforeOperations + 2);
+    assertThat(f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes")))
+        .isEqualTo(beforeEnvelopes + 2);
+    String otpCompact = new String(originalCompact, StandardCharsets.US_ASCII);
+    assertThat(actors.authenticateAccount(otpCompact).accountId()).isEqualTo(accountId);
+    try (var peer =
+        AccountControlUiOwnerSourcesFixture.withPeer(
+            "spiffe://firemud/ns/control-ui-owner-proof/sa/game-design-service")) {
+      assertThatThrownBy(() -> issuance.issueAccount(otpRequest))
+          .isInstanceOf(RuntimeException.class);
+    }
+    f.tx(
+        () -> {
+          var mutation = f.accounts.findById(account.getId()).orElseThrow();
+          mutation.setRole("admin");
+          return f.accounts.save(mutation);
+        });
+    var advanced = f.tx(() -> f.authority.captureAccount(accountId));
+    assertThat(advanced.evidence()).isNotEqualTo(originalSource.evidence());
+    assertThat(advanced.issuanceFence()).isGreaterThan(originalSource.issuanceFence());
+    for (String compact : List.of(passwordCompact, otpCompact)) {
+      var invoked = new java.util.concurrent.atomic.AtomicBoolean();
+      assertThatThrownBy(
+              () ->
+                  actors.withCurrentAccount(
+                      compact,
+                      actor -> {
+                        invoked.set(true);
+                        return actor.accountId();
+                      }))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(invoked).isFalse();
+    }
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT count(*) AS count FROM account_tenant_membership WHERE account_id = ?",
+                    account.getId())
+                .get("count", Long.class))
+        .isZero();
   }
 
   private AnnotationConfigApplicationContext operatorAuthorizationContext(

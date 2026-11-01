@@ -22,6 +22,7 @@ import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -192,6 +193,9 @@ class AccountControlUiCoordinationTest {
     Record row = mock(Record.class);
     when(row.get("status", String.class)).thenReturn("REVOKING");
     when(row.get("token_hash", String.class)).thenReturn(HASH);
+    when(row.get("authorization_scope", String.class)).thenReturn("TENANT");
+    when(row.get("tenant_uuid", UUID.class))
+        .thenReturn(UUID.fromString("20000000-0000-4000-8000-000000000002"));
     when(row.get("pending_registry", byte[].class)).thenReturn(record("pending"));
     when(row.get("active_registry", byte[].class)).thenReturn(record("active"));
     when(row.get("issued_at_epoch_second", Long.class)).thenReturn(EXPIRY / 1000 - 300);

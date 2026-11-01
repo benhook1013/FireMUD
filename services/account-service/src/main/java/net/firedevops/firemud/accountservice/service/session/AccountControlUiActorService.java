@@ -90,6 +90,29 @@ public final class AccountControlUiActorService {
                 current.stored.tokenHash));
   }
 
+  /** Account identity observation only; mutation callers must use withCurrentAccount. */
+  public AccountAuthenticatedActor authenticateAccount(String compactJwt) {
+    return withCurrentAccount(compactJwt, Function.identity());
+  }
+
+  /** Consumes current Account evidence and producer fences in the mutation's owner transaction. */
+  public <T> T withCurrentAccount(
+      String compactJwt, Function<AccountAuthenticatedActor, T> action) {
+    Objects.requireNonNull(action, "current Account action is required");
+    return withCurrentScope(
+        compactJwt,
+        AccountControlUiAuthority.ScopeKind.ACCOUNT,
+        null,
+        null,
+        current -> {
+          fences.lockProducerSourcesNowait(current.source.sources());
+          requireCurrentOriginalToken(current.stored);
+          return action.apply(
+              new AccountAuthenticatedActor(
+                  current.stored.accountId, current.stored.operationId, current.stored.tokenHash));
+        });
+  }
+
   /** Exact retained producer recovery; absence alone permits a fresh authenticated claim. */
   boolean readHeldOriginalDraft(DraftAuthorizationFenceBinding original) {
     outsideSql();
@@ -142,6 +165,21 @@ public final class AccountControlUiActorService {
       UUID selectedTenant,
       CapturedEnvironmentBoundary environment,
       Function<Current, T> action) {
+    Objects.requireNonNull(selectedTenant, "selected tenant is required");
+    return withCurrentScope(
+        compactJwt,
+        AccountControlUiAuthority.ScopeKind.TENANT,
+        selectedTenant,
+        environment,
+        action);
+  }
+
+  private <T> T withCurrentScope(
+      String compactJwt,
+      AccountControlUiAuthority.ScopeKind scopeKind,
+      UUID selectedTenant,
+      CapturedEnvironmentBoundary environment,
+      Function<Current, T> action) {
     outsideSql();
     var signed = verifySigned(compactJwt);
     var acceptedKey = readAcceptedSignerKey(signed.claims.keyId());
@@ -152,7 +190,9 @@ public final class AccountControlUiActorService {
         ignored -> {
           var stored = operations.findToken(tokenHash);
           if (stored == null
-              || !selectedTenant.equals(stored.tenantId)
+              || stored.scopeKind() != scopeKind
+              || (scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
+                  && !selectedTenant.equals(stored.tenantId()))
               || !"COMMITTED".equals(stored.status)
               || !Arrays.equals(stored.activeRegistry, exactRegistry)
               || !Arrays.equals(
@@ -162,13 +202,41 @@ public final class AccountControlUiActorService {
           requireSignerIdentity(stored, signed);
           requireAcceptedSignerKey(stored, acceptedKey);
           signers.requireOriginal(stored.signerReceipt);
-          var current = authority.capture(stored.accountId, selectedTenant, environment);
+          var current =
+              switch (scopeKind) {
+                case ACCOUNT -> authority.captureAccount(stored.accountId);
+                case TENANT -> authority.capture(stored.accountId, selectedTenant, environment);
+              };
+          if (current.scopeKind() != scopeKind) throw denied();
+          if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+            var claims = signed.claims.claims();
+            if (!Arrays.equals(
+                    AccountControlUiAuthority.canonical(current.authorityTuple()),
+                    AccountControlUiAuthority.canonical(claims.get("authorityTuple")))
+                || !Arrays.equals(
+                    AccountControlUiAuthority.canonical(current.membershipVersion()),
+                    AccountControlUiAuthority.canonical(claims.get("membershipVersion")))
+                || !Arrays.equals(
+                    AccountControlUiAuthority.canonical(current.scopedRoles()),
+                    AccountControlUiAuthority.canonical(claims.get("scopedRoles")))
+                || !Arrays.equals(
+                    AccountControlUiAuthority.canonical(current.globalRoles()),
+                    AccountControlUiAuthority.canonical(
+                        claims.getOrDefault("globalRoles", List.of())))
+                || !Long.toString(current.issuanceFence())
+                    .equals(String.valueOf(claims.get("issuanceFence")))) throw denied();
+          }
           if (!Arrays.equals(current.evidence(), stored.sources)) {
             throw denied();
           }
           var committed = operations.requireCommitted(stored);
           if (!committed.tokenHash().equals(tokenHash)) {
             throw denied();
+          }
+          if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+            var original = operations.findToken(tokenHash);
+            if (!sameCommittedOperation(stored, original)
+                || !Arrays.equals(original.activeRegistry, exactRegistry)) throw denied();
           }
           requireCurrentOriginalToken(stored);
           return action.apply(new Current(stored, current));
@@ -196,7 +264,8 @@ public final class AccountControlUiActorService {
     var original = transaction.execute(ignored -> operations.findTokenJti(tokenJti));
     if (original == null
         || !actorAccountId.equals(original.accountId)
-        || !selectedTenant.equals(original.tenantId)
+        || original.scopeKind() != AccountControlUiAuthority.ScopeKind.TENANT
+        || !selectedTenant.equals(original.tenantId())
         || !tokenJti.equals(original.jti)
         || !"COMMITTED".equals(original.status)
         || original.tokenHash == null
@@ -294,11 +363,18 @@ public final class AccountControlUiActorService {
         || !pin.bindingRevision().equals(receipt.get("apiConfigRevision"))
         || !stored.accountId.toString().equals(signed.claims().get("sub"))
         || !stored.accountId.toString().equals(signed.claims().get("accountId"))
-        || !stored.jti.toString().equals(signed.claims().get("jti"))
-        || !Map.of(stored.tenantId.toString(), List.of("tenantAdmin"))
-            .equals(signed.claims().get("scopedRoles"))
-        || signed.claims().containsKey("globalRoles")) {
+        || !stored.jti.toString().equals(signed.claims().get("jti"))) {
       throw denied();
+    }
+    switch (stored.scopeKind()) {
+      case TENANT -> {
+        if (!Map.of(stored.tenantId().toString(), List.of("tenantAdmin"))
+                .equals(signed.claims().get("scopedRoles"))
+            || signed.claims().containsKey("globalRoles")) throw denied();
+      }
+      case ACCOUNT -> {
+        if (!Map.of().equals(signed.claims().get("scopedRoles"))) throw denied();
+      }
     }
   }
 
@@ -325,7 +401,8 @@ public final class AccountControlUiActorService {
         && first.operationId.equals(second.operationId)
         && first.jti.equals(second.jti)
         && first.accountId.equals(second.accountId)
-        && first.tenantId.equals(second.tenantId)
+        && first.scopeKind() == second.scopeKind()
+        && first.optionalTenantId().equals(second.optionalTenantId())
         && first.callerContextId.equals(second.callerContextId)
         && first.caller.equals(second.caller)
         && first.requestMacKeyId.equals(second.requestMacKeyId)
@@ -348,7 +425,8 @@ public final class AccountControlUiActorService {
       UUID tenantId,
       UUID tokenJti) {
     Map<String, Object> claims = AccountControlUiIssuanceRepository.object(stored.claims);
-    if (!actorAccountId.toString().equals(claims.get("sub"))
+    if (stored.scopeKind() != AccountControlUiAuthority.ScopeKind.TENANT
+        || !actorAccountId.toString().equals(claims.get("sub"))
         || !actorAccountId.toString().equals(claims.get("accountId"))
         || !tenantId.toString().equals(stored.tenantId.toString())
         || !tokenJti.toString().equals(claims.get("jti"))
@@ -405,6 +483,36 @@ public final class AccountControlUiActorService {
     @Override
     public String toString() {
       return "AccountControlUiActorService.AuthenticatedActor[redacted]";
+    }
+  }
+
+  /** Privately constructed Account identity; global roles confer no route authorization here. */
+  public static final class AccountAuthenticatedActor {
+    private final UUID accountId;
+    private final UUID issuanceOperationId;
+    private final String tokenHash;
+
+    private AccountAuthenticatedActor(UUID accountId, UUID issuanceOperationId, String tokenHash) {
+      this.accountId = accountId;
+      this.issuanceOperationId = issuanceOperationId;
+      this.tokenHash = tokenHash;
+    }
+
+    public UUID accountId() {
+      return accountId;
+    }
+
+    public UUID issuanceOperationId() {
+      return issuanceOperationId;
+    }
+
+    public String tokenHash() {
+      return tokenHash;
+    }
+
+    @Override
+    public String toString() {
+      return "AccountControlUiActorService.AccountAuthenticatedActor[redacted]";
     }
   }
 

@@ -3,7 +3,10 @@ package unit.net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -32,6 +35,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority.ScopeKind;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ParsedBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
@@ -75,17 +80,22 @@ import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksTrust
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
 import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -131,6 +141,11 @@ class AccountControlUiCurrentActorVerifierTest {
   private static final long EXPIRY_SECONDS = NOW_SECONDS + 300L;
   private static final long CLEANUP_DEADLINE_MILLIS = EXPIRY_SECONDS * 1000L + 300_000L;
   private static KeyPair signingKey;
+
+  @AfterEach
+  void clearTransaction() {
+    TransactionSynchronizationManager.clear();
+  }
 
   @BeforeAll
   static void generateSigningKey() throws Exception {
@@ -341,6 +356,139 @@ class AccountControlUiCurrentActorVerifierTest {
     verify(fixture.issuances, never()).readCommitted(any());
   }
 
+  @Test
+  void verifiesAccountOnlySignedActorWithNoTenantOrMembershipSources() throws Exception {
+    Fixture fixture = accountFixture(List.of());
+    var actor = fixture.verifier.verifyAccount(fixture.compactJwt);
+    assertThat(actor.accountId()).isEqualTo(ACCOUNT_ID);
+    assertThat(actor.issuanceOperationId()).isEqualTo(OPERATION_ID);
+    assertThat(actor.tokenHash()).isEqualTo(fixture.tokenHash);
+    assertThat(actor.currentGlobalRoles()).isEmpty();
+    verify(fixture.authority).captureAccount(ACCOUNT_ID);
+    verify(fixture.committedIssuance, never()).tenantId();
+    verify(fixture.tenantEvents, never()).readCurrentByTenant(any());
+    verify(fixture.memberships, never()).findFreshMembership(any(), any());
+    verify(fixture.membershipPairs, never()).readPositive(any(), any());
+    verify(fixture.roleSnapshots, never())
+        .findForCanonicalUpdate(any(), any(), any(), anyLong(), anyLong());
+    verify(fixture.generations, never()).readCompositeSnapshot(any(), any(), any(), any());
+  }
+
+  @Test
+  void reportsActualAccountGlobalRoleFactsAfterOriginalSignerAndReceiptChecks() throws Exception {
+    Fixture fixture = accountFixture(List.of("support"));
+    var actor = fixture.verifier.verifyAccount(fixture.compactJwt);
+    assertThat(actor.currentGlobalRoles()).containsExactly("support");
+    verify(fixture.signerStates)
+        .readOriginalCommittedSigner(
+            eq(fixture.signerBinding),
+            eq(fixture.trustFence),
+            eq(API_BINDING_DIGEST),
+            eq("api-r1"),
+            eq(PROMOTION_OPERATION_ID),
+            eq(GENERATION_OPERATION_ID));
+    assertThat(fixture.accountSnapshot.sources())
+        .extracting(SourceEvidence::kind)
+        .containsExactly(SourceKind.ACCOUNT, SourceKind.GLOBAL_ROLES, SourceKind.ISSUER);
+  }
+
+  @Test
+  void accountAndTenantVerificationRejectEachOthersScopeBeforeTenantAccess() throws Exception {
+    Fixture account = accountFixture(List.of());
+    assertDenied(() -> account.verifier.verify(account.compactJwt, TENANT_ID));
+    verify(account.committedIssuance, never()).tenantId();
+    verify(account.authority, never()).captureAccount(any());
+    Fixture tenant = new Fixture(ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false);
+    assertDenied(() -> tenant.verifier.verifyAccount(tenant.compactJwt));
+    verify(tenant.authority, never()).captureAccount(any());
+  }
+
+  @Test
+  void accountVerificationRefusesUnavailableOrChangedCurrentAccountSources() throws Exception {
+    Fixture unavailable = accountFixture(List.of());
+    doThrow(new IllegalStateException("test-only missing Account projection"))
+        .when(unavailable.authority)
+        .captureAccount(ACCOUNT_ID);
+    assertDenied(() -> unavailable.verifier.verifyAccount(unavailable.compactJwt));
+    Fixture changed = accountFixture(List.of());
+    when(changed.accountSnapshot.evidence()).thenReturn(canonicalBytes(Map.of("changed", true)));
+    assertDenied(() -> changed.verifier.verifyAccount(changed.compactJwt));
+  }
+
+  @Test
+  void accountVerificationRefusesChangedGlobalRoleTupleAndIssuanceFence() throws Exception {
+    Fixture roles = accountFixture(List.of("support"));
+    when(roles.accountSnapshot.globalRoles()).thenReturn(List.of());
+    assertDenied(() -> roles.verifier.verifyAccount(roles.compactJwt));
+    Fixture tuple = accountFixture(List.of());
+    when(tuple.accountSnapshot.authorityTuple()).thenReturn(Map.of());
+    assertDenied(() -> tuple.verifier.verifyAccount(tuple.compactJwt));
+    Fixture fence = accountFixture(List.of());
+    when(fence.accountSnapshot.issuanceFence()).thenReturn(2L);
+    assertDenied(() -> fence.verifier.verifyAccount(fence.compactJwt));
+  }
+
+  @Test
+  void accountVerificationRefusesMissingCommittedIssuanceAndRegistryOrClaimsMismatch()
+      throws Exception {
+    Fixture missing = accountFixture(List.of());
+    when(missing.issuances.readCommitted(missing.tokenHash)).thenReturn(Optional.empty());
+    assertDenied(() -> missing.verifier.verifyAccount(missing.compactJwt));
+    verify(missing.authority, never()).captureAccount(any());
+    Fixture registry = accountFixture(List.of());
+    when(registry.committedIssuance.activeRegistry()).thenReturn(canonicalBytes(Map.of()));
+    assertDenied(() -> registry.verifier.verifyAccount(registry.compactJwt));
+    verify(registry.authority, never()).captureAccount(any());
+    Fixture claims = accountFixture(List.of());
+    when(claims.committedIssuance.claims()).thenReturn(canonicalBytes(Map.of()));
+    assertDenied(() -> claims.verifier.verifyAccount(claims.compactJwt));
+    verify(claims.authority, never()).captureAccount(any());
+  }
+
+  @Test
+  void accountVerificationRefusesTenantBundleScopeAndInvalidReceiptOrOriginalSigner()
+      throws Exception {
+    Fixture scope = accountFixture(List.of());
+    Map<String, Object> bundle =
+        JSON.readValue(
+            scope.committedIssuance.bundle(), new TypeReference<Map<String, Object>>() {});
+    bundle.put(
+        "scope",
+        Map.of("kind", "TENANT", "accountId", ACCOUNT_ID.toString(), "tenantIds", List.of()));
+    when(scope.committedIssuance.bundle()).thenReturn(canonicalBytes(bundle));
+    assertDenied(() -> scope.verifier.verifyAccount(scope.compactJwt));
+    verify(scope.authority, never()).captureAccount(any());
+    Fixture receipt =
+        new Fixture(ACCOUNT_ID, List.of(), 1, 1, List.of(), 0, false, null, null, true);
+    assertDenied(() -> receipt.verifier.verifyAccount(receipt.compactJwt));
+    verify(receipt.authority, never()).captureAccount(any());
+    Fixture signer = new Fixture(ACCOUNT_ID, List.of(), 1, 1, List.of(), 1, true, null, null, true);
+    assertDenied(() -> signer.verifier.verifyAccount(signer.compactJwt));
+    verify(signer.authority, never()).captureAccount(any());
+  }
+
+  @Test
+  void accountVerificationStillRequiresGenuineSignatureBeforeIssuanceReads() throws Exception {
+    Fixture fixture = accountFixture(List.of());
+    String[] segments = fixture.compactJwt.split("\\.");
+    byte[] signature = Base64.getUrlDecoder().decode(segments[2]);
+    signature[0] ^= 1;
+    String tampered =
+        segments[0]
+            + "."
+            + segments[1]
+            + "."
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(signature);
+    assertThatThrownBy(() -> fixture.verifier.verifyAccount(tampered))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
+    verify(fixture.issuances, never()).readCommitted(any());
+    verify(fixture.authority, never()).captureAccount(any());
+  }
+
+  private static Fixture accountFixture(List<String> globalRoles) throws Exception {
+    return new Fixture(ACCOUNT_ID, globalRoles, 1, 1, List.of(), 1, false, null, null, true);
+  }
+
   private static void assertDenied(Runnable action) {
     assertThatThrownBy(action::run).isInstanceOf(IllegalStateException.class);
   }
@@ -371,6 +519,10 @@ class AccountControlUiCurrentActorVerifierTest {
     private final AccountJwtSignerDesiredStateRepository signerStates =
         mock(AccountJwtSignerDesiredStateRepository.class);
     private final AccountJwtJwksTrustedSource publicJwks = mock(AccountJwtJwksTrustedSource.class);
+    private final AccountControlUiAuthority authority = mock(AccountControlUiAuthority.class);
+    private final AccountControlUiAuthority.Snapshot accountSnapshot =
+        mock(AccountControlUiAuthority.Snapshot.class);
+    private final CommittedIssuance committedIssuance = mock(CommittedIssuance.class);
 
     private Fixture(
         UUID tokenAccountId,
@@ -393,10 +545,6 @@ class AccountControlUiCurrentActorVerifierTest {
           null);
     }
 
-    @SuppressFBWarnings(
-        value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
-        justification =
-            "These fixed paths model the protected Account API CA and projected bearer-token trust inputs in the fixture; the test never reads them.")
     private Fixture(
         UUID tokenAccountId,
         List<String> globalRoles,
@@ -408,7 +556,53 @@ class AccountControlUiCurrentActorVerifierTest {
         TenantAuthorityEventV1Codec.Event currentTenantEvent,
         Map<String, Object> tenantBillingCutoff)
         throws Exception {
+      this(
+          tokenAccountId,
+          globalRoles,
+          currentTenantGeneration,
+          currentMembershipGeneration,
+          roleSnapshot,
+          localAofCount,
+          mismatchPublicReceipt,
+          currentTenantEvent,
+          tenantBillingCutoff,
+          false);
+    }
+
+    @SuppressFBWarnings(
+        value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+        justification = "Protected trust paths are controlled fixture values and never read.")
+    private Fixture(
+        UUID tokenAccountId,
+        List<String> globalRoles,
+        long currentTenantGeneration,
+        long currentMembershipGeneration,
+        List<String> roleSnapshot,
+        int localAofCount,
+        boolean mismatchPublicReceipt,
+        TenantAuthorityEventV1Codec.Event currentTenantEvent,
+        Map<String, Object> tenantBillingCutoff,
+        boolean accountOnly)
+        throws Exception {
       Map<String, Object> claims = claims(tokenAccountId, globalRoles, tenantBillingCutoff);
+      if (accountOnly) {
+        claims.put(
+            "authorityTuple",
+            Map.of(
+                "issuerAuthGeneration",
+                1L,
+                "accountAuthorityGeneration",
+                1L,
+                "tenantAuthorityGeneration",
+                Map.of(),
+                "membershipAuthorityGeneration",
+                Map.of(),
+                "privateRealmGrantVersions",
+                List.of()));
+        claims.put("membershipVersion", Map.of());
+        claims.put("scopedRoles", Map.of());
+        if (globalRoles.isEmpty()) claims.remove("globalRoles");
+      }
       compactJwt = sign(claims, signingKey);
       tokenHash = sha256(compactJwt.getBytes(StandardCharsets.US_ASCII));
 
@@ -417,7 +611,12 @@ class AccountControlUiCurrentActorVerifierTest {
       SourceIdentity sourceIdentity = sourceIdentity();
       PublicJwksSnapshot jwksSnapshot = new PublicJwksSnapshot(sourceIdentity, jwksBytes);
       when(publicJwks.sourceIdentity()).thenReturn(sourceIdentity);
-      when(publicJwks.load()).thenReturn(jwksSnapshot);
+      when(publicJwks.load())
+          .thenAnswer(
+              ignored -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return jwksSnapshot;
+              });
 
       String trustBindingDigest =
           AccountJwtSignerMaterializerTrustBinding.computeBindingDigest(
@@ -467,13 +666,15 @@ class AccountControlUiCurrentActorVerifierTest {
       trustFence = new TrustFence(CLUSTER_UID, NAMESPACE_UID, trustBindingDigest, "trust-r1");
 
       byte[] sourceBytes =
-          canonicalBytes(
-              Map.of(
-                  "schemaVersion", 1,
-                  "issuer", ISSUER,
-                  "accountId", issuanceAccountId.toString(),
-                  "tenantId", TENANT_ID.toString(),
-                  "sources", List.of()));
+          accountOnly
+              ? accountSourceBytes(globalRoles)
+              : canonicalBytes(
+                  Map.of(
+                      "schemaVersion", 1,
+                      "issuer", ISSUER,
+                      "accountId", issuanceAccountId.toString(),
+                      "tenantId", TENANT_ID.toString(),
+                      "sources", List.of()));
       String sourceHash = sha256(sourceBytes);
       Map<String, Object> bundleRef =
           Map.of(
@@ -489,7 +690,16 @@ class AccountControlUiCurrentActorVerifierTest {
               "callerWorkload", "logging-admin-service",
               "callerContextId", CALLER_CONTEXT_ID.toString(),
               "accountId", issuanceAccountId.toString());
-      Map<String, Object> sourceVersions = sourceVersions();
+      Map<String, Object> sourceVersions =
+          accountOnly
+              ? Map.of(
+                  "ISSUER:" + ISSUER,
+                  "1",
+                  "ACCOUNT:" + ACCOUNT_ID,
+                  "1",
+                  "GLOBAL_ROLES:" + ACCOUNT_ID,
+                  "1")
+              : sourceVersions();
       Map<String, Object> roleEvidence =
           Map.of("scopedRoles", claims.get("scopedRoles"), "freshnessSource", sourceHash);
       Map<String, Object> bundle =
@@ -504,9 +714,9 @@ class AccountControlUiCurrentActorVerifierTest {
                   Map.entry(
                       "scope",
                       Map.of(
-                          "kind", "TENANT",
+                          "kind", accountOnly ? "ACCOUNT" : "TENANT",
                           "accountId", issuanceAccountId.toString(),
-                          "tenantIds", List.of(TENANT_ID.toString()))),
+                          "tenantIds", accountOnly ? List.of() : List.of(TENANT_ID.toString()))),
                   Map.entry("operation", operation),
                   Map.entry("tokenIdentity", tokenIdentity(claims)),
                   Map.entry("authorityTuple", claims.get("authorityTuple")),
@@ -515,20 +725,40 @@ class AccountControlUiCurrentActorVerifierTest {
                   Map.entry("authoritySourceVersions", sourceVersions),
                   Map.entry(
                       "accountIdentitySource",
-                      Map.of(
-                          "accountId",
-                          issuanceAccountId.toString(),
-                          "source",
-                          "account_repository_insert",
-                          "sourceVersion",
-                          1)),
+                      accountOnly
+                          ? Map.of(
+                              "sourceRowId",
+                              77,
+                              "sourceNumericId",
+                              77,
+                              "provenance",
+                              "ACCOUNT_REPOSITORY_INSERT")
+                          : Map.of(
+                              "accountId",
+                              issuanceAccountId.toString(),
+                              "source",
+                              "account_repository_insert",
+                              "sourceVersion",
+                              1)),
                   Map.entry(
                       "outboxCheckpoints",
-                      Map.of(
-                          "issuer", 0,
-                          "account", 0,
-                          "tenant", 0,
-                          "membership", 1)),
+                      accountOnly
+                          ? List.of(
+                              Map.of(
+                                  "outboxStreamKey",
+                                  "account:auth-authority:v1:issuer/" + ISSUER,
+                                  "outboxSequence",
+                                  "1"),
+                              Map.of(
+                                  "outboxStreamKey",
+                                  "account:auth-authority:v1:account/" + ACCOUNT_ID,
+                                  "outboxSequence",
+                                  "1"))
+                          : Map.of(
+                              "issuer", 0,
+                              "account", 0,
+                              "tenant", 0,
+                              "membership", 1)),
                   Map.entry("roleEvidence", roleEvidence)));
       Map<String, Object> evaluation =
           Map.of(
@@ -624,12 +854,19 @@ class AccountControlUiCurrentActorVerifierTest {
                   "replicaAofCount",
                   1));
 
-      var committedIssuance = mock(CommittedIssuance.class);
+      when(committedIssuance.scopeKind())
+          .thenReturn(accountOnly ? ScopeKind.ACCOUNT : ScopeKind.TENANT);
+      when(committedIssuance.optionalTenantId())
+          .thenReturn(accountOnly ? Optional.empty() : Optional.of(TENANT_ID));
       when(committedIssuance.requestId()).thenReturn(REQUEST_ID);
       when(committedIssuance.operationId()).thenReturn(OPERATION_ID);
       when(committedIssuance.tokenJti()).thenReturn(TOKEN_ID);
       when(committedIssuance.accountId()).thenReturn(issuanceAccountId);
-      when(committedIssuance.tenantId()).thenReturn(TENANT_ID);
+      if (accountOnly) {
+        when(committedIssuance.tenantId()).thenThrow(new AssertionError("Account has no tenant"));
+      } else {
+        when(committedIssuance.tenantId()).thenReturn(TENANT_ID);
+      }
       when(committedIssuance.callerWorkload()).thenReturn("logging-admin-service");
       when(committedIssuance.callerContextId()).thenReturn(CALLER_CONTEXT_ID);
       when(committedIssuance.requestDigest()).thenReturn(REQUEST_DIGEST);
@@ -649,12 +886,59 @@ class AccountControlUiCurrentActorVerifierTest {
 
       configureSignerReadback(mismatchPublicReceipt ? "0".repeat(64) : publicDataDigest);
       configureRegistry(activeRegistry);
-      configureCurrentSources(
-          currentTenantGeneration, currentMembershipGeneration, roleSnapshot, currentTenantEvent);
+      if (accountOnly) {
+        when(accountSnapshot.scopeKind()).thenReturn(ScopeKind.ACCOUNT);
+        when(accountSnapshot.actor()).thenReturn(issuanceAccountId);
+        when(accountSnapshot.optionalTenantId()).thenReturn(Optional.empty());
+        when(accountSnapshot.scopedRoles()).thenReturn(Map.of());
+        when(accountSnapshot.globalRoles()).thenReturn(List.copyOf(globalRoles));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> tuple = (Map<String, Object>) claims.get("authorityTuple");
+        when(accountSnapshot.authorityTuple()).thenReturn(tuple);
+        when(accountSnapshot.membershipVersion()).thenReturn(Map.of());
+        when(accountSnapshot.issuanceFence()).thenReturn(1L);
+        when(accountSnapshot.evidence()).thenReturn(sourceBytes);
+        when(accountSnapshot.sources()).thenReturn(accountSources(globalRoles));
+        when(authority.captureAccount(issuanceAccountId))
+            .thenAnswer(
+                ignored -> {
+                  assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                      .isTrue();
+                  assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                      .isFalse();
+                  return accountSnapshot;
+                });
+      } else {
+        configureCurrentSources(
+            currentTenantGeneration, currentMembershipGeneration, roleSnapshot, currentTenantEvent);
+      }
 
       PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
       when(transactionManager.getTransaction(any(TransactionDefinition.class)))
-          .thenReturn(new SimpleTransactionStatus());
+          .thenAnswer(
+              invocation -> {
+                TransactionDefinition definition = invocation.getArgument(0);
+                assertThat(definition.getIsolationLevel())
+                    .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+                TransactionSynchronizationManager.setActualTransactionActive(true);
+                TransactionSynchronizationManager.setCurrentTransactionReadOnly(
+                    definition.isReadOnly());
+                return new SimpleTransactionStatus();
+              });
+      doAnswer(
+              ignored -> {
+                TransactionSynchronizationManager.clear();
+                return null;
+              })
+          .when(transactionManager)
+          .commit(any());
+      doAnswer(
+              ignored -> {
+                TransactionSynchronizationManager.clear();
+                return null;
+              })
+          .when(transactionManager)
+          .rollback(any());
       verifier =
           new AccountControlUiCurrentActorVerifier(
               publicJwks,
@@ -670,6 +954,7 @@ class AccountControlUiCurrentActorVerifierTest {
               membershipPairs,
               roleSnapshots,
               outbox,
+              authority,
               transactionManager,
               Clock.fixed(NOW, ZoneId.of("UTC")));
     }
@@ -725,7 +1010,12 @@ class AccountControlUiCurrentActorVerifierTest {
       when(options.isAutoReconnect()).thenReturn(false);
       when(connection.sync()).thenReturn(commands);
       when(commands.aclWhoami()).thenReturn(AccountControlUiRegistryReader.REQUIRED_ACL_IDENTITY);
-      when(commands.get(any(byte[].class))).thenReturn(activeRegistry);
+      when(commands.get(any(byte[].class)))
+          .thenAnswer(
+              ignored -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return activeRegistry;
+              });
       when(commands.pexpiretime(any(byte[].class))).thenReturn(CLEANUP_DEADLINE_MILLIS);
       registry = new AccountControlUiRegistryReader(() -> connection);
     }
@@ -859,6 +1149,77 @@ class AccountControlUiCurrentActorVerifierTest {
               membershipEvent.canonicalJson().getBytes(StandardCharsets.UTF_8));
       when(outbox.findEvent(streamKey, 1L)).thenReturn(Optional.of(membershipOutboxEvent));
     }
+  }
+
+  private static List<SourceEvidence> accountSources(List<String> globalRoles) throws Exception {
+    return List.of(
+        new SourceEvidence(
+            SourceKind.ACCOUNT,
+            ACCOUNT_ID.toString(),
+            "1",
+            "1",
+            "account:auth-authority:v1:account/" + ACCOUNT_ID,
+            "1",
+            canonicalBytes(
+                Map.of(
+                    "accountId",
+                    ACCOUNT_ID.toString(),
+                    "lifecycleState",
+                    "ACTIVE",
+                    "accountSecurityLock",
+                    "NONRESTRICTED",
+                    "platformAccessBan",
+                    "NONRESTRICTED"))),
+        new SourceEvidence(
+            SourceKind.GLOBAL_ROLES,
+            ACCOUNT_ID.toString(),
+            "1",
+            "1",
+            "account:auth-authority:v1:account/" + ACCOUNT_ID,
+            "1",
+            canonicalBytes(
+                Map.of(
+                    "accountId",
+                    ACCOUNT_ID.toString(),
+                    "globalRoleSourceVersion",
+                    1,
+                    "globalRoles",
+                    globalRoles))),
+        new SourceEvidence(
+            SourceKind.ISSUER,
+            ISSUER,
+            "1",
+            "1",
+            "account:auth-authority:v1:issuer/" + ISSUER,
+            "1",
+            canonicalBytes(Map.of("issuer", ISSUER, "generation", 1))));
+  }
+
+  private static byte[] accountSourceBytes(List<String> globalRoles) throws Exception {
+    return canonicalBytes(
+        Map.of(
+            "schemaVersion",
+            1,
+            "scopeKind",
+            "ACCOUNT",
+            "accountId",
+            ACCOUNT_ID.toString(),
+            "issuanceFence",
+            1,
+            "issuanceFenceSourceVersion",
+            1,
+            "accountIdentitySource",
+            Map.of(
+                "sourceRowId",
+                77,
+                "sourceNumericId",
+                77,
+                "provenance",
+                "ACCOUNT_REPOSITORY_INSERT"),
+            "sources",
+            accountSources(globalRoles).stream()
+                .map(source -> Base64.getEncoder().encodeToString(source.canonicalBytes()))
+                .toList()));
   }
 
   private static TenantAuthorityEventV1Codec.Event currentTenantEvent() {

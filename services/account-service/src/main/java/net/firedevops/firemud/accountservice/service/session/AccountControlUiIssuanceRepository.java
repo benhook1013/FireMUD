@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
@@ -99,6 +100,21 @@ public final class AccountControlUiIssuanceRepository {
     Instant recovery = issuedAt.plusSeconds(60);
     var spec =
         new AccountControlUiSigningSpec(operationId, requestId, jti, source, issuedAt, expiry);
+    var scopeKind = source.scopeKind();
+    Optional<UUID> optionalTenantId = source.optionalTenantId();
+    if (scopeKind == null
+        || optionalTenantId == null
+        || ((scopeKind == AccountControlUiAuthority.ScopeKind.TENANT)
+            != optionalTenantId.isPresent())) {
+      throw denied();
+    }
+    if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+        && (!Map.of().equals(source.authorityTuple().get("tenantAuthorityGeneration"))
+            || !Map.of().equals(source.authorityTuple().get("membershipAuthorityGeneration"))
+            || !source.membershipVersion().isEmpty()
+            || !source.scopedRoles().isEmpty())) {
+      throw denied();
+    }
     OwnerLinearization linearization = captureOwnerLinearization();
     String xid = linearization.transactionId();
     long fence = linearization.sourceFence();
@@ -146,15 +162,7 @@ public final class AccountControlUiIssuanceRepository {
     bundle.put("issuer", "firemud-account-service");
     bundle.put("profile", "control-ui");
     bundle.put("audience", "control-ui");
-    bundle.put(
-        "scope",
-        Map.of(
-            "kind",
-            "TENANT",
-            "accountId",
-            source.actor().toString(),
-            "tenantIds",
-            java.util.List.of(source.tenant().toString())));
+    bundle.put("scope", scope(source, scopeKind, optionalTenantId));
     bundle.put("operation", operation);
     bundle.put(
         "tokenIdentity",
@@ -188,17 +196,19 @@ public final class AccountControlUiIssuanceRepository {
         dsl.execute(
             "INSERT INTO "
                 + TABLE
-                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload,"
+                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid,"
+                + " authorization_scope, caller_workload,"
                 + " caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload,"
                 + " bundle_payload, signer_receipt, issued_at_epoch_second, expires_at_epoch_second,"
                 + " registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
                 + " ON CONFLICT (request_id) DO NOTHING",
             requestId,
             operationId,
             jti,
             source.actor(),
-            source.tenant(),
+            optionalTenantId.orElse(null),
+            scopeKind.name(),
             caller,
             callerContextId,
             macKeyId,
@@ -220,6 +230,32 @@ public final class AccountControlUiIssuanceRepository {
     registry(stored, signer, "0".repeat(64), false);
     registry(stored, signer, "0".repeat(64), true);
     return stored;
+  }
+
+  private static Map<String, Object> scope(
+      AccountControlUiAuthority.Snapshot source,
+      AccountControlUiAuthority.ScopeKind scopeKind,
+      Optional<UUID> tenantId) {
+    if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+      if (tenantId.isPresent()) {
+        throw denied();
+      }
+      return Map.of(
+          "kind",
+          "ACCOUNT",
+          "accountId",
+          source.actor().toString(),
+          "tenantIds",
+          java.util.List.of());
+    }
+    UUID tenant = tenantId.orElseThrow(AccountControlUiIssuanceRepository::denied);
+    if (!tenant.equals(source.tenant())) {
+      throw denied();
+    }
+    return Map.of(
+        "kind", "TENANT",
+        "accountId", source.actor().toString(),
+        "tenantIds", java.util.List.of(tenant.toString()));
   }
 
   Stored bindCandidate(
@@ -403,6 +439,8 @@ public final class AccountControlUiIssuanceRepository {
     }
     Stored current = new Stored(row);
     if (!original.requestId.equals(current.requestId)
+        || original.scopeKind != current.scopeKind
+        || !Objects.equals(original.tenantId, current.tenantId)
         || !Arrays.equals(original.claims, current.claims)
         || !Arrays.equals(original.sources, current.sources)
         || !Arrays.equals(original.bundle, current.bundle)
@@ -504,6 +542,7 @@ public final class AccountControlUiIssuanceRepository {
 
   static final class Stored {
     final UUID requestId, operationId, jti, accountId, tenantId, callerContextId;
+    final AccountControlUiAuthority.ScopeKind scopeKind;
     final String caller, requestMacKeyId, requestDigest, status, tokenHash;
     final byte[] claims, sources, bundle, signerReceipt, pendingRegistry, activeRegistry;
     final Instant issuedAt, expiresAt, recoveryExpiry;
@@ -514,7 +553,8 @@ public final class AccountControlUiIssuanceRepository {
       operationId = row.get("operation_id", UUID.class);
       jti = row.get("token_jti", UUID.class);
       accountId = row.get("account_uuid", UUID.class);
-      tenantId = row.get("tenant_uuid", UUID.class);
+      scopeKind = scopeKind(row);
+      tenantId = tenantId(row, scopeKind);
       callerContextId = row.get("caller_context_id", UUID.class);
       caller = row.get("caller_workload", String.class);
       requestMacKeyId = row.get("request_mac_key_id", String.class);
@@ -532,6 +572,47 @@ public final class AccountControlUiIssuanceRepository {
       registryCleanupDeadlineEpochMillis =
           row.get("registry_cleanup_deadline_epoch_millis", Long.class);
       recoveryExpiry = row.get("recovery_expires_at", OffsetDateTime.class).toInstant();
+    }
+
+    private static AccountControlUiAuthority.ScopeKind scopeKind(Record row) {
+      String value = row.get("authorization_scope", String.class);
+      if (value == null) {
+        throw denied();
+      }
+      return switch (value) {
+        case "ACCOUNT" -> AccountControlUiAuthority.ScopeKind.ACCOUNT;
+        case "TENANT" -> AccountControlUiAuthority.ScopeKind.TENANT;
+        default -> throw denied();
+      };
+    }
+
+    private static UUID tenantId(Record row, AccountControlUiAuthority.ScopeKind scopeKind) {
+      UUID value = row.get("tenant_uuid", UUID.class);
+      if (scopeKind == AccountControlUiAuthority.ScopeKind.TENANT) {
+        if (value == null || isNil(value)) {
+          throw denied();
+        }
+        return value;
+      }
+      if (value != null) {
+        throw denied();
+      }
+      return null;
+    }
+
+    public AccountControlUiAuthority.ScopeKind scopeKind() {
+      return scopeKind;
+    }
+
+    public Optional<UUID> optionalTenantId() {
+      return Optional.ofNullable(tenantId);
+    }
+
+    public UUID tenantId() {
+      if (scopeKind != AccountControlUiAuthority.ScopeKind.TENANT) {
+        throw denied();
+      }
+      return tenantId;
     }
 
     long expiryMillis() {
@@ -553,6 +634,10 @@ public final class AccountControlUiIssuanceRepository {
     public String toString() {
       return "AccountControlUiIssuanceRepository.Stored[redacted]";
     }
+  }
+
+  private static boolean isNil(UUID value) {
+    return value.getMostSignificantBits() == 0L && value.getLeastSignificantBits() == 0L;
   }
 
   public record OwnerLinearization(String transactionId, long sourceFence) {

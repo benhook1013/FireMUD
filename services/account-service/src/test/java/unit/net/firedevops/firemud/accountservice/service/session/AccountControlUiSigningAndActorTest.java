@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import org.jooq.Record;
@@ -291,6 +293,124 @@ class AccountControlUiSigningAndActorTest {
         .isInstanceOf(IllegalStateException.class);
   }
 
+  @Test
+  void accountActorConsumesExactCurrentSourcesAndProducerFenceInsideOwnerTransaction()
+      throws Exception {
+    Fixture f = new Fixture(true);
+    String compact = f.sign(f.claims);
+    f.owner(compact);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new byte[] {12};
+            })
+        .when(f.registry)
+        .readActive(anyString());
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return f.snapshot;
+            })
+        .when(f.authority)
+        .captureAccount(f.actor);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return null;
+            })
+        .when(f.fences)
+        .lockProducerSourcesNowait(any());
+    var actor =
+        f.actors.withCurrentAccount(
+            compact,
+            current -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              verify(f.fences).lockProducerSourcesNowait(f.snapshot.sources());
+              return current;
+            });
+    assertThat(actor.accountId()).isEqualTo(f.actor);
+    assertThat(actor.issuanceOperationId()).isEqualTo(f.operationId);
+    assertThat(actor.tokenHash()).isEqualTo(f.stored.tokenHash);
+    verify(f.authority, never()).capture(any(), any(), any());
+    assertThatThrownBy(() -> f.actors.authenticate(compact, f.tenant, f.environment))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                f.actors.withCurrentCommitted(
+                    f.actor, f.tenant, f.jti, f.environment, current -> current))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void accountActorRejectsChangedSourceOrRoleAndNeverInvokesMutation() throws Exception {
+    Fixture f = new Fixture(true);
+    String compact = f.sign(f.claims);
+    f.owner(compact);
+    when(f.snapshot.evidence()).thenReturn(new byte[] {99});
+    assertThatThrownBy(
+            () ->
+                f.actors.withCurrentAccount(
+                    compact,
+                    current -> {
+                      throw new AssertionError("mutation must not run");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    when(f.snapshot.evidence()).thenReturn(new byte[] {7});
+    when(f.snapshot.globalRoles()).thenReturn(List.of());
+    assertThatThrownBy(() -> f.actors.authenticateAccount(compact))
+        .isInstanceOf(IllegalStateException.class);
+    verify(f.fences, never()).lockProducerSourcesNowait(any());
+  }
+
+  @Test
+  void accountActorRejectsTenantTokenAndLostProducerFence() throws Exception {
+    Fixture tenant = new Fixture();
+    String tenantJwt = tenant.sign(tenant.claims);
+    tenant.owner(tenantJwt);
+    assertThatThrownBy(() -> tenant.actors.authenticateAccount(tenantJwt))
+        .isInstanceOf(IllegalStateException.class);
+    verify(tenant.authority, never()).captureAccount(any());
+
+    Fixture account = new Fixture(true);
+    String compact = account.sign(account.claims);
+    account.owner(compact);
+    doThrow(new IllegalStateException("test-only concurrent source writer"))
+        .when(account.fences)
+        .lockProducerSourcesNowait(any());
+    assertThatThrownBy(
+            () ->
+                account.actors.withCurrentAccount(
+                    compact,
+                    current -> {
+                      throw new AssertionError("mutation must not run");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void accountActorStillRequiresExactRegistryAndOriginalSigner() throws Exception {
+    Fixture f = new Fixture(true);
+    String compact = f.sign(f.claims);
+    f.owner(compact);
+    when(f.registry.readActive(anyString())).thenReturn(new byte[] {99});
+    assertThatThrownBy(() -> f.actors.authenticateAccount(compact))
+        .isInstanceOf(IllegalStateException.class);
+    verify(f.authority, never()).captureAccount(any());
+    when(f.registry.readActive(anyString())).thenReturn(new byte[] {12});
+    when(f.signers.requireOriginal(any(byte[].class)))
+        .thenThrow(new IllegalStateException("test-only missing original signer"));
+    assertThatThrownBy(
+            () ->
+                f.actors.withCurrentAccount(
+                    compact,
+                    current -> {
+                      throw new AssertionError("mutation must not run");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    verify(f.authority, never()).captureAccount(any());
+    verify(f.fences, never()).lockProducerSourcesNowait(any());
+  }
+
   private static final class Fixture {
     final UUID actor = UUID.randomUUID(), tenant = UUID.randomUUID(), jti = UUID.randomUUID();
     final UUID operationId = UUID.randomUUID(), requestId = UUID.randomUUID();
@@ -337,11 +457,55 @@ class AccountControlUiSigningAndActorTest {
             "test-revision",
             "https://test-api.example.test:6443",
             "a".repeat(64));
+    final DraftAuthorizationFenceRepository fences = mock(DraftAuthorizationFenceRepository.class);
     final AccountControlUiActorService actors;
     final Map<String, Object> claims;
     AccountControlUiIssuanceRepository.Stored stored;
 
     Fixture() {
+      this(false);
+    }
+
+    Fixture(boolean accountOnly) {
+      when(snapshot.scopeKind())
+          .thenReturn(
+              accountOnly
+                  ? AccountControlUiAuthority.ScopeKind.ACCOUNT
+                  : AccountControlUiAuthority.ScopeKind.TENANT);
+      when(snapshot.optionalTenantId())
+          .thenReturn(accountOnly ? java.util.Optional.empty() : java.util.Optional.of(tenant));
+      when(snapshot.scopedRoles())
+          .thenReturn(accountOnly ? Map.of() : Map.of(tenant.toString(), List.of("tenantAdmin")));
+      when(snapshot.globalRoles()).thenReturn(accountOnly ? List.of("support") : List.of());
+      if (accountOnly) {
+        when(snapshot.sources())
+            .thenReturn(
+                List.of(
+                    new SourceEvidence(
+                        SourceKind.ACCOUNT,
+                        actor.toString(),
+                        "1",
+                        "1",
+                        "test/account",
+                        "1",
+                        new byte[] {1}),
+                    new SourceEvidence(
+                        SourceKind.GLOBAL_ROLES,
+                        actor.toString(),
+                        "1",
+                        "1",
+                        "test/account",
+                        "1",
+                        new byte[] {2}),
+                    new SourceEvidence(
+                        SourceKind.ISSUER,
+                        "firemud-account-service",
+                        "1",
+                        "1",
+                        "test/issuer",
+                        "1",
+                        new byte[] {3})));
+      }
       when(snapshot.actor()).thenReturn(actor);
       when(snapshot.tenant()).thenReturn(tenant);
       when(snapshot.authorityTuple())
@@ -357,7 +521,23 @@ class AccountControlUiSigningAndActorTest {
                   Map.of(tenant.toString(), 1L),
                   "privateRealmGrantVersions",
                   List.of()));
-      when(snapshot.membershipVersion()).thenReturn(Map.of(tenant.toString(), 2L));
+      when(snapshot.membershipVersion())
+          .thenReturn(accountOnly ? Map.of() : Map.of(tenant.toString(), 2L));
+      if (accountOnly) {
+        when(snapshot.authorityTuple())
+            .thenReturn(
+                Map.of(
+                    "issuerAuthGeneration",
+                    1L,
+                    "accountAuthorityGeneration",
+                    1L,
+                    "tenantAuthorityGeneration",
+                    Map.of(),
+                    "membershipAuthorityGeneration",
+                    Map.of(),
+                    "privateRealmGrantVersions",
+                    List.of()));
+      }
       when(snapshot.issuanceFence()).thenReturn(1L);
       when(snapshot.evidence()).thenReturn(new byte[] {7});
       claims =
@@ -393,7 +573,7 @@ class AccountControlUiSigningAndActorTest {
               signers,
               registry,
               source,
-              mock(DraftAuthorizationFenceRepository.class),
+              fences,
               transactions,
               Clock.fixed(NOW, ZoneOffset.UTC));
     }
@@ -406,7 +586,8 @@ class AccountControlUiSigningAndActorTest {
       values.put("operation_id", operationId);
       values.put("token_jti", jti);
       values.put("account_uuid", actor);
-      values.put("tenant_uuid", tenant);
+      values.put("authorization_scope", snapshot.scopeKind().name());
+      values.put("tenant_uuid", snapshot.optionalTenantId().orElse(null));
       values.put("caller_context_id", UUID.randomUUID());
       values.put("caller_workload", "test-only-peer");
       values.put("request_mac_key_id", "test-only-mac");
@@ -450,6 +631,7 @@ class AccountControlUiSigningAndActorTest {
       when(operations.findTokenJti(jti)).thenReturn(stored);
       when(registry.readActive(hash)).thenReturn(new byte[] {12});
       when(authority.capture(actor, tenant, environment)).thenReturn(snapshot);
+      when(authority.captureAccount(actor)).thenReturn(snapshot);
       var committed = mock(AccountControlUiIssuanceRepository.Committed.class);
       when(committed.tokenHash()).thenReturn(hash);
       when(operations.requireCommitted(stored)).thenReturn(committed);

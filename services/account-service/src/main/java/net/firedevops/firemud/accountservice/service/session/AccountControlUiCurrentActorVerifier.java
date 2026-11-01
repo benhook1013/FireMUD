@@ -17,6 +17,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority.ScopeKind;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -63,8 +65,8 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>The returned object is authenticated-current actor evidence only. This class does not issue or
  * redeem operator references, select a privileged route, or turn a creator grant into owner
- * authority. It deliberately denies global-role claims; callers must perform the approved route
- * predicate separately against this current tenant-scoped evidence.
+ * authority. Tenant verification denies global-role claims. Account verification reports role facts
+ * only; callers must perform the approved route predicate separately.
  */
 public final class AccountControlUiCurrentActorVerifier {
   private static final String ISSUER = "firemud-account-service";
@@ -142,6 +144,19 @@ public final class AccountControlUiCurrentActorVerifier {
           0,
           16384,
           claims -> ControlUiJwtProfileValidator.validateClaims(claims, 1));
+  private static final ExplicitRouteProfilePolicy ACCOUNT_POLICY =
+      new ExplicitRouteProfilePolicy(
+          "account-control-ui-account-current-actor",
+          ControlUiJwtProfileValidator.PROFILE,
+          ControlUiJwtProfileValidator.TOKEN_TYPE,
+          ISSUER,
+          ControlUiJwtProfileValidator.AUDIENCE,
+          ControlUiJwtProfileValidator.REQUIRED_CLAIMS,
+          ControlUiJwtProfileValidator.OPTIONAL_CLAIMS,
+          300,
+          0,
+          16384,
+          claims -> ControlUiJwtProfileValidator.validateClaims(claims, 1));
 
   private final AccountJwtJwksTrustedSource publicJwks;
   private final SourceIdentity publicSourcePin;
@@ -160,6 +175,7 @@ public final class AccountControlUiCurrentActorVerifier {
   private final AccountAuthorityOutboxRepository outbox;
   private final TransactionTemplate accountTransaction;
   private final Clock clock;
+  private final AccountControlUiAuthority authority;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -179,6 +195,7 @@ public final class AccountControlUiCurrentActorVerifier {
       AccountMembershipPairAuthorityRepository membershipPairs,
       AccountTenantMembershipRoleSnapshotRepository roleSnapshots,
       AccountAuthorityOutboxRepository outbox,
+      AccountControlUiAuthority authority,
       PlatformTransactionManager transactionManager,
       Clock clock) {
     this.publicJwks = Objects.requireNonNull(publicJwks);
@@ -194,6 +211,7 @@ public final class AccountControlUiCurrentActorVerifier {
     this.membershipPairs = Objects.requireNonNull(membershipPairs);
     this.roleSnapshots = Objects.requireNonNull(roleSnapshots);
     this.outbox = Objects.requireNonNull(outbox);
+    this.authority = Objects.requireNonNull(authority);
     this.clock = Objects.requireNonNull(clock);
     this.publicSourcePin = this.publicJwks.sourceIdentity();
     this.publicJwksCache =
@@ -206,33 +224,74 @@ public final class AccountControlUiCurrentActorVerifier {
 
   /** Verifies one signed actor for its selected canonical tenant; no authorization is returned. */
   public CurrentActor verify(String compactJwt, UUID selectedTenant) {
-    outsideSql();
     requireTenant(selectedTenant);
+    return verifyObserved(
+        compactJwt,
+        ScopeKind.TENANT,
+        selectedTenant,
+        (issuance, claims) ->
+            requireCurrentAccountAuthority(issuance, claims, selectedTenant, issuance.tokenHash()));
+  }
+
+  /** Bounded current Account observation, never authority for a later mutation or route. */
+  public CurrentAccountActor verifyAccount(String compactJwt) {
+    return verifyObserved(
+        compactJwt,
+        ScopeKind.ACCOUNT,
+        null,
+        (issuance, claims) -> {
+          var current = authority.captureAccount(issuance.accountId());
+          if (current.scopeKind() != ScopeKind.ACCOUNT
+              || !Arrays.equals(current.evidence(), issuance.source())
+              || !canonicalMapEquals(current.authorityTuple(), claims.get("authorityTuple"))
+              || !canonicalMapEquals(current.membershipVersion(), claims.get("membershipVersion"))
+              || !canonicalMapEquals(current.scopedRoles(), claims.get("scopedRoles"))
+              || !canonicalMapEquals(
+                  current.globalRoles(), claims.getOrDefault("globalRoles", List.of()))
+              || !numericEquals(claims.get("issuanceFence"), current.issuanceFence()))
+            throw denied();
+          return new CurrentAccountActor(
+              issuance.accountId(),
+              issuance.operationId(),
+              issuance.tokenHash(),
+              current.globalRoles());
+        });
+  }
+
+  private <T> T verifyObserved(
+      String compactJwt,
+      ScopeKind scopeKind,
+      UUID selectedTenant,
+      java.util.function.BiFunction<CommittedIssuance, Map<String, Object>, T> action) {
+    outsideSql();
     byte[] compactBytes = compactBytes(compactJwt);
     VerifiedClaims signed =
-        new AccountAsymmetricJwtVerifier(publicJwksCache, clock).verify(compactJwt, POLICY);
+        new AccountAsymmetricJwtVerifier(publicJwksCache, clock)
+            .verify(compactJwt, scopeKind == ScopeKind.ACCOUNT ? ACCOUNT_POLICY : POLICY);
     PublicJwksSnapshot currentJwks = publicJwks.load();
     String tokenHash = sha256(compactBytes);
     byte[] activeRegistry = registry.readActive(tokenHash);
-
-    CurrentActor result =
+    T result =
         accountTransaction.execute(
-            ignored ->
-                verifyOwnerState(
-                    tokenHash,
-                    selectedTenant,
-                    signed,
-                    publicSourcePin,
-                    currentJwks,
-                    activeRegistry));
-    if (result == null) {
-      throw denied();
-    }
+            ignored -> {
+              var issuance =
+                  verifyOwnerState(
+                      tokenHash,
+                      scopeKind,
+                      selectedTenant,
+                      signed,
+                      publicSourcePin,
+                      currentJwks,
+                      activeRegistry);
+              return action.apply(issuance, signed.claims());
+            });
+    if (result == null) throw denied();
     return result;
   }
 
-  private CurrentActor verifyOwnerState(
+  private CommittedIssuance verifyOwnerState(
       String tokenHash,
+      ScopeKind scopeKind,
       UUID selectedTenant,
       VerifiedClaims signed,
       SourceIdentity pin,
@@ -240,9 +299,15 @@ public final class AccountControlUiCurrentActorVerifier {
       byte[] activeRegistry) {
     Map<String, Object> claims = signed.claims();
     UUID accountId = uuid(claims.get("accountId"));
-    UUID tokenTenant = selectedScopedTenant(claims, selectedTenant);
-    if (!selectedTenant.equals(tokenTenant) || claims.containsKey("globalRoles")) {
-      throw denied();
+    switch (scopeKind) {
+      case TENANT -> {
+        selectedScopedTenant(claims, selectedTenant);
+        if (claims.containsKey("globalRoles")) throw denied();
+      }
+      case ACCOUNT -> {
+        if (!Map.of().equals(claims.get("scopedRoles"))
+            || !Map.of().equals(claims.get("membershipVersion"))) throw denied();
+      }
     }
     CommittedIssuance issuance =
         issuances
@@ -254,7 +319,8 @@ public final class AccountControlUiCurrentActorVerifier {
         || !claims.get("sub").equals(accountId.toString())
         || !issuance.tokenHash().equals(tokenHash)
         || !issuance.accountId().equals(accountId)
-        || !issuance.tenantId().equals(selectedTenant)
+        || issuance.scopeKind() != scopeKind
+        || (scopeKind == ScopeKind.TENANT && !issuance.tenantId().equals(selectedTenant))
         || !issuance.tokenJti().equals(uuid(claims.get("jti")))
         || !issuance.requestId().equals(uuid(registryRecord.get("requestId")))
         || !issuance.operationId().equals(uuid(registryRecord.get("operationId")))
@@ -284,7 +350,7 @@ public final class AccountControlUiCurrentActorVerifier {
     requireBundle(issuance, claims, registryRecord);
     requirePendingReceipt(issuance);
     requireSignerReceipt(issuance, signed.keyId(), pin, currentJwks);
-    return requireCurrentAccountAuthority(issuance, claims, selectedTenant, tokenHash);
+    return issuance;
   }
 
   private void requireBundle(
@@ -325,8 +391,11 @@ public final class AccountControlUiCurrentActorVerifier {
         || !issuance.callerWorkload().equals(operation.get("callerWorkload"))
         || !issuance.callerContextId().toString().equals(operation.get("callerContextId"))
         || !issuance.accountId().toString().equals(scope.get("accountId"))
-        || !List.of(issuance.tenantId().toString()).equals(scope.get("tenantIds"))
-        || !"TENANT".equals(scope.get("kind"))
+        || !issuance.scopeKind().name().equals(scope.get("kind"))
+        || !switch (issuance.scopeKind()) {
+          case ACCOUNT -> List.of().equals(scope.get("tenantIds"));
+          case TENANT -> List.of(issuance.tenantId().toString()).equals(scope.get("tenantIds"));
+        }
         || !canonicalMapEquals(bundle.get("authorityTuple"), claims.get("authorityTuple"))
         || !canonicalMapEquals(bundle.get("membershipVersion"), claims.get("membershipVersion"))
         || !numericEquals(bundle.get("issuanceFence"), positiveLong(claims.get("issuanceFence")))
@@ -825,6 +894,17 @@ public final class AccountControlUiCurrentActorVerifier {
   /**
    * Identity and current source tuple only. It is not a route authorization or a reference grant.
    */
+  public record CurrentAccountActor(
+      UUID accountId, UUID issuanceOperationId, String tokenHash, List<String> currentGlobalRoles) {
+    public CurrentAccountActor {
+      Objects.requireNonNull(accountId);
+      Objects.requireNonNull(issuanceOperationId);
+      if (tokenHash == null || !DIGEST.matcher(tokenHash).matches())
+        throw new IllegalArgumentException("Control-ui actor token identity is invalid");
+      currentGlobalRoles = List.copyOf(currentGlobalRoles);
+    }
+  }
+
   public record CurrentActor(
       UUID accountId,
       UUID tenantId,

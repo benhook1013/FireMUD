@@ -581,6 +581,7 @@ class AccountSelectedOwnerIntakeAuthorizationServiceTest {
     when(row.get("token_jti", UUID.class)).thenReturn(UUID.randomUUID());
     when(row.get("account_uuid", UUID.class)).thenReturn(actorId);
     when(row.get("tenant_uuid", UUID.class)).thenReturn(tenantId);
+    when(row.get("authorization_scope", String.class)).thenReturn("TENANT");
     when(row.get("caller_context_id", UUID.class)).thenReturn(UUID.randomUUID());
     when(row.get("caller_workload", String.class)).thenReturn("game-design-service");
     when(row.get("request_mac_key_id", String.class)).thenReturn("key");
