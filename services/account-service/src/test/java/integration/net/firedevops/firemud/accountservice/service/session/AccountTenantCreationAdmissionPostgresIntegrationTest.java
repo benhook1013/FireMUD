@@ -544,7 +544,7 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
     Account account(String modes) {
       Account account = new Account();
       String suffix = UUID.randomUUID().toString();
-      account.setUsername("creation-admission-" + suffix);
+      account.setUsername("creation-" + suffix);
       account.setEmail(suffix + "@example.test");
       account.setPasswordHash(hash(PASSWORD));
       account.setRole("player");
