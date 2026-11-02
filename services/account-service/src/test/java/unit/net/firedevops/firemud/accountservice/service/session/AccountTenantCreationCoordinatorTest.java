@@ -67,6 +67,28 @@ class AccountTenantCreationCoordinatorTest {
   }
 
   @Test
+  void exactCreatedHistoricalRecoveryIsDistinctFromAccountCompletionAndNeverResends() {
+    var f = new Fixture();
+    when(f.dispatches.hasClaim(f.operation)).thenReturn(true);
+    when(f.completed.state())
+        .thenReturn(AccountTenantCreationCompletionOwner.State.CREATED_WITHOUT_ACCOUNT_COMPLETION);
+    byte[] history = f.terminal.evidence().canonicalBytes();
+    String historyDigest = f.terminal.evidence().evidenceDigest();
+    when(f.completed.payload()).thenReturn(history);
+    when(f.completed.digest()).thenReturn(historyDigest);
+    var first = f.start();
+    var replay = f.coordinator.recover(f.operation, f.recent, f.environment);
+    assertThat(first.state())
+        .isEqualTo(AccountTenantCreationCoordinator.State.CREATED_WITHOUT_ACCOUNT_COMPLETION);
+    assertThat(replay.state()).isEqualTo(first.state());
+    assertThat(replay.payload()).isEqualTo(history);
+    assertThat(replay.digest()).isEqualTo(historyDigest);
+    verify(f.dispatches, never()).claim(any(), any(), any());
+    verify(f.dispatches, never()).isDispatchWindowClosed(any());
+    verifyNoInteractions(f.creation, f.admission, f.orders);
+  }
+
+  @Test
   void exactConcurrentRetryBeforeDispatchDeadlineNeverClosesReadmitsOrRedispatches() {
     var f = new Fixture();
     when(f.dispatches.hasClaim(f.operation)).thenReturn(true);
@@ -259,6 +281,8 @@ class AccountTenantCreationCoordinatorTest {
         mock(AccountRecentReauthenticationEvidence.class);
     final CapturedEnvironmentBoundary environment = mock(CapturedEnvironmentBoundary.class);
     final VerifiedTerminal terminal = mock(VerifiedTerminal.class);
+    final AccountTenantCreationCompletionOwner.Result completed =
+        mock(AccountTenantCreationCompletionOwner.Result.class);
     final AccountTenantCreationDispatchRepository.Original original;
     final AccountTenantCreationCoordinator coordinator;
 
@@ -323,7 +347,7 @@ class AccountTenantCreationCoordinatorTest {
       when(terminal.binding()).thenReturn(binding);
       when(terminal.evidence()).thenReturn(evidence);
       when(outcomes.readOriginal(binding)).thenReturn(terminal);
-      var completed = mock(AccountTenantCreationCompletionOwner.Result.class);
+      when(completed.state()).thenReturn(AccountTenantCreationCompletionOwner.State.COMPLETED);
       when(completed.payload()).thenReturn(new byte[] {3});
       when(completed.digest()).thenReturn("digest");
       when(completion.complete(operation, terminal, environment, recent)).thenReturn(completed);

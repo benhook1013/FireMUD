@@ -115,7 +115,12 @@ final class AccountTenantCreationCoordinator {
     // A late historical CREATED result cannot bypass those checks or consume new authority here.
     var result =
         completion.complete(original.intent().creationOperationId(), terminal, environment, recent);
-    return new Result(State.COMPLETED, result.payload(), result.digest());
+    State state =
+        switch (result.state()) {
+          case COMPLETED -> State.COMPLETED;
+          case CREATED_WITHOUT_ACCOUNT_COMPLETION -> State.CREATED_WITHOUT_ACCOUNT_COMPLETION;
+        };
+    return new Result(state, result.payload(), result.digest());
   }
 
   private VerifiedTerminal readOrCloseOriginal(Original original) {
@@ -204,7 +209,8 @@ final class AccountTenantCreationCoordinator {
   enum State {
     PENDING,
     NOT_CREATED,
-    COMPLETED
+    COMPLETED,
+    CREATED_WITHOUT_ACCOUNT_COMPLETION
   }
 
   static final class Result {
