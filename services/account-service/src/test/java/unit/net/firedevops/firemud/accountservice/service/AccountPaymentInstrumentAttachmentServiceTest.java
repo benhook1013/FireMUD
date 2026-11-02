@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -127,6 +128,24 @@ class AccountPaymentInstrumentAttachmentServiceTest {
             });
   }
 
+  private AccountPaymentInstrumentRecord occupiedInstrument() {
+    UUID otherRequestId = UUID.randomUUID();
+    return new AccountPaymentInstrumentRecord(
+        request.instrumentUuid(),
+        ACCOUNT,
+        CUSTOMER_OPERATION,
+        "cus_owner",
+        "pm_other",
+        otherRequestId,
+        1,
+        State.ATTACHABLE,
+        new AccountPaymentInstrumentRecord.DisplayMetadata("visa", "4242", 12, 2030),
+        otherRequestId,
+        "sha256:" + "b".repeat(64),
+        NOW,
+        NOW);
+  }
+
   @Test
   void actualSdkFactsAreRetainedBetweenSeparateTransactionsAndReadBackAfterCommit() {
     source();
@@ -143,6 +162,39 @@ class AccountPaymentInstrumentAttachmentServiceTest {
     assertThat(ObservedAttachment.class.getConstructors()).isEmpty();
     verify(instruments, org.mockito.Mockito.times(3))
         .findAttachmentByRequestId(request.requestId());
+  }
+
+  @Test
+  void occupiedExplicitInstrumentUuidRejectsBeforeAnySdkReadsOrWrites() {
+    source();
+    current = occupiedInstrument();
+
+    assertThatThrownBy(() -> service().retainSavedMethod(request))
+        .isInstanceOf(AccountPaymentInstrumentRepository.ConflictException.class)
+        .hasMessageContaining("Explicit instrument UUID already has a retained owner row");
+
+    assertThat(transport.paths).isEmpty();
+    assertThat(transactions.commits).isZero();
+    verify(instruments, never()).retainAttachment(any());
+  }
+
+  @Test
+  void instrumentOccupiedDuringProviderObservationRejectsBeforeRetentionWrite() {
+    source();
+    AccountPaymentInstrumentRecord competingAttachment = occupiedInstrument();
+    doReturn(Optional.empty(), Optional.of(competingAttachment))
+        .when(instruments)
+        .findByOwnerForUpdate(ACCOUNT, request.instrumentUuid());
+
+    assertThatThrownBy(() -> service().retainSavedMethod(request))
+        .isInstanceOf(AccountPaymentInstrumentRepository.ConflictException.class)
+        .hasMessageContaining("Explicit instrument UUID already has a retained owner row");
+
+    assertThat(transport.paths)
+        .containsExactly("/v1/customers/cus_owner", "/v1/payment_methods/pm_saved");
+    assertThat(transactions.commits).isEqualTo(1);
+    assertThat(retained).isNull();
+    verify(instruments, never()).retainAttachment(any());
   }
 
   @Test

@@ -72,11 +72,16 @@ public final class AccountPaymentInstrumentAttachmentService {
             transaction.execute(
                 status -> {
                   AccountBillingCustomerRecord customer = lockCustomer(request.accountUuid());
-                  instruments.findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid());
+                  AccountPaymentInstrumentRecord currentInstrument =
+                      instruments
+                          .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
+                          .orElse(null);
                   AccountPaymentInstrumentRecord receipt =
                       instruments.findAttachmentByRequestId(request.requestId()).orElse(null);
                   if (receipt != null) {
                     requireReceiptBinding(receipt, request, customer);
+                  } else {
+                    requireInstrumentAvailable(currentInstrument, request);
                   }
                   return new Prepared(customer, receipt);
                 }));
@@ -106,13 +111,17 @@ public final class AccountPaymentInstrumentAttachmentService {
                     throw new IllegalStateException(
                         "Confirmed customer changed during provider observation");
                   }
-                  instruments.findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid());
+                  AccountPaymentInstrumentRecord currentInstrument =
+                      instruments
+                          .findByOwnerForUpdate(request.accountUuid(), request.instrumentUuid())
+                          .orElse(null);
                   AccountPaymentInstrumentRecord original =
                       instruments.findAttachmentByRequestId(request.requestId()).orElse(null);
                   if (original != null) {
                     requireReceiptBinding(original, request, current);
                     return new CommitResult(original, false);
                   }
+                  requireInstrumentAvailable(currentInstrument, request);
                   requireFresh(observed);
                   if (!current.accountUuid().equals(observed.accountUuid())
                       || !current
@@ -232,6 +241,14 @@ public final class AccountPaymentInstrumentAttachmentService {
         || !receipt.attachmentRequestId().equals(request.requestId())
         || !receipt.changeRequestId().equals(request.requestId())) {
       throw new IllegalStateException("Stable attachment request was reused with changed binding");
+    }
+  }
+
+  private static void requireInstrumentAvailable(
+      AccountPaymentInstrumentRecord current, Request request) {
+    if (current != null && !current.attachmentRequestId().equals(request.requestId())) {
+      throw new AccountPaymentInstrumentRepository.ConflictException(
+          "Explicit instrument UUID already has a retained owner row");
     }
   }
 
