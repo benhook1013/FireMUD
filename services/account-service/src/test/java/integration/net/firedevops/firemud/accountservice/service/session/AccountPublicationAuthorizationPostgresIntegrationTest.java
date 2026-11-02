@@ -1025,7 +1025,8 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
         var issued = fixture.issueCreator();
         var f = issued.sources();
         var proof = proof(f, issued.environment());
-        var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+        var repository =
+            new AccountPublicationAuthorizationRepository(f.dsl, fixture.issuanceRepository());
         var order =
             new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
                 .authorize(issued.compact(), proof.selection(), issued.environment());
@@ -1042,7 +1043,17 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                 f.dsl
                     .fetchSingle("SELECT max(installed_rank) FROM flyway_schema_history")
                     .get(0, Integer.class));
-        var before = publicationRetentionRows(f.dsl, predecessorHistoryRank);
+        var historicalIssuanceColumns =
+            java.util.Arrays.stream(
+                    f.dsl
+                        .fetch("SELECT * FROM account_control_ui_issuance_operations LIMIT 0")
+                        .fields())
+                .map(org.jooq.Field::getName)
+                .toList();
+        assertThat(historicalIssuanceColumns).doesNotContain("authorization_scope");
+        var before =
+            publicationRetentionRows(f.dsl, predecessorHistoryRank, historicalIssuanceColumns);
+        assertThat(before.get("account_control_ui_response_envelopes")).hasSize(1);
         f.upgradeToCurrent();
         assertThat(
                 f.dsl
@@ -1052,20 +1063,31 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
                         predecessorHistoryRank)
                     .get(0, Long.class))
             .isPositive();
-        assertThat(publicationRetentionRows(f.dsl, predecessorHistoryRank)).isEqualTo(before);
+        assertThat(
+                publicationRetentionRows(f.dsl, predecessorHistoryRank, historicalIssuanceColumns))
+            .isEqualTo(before);
+        assertThat(
+                f.dsl
+                    .fetch("SELECT authorization_scope FROM account_control_ui_issuance_operations")
+                    .getValues(0, String.class))
+            .containsExactly("TENANT");
         f.dsl.fetch(
             "SELECT require_selected_inventory_operation_v2(?::bytea)", operation.canonicalBytes());
         assertThat(
                 f.tx(
                     () -> repository.settle(operation, terminal, phase, terminal.canonicalBytes())))
             .containsExactly(receipt);
-        assertThat(publicationRetentionRows(f.dsl, predecessorHistoryRank)).isEqualTo(before);
+        assertThat(
+                publicationRetentionRows(f.dsl, predecessorHistoryRank, historicalIssuanceColumns))
+            .isEqualTo(before);
       }
     }
   }
 
   private static java.util.Map<String, java.util.List<String>> publicationRetentionRows(
-      org.jooq.DSLContext dsl, int predecessorHistoryRank) {
+      org.jooq.DSLContext dsl,
+      int predecessorHistoryRank,
+      java.util.List<String> historicalIssuanceColumns) {
     var result = new java.util.LinkedHashMap<String, java.util.List<String>>();
     for (String table :
         java.util.List.of(
@@ -1073,18 +1095,27 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
             "account_selected_publication_sources",
             "account_selected_publication_settlements",
             "account_control_ui_issuance_operations",
+            "account_control_ui_response_envelopes",
             "flyway_schema_history")) {
-      String filter = table.equals("flyway_schema_history") ? " WHERE installed_rank <= ?" : "";
+      String filter = table.equals("flyway_schema_history") ? " WHERE r.installed_rank <= ?" : "";
       Object[] bindings =
           table.equals("flyway_schema_history")
               ? new Object[] {predecessorHistoryRank}
               : new Object[0];
+      String projection =
+          table.equals("account_control_ui_issuance_operations")
+              ? historicalIssuanceColumns.stream()
+                  .map(column -> "r." + org.jooq.impl.DSL.name(column).toString())
+                  .collect(java.util.stream.Collectors.joining(", "))
+              : "r.*";
       result.put(
           table,
           dsl.fetch(
-                  "SELECT to_jsonb(r)::text || ':' || r.xmin::text FROM "
+                  "SELECT to_jsonb(projected)::text || ':' || r.xmin::text FROM "
                       + table
-                      + " r"
+                      + " r CROSS JOIN LATERAL (SELECT "
+                      + projection
+                      + ") projected"
                       + filter
                       + " ORDER BY 1",
                   bindings)

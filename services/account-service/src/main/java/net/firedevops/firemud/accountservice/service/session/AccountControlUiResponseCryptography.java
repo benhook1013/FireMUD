@@ -27,13 +27,22 @@ public final class AccountControlUiResponseCryptography {
   }
 
   String requestDigest(String keyId, byte[] exactRequest) {
+    return requestMac(keyId, exactRequest, "firemud/control-ui/credential-request/v1\0");
+  }
+
+  /** Separate replay purpose; never interchangeable with Control-UI issuance requests. */
+  String recentReauthenticationRequestMac(String keyId, byte[] exactRequest) {
+    return requestMac(keyId, exactRequest, "firemud/account/recent-reauthentication-replay/v1\0");
+  }
+
+  private String requestMac(String keyId, byte[] exactRequest, String purpose) {
     if (exactRequest == null || exactRequest.length == 0 || exactRequest.length > 16384) {
       throw new IllegalArgumentException("Bounded control-ui credential request required");
     }
     try {
       Mac mac = Mac.getInstance("HmacSHA256");
       mac.init(keys.requestKey(keyId, clock.instant()));
-      mac.update("firemud/control-ui/credential-request/v1\0".getBytes(StandardCharsets.US_ASCII));
+      mac.update(purpose.getBytes(StandardCharsets.US_ASCII));
       return HexFormat.of().formatHex(mac.doFinal(exactRequest));
     } catch (java.security.GeneralSecurityException | RuntimeException exception) {
       throw new IllegalStateException("Control-ui request MAC unavailable");

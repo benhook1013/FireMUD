@@ -79,33 +79,56 @@ public final class AccountControlUiIssuanceService {
   }
 
   public IssuedCredential issue(Request request, CapturedEnvironmentBoundary environment) {
+    Objects.requireNonNull(request);
+    return issueInternal(
+        new Invocation(
+            request.requestId,
+            request.email,
+            request.secret,
+            request.callerContextId,
+            AccountControlUiAuthority.ScopeKind.TENANT,
+            java.util.Optional.of(request.tenantId),
+            java.util.Optional.of(Objects.requireNonNull(environment))));
+  }
+
+  /** Account-global sign-in: no tenant, membership, creator or terms selector is accepted. */
+  public IssuedCredential issueAccount(AccountSignInRequest request) {
+    Objects.requireNonNull(request);
+    return issueInternal(
+        new Invocation(
+            request.requestId,
+            request.email,
+            request.secret,
+            request.callerContextId,
+            AccountControlUiAuthority.ScopeKind.ACCOUNT,
+            java.util.Optional.empty(),
+            java.util.Optional.empty()));
+  }
+
+  private IssuedCredential issueInternal(Invocation request) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("Control-ui workflow cannot inherit owner SQL locks");
     }
     Objects.requireNonNull(request);
-    Objects.requireNonNull(environment);
+    var environment = request.environment;
     var peer = GrpcPeerIdentity.current();
     if (peer == null || !protectedCallerUri.equals(peer.uri())) {
       throw denied();
     }
     String email = EmailCanonicalization.normalize(request.email);
-    byte[] exactRequest =
-        AccountControlUiAuthority.canonical(
-            Map.of(
-                "schema",
-                "account-control-ui-request/v1",
-                "requestId",
-                request.requestId.toString(),
-                "email",
-                email,
-                "secret",
-                request.secret,
-                "canonicalTenantId",
-                request.tenantId.toString(),
-                "callerWorkload",
-                peer.uri(),
-                "callerContextId",
-                request.callerContextId.toString()));
+    Map<String, Object> requestFields = new java.util.LinkedHashMap<>();
+    requestFields.put("schema", "account-control-ui-request/v1");
+    requestFields.put("requestId", request.requestId.toString());
+    requestFields.put("email", email);
+    requestFields.put("secret", request.secret);
+    if (request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT) {
+      requestFields.put("canonicalTenantId", request.tenantId.orElseThrow().toString());
+    } else {
+      requestFields.put("authorizationScope", AccountControlUiAuthority.ScopeKind.ACCOUNT.name());
+    }
+    requestFields.put("callerWorkload", peer.uri());
+    requestFields.put("callerContextId", request.callerContextId.toString());
+    byte[] exactRequest = AccountControlUiAuthority.canonical(requestFields);
     try {
       InitialPreparation initial =
           transaction.execute(
@@ -117,8 +140,13 @@ public final class AccountControlUiIssuanceService {
                 }
                 // Preserve canonical tenant -> Account owner order before OTP/advisory
                 // authentication.
-                var source = authority.captureInitial(request.tenantId, environment);
-                fences.lockProducerSourcesNowait(source.sources());
+                java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
+                    request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
+                        ? java.util.Optional.of(
+                            authority.captureInitial(
+                                request.tenantId.orElseThrow(), environment.orElseThrow()))
+                        : java.util.Optional.empty();
+                tenantSource.ifPresent(value -> fences.lockProducerSourcesNowait(value.sources()));
                 AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
                 try {
                   authenticated =
@@ -130,8 +158,15 @@ public final class AccountControlUiIssuanceService {
                   return new InitialPreparation(
                       null, new PrimaryDenial(denial.getCode(), denial.getMessage()));
                 }
-                if (!source.actor().equals(authenticated.accountId())) {
+                var source =
+                    tenantSource.orElseGet(
+                        () -> authority.captureAccount(authenticated.accountId()));
+                if (!source.actor().equals(authenticated.accountId())
+                    || source.scopeKind() != request.scopeKind) {
                   throw denied();
+                }
+                if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+                  fences.lockProducerSourcesNowait(source.sources());
                 }
                 var signer = signers.captureCurrent();
                 String macKey = cryptography.currentKeyId();
@@ -245,12 +280,21 @@ public final class AccountControlUiIssuanceService {
         if (!committed.tokenHash().equals(AccountControlUiIssuanceRepository.hash(credential))) {
           throw new RecoveryLost(committed.stored);
         }
-        var actor =
-            actors.authenticate(
-                new String(credential, StandardCharsets.US_ASCII), request.tenantId, environment);
-        if (!actor.accountId().equals(committed.stored.accountId)
-            || !actor.issuanceOperationId().equals(committed.stored.operationId)) {
-          throw denied();
+        String compact = new String(credential, StandardCharsets.US_ASCII);
+        if (request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+          var actor = actors.authenticateAccount(compact);
+          if (!actor.accountId().equals(committed.stored.accountId)
+              || !actor.issuanceOperationId().equals(committed.stored.operationId)) {
+            throw denied();
+          }
+        } else {
+          var actor =
+              actors.authenticate(
+                  compact, request.tenantId.orElseThrow(), environment.orElseThrow());
+          if (!actor.accountId().equals(committed.stored.accountId)
+              || !actor.issuanceOperationId().equals(committed.stored.operationId)) {
+            throw denied();
+          }
         }
         return new IssuedCredential(
             credential, committed.stored.expiresAt, committed.stored.recoveryExpiry);
@@ -278,11 +322,12 @@ public final class AccountControlUiIssuanceService {
 
   private void requireRequest(
       AccountControlUiIssuanceRepository.Stored stored,
-      Request request,
+      Invocation request,
       String caller,
       byte[] exactRequest) {
     if (!stored.requestId.equals(request.requestId)
-        || !stored.tenantId.equals(request.tenantId)
+        || stored.scopeKind() != request.scopeKind
+        || !stored.optionalTenantId().equals(request.tenantId)
         || !stored.caller.equals(caller)
         || !stored.callerContextId.equals(request.callerContextId)
         || !stored.requestDigest.equals(
@@ -292,7 +337,8 @@ public final class AccountControlUiIssuanceService {
   }
 
   private Prepared current(
-      AccountControlUiIssuanceRepository.Stored original, CapturedEnvironmentBoundary environment) {
+      AccountControlUiIssuanceRepository.Stored original,
+      java.util.Optional<CapturedEnvironmentBoundary> environment) {
     // Missing cleanup evidence identifies a retained pre-margin row; never reinterpret or reissue
     // it.
     original.expiryMillis();
@@ -300,7 +346,10 @@ public final class AccountControlUiIssuanceService {
         || java.util.List.of("FAILED", "REVOKING", "REVOKED").contains(original.status)) {
       throw new RecoveryLost(original);
     }
-    var source = authority.capture(original.accountId, original.tenantId, environment);
+    var source =
+        original.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT
+            ? authority.captureAccount(original.accountId)
+            : authority.capture(original.accountId, original.tenantId(), environment.orElseThrow());
     fences.lockProducerSourcesNowait(source.sources());
     if (!Arrays.equals(source.evidence(), original.sources)) {
       throw denied();
@@ -319,24 +368,75 @@ public final class AccountControlUiIssuanceService {
 
   private static byte[] envelopeBinding(
       AccountControlUiIssuanceRepository.Stored original, String tokenHash) {
-    return AccountControlUiAuthority.canonical(
-        Map.ofEntries(
-            Map.entry("purpose", "account-control-ui-original-credential/v1"),
-            Map.entry("operationId", original.operationId.toString()),
-            Map.entry("requestId", original.requestId.toString()),
-            Map.entry("accountId", original.accountId.toString()),
-            Map.entry("tenantId", original.tenantId.toString()),
-            Map.entry("callerWorkload", original.caller),
-            Map.entry("callerContextId", original.callerContextId.toString()),
-            Map.entry("requestMacKeyId", original.requestMacKeyId),
-            Map.entry("requestDigest", original.requestDigest),
-            Map.entry("tokenHash", tokenHash),
-            Map.entry("claimsDigest", AccountControlUiIssuanceRepository.hash(original.claims)),
-            Map.entry("bundleDigest", AccountControlUiIssuanceRepository.hash(original.bundle)),
-            Map.entry(
-                "signerReceiptDigest",
-                AccountControlUiIssuanceRepository.hash(original.signerReceipt)),
-            Map.entry("recoveryExpiresAt", original.recoveryExpiry.toString())));
+    Map<String, Object> binding = new java.util.LinkedHashMap<>();
+    binding.put("purpose", "account-control-ui-original-credential/v1");
+    binding.put("operationId", original.operationId.toString());
+    binding.put("requestId", original.requestId.toString());
+    binding.put("accountId", original.accountId.toString());
+    if (original.scopeKind() == AccountControlUiAuthority.ScopeKind.TENANT) {
+      binding.put("tenantId", original.tenantId().toString());
+    } else {
+      binding.put("authorizationScope", AccountControlUiAuthority.ScopeKind.ACCOUNT.name());
+    }
+    binding.put("callerWorkload", original.caller);
+    binding.put("callerContextId", original.callerContextId.toString());
+    binding.put("requestMacKeyId", original.requestMacKeyId);
+    binding.put("requestDigest", original.requestDigest);
+    binding.put("tokenHash", tokenHash);
+    binding.put("claimsDigest", AccountControlUiIssuanceRepository.hash(original.claims));
+    binding.put("bundleDigest", AccountControlUiIssuanceRepository.hash(original.bundle));
+    binding.put(
+        "signerReceiptDigest", AccountControlUiIssuanceRepository.hash(original.signerReceipt));
+    binding.put("recoveryExpiresAt", original.recoveryExpiry.toString());
+    return AccountControlUiAuthority.canonical(binding);
+  }
+
+  private record Invocation(
+      UUID requestId,
+      String email,
+      String secret,
+      UUID callerContextId,
+      AccountControlUiAuthority.ScopeKind scopeKind,
+      java.util.Optional<UUID> tenantId,
+      java.util.Optional<CapturedEnvironmentBoundary> environment) {
+    private Invocation {
+      Objects.requireNonNull(scopeKind);
+      Objects.requireNonNull(tenantId);
+      Objects.requireNonNull(environment);
+      boolean tenant = scopeKind == AccountControlUiAuthority.ScopeKind.TENANT;
+      if (tenant != tenantId.isPresent() || tenant != environment.isPresent()) {
+        throw new IllegalArgumentException(
+            "Explicit control-ui scope and source selection required");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "AccountControlUiIssuanceService.Invocation[redacted]";
+    }
+  }
+
+  public record AccountSignInRequest(
+      UUID requestId, String email, String secret, UUID callerContextId) {
+    public AccountSignInRequest {
+      if (requestId == null
+          || requestId.equals(new UUID(0L, 0L))
+          || callerContextId == null
+          || callerContextId.equals(new UUID(0L, 0L))
+          || email == null
+          || email.isBlank()
+          || email.length() > 254
+          || secret == null
+          || secret.isEmpty()
+          || secret.length() > 1024) {
+        throw new IllegalArgumentException("Exact bounded account-global sign-in request required");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "AccountControlUiIssuanceService.AccountSignInRequest[redacted]";
+    }
   }
 
   private record PrimaryDenial(String code, String message) {

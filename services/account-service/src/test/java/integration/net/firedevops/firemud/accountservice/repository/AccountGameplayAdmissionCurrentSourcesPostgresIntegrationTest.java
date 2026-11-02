@@ -176,6 +176,17 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture(true);
 
+  private AccountPostgresIntegrationFixture postgres = POSTGRES;
+
+  // Keep the concrete Jupiter test's single no-arg constructor. Compositions inject their
+  // independently owned database before the fixture is returned or any source work begins.
+  static AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest withPostgres(
+      AccountPostgresIntegrationFixture postgres) {
+    var fixture = new AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest();
+    fixture.postgres = java.util.Objects.requireNonNull(postgres);
+    return fixture;
+  }
+
   @TempDir Path temporaryDirectory;
   private final Set<String> runOwnedSchemas = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -191,7 +202,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
 
   @AfterEach
   void dropRunOwnedSchemas() {
-    JdbcTemplate root = new JdbcTemplate(POSTGRES.dataSource());
+    JdbcTemplate root = new JdbcTemplate(postgres.dataSource());
     for (String schema : runOwnedSchemas) {
       if (!schema.startsWith(SCHEMA_PREFIX) || !schema.matches("[a-z][a-z0-9_]{0,62}")) {
         throw new IllegalStateException("Refusing to clean a schema not owned by this test");
@@ -1428,7 +1439,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() > 63) throw new IllegalStateException("Generated schema name is too long");
     runOwnedSchemas.add(schema);
-    DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
+    DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)

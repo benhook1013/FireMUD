@@ -20,7 +20,11 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
@@ -56,8 +60,7 @@ class AccountControlUiIssuanceWorkflowTest {
   @Test
   void primaryDenialCommitsAccountingBeforeThrowingAndNeverStartsIssuancePreparation() {
     Fixture fixture = new Fixture(NOW.plusSeconds(30));
-    var source = mock(AccountControlUiAuthority.Snapshot.class);
-    when(source.sources()).thenReturn(java.util.List.of());
+    var source = fixture.tenantSource();
     when(fixture.authority.captureInitial(fixture.tenant, fixture.environment)).thenReturn(source);
     var denial = new AuthenticationException("AUTH_INVALID_CREDENTIALS", "Invalid credentials");
     when(fixture.primary.authenticateControlUiPrimaryIdentity(
@@ -176,13 +179,7 @@ class AccountControlUiIssuanceWorkflowTest {
     byte[] exactCredential = "test-only-original-compact-jwt".getBytes(StandardCharsets.US_ASCII);
     String tokenHash = AccountControlUiIssuanceRepository.hash(exactCredential);
     var original = fixture.useOwnerRepository(tokenHash);
-    var snapshot = mock(AccountControlUiAuthority.Snapshot.class);
-    when(snapshot.evidence()).thenReturn(new byte[] {1});
-    when(snapshot.sources()).thenReturn(java.util.List.of());
-    when(fixture.authority.capture(fixture.account, fixture.tenant, fixture.environment))
-        .thenReturn(snapshot);
-    when(fixture.signers.requireOriginal(any(byte[].class)))
-        .thenReturn(mock(AccountControlUiSignerOwner.Capture.class));
+    fixture.recoveryInputs();
     var binding = fixture.envelopeBinding(original, tokenHash);
     var envelope = new AccountControlUiIssuanceRepository.Envelope(new byte[] {9}, binding);
     doAnswer(call -> envelope).when(fixture.operations).envelope(any());
@@ -214,6 +211,205 @@ class AccountControlUiIssuanceWorkflowTest {
     verify(fixture.registry).activate(any(AccountControlUiIssuanceRepository.Committed.class));
     verify(fixture.primary, never()).authenticateControlUiPrimaryIdentity(anyString(), anyString());
     verify(fixture.signers, never()).sign(any(), any(), any());
+  }
+
+  @Test
+  void accountGlobalIssuanceUsesAccountSourcesAndReturnsItsSingleOriginalCredential()
+      throws Exception {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    var source = fixture.accountSource();
+    byte[] expectedCredential = "test-only-account-token".getBytes(StandardCharsets.US_ASCII);
+    byte[] expectedReturnedCredential = expectedCredential.clone();
+    String tokenHash = AccountControlUiIssuanceRepository.hash(expectedCredential);
+    var spec =
+        new AccountControlUiSigningSpec(
+            fixture.operationId, fixture.requestId, fixture.jti, source, NOW, NOW.plusSeconds(300));
+    var prepared =
+        fixture.storedAccount(
+            "PREPARED", fixture.recoveryExpiry, null, spec.claims(), source.evidence());
+    var candidate =
+        fixture.storedAccount(
+            "CANDIDATE", fixture.recoveryExpiry, tokenHash, spec.claims(), source.evidence());
+    var committedStored =
+        fixture.storedAccount(
+            "COMMITTED", fixture.recoveryExpiry, tokenHash, spec.claims(), source.evidence());
+    var committed = committed(committedStored);
+    var signer = mock(AccountControlUiSignerOwner.Capture.class);
+    var signed = signedObservation(spec.claims());
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(fixture.account);
+    when(actor.issuanceOperationId()).thenReturn(fixture.operationId);
+    var authenticated = mock(AccountServiceImpl.ControlUiPrimaryIdentity.class);
+    when(authenticated.accountId()).thenReturn(fixture.account);
+    AtomicReference<byte[]> requestBytes = new AtomicReference<>();
+    when(fixture.primary.authenticateControlUiPrimaryIdentity(
+            "creator@example.test", "test-only-secret"))
+        .thenReturn(authenticated);
+    when(fixture.authority.captureAccount(fixture.account)).thenReturn(source);
+    when(fixture.signers.captureCurrent()).thenReturn(signer);
+    when(fixture.signers.requireOriginal(any(byte[].class))).thenReturn(signer);
+    when(fixture.cryptography.currentKeyId()).thenReturn("test-only-mac-key");
+    when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
+        .thenAnswer(
+            call -> {
+              requestBytes.set(call.getArgument(1, byte[].class).clone());
+              return "account-request-digest";
+            });
+    when(fixture.cryptography.seal(any(byte[].class), any(byte[].class), any(Instant.class)))
+        .thenReturn(new byte[] {8});
+    when(fixture.cryptography.open(any(byte[].class), any(byte[].class), any(Instant.class)))
+        .thenReturn(expectedCredential);
+    when(fixture.actors.verifySigned("test-only-account-token")).thenReturn(signed);
+    when(fixture.actors.authenticateAccount("test-only-account-token")).thenReturn(actor);
+    when(fixture.operations.findRequest(fixture.requestId))
+        .thenReturn(null, prepared, candidate, candidate, committedStored);
+    when(fixture.operations.prepare(
+            any(),
+            anyString(),
+            any(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any(),
+            any(),
+            anyLong()))
+        .thenReturn(prepared);
+    when(fixture.operations.commit(any(), any())).thenReturn(committed);
+    when(fixture.operations.envelope(any()))
+        .thenReturn(
+            new AccountControlUiIssuanceRepository.Envelope(
+                new byte[] {9}, fixture.envelopeBinding(committedStored, tokenHash)));
+    when(fixture.registry.registerPending(anyString(), any(byte[].class), anyLong()))
+        .thenReturn(mock(AccountControlUiCoordination.Receipt.class));
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              AccountControlUiSigningSpec actual = call.getArgument(1);
+              assertThat(actual.claims()).isEqualTo(spec.claims());
+              java.util.function.BiConsumer<String, byte[]> consumer = call.getArgument(2);
+              consumer.accept(tokenHash, expectedCredential);
+              return "test-only-sign-result";
+            })
+        .when(fixture.signers)
+        .sign(any(), any(), any());
+
+    ArgumentCaptor<byte[]> envelopeBindingCaptor = ArgumentCaptor.forClass(byte[].class);
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      try (var issued = fixture.service().issueAccount(fixture.accountRequest())) {
+        assertThat(issued.compactBytes()).containsExactly(expectedReturnedCredential);
+        assertThat(issued.expiresAt()).isEqualTo(NOW.plusSeconds(300));
+        assertThat(issued.recoveryExpiresAt()).isEqualTo(fixture.recoveryExpiry);
+      }
+    }
+    assertThat(expectedCredential).containsOnly((byte) 0);
+
+    verify(fixture.cryptography)
+        .requestDigest(org.mockito.ArgumentMatchers.eq("test-only-mac-key"), any(byte[].class));
+    verify(fixture.cryptography)
+        .seal(
+            any(byte[].class),
+            envelopeBindingCaptor.capture(),
+            org.mockito.ArgumentMatchers.eq(fixture.recoveryExpiry));
+    Map<String, Object> requestFields =
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readValue(requestBytes.get(), new tools.jackson.core.type.TypeReference<>() {});
+    assertThat(requestFields)
+        .containsEntry("authorizationScope", "ACCOUNT")
+        .doesNotContainKey("canonicalTenantId");
+    assertThat(requestFields)
+        .doesNotContainKeys("tenantId", "environmentId", "clusterId", "namespace");
+    Map<String, Object> envelopeFields =
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readValue(
+                envelopeBindingCaptor.getValue(), new tools.jackson.core.type.TypeReference<>() {});
+    assertThat(envelopeFields)
+        .containsEntry("authorizationScope", "ACCOUNT")
+        .doesNotContainKey("tenantId");
+    var order = org.mockito.Mockito.inOrder(fixture.primary, fixture.authority);
+    order
+        .verify(fixture.primary)
+        .authenticateControlUiPrimaryIdentity("creator@example.test", "test-only-secret");
+    order.verify(fixture.authority, org.mockito.Mockito.times(5)).captureAccount(fixture.account);
+    verify(fixture.authority, never()).captureInitial(any(), any());
+    verify(fixture.authority, never()).capture(any(), any(), any());
+    verify(fixture.fences, org.mockito.Mockito.atLeast(2))
+        .lockProducerSourcesNowait(source.sources());
+    verify(fixture.actors).authenticateAccount("test-only-account-token");
+    verify(fixture.actors, never()).authenticate(anyString(), any(), any());
+    verify(fixture.operations)
+        .prepare(
+            fixture.requestId,
+            ISSUER,
+            fixture.context,
+            "test-only-mac-key",
+            "account-request-digest",
+            authenticated,
+            source,
+            signer,
+            NOW,
+            300_000L);
+    verify(fixture.registry).activate(committed);
+  }
+
+  @Test
+  void accountGlobalReplayReturnsOriginalCredentialAndCrossScopeRetriesConflict() {
+    Fixture replay = new Fixture(NOW.plusSeconds(30));
+    byte[] exactCredential = "test-only-account-original".getBytes(StandardCharsets.US_ASCII);
+    byte[] expectedCredential = exactCredential.clone();
+    String tokenHash = AccountControlUiIssuanceRepository.hash(exactCredential);
+    var original = replay.useAccountOwnerRepository(tokenHash);
+    replay.accountRecoveryInputs();
+    var binding = replay.envelopeBinding(original, tokenHash);
+    var envelope = new AccountControlUiIssuanceRepository.Envelope(new byte[] {9}, binding);
+    doAnswer(call -> envelope).when(replay.operations).envelope(any());
+    when(replay.cryptography.open(any(byte[].class), any(byte[].class), any(Instant.class)))
+        .thenReturn(exactCredential);
+    var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
+    when(actor.accountId()).thenReturn(replay.account);
+    when(actor.issuanceOperationId()).thenReturn(replay.operationId);
+    when(replay.actors.authenticateAccount("test-only-account-original")).thenReturn(actor);
+
+    try (var ignored = replay.withPeer(ISSUER)) {
+      try (var issued = replay.service().issueAccount(replay.accountRequest())) {
+        assertThat(issued.compactBytes()).containsExactly(expectedCredential);
+      }
+    }
+    verify(replay.authority, org.mockito.Mockito.atLeastOnce()).captureAccount(replay.account);
+    verify(replay.actors).authenticateAccount("test-only-account-original");
+    verify(replay.primary, never()).authenticateControlUiPrimaryIdentity(anyString(), anyString());
+    verify(replay.signers, never()).sign(any(), any(), any());
+    assertThat(original.scopeKind()).isEqualTo(AccountControlUiAuthority.ScopeKind.ACCOUNT);
+    assertThat(original.optionalTenantId()).isEmpty();
+
+    for (boolean originalWasAccount : java.util.List.of(false, true)) {
+      Fixture conflict = new Fixture(NOW.plusSeconds(30));
+      if (originalWasAccount) {
+        conflict.accountExisting();
+      } else {
+        conflict.existing();
+      }
+      try (var ignored = conflict.withPeer(ISSUER)) {
+        if (originalWasAccount) {
+          assertThatThrownBy(
+                  () ->
+                      conflict
+                          .service()
+                          .issue(
+                              conflict.request(
+                                  conflict.tenant, conflict.context, "test-only-secret"),
+                              conflict.environment))
+              .isInstanceOf(IllegalArgumentException.class);
+        } else {
+          assertThatThrownBy(() -> conflict.service().issueAccount(conflict.accountRequest()))
+              .isInstanceOf(IllegalArgumentException.class);
+        }
+      }
+      verify(conflict.operations, never()).beginRecoveryFailure(any());
+      verifyNoInteractions(
+          conflict.authority, conflict.primary, conflict.signers, conflict.registry);
+    }
   }
 
   @Test
@@ -316,6 +512,29 @@ class AccountControlUiIssuanceWorkflowTest {
         .seal(any(byte[].class), any(byte[].class), any(Instant.class));
   }
 
+  private static AccountControlUiIssuanceRepository.Committed committed(
+      AccountControlUiIssuanceRepository.Stored stored) throws Exception {
+    var constructor =
+        AccountControlUiIssuanceRepository.Committed.class.getDeclaredConstructor(
+            AccountControlUiIssuanceRepository.Stored.class);
+    constructor.setAccessible(true);
+    return constructor.newInstance(stored);
+  }
+
+  private static AccountControlUiActorService.SignedObservation signedObservation(
+      Map<String, Object> claims) throws Exception {
+    var verified =
+        new net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.VerifiedClaims(
+            "test-control-ui", "control-ui", "control-ui", "test-only-kid", claims);
+    var constructor =
+        AccountControlUiActorService.SignedObservation.class.getDeclaredConstructor(
+            net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.VerifiedClaims
+                .class,
+            net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity.class);
+    constructor.setAccessible(true);
+    return constructor.newInstance(verified, null);
+  }
+
   private static boolean sameOriginalRecord(
       AccountControlUiIssuanceRepository.Stored expected,
       AccountControlUiIssuanceRepository.Stored actual) {
@@ -324,7 +543,8 @@ class AccountControlUiIssuanceWorkflowTest {
         && expected.operationId.equals(actual.operationId)
         && expected.jti.equals(actual.jti)
         && expected.accountId.equals(actual.accountId)
-        && expected.tenantId.equals(actual.tenantId)
+        && expected.scopeKind() == actual.scopeKind()
+        && expected.optionalTenantId().equals(actual.optionalTenantId())
         && expected.callerContextId.equals(actual.callerContextId)
         && expected.caller.equals(actual.caller)
         && expected.requestMacKeyId.equals(actual.requestMacKeyId)
@@ -421,8 +641,25 @@ class AccountControlUiIssuanceWorkflowTest {
       return stored;
     }
 
+    AccountControlUiIssuanceRepository.Stored accountExisting() {
+      var stored = storedAccount("COMMITTED", recoveryExpiry, "original-account-token-hash");
+      when(operations.findRequest(requestId)).thenReturn(stored);
+      when(cryptography.requestDigest(anyString(), any(byte[].class)))
+          .thenReturn("original-request-digest");
+      return stored;
+    }
+
     AccountControlUiIssuanceRepository.Stored useOwnerRepository(String tokenHash) {
-      var stored = stored("COMMITTED", recoveryExpiry, tokenHash);
+      return useOwnerRepository(tokenHash, AccountControlUiAuthority.ScopeKind.TENANT, tenant);
+    }
+
+    AccountControlUiIssuanceRepository.Stored useAccountOwnerRepository(String tokenHash) {
+      return useOwnerRepository(tokenHash, AccountControlUiAuthority.ScopeKind.ACCOUNT, null);
+    }
+
+    private AccountControlUiIssuanceRepository.Stored useOwnerRepository(
+        String tokenHash, AccountControlUiAuthority.ScopeKind scopeKind, UUID tenantId) {
+      var stored = stored("COMMITTED", recoveryExpiry, tokenHash, ISSUER, scopeKind, tenantId);
       var dsl = mock(DSLContext.class);
       var connection = mock(java.sql.Connection.class);
       try {
@@ -448,12 +685,75 @@ class AccountControlUiIssuanceWorkflowTest {
     }
 
     void recoveryInputs() {
+      var snapshot = tenantSource();
+      var signerCapture = mock(AccountControlUiSignerOwner.Capture.class);
+      when(authority.capture(account, tenant, environment)).thenReturn(snapshot);
+      when(signers.requireOriginal(any(byte[].class))).thenReturn(signerCapture);
+    }
+
+    AccountControlUiAuthority.Snapshot tenantSource() {
       var snapshot = mock(AccountControlUiAuthority.Snapshot.class);
+      when(snapshot.actor()).thenReturn(account);
+      when(snapshot.scopeKind()).thenReturn(AccountControlUiAuthority.ScopeKind.TENANT);
+      when(snapshot.optionalTenantId()).thenReturn(Optional.of(tenant));
+      when(snapshot.authorityTuple())
+          .thenReturn(
+              Map.of(
+                  "issuerAuthGeneration",
+                  1L,
+                  "accountAuthorityGeneration",
+                  2L,
+                  "tenantAuthorityGeneration",
+                  Map.of(tenant.toString(), 3L),
+                  "membershipAuthorityGeneration",
+                  Map.of(tenant.toString(), 4L),
+                  "privateRealmGrantVersions",
+                  List.of()));
+      when(snapshot.membershipVersion()).thenReturn(Map.of(tenant.toString(), 5L));
+      when(snapshot.scopedRoles()).thenReturn(Map.of(tenant.toString(), List.of("tenantAdmin")));
+      when(snapshot.globalRoles()).thenReturn(List.of());
+      when(snapshot.issuanceFence()).thenReturn(6L);
       when(snapshot.evidence()).thenReturn(new byte[] {1});
       when(snapshot.sources()).thenReturn(java.util.List.of());
-      when(authority.capture(account, tenant, environment)).thenReturn(snapshot);
-      when(signers.requireOriginal(any(byte[].class)))
-          .thenReturn(mock(AccountControlUiSignerOwner.Capture.class));
+      when(snapshot.accountIdentitySource()).thenReturn(Map.of("accountId", account.toString()));
+      when(snapshot.outboxCheckpoints()).thenReturn(List.of());
+      return snapshot;
+    }
+
+    void accountRecoveryInputs() {
+      AccountControlUiAuthority.Snapshot snapshot = accountSource();
+      var signerCapture = mock(AccountControlUiSignerOwner.Capture.class);
+      when(authority.captureAccount(account)).thenReturn(snapshot);
+      when(signers.requireOriginal(any(byte[].class))).thenReturn(signerCapture);
+    }
+
+    AccountControlUiAuthority.Snapshot accountSource() {
+      var snapshot = mock(AccountControlUiAuthority.Snapshot.class);
+      when(snapshot.actor()).thenReturn(account);
+      when(snapshot.scopeKind()).thenReturn(AccountControlUiAuthority.ScopeKind.ACCOUNT);
+      when(snapshot.optionalTenantId()).thenReturn(Optional.empty());
+      when(snapshot.authorityTuple())
+          .thenReturn(
+              Map.of(
+                  "issuerAuthGeneration",
+                  1L,
+                  "accountAuthorityGeneration",
+                  2L,
+                  "tenantAuthorityGeneration",
+                  Map.of(),
+                  "membershipAuthorityGeneration",
+                  Map.of(),
+                  "privateRealmGrantVersions",
+                  List.of()));
+      when(snapshot.membershipVersion()).thenReturn(Map.of());
+      when(snapshot.scopedRoles()).thenReturn(Map.of());
+      when(snapshot.globalRoles()).thenReturn(List.of("platformAdmin"));
+      when(snapshot.issuanceFence()).thenReturn(3L);
+      when(snapshot.evidence()).thenReturn(new byte[] {1});
+      when(snapshot.sources()).thenReturn(List.of());
+      when(snapshot.accountIdentitySource()).thenReturn(Map.of("accountId", account.toString()));
+      when(snapshot.outboxCheckpoints()).thenReturn(List.of());
+      return snapshot;
     }
 
     AccountControlUiIssuanceRepository.Stored stored(
@@ -463,12 +763,62 @@ class AccountControlUiIssuanceWorkflowTest {
 
     AccountControlUiIssuanceRepository.Stored stored(
         String status, Instant expiry, String tokenHash, String caller) {
+      return stored(
+          status, expiry, tokenHash, caller, AccountControlUiAuthority.ScopeKind.TENANT, tenant);
+    }
+
+    AccountControlUiIssuanceRepository.Stored storedAccount(
+        String status, Instant expiry, String tokenHash) {
+      return stored(
+          status, expiry, tokenHash, ISSUER, AccountControlUiAuthority.ScopeKind.ACCOUNT, null);
+    }
+
+    AccountControlUiIssuanceRepository.Stored storedAccount(
+        String status,
+        Instant expiry,
+        String tokenHash,
+        Map<String, Object> claims,
+        byte[] source) {
       var values = new java.util.HashMap<String, Object>();
       values.put("request_id", requestId);
       values.put("operation_id", operationId);
       values.put("token_jti", jti);
       values.put("account_uuid", account);
-      values.put("tenant_uuid", tenant);
+      values.put("tenant_uuid", null);
+      values.put("authorization_scope", AccountControlUiAuthority.ScopeKind.ACCOUNT.name());
+      values.put("caller_context_id", context);
+      values.put("caller_workload", ISSUER);
+      values.put("request_mac_key_id", "test-only-mac-key");
+      values.put("request_digest", "account-request-digest");
+      values.put("status", status);
+      values.put("token_hash", tokenHash);
+      values.put("claims_payload", AccountControlUiAuthority.canonical(claims));
+      values.put("source_payload", source.clone());
+      values.put("bundle_payload", new byte[] {2});
+      values.put("signer_receipt", new byte[] {3});
+      values.put("pending_registry", new byte[] {4});
+      values.put("active_registry", new byte[] {5});
+      values.put("issued_at_epoch_second", NOW.getEpochSecond());
+      values.put("expires_at_epoch_second", NOW.plusSeconds(300).getEpochSecond());
+      values.put("registry_cleanup_deadline_epoch_millis", NOW.plusSeconds(600).toEpochMilli());
+      values.put("recovery_expires_at", OffsetDateTime.ofInstant(expiry, ZoneOffset.UTC));
+      return new AccountControlUiIssuanceRepository.Stored(rowForValues(values));
+    }
+
+    private AccountControlUiIssuanceRepository.Stored stored(
+        String status,
+        Instant expiry,
+        String tokenHash,
+        String caller,
+        AccountControlUiAuthority.ScopeKind scopeKind,
+        UUID tenantId) {
+      var values = new java.util.HashMap<String, Object>();
+      values.put("request_id", requestId);
+      values.put("operation_id", operationId);
+      values.put("token_jti", jti);
+      values.put("account_uuid", account);
+      values.put("tenant_uuid", tenantId);
+      values.put("authorization_scope", scopeKind.name());
       values.put("caller_context_id", context);
       values.put("caller_workload", caller);
       values.put("request_mac_key_id", "test-only-mac-key");
@@ -498,6 +848,7 @@ class AccountControlUiIssuanceWorkflowTest {
       values.put("token_jti", stored.jti);
       values.put("account_uuid", stored.accountId);
       values.put("tenant_uuid", stored.tenantId);
+      values.put("authorization_scope", stored.scopeKind().name());
       values.put("caller_context_id", stored.callerContextId);
       values.put("caller_workload", stored.caller);
       values.put("request_mac_key_id", stored.requestMacKeyId);
@@ -526,32 +877,38 @@ class AccountControlUiIssuanceWorkflowTest {
     }
 
     byte[] envelopeBinding(AccountControlUiIssuanceRepository.Stored original, String tokenHash) {
-      return AccountControlUiAuthority.canonical(
-          java.util.Map.ofEntries(
-              java.util.Map.entry("purpose", "account-control-ui-original-credential/v1"),
-              java.util.Map.entry("operationId", original.operationId.toString()),
-              java.util.Map.entry("requestId", original.requestId.toString()),
-              java.util.Map.entry("accountId", original.accountId.toString()),
-              java.util.Map.entry("tenantId", original.tenantId.toString()),
-              java.util.Map.entry("callerWorkload", original.caller),
-              java.util.Map.entry("callerContextId", original.callerContextId.toString()),
-              java.util.Map.entry("requestMacKeyId", original.requestMacKeyId),
-              java.util.Map.entry("requestDigest", original.requestDigest),
-              java.util.Map.entry("tokenHash", tokenHash),
-              java.util.Map.entry(
-                  "claimsDigest", AccountControlUiIssuanceRepository.hash(original.claims)),
-              java.util.Map.entry(
-                  "bundleDigest", AccountControlUiIssuanceRepository.hash(original.bundle)),
-              java.util.Map.entry(
-                  "signerReceiptDigest",
-                  AccountControlUiIssuanceRepository.hash(original.signerReceipt)),
-              java.util.Map.entry("recoveryExpiresAt", original.recoveryExpiry.toString())));
+      Map<String, Object> binding = new java.util.LinkedHashMap<>();
+      binding.put("purpose", "account-control-ui-original-credential/v1");
+      binding.put("operationId", original.operationId.toString());
+      binding.put("requestId", original.requestId.toString());
+      binding.put("accountId", original.accountId.toString());
+      if (original.scopeKind() == AccountControlUiAuthority.ScopeKind.TENANT) {
+        binding.put("tenantId", original.tenantId().toString());
+      } else {
+        binding.put("authorizationScope", AccountControlUiAuthority.ScopeKind.ACCOUNT.name());
+      }
+      binding.put("callerWorkload", original.caller);
+      binding.put("callerContextId", original.callerContextId.toString());
+      binding.put("requestMacKeyId", original.requestMacKeyId);
+      binding.put("requestDigest", original.requestDigest);
+      binding.put("tokenHash", tokenHash);
+      binding.put("claimsDigest", AccountControlUiIssuanceRepository.hash(original.claims));
+      binding.put("bundleDigest", AccountControlUiIssuanceRepository.hash(original.bundle));
+      binding.put(
+          "signerReceiptDigest", AccountControlUiIssuanceRepository.hash(original.signerReceipt));
+      binding.put("recoveryExpiresAt", original.recoveryExpiry.toString());
+      return AccountControlUiAuthority.canonical(binding);
     }
 
     AccountControlUiIssuanceService.Request request(
         UUID requestTenant, UUID requestContext, String secret) {
       return new AccountControlUiIssuanceService.Request(
           requestId, "creator@example.test", secret, requestTenant, requestContext);
+    }
+
+    AccountControlUiIssuanceService.AccountSignInRequest accountRequest() {
+      return new AccountControlUiIssuanceService.AccountSignInRequest(
+          requestId, "creator@example.test", "test-only-secret", context);
     }
 
     PeerScope withPeer(String uri) {

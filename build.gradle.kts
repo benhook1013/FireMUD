@@ -91,7 +91,7 @@ tasks.register<JavaCompile>("compileBufGeneratedJava") {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
-val slowServiceCiPartitionCounts = mapOf("account-service" to 2, "game-session-service" to 4)
+val slowServiceCiPartitionCounts = mapOf("account-service" to 4, "game-session-service" to 4)
 val slowServiceCiModules = slowServiceCiPartitionCounts.keys
 val slowServiceCiPartition = providers.gradleProperty("slowServiceCiPartition").orNull
 val slowServiceCiPartitionModule = providers.gradleProperty("slowServiceCiPartitionModule").orNull

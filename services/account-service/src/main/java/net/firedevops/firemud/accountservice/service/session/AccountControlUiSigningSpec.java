@@ -6,7 +6,9 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.common.security.ControlUiJwtProfileValidator;
 
-/** One canonical initial creator's immutable signing input, never an authentication result. */
+/**
+ * One canonical control-ui credential's immutable signing input, never an authentication result.
+ */
 final class AccountControlUiSigningSpec {
   private final UUID operationId;
   private final UUID requestId;
@@ -48,7 +50,11 @@ final class AccountControlUiSigningSpec {
     values.put("authorityTuple", source.authorityTuple());
     values.put("membershipVersion", source.membershipVersion());
     values.put("issuanceFence", source.issuanceFence());
-    values.put("scopedRoles", Map.of(source.tenant().toString(), java.util.List.of("tenantAdmin")));
+    values.put("scopedRoles", source.scopedRoles());
+    if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT
+        && !source.globalRoles().isEmpty()) {
+      values.put("globalRoles", source.globalRoles());
+    }
     ControlUiJwtProfileValidator.validateClaims(values, 1);
     if (AccountControlUiAuthority.canonical(values).length > 12288) {
       throw new IllegalArgumentException("Control-ui claim encoding exceeds its finite ceiling");

@@ -83,6 +83,33 @@ class AccountControlUiResponseCryptographyTest {
         new AccountControlUiKeyring(temporary), Clock.fixed(now, ZoneOffset.UTC));
   }
 
+  @Test
+  void recentReauthenticationMacHasDistinctPurposeAndUsesOriginalOverlappingKey() throws Exception {
+    custody("encryption", "enc1", 11);
+    custody("request-mac", "mac1", 29);
+    var crypto = crypto(NOW);
+    byte[] input = bytes("test-only-exact-reauthentication-credential-request");
+    String original = crypto.recentReauthenticationRequestMac("mac1", input);
+    assertThat(original).isNotEqualTo(crypto.requestDigest("mac1", input));
+    byte[] oldKey = new byte[32];
+    Arrays.fill(oldKey, (byte) 29);
+    custody("request-mac", "mac2", 31);
+    Files.writeString(
+        temporary.resolve("request-mac/keyring"),
+        Files.readString(temporary.resolve("request-mac/keyring"))
+            + "retiring mac1 "
+            + NOW.plusSeconds(60).toEpochMilli()
+            + " "
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(oldKey)
+            + "\n");
+    assertThat(crypto.currentKeyId()).isEqualTo("mac2");
+    assertThat(crypto.recentReauthenticationRequestMac("mac1", input)).isEqualTo(original);
+    assertThat(crypto.recentReauthenticationRequestMac("mac2", input)).isNotEqualTo(original);
+    assertThatThrownBy(
+            () -> crypto(NOW.plusSeconds(60)).recentReauthenticationRequestMac("mac1", input))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
   private void custody(String purpose, String id, int value) throws Exception {
     byte[] key = new byte[32];
     Arrays.fill(key, (byte) value);

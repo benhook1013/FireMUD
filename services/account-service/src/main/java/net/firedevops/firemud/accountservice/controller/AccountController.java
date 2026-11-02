@@ -64,7 +64,7 @@ public class AccountController {
     AccountRequestReaders.resolveAccountStorageId(accountService, parsedAccountUuid);
     throw new org.springframework.web.server.ResponseStatusException(
         HttpStatus.NOT_IMPLEMENTED,
-        "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism");
+        "Recent ordinary reauthentication for login-factor changes is unavailable; the game-creation evidence owner cannot authorize this mutation");
   }
 
   @GetMapping("/{accountId}/export")

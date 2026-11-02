@@ -175,33 +175,7 @@ public class AccountRepository {
     Objects.requireNonNull(entity, "Account is required");
     entity.setEmail(EmailCanonicalization.normalize(entity.getEmail()));
     if (entity.getId() == null) {
-      if (entity.getLifecycleState() != AccountLifecycleState.ACTIVE) {
-        throw new IllegalArgumentException(
-            "Fresh Accounts must be created in the ACTIVE lifecycle state");
-      }
-      UUID expectedUuid = UUID.randomUUID();
-      AccountsRecord inserted =
-          dsl.insertInto(ACCOUNTS)
-              .set(ACCOUNTS.ACCOUNT_UUID, expectedUuid)
-              .set(
-                  ACCOUNTS.ACCOUNT_UUID_PROVENANCE,
-                  AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT.name())
-              .set(ACCOUNTS.USERNAME, entity.getUsername())
-              .set(ACCOUNTS.EMAIL, entity.getEmail())
-              .set(ACCOUNTS.PASSWORD_HASH, entity.getPasswordHash())
-              .set(ACCOUNTS.ROLE, entity.getRole())
-              .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
-              .set(ACCOUNTS.LOGIN_AUTH_MODES, normalizedLoginAuthModes(entity))
-              .set(ACCOUNTS.LIFECYCLE_STATE, entity.getLifecycleState().storageValue())
-              .returning()
-              .fetchOne();
-      if (inserted == null) {
-        throw new IllegalStateException("Account insert did not return its persisted identity");
-      }
-      requireExactIdentityReadback(
-          inserted, expectedUuid, AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
-      copyIdentityToEntity(entity, inserted);
-      sourceEvidence.initializeFreshAccount(new FreshAccountInsert(inserted.getId(), expectedUuid));
+      insertFresh(entity, proof -> entity);
       return entity;
     }
     UUID expectedUuid = entity.getAccountUuid();
@@ -264,6 +238,59 @@ public class AccountRepository {
             beforeState,
             afterState));
     return entity;
+  }
+
+  /** Internal composition point; only a new insertion can supply this transaction capability. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public <T> T insertFreshAndApply(
+      Account entity, java.util.function.Function<FreshAccountInsert, T> afterInsert) {
+    requireWritableOwnerTransaction();
+    return insertFresh(entity, Objects.requireNonNull(afterInsert));
+  }
+
+  private <T> T insertFresh(
+      Account entity, java.util.function.Function<FreshAccountInsert, T> afterInsert) {
+    Objects.requireNonNull(entity, "Fresh Account is required");
+    if (entity.getId() != null) {
+      throw new IllegalArgumentException(
+          "Fresh insertion does not accept retained Account identity");
+    }
+    entity.setEmail(EmailCanonicalization.normalize(entity.getEmail()));
+    if (entity.getLifecycleState() != AccountLifecycleState.ACTIVE) {
+      throw new IllegalArgumentException(
+          "Fresh Accounts must be created in the ACTIVE lifecycle state");
+    }
+    UUID expectedUuid = UUID.randomUUID();
+    AccountsRecord inserted =
+        dsl.insertInto(ACCOUNTS)
+            .set(ACCOUNTS.ACCOUNT_UUID, expectedUuid)
+            .set(
+                ACCOUNTS.ACCOUNT_UUID_PROVENANCE,
+                AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT.name())
+            .set(ACCOUNTS.USERNAME, entity.getUsername())
+            .set(ACCOUNTS.EMAIL, entity.getEmail())
+            .set(ACCOUNTS.PASSWORD_HASH, entity.getPasswordHash())
+            .set(ACCOUNTS.ROLE, entity.getRole())
+            .set(ACCOUNTS.EMAIL_VERIFIED, entity.isEmailVerified())
+            .set(ACCOUNTS.LOGIN_AUTH_MODES, normalizedLoginAuthModes(entity))
+            .set(ACCOUNTS.LIFECYCLE_STATE, entity.getLifecycleState().storageValue())
+            .returning()
+            .fetchOne();
+    if (inserted == null) {
+      throw new IllegalStateException("Account insert did not return its persisted identity");
+    }
+    requireExactIdentityReadback(
+        inserted, expectedUuid, AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    copyIdentityToEntity(entity, inserted);
+    Long insertionTransactionId = inserted.getAccountRepositoryInsertTransactionId();
+    FreshAccountInsert proof =
+        new FreshAccountInsert(inserted.getId(), expectedUuid, insertionTransactionId);
+    try {
+      sourceEvidence.initializeFreshAccount(proof);
+      return afterInsert.apply(proof);
+    } finally {
+      proof.open = false;
+    }
   }
 
   public void delete(Account entity) {
@@ -345,13 +372,50 @@ public class AccountRepository {
   public static final class FreshAccountInsert {
     private final long accountId;
     private final UUID accountUuid;
+    private final Long insertionTransactionId;
+    private boolean open = true;
 
-    private FreshAccountInsert(long accountId, UUID accountUuid) {
+    private FreshAccountInsert(long accountId, UUID accountUuid, Long insertionTransactionId) {
       if (accountId <= 0L || accountUuid == null || new UUID(0L, 0L).equals(accountUuid)) {
         throw new IllegalArgumentException("Fresh Account insert identity is invalid");
       }
       this.accountId = accountId;
       this.accountUuid = accountUuid;
+      this.insertionTransactionId = insertionTransactionId;
+    }
+
+    /**
+     * Independently verifies actual retained insertion provenance in the still-open transaction.
+     */
+    void requireCurrent(DSLContext context) {
+      if (!open
+          || insertionTransactionId == null
+          || !TransactionSynchronizationManager.isActualTransactionActive()
+          || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+        throw new IllegalStateException("Fresh insertion capability is no longer live");
+      }
+      var row =
+          context.fetchOne(
+              "SELECT id, account_uuid_provenance, account_uuid_source_numeric_id, "
+                  + "account_repository_insert_transaction_id, txid_current() AS xid "
+                  + "FROM accounts WHERE account_uuid = ? FOR UPDATE",
+              accountUuid);
+      if (row == null
+          || !Objects.equals(row.get("id", Long.class), accountId)
+          || !Objects.equals(row.get("account_uuid_source_numeric_id", Long.class), accountId)
+          || !accountUuidProvenance()
+              .name()
+              .equals(row.get("account_uuid_provenance", String.class))
+          || !Objects.equals(
+              row.get("account_repository_insert_transaction_id", Long.class),
+              insertionTransactionId)
+          || !Objects.equals(row.get("xid", Long.class), insertionTransactionId)) {
+        throw new IllegalStateException("Fresh insertion transaction/provenance differs");
+      }
+    }
+
+    long insertionTransactionId() {
+      return insertionTransactionId;
     }
 
     public long accountId() {

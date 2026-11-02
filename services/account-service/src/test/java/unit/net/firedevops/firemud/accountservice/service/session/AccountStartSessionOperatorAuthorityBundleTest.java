@@ -408,6 +408,7 @@ class AccountStartSessionOperatorAuthorityBundleTest {
             Map.entry("token_jti", tokenJti),
             Map.entry("account_uuid", actorId),
             Map.entry("tenant_uuid", tenantId),
+            Map.entry("authorization_scope", "TENANT"),
             Map.entry("caller_context_id", UUID.randomUUID()),
             Map.entry("caller_workload", "spiffe://firemud/ns/test/sa/account-service"),
             Map.entry("request_mac_key_id", "test-key"),

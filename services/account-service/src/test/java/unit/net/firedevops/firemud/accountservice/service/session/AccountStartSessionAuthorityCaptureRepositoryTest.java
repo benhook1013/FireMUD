@@ -106,6 +106,8 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
   private static final Field<UUID> ISSUANCE_OPERATION_ID =
       field(name("operation_id"), SQLDataType.UUID);
   private static final Field<UUID> ISSUANCE_TOKEN_JTI = field(name("token_jti"), SQLDataType.UUID);
+  private static final Field<String> ISSUANCE_AUTHORIZATION_SCOPE =
+      field(name("authorization_scope"), SQLDataType.VARCHAR);
   private static final Field<UUID> ISSUANCE_CALLER_CONTEXT_ID =
       field(name("caller_context_id"), SQLDataType.UUID);
   private static final Field<String> ISSUANCE_CALLER_WORKLOAD =
@@ -505,6 +507,7 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
                 ISSUANCE_TOKEN_JTI,
                 ACCOUNT_UUID,
                 TENANT_UUID,
+                ISSUANCE_AUTHORIZATION_SCOPE,
                 ISSUANCE_CALLER_CONTEXT_ID,
                 ISSUANCE_CALLER_WORKLOAD,
                 ISSUANCE_REQUEST_MAC_KEY_ID,
@@ -526,6 +529,7 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
     row.setValue(ISSUANCE_TOKEN_JTI, CONTROL_UI_TOKEN_JTI);
     row.setValue(ACCOUNT_UUID, tuple.actor().accountId());
     row.setValue(TENANT_UUID, tuple.action().scope().tenantId());
+    row.setValue(ISSUANCE_AUTHORIZATION_SCOPE, "TENANT");
     row.setValue(
         ISSUANCE_CALLER_CONTEXT_ID, UUID.fromString("66666666-6666-4666-8666-666666666666"));
     row.setValue(ISSUANCE_CALLER_WORKLOAD, LOGGING_PEER_URI);

@@ -28,8 +28,10 @@ import net.firedevops.firemud.accountservice.creatorparty.CreatorPartyEncoding;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyRepository;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartySource;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartySource.VerificationStatus;
+import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionBirthSource.Category;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsCatalogVersion;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEncoding;
@@ -42,8 +44,13 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountFreshEnrollmentPolicyRepository;
+import net.firedevops.firemud.accountservice.repository.AccountFreshEnrollmentRepository;
+import net.firedevops.firemud.accountservice.repository.AccountFreshEnrollmentRequest;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionBirthRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -79,6 +86,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 /** Real Account source/auth owners with explicitly stipulated upstream creator/legal inputs. */
 final class AccountControlUiOwnerSourcesFixture {
   private static final String NAMESPACE = "control-ui-owner-proof";
+  private static final String CONTROLLED_POLICY_SOURCE_ROOT =
+      "/controlled-test/owner-protected-mount";
+  static final List<String> HISTORICAL_MIGRATION_TARGETS =
+      List.of("160.1", "1006", "1007", "1009", "1010");
   static final String CALLER =
       "spiffe://firemud/ns/control-ui-owner-proof/sa/logging-admin-service";
   public static final String OTP = "test-only-original-creator-otp";
@@ -100,6 +111,8 @@ final class AccountControlUiOwnerSourcesFixture {
   private final String migrationSchema;
   final DraftAuthorizationFenceRepository fences;
   final AccountServiceImpl primary;
+  final AccountPlatformRestrictionBirthRepository restrictionBirths;
+  final AccountPlatformRestrictionOperationRepository restrictionOperations;
 
   /**
    * Reuses actual Account/source/auth owners while a composed test supplies signer/Redis owners.
@@ -134,12 +147,7 @@ final class AccountControlUiOwnerSourcesFixture {
       UUID tenant,
       String migrationTarget)
       throws Exception {
-    if (migrationTarget != null
-        && !"160.1".equals(migrationTarget)
-        && !"1006".equals(migrationTarget)
-        && !"1007".equals(migrationTarget)
-        && !"1009".equals(migrationTarget)
-        && !"1010".equals(migrationTarget)) {
+    if (migrationTarget != null && !HISTORICAL_MIGRATION_TARGETS.contains(migrationTarget)) {
       throw new IllegalArgumentException(
           "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read, 1009 selected-owner predecessor, or 1010 selected-publication closure predecessor is supported");
     }
@@ -160,6 +168,10 @@ final class AccountControlUiOwnerSourcesFixture {
     var outbox = new AccountAuthorityOutboxRepository(dsl);
     var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
     accounts = new AccountRepository(dsl, sourceEvidence);
+    restrictionBirths = new AccountPlatformRestrictionBirthRepository(dsl);
+    restrictionOperations =
+        new AccountPlatformRestrictionOperationRepository(
+            dsl, generations, outbox, sourceEvidence, restrictionBirths);
     account =
         tx(
             () -> {
@@ -302,7 +314,11 @@ final class AccountControlUiOwnerSourcesFixture {
     authority =
         new AccountControlUiAuthority(
             new AccountDraftSourceCompositionService(
-                dsl, parties, bootstrap, terms, sourceEvidence));
+                dsl, parties, bootstrap, terms, sourceEvidence),
+            accounts,
+            sourceEvidence,
+            restrictionOperations,
+            dsl);
     challenges = new AccountEmailLoginChallengeRepository(dsl);
     tx(
         () -> {
@@ -421,6 +437,190 @@ final class AccountControlUiOwnerSourcesFixture {
   AccountControlUiIssuanceService.Request request(String secret) {
     return new AccountControlUiIssuanceService.Request(
         request, account.getEmail(), secret, tenant, callerContext);
+  }
+
+  /** Fresh real Account/auth sources only; no tenant membership or current restriction is added. */
+  Account createGlobalAccount(String password) {
+    return tx(
+        () -> {
+          Account candidate = new Account();
+          String suffix = UUID.randomUUID().toString();
+          candidate.setUsername("global-owner-" + suffix);
+          candidate.setEmail(suffix + "@example.test");
+          candidate.setPasswordHash(hash(password));
+          candidate.setEmailVerified(true);
+          candidate.setLoginAuthModes(AccountLoginAuthModes.DEFAULT_SERIALIZED);
+          return accounts.save(candidate);
+        });
+  }
+
+  /**
+   * Genuine insert and both category certifications under controlled SQL policy publications.
+   * Publication bytes and owner delivery are stipulated here; no protected mount custody is proved.
+   * The ordinary createGlobalAccount helper deliberately remains uncertified for negative proofs.
+   */
+  Account createCertifiedGlobalAccount(String password) {
+    return tx(
+        () -> {
+          for (Category category : Category.values()) {
+            ensureControlledFreshEnrollmentPolicy(category);
+          }
+          String suffix = UUID.randomUUID().toString();
+          var result =
+              new AccountFreshEnrollmentRepository(
+                      dsl,
+                      accounts,
+                      new AccountFreshEnrollmentPolicyRepository(dsl),
+                      restrictionOperations)
+                  .enroll(
+                      new AccountFreshEnrollmentRequest(
+                          UUID.randomUUID(),
+                          "global-" + suffix,
+                          suffix + "@example.test",
+                          hash(password),
+                          true,
+                          AccountLoginAuthModes.DEFAULT_SERIALIZED));
+          assertThat(result.accountSecurityLock().receipt()).isPresent();
+          assertThat(result.platformAccessBan().receipt()).isPresent();
+          return accounts.findById(result.accountId()).orElseThrow();
+        });
+  }
+
+  private void ensureControlledFreshEnrollmentPolicy(Category category) {
+    String categoryValue = category.storageValue();
+    String owner =
+        category == Category.ACCOUNT_SECURITY_LOCK
+            ? "account-service/account-security-enrollment-policy/v1"
+            : "logging-admin-service/platform-access-enrollment-policy/v1";
+    var current =
+        dsl.fetchOptional(
+            "SELECT c.publication_id AS current_publication_id, c.revision AS current_revision,"
+                + " p.publication_id AS matched_publication_id, p.category AS publication_category,"
+                + " p.revision AS publication_revision, p.policy_id, p.closure_id, p.policy_rule,"
+                + " p.closure_rule, p.source_identity, p.source_root, p.publication_digest,"
+                + " p.publication_bytes FROM account_fresh_enrollment_policy_current c"
+                + " LEFT JOIN account_fresh_enrollment_policy_publications p"
+                + " ON p.publication_id = c.publication_id WHERE c.category = ?",
+            categoryValue);
+    if (current.isPresent()) {
+      var row = current.orElseThrow();
+      UUID publication = row.get("current_publication_id", UUID.class);
+      UUID policy = row.get("policy_id", UUID.class);
+      UUID closure = row.get("closure_id", UUID.class);
+      assertThat(publication).isNotNull();
+      assertThat(policy).isNotNull();
+      assertThat(closure).isNotNull();
+      assertThat(row.get("matched_publication_id", UUID.class)).isEqualTo(publication);
+      assertThat(row.get("publication_category", String.class)).isEqualTo(categoryValue);
+      assertThat(row.get("current_revision", Long.class)).isEqualTo(1L);
+      assertThat(row.get("publication_revision", Long.class)).isEqualTo(1L);
+      assertThat(row.get("policy_rule", String.class)).isEqualTo("CERTIFY_NEW_ACTIVE_ACCOUNT");
+      assertThat(row.get("closure_rule", String.class)).isEqualTo("EXACT_FRESH_INSERT_ONLY");
+      assertThat(row.get("source_identity", String.class)).isEqualTo(owner);
+      assertThat(row.get("source_root", String.class)).isEqualTo(CONTROLLED_POLICY_SOURCE_ROOT);
+      byte[] publicationBytes =
+          canonicalPolicyPublicationBytes(
+              category,
+              owner,
+              publication,
+              1,
+              policy,
+              "CERTIFY_NEW_ACTIVE_ACCOUNT",
+              closure,
+              "EXACT_FRESH_INSERT_ONLY");
+      assertThat(row.get("publication_digest", String.class))
+          .isEqualTo("sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes));
+      assertThat(row.get("publication_bytes", byte[].class)).containsExactly(publicationBytes);
+      return;
+    }
+
+    if (dsl.fetchOptional(
+            "SELECT publication_id FROM account_fresh_enrollment_policy_publications"
+                + " WHERE category = ?",
+            categoryValue)
+        .isPresent()) {
+      throw new IllegalStateException(
+          "Controlled fresh-enrollment publication exists without its current policy row");
+    }
+    UUID publication = UUID.randomUUID(), policy = UUID.randomUUID(), closure = UUID.randomUUID();
+    byte[] publicationBytes =
+        canonicalPolicyPublicationBytes(
+            category,
+            owner,
+            publication,
+            1,
+            policy,
+            "CERTIFY_NEW_ACTIVE_ACCOUNT",
+            closure,
+            "EXACT_FRESH_INSERT_ONLY");
+    dsl.execute(
+        "INSERT INTO account_fresh_enrollment_policy_publications"
+            + " (publication_id, category, revision, policy_id, closure_id, policy_rule, closure_rule,"
+            + " source_identity, source_root, publication_digest, publication_bytes)"
+            + " VALUES (?, ?, 1, ?, ?, 'CERTIFY_NEW_ACTIVE_ACCOUNT', 'EXACT_FRESH_INSERT_ONLY', ?, ?, ?, ?)",
+        publication,
+        categoryValue,
+        policy,
+        closure,
+        owner,
+        CONTROLLED_POLICY_SOURCE_ROOT,
+        "sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes),
+        publicationBytes);
+    dsl.execute(
+        "INSERT INTO account_fresh_enrollment_policy_current (category, publication_id, revision) VALUES (?, ?, 1)",
+        categoryValue,
+        publication);
+  }
+
+  private static byte[] canonicalPolicyPublicationBytes(
+      Category category,
+      String owner,
+      UUID publication,
+      long revision,
+      UUID policy,
+      String policyRule,
+      UUID closure,
+      String closureRule) {
+    return AccountControlUiAuthority.canonical(
+        Map.of(
+            "schemaVersion",
+            "account-fresh-enrollment-policy/v1",
+            "category",
+            category.storageValue(),
+            "sourceIdentity",
+            owner,
+            "publicationId",
+            publication.toString(),
+            "revision",
+            Long.toString(revision),
+            "policyId",
+            policy.toString(),
+            "policyRule",
+            policyRule,
+            "closureId",
+            closure.toString(),
+            "closureRule",
+            closureRule));
+  }
+
+  /** Stores an actual hashed email-OTP challenge for the separate Account's real primary path. */
+  AccountEmailLoginChallenge installGlobalOtp(Account globalAccount, String otp) {
+    return tx(
+        () -> {
+          challenges.lockAccountChallenge(globalAccount.getId());
+          if (challenges.findByAccountId(globalAccount.getId()).isPresent()) {
+            throw new IllegalStateException("Global Account already has an email challenge");
+          }
+          var now = LocalDateTime.now().withNano(0);
+          var challenge = new AccountEmailLoginChallenge();
+          challenge.setAccountId(globalAccount.getId());
+          challenge.setCodeHash(hash(otp));
+          challenge.setExpiresAt(now.plusMinutes(5));
+          challenge.setResendAvailableAt(now.plusMinutes(1));
+          challenge.setCreatedAt(now);
+          challenge.setUpdatedAt(now);
+          return challenges.save(challenge);
+        });
   }
 
   <T> T tx(Supplier<T> action) {

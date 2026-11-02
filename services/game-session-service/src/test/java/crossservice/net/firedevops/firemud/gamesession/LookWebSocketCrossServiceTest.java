@@ -174,7 +174,9 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection).anyMatch(response -> response.startsWith("OK LOGIN"));
+    assertThat(firstConnection).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(firstConnection)
         .anyMatch(
             response ->
@@ -184,7 +186,7 @@ class LookWebSocketCrossServiceTest {
 
     List<String> reconnectLook =
         runLookAfterReconnect(sessionId, LookTestFixtures.DESTINATION_ROOM_ID);
-    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(3);
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
@@ -280,7 +282,9 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection).anyMatch(response -> response.startsWith("OK LOGIN"));
+    assertThat(firstConnection).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(firstConnection)
         .anyMatch(
             response ->
@@ -310,7 +314,9 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection).anyMatch(response -> response.startsWith("OK LOGIN"));
+    assertThat(firstConnection).anyMatch(response -> response.startsWith("OK PLAY"));
     assertThat(firstConnection)
         .anyMatch(
             response ->

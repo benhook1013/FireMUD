@@ -1229,7 +1229,9 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
           .doesNotContain("1008", "1009", "1010");
       var selected = selectedForSettlement(f.tenant);
       settleOriginal(issued, selected);
-      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var repository =
+          new AccountSelectedOwnerIntakeSourceReservationRepository(
+              f.dsl, fixture.issuanceRepository());
       var reservations =
           new AccountSelectedOwnerIntakeSourceReservationService(
               issued.actors(), f.fences, repository, f.manager, "test");
@@ -1294,7 +1296,9 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       var f = issued.sources();
       var selected = selectedForSettlement(f.tenant);
       settleOriginal(issued, selected);
-      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var repository =
+          new AccountSelectedOwnerIntakeSourceReservationRepository(
+              f.dsl, fixture.issuanceRepository());
       var reservations =
           new AccountSelectedOwnerIntakeSourceReservationService(
               issued.actors(), f.fences, repository, f.manager, "test");

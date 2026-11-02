@@ -75,7 +75,11 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
       Set.of("account_security_lock", "platform_access_ban");
   private static final Set<String> RESTRICTION_STATES = Set.of("NONRESTRICTED", "RESTRICTED");
   private static final Set<String> RESTRICTION_SOURCE_KINDS =
-      Set.of("ACCOUNT_SECURITY_POLICY", "ACCOUNT_SECURITY_RECOVERY", "LOGGING_ADMIN_MODERATION");
+      Set.of(
+          "ACCOUNT_SECURITY_POLICY",
+          "ACCOUNT_SECURITY_RECOVERY",
+          "LOGGING_ADMIN_MODERATION",
+          "ACCOUNT_FRESH_ENROLLMENT");
   private static final Set<String> LOGIN_MODES = Set.of("EMAIL_OTP", "PASSWORD");
   private static final Set<String> GLOBAL_ROLES =
       Set.of("platformAdmin", "support", "billingAdmin");
@@ -237,15 +241,8 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
       throw invalid("restrictionRequestDigest must be canonical sha256 hexadecimal");
     }
     String sourceKind = text(event, "restrictionSourceKind");
-    if (!RESTRICTION_SOURCE_KINDS.contains(sourceKind)
-        || ("account_security_lock".equals(category)
-            && ("LOGGING_ADMIN_MODERATION".equals(sourceKind)
-                || ("ACCOUNT_SECURITY_POLICY".equals(sourceKind)
-                    && !"RESTRICTED".equals(text(event, "restrictionState")))
-                || ("ACCOUNT_SECURITY_RECOVERY".equals(sourceKind)
-                    && !"NONRESTRICTED".equals(text(event, "restrictionState")))))
-        || ("platform_access_ban".equals(category)
-            && !"LOGGING_ADMIN_MODERATION".equals(sourceKind))) {
+    if (!restrictionSourceOwnsCategoryState(
+        category, text(event, "restrictionState"), sourceKind)) {
       throw invalid("restrictionSourceKind does not match its Account category owner");
     }
     uuid(event, "restrictionSourceRequestId");
@@ -253,6 +250,24 @@ public final class AccountSecurityStateAuthorityEventV1Codec {
     if (!StrictAuthorityEventSupport.isCanonicalSha256Digest(sourceDigest)) {
       throw invalid("restrictionSourceDigest must be canonical sha256 hexadecimal");
     }
+  }
+
+  private static boolean restrictionSourceOwnsCategoryState(
+      String category, String state, String sourceKind) {
+    if (!RESTRICTION_SOURCE_KINDS.contains(sourceKind)) {
+      return false;
+    }
+    return switch (sourceKind) {
+      case "ACCOUNT_FRESH_ENROLLMENT" ->
+          ("account_security_lock".equals(category) || "platform_access_ban".equals(category))
+              && "NONRESTRICTED".equals(state);
+      case "ACCOUNT_SECURITY_POLICY" ->
+          "account_security_lock".equals(category) && "RESTRICTED".equals(state);
+      case "ACCOUNT_SECURITY_RECOVERY" ->
+          "account_security_lock".equals(category) && "NONRESTRICTED".equals(state);
+      case "LOGGING_ADMIN_MODERATION" -> "platform_access_ban".equals(category);
+      default -> false;
+    };
   }
 
   private static AccountRestrictionAuthorityEvent restrictionEvidence(

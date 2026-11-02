@@ -382,7 +382,7 @@ class AccountControllerTest {
         .andExpect(
             jsonPath("$.error.message")
                 .value(
-                    "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism"));
+                    "Recent ordinary reauthentication for login-factor changes is unavailable; the game-creation evidence owner cannot authorize this mutation"));
 
     verify(accountService, never())
         .updateLoginAuthModes(anyLong(), any(UpdateAccountLoginAuthModesRequest.class));

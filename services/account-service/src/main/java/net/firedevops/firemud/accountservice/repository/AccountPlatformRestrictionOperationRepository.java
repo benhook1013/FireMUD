@@ -26,8 +26,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Account restriction receipt reader and closed persistence draft. This class is not registered as
  * a Spring bean and exposes no RPC or HTTP surface. Request fields are correlation only. The
- * mutation command remains mechanically denied until the exact Account policy/recovery or Logging &
- * Admin intent/authentication proof boundary is implemented and passed as typed evidence.
+ * ordinary mutation command remains mechanically denied until the exact Account policy/recovery or
+ * Logging & Admin intent/authentication proof receiver exists. The separate internal fresh-only
+ * certification entry requires the actual insertion capability and explicit current owner decision.
  */
 public final class AccountPlatformRestrictionOperationRepository {
   private static final String OPERATIONS = "account_platform_restriction_operations";
@@ -65,9 +66,21 @@ public final class AccountPlatformRestrictionOperationRepository {
     throw new OwnerAuthorizationUnresolvedException();
   }
 
+  /** Closed fresh-only entry; ordinary mutation requests never reach private persistence. */
+  public Operation certifyFreshEnrollment(
+      AccountRepository.FreshAccountInsert proof,
+      AccountFreshEnrollmentPolicyRepository.OwnerDecision decision) {
+    requireWritableTransaction();
+    Objects.requireNonNull(proof);
+    Objects.requireNonNull(decision);
+    AccountPlatformRestrictionMutationRequest request = decision.requireCurrent(dsl, proof);
+    return persistWithoutOwnerProof(request);
+  }
+
   /**
-   * Persistence sequence retained for integration once an authoritative typed proof receiver
-   * exists. It is private and has no caller today; do not connect it using caller correlation.
+   * Shared private persistence mechanics. Only the typed fresh certification entry calls this
+   * sequence; ordinary request/correlation fields do not authorize it. Historical controlled
+   * storage fixtures retain this private method name without establishing an ordinary receiver.
    */
   private Operation persistWithoutOwnerProof(AccountPlatformRestrictionMutationRequest request) {
     requireWritableTransaction();
@@ -467,6 +480,12 @@ public final class AccountPlatformRestrictionOperationRepository {
         || !event.eventDigest().equals(eventRow.get("event_digest", String.class))
         || !Arrays.equals(event.payload(), eventRow.get("payload", byte[].class))) {
       throw new RestrictionSourceUnavailableException();
+    }
+    if (request.sourceKind()
+        == AccountPlatformRestrictionMutationRequest.SourceKind.ACCOUNT_FRESH_ENROLLMENT) {
+      // Original policy/closure/certification and insertion provenance remain required after later
+      // owner publications or category revisions. Current policy is required only for first commit.
+      dsl.fetch("SELECT account_fresh_enrollment_require_operation(?)", request.requestId());
     }
     Record revision =
         dsl.fetchOne(

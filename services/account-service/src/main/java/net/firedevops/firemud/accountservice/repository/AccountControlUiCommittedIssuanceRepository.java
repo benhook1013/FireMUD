@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -45,7 +46,8 @@ public class AccountControlUiCommittedIssuanceRepository {
     }
     Record row =
         dsl.fetchOne(
-            "SELECT request_id, operation_id, token_jti, account_uuid, tenant_uuid, "
+            "SELECT request_id, operation_id, token_jti, account_uuid, tenant_uuid,"
+                + " authorization_scope, "
                 + "caller_workload, caller_context_id, request_digest, claims_payload, "
                 + "source_payload, bundle_payload, signer_receipt, issued_at_epoch_second, "
                 + "expires_at_epoch_second, recovery_expires_at, status, token_hash, "
@@ -128,6 +130,7 @@ public class AccountControlUiCommittedIssuanceRepository {
     private final UUID tokenJti;
     private final UUID accountId;
     private final UUID tenantId;
+    private final AccountControlUiAuthority.ScopeKind scopeKind;
     private final String callerWorkload;
     private final UUID callerContextId;
     private final String requestDigest;
@@ -151,7 +154,8 @@ public class AccountControlUiCommittedIssuanceRepository {
       operationId = uuid(row, "operation_id");
       tokenJti = uuid(row, "token_jti");
       accountId = uuid(row, "account_uuid");
-      tenantId = uuid(row, "tenant_uuid");
+      scopeKind = AccountControlUiCommittedIssuanceRepository.scopeKind(row);
+      tenantId = AccountControlUiCommittedIssuanceRepository.tenantId(row, scopeKind);
       callerWorkload = text(row, "caller_workload");
       callerContextId = uuid(row, "caller_context_id");
       requestDigest = digest(row, "request_digest");
@@ -212,7 +216,18 @@ public class AccountControlUiCommittedIssuanceRepository {
     }
 
     public UUID tenantId() {
+      if (scopeKind != AccountControlUiAuthority.ScopeKind.TENANT) {
+        throw denied();
+      }
       return tenantId;
+    }
+
+    public AccountControlUiAuthority.ScopeKind scopeKind() {
+      return scopeKind;
+    }
+
+    public Optional<UUID> optionalTenantId() {
+      return Optional.ofNullable(tenantId);
     }
 
     public String callerWorkload() {
@@ -290,6 +305,24 @@ public class AccountControlUiCommittedIssuanceRepository {
     @Override
     public String toString() {
       return "AccountControlUiCommittedIssuanceRepository.CommittedIssuance[redacted]";
+    }
+  }
+
+  private static AccountControlUiAuthority.ScopeKind scopeKind(Record row) {
+    String value = row.get("authorization_scope", String.class);
+    try {
+      return AccountControlUiAuthority.decodeScope(value);
+    } catch (IllegalArgumentException malformed) {
+      throw denied();
+    }
+  }
+
+  private static UUID tenantId(Record row, AccountControlUiAuthority.ScopeKind scopeKind) {
+    UUID value = row.get("tenant_uuid", UUID.class);
+    try {
+      return AccountControlUiAuthority.decodeScopedTenant(scopeKind, value);
+    } catch (IllegalArgumentException malformed) {
+      throw denied();
     }
   }
 }
