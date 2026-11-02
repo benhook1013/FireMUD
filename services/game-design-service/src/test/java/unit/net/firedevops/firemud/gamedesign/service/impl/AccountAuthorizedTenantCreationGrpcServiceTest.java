@@ -183,11 +183,15 @@ class AccountAuthorizedTenantCreationGrpcServiceTest {
   @Test
   void closureAuthenticatesPeerAndCallerBeforeDecodingAndUsesExistingExactSelector() {
     var selector = closureRequest();
+    var malformed = selector.toBuilder().setCreationRequestId("not-canonical").build();
     assertThat(close(selector, OTHER_URI)).isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(close(selector, null)).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(close(malformed, OTHER_URI)).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(close(malformed, null)).isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(owner);
     SessionContext.setContext("authenticated-user", java.util.List.of(), java.util.Map.of());
     assertThat(close(selector, ACCOUNT_URI)).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(close(malformed, ACCOUNT_URI)).isEqualTo(Status.Code.PERMISSION_DENIED);
     SessionContext.clear();
     assertThat(close(selector, ACCOUNT_URI)).isNull();
     verify(owner)
