@@ -21,6 +21,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.client.StripeBillingPrerequisiteObserver;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord.Observation;
@@ -28,6 +33,9 @@ import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRe
 import net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRecord;
 import net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRepository;
 import net.firedevops.firemud.accountservice.service.AccountBillingPrerequisiteConfirmationService.ConfirmationRequest;
+import net.firedevops.firemud.accountservice.service.AccountBillingPrerequisiteConfirmationService.ConfirmedConfirmation;
+import net.firedevops.firemud.accountservice.service.AccountBillingPrerequisiteConfirmationService.ReplayedConfirmation;
+import net.firedevops.firemud.accountservice.service.AccountBillingPrerequisiteConfirmationService.Result;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
@@ -101,6 +109,89 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
         .containsExactly(Observation.NONE, Observation.CONFIRMED);
     assertThat(context.instruments().readHistory(context.account(), request.instrumentUuid()))
         .containsExactly(confirmed.instrument());
+  }
+
+  @Test
+  void concurrentExactConfirmationsWithChangedDisplayReplayTheWinningReceipts() throws Exception {
+    Context context = context();
+    AccountBillingCustomerRecord intent = intent(context);
+    ConfirmationRequest request = request(context, intent);
+    CountDownLatch paymentMethodReadsReady = new CountDownLatch(2);
+    CountDownLatch releasePaymentMethodReads = new CountDownLatch(1);
+    Runnable waitForBothPaymentMethodReads =
+        () -> {
+          paymentMethodReadsReady.countDown();
+          try {
+            if (!releasePaymentMethodReads.await(10, TimeUnit.SECONDS)) {
+              throw new AssertionError("Timed out waiting to release Stripe payment-method reads");
+            }
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(
+                "Interrupted while waiting to release Stripe reads", interrupted);
+          }
+        };
+    ControlledStripeTransport firstTransport =
+        new ControlledStripeTransport(
+            customerResponse(context.account(), intent.customerProvisioningRequestId()),
+            paymentMethodResponse(PROVIDER_PAYMENT_METHOD_ID, PROVIDER_CUSTOMER_ID)
+                .replace("4242", "1111"),
+            waitForBothPaymentMethodReads);
+    ControlledStripeTransport secondTransport =
+        new ControlledStripeTransport(
+            customerResponse(context.account(), intent.customerProvisioningRequestId()),
+            paymentMethodResponse(PROVIDER_PAYMENT_METHOD_ID, PROVIDER_CUSTOMER_ID)
+                .replace("4242", "8888"),
+            waitForBothPaymentMethodReads);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+
+    try {
+      Future<Result> first =
+          executor.submit(() -> service(context, firstTransport).confirm(request));
+      Future<Result> second =
+          executor.submit(() -> service(context, secondTransport).confirm(request));
+
+      assertThat(paymentMethodReadsReady.await(10, TimeUnit.SECONDS))
+          .as("both requests pass preflight and finish the customer read before either card read")
+          .isTrue();
+      releasePaymentMethodReads.countDown();
+
+      Result firstResult = first.get(10, TimeUnit.SECONDS);
+      Result secondResult = second.get(10, TimeUnit.SECONDS);
+      assertThat(firstResult instanceof ConfirmedConfirmation)
+          .isNotEqualTo(secondResult instanceof ConfirmedConfirmation);
+      assertThat(firstResult instanceof ReplayedConfirmation)
+          .isNotEqualTo(secondResult instanceof ReplayedConfirmation);
+
+      ConfirmedConfirmation confirmed =
+          (ConfirmedConfirmation)
+              (firstResult instanceof ConfirmedConfirmation ? firstResult : secondResult);
+      ReplayedConfirmation replayed =
+          (ReplayedConfirmation)
+              (firstResult instanceof ReplayedConfirmation ? firstResult : secondResult);
+
+      assertThat(replayed.customerReceipt()).isEqualTo(confirmed.customer());
+      assertThat(replayed.instrumentReceipt()).isEqualTo(confirmed.instrument());
+      assertThat(replayed.evidenceDigest()).isEqualTo(confirmed.evidenceDigest());
+      assertThat(confirmed.customer().evidenceDigest()).isEqualTo(confirmed.evidenceDigest());
+      assertThat(confirmed.instrument().evidenceDigest()).isEqualTo(confirmed.evidenceDigest());
+      assertThat(confirmed.instrument().display().lastFour()).isIn("1111", "8888");
+
+      assertThat(firstTransport.callCount()).isEqualTo(2);
+      assertThat(secondTransport.callCount()).isEqualTo(2);
+      assertThat(context.customers().readHistory(context.account()))
+          .containsExactly(intent, confirmed.customer());
+      assertThat(context.instruments().readHistory(context.account(), request.instrumentUuid()))
+          .containsExactly(confirmed.instrument());
+      assertThat(context.instruments().findByOwner(context.account(), request.instrumentUuid()))
+          .contains(confirmed.instrument());
+    } finally {
+      releasePaymentMethodReads.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS))
+          .as("concurrent confirmation workers finish during cleanup")
+          .isTrue();
+    }
   }
 
   @Test

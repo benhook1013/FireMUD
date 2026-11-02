@@ -157,9 +157,6 @@ public final class AccountBillingPrerequisiteConfirmationService {
         classifyOriginalOrNewIntent(
             current, currentInstrument, originalCustomer, originalInstrument, request);
     if (preflight instanceof OriginalReplay replay) {
-      if (!observed.evidenceDigest().equals(replay.customer().evidenceDigest())) {
-        throw new ConflictException("Concurrent exact replay has conflicting provider evidence");
-      }
       return new CommittedRecords(replay.customer(), replay.instrument(), true);
     }
     if (!(preflight instanceof NewIntent)) {
