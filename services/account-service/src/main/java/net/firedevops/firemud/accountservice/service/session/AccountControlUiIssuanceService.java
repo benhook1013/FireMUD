@@ -409,6 +409,11 @@ public final class AccountControlUiIssuanceService {
             "Explicit control-ui scope and source selection required");
       }
     }
+
+    @Override
+    public String toString() {
+      return "AccountControlUiIssuanceService.Invocation[redacted]";
+    }
   }
 
   public record AccountSignInRequest(

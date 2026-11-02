@@ -168,6 +168,63 @@ class AccountControlUiPrimaryAuthenticationTest {
   }
 
   @Test
+  void missingLockedAccountIsRejectedBeforeCredentialVerificationOrMapping() {
+    account.setLoginAuthModes("EMAIL_OTP");
+    when(accounts.findByEmail(account.getEmail())).thenReturn(Optional.of(account));
+    when(accounts.findByIdForUpdate(account.getId())).thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () -> primary.authenticateControlUiPrimaryIdentity(account.getEmail(), "test-only-otp"))
+        .isExactlyInstanceOf(AuthenticationException.class);
+    verifyPrimaryAuthenticationDidNotStart();
+  }
+
+  @Test
+  void lockedUuidProvenanceAndSourceRowMismatchesAreRejectedBeforeAuthentication() {
+    account.setLoginAuthModes("EMAIL_OTP");
+    Account changedUuid = accountWithPassword("test-only-primary-secret");
+    changedUuid.setAccountUuid(UUID.randomUUID());
+    Account changedProvenance = accountWithPassword("test-only-primary-secret");
+    changedProvenance.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT);
+    Account changedSourceRow = accountWithPassword("test-only-primary-secret");
+    changedSourceRow.setAccountUuidSourceNumericId(account.getId() + 1L);
+    when(accounts.findByEmail(account.getEmail())).thenReturn(Optional.of(account));
+    when(accounts.findByIdForUpdate(account.getId()))
+        .thenReturn(
+            Optional.of(changedUuid),
+            Optional.of(changedProvenance),
+            Optional.of(changedSourceRow));
+
+    assertThatThrownBy(
+            () -> primary.authenticateControlUiPrimaryIdentity(account.getEmail(), "test-only-otp"))
+        .isExactlyInstanceOf(AuthenticationException.class);
+    assertThatThrownBy(
+            () -> primary.authenticateControlUiPrimaryIdentity(account.getEmail(), "test-only-otp"))
+        .isExactlyInstanceOf(AuthenticationException.class);
+    assertThatThrownBy(
+            () -> primary.authenticateControlUiPrimaryIdentity(account.getEmail(), "test-only-otp"))
+        .isExactlyInstanceOf(IllegalStateException.class);
+    verifyPrimaryAuthenticationDidNotStart();
+  }
+
+  @Test
+  void changedUsernameSelectedRowIsRejectedBeforeCredentialVerificationOrMapping() {
+    account.setLoginAuthModes("EMAIL_OTP");
+    Account current = accountWithPassword("test-only-primary-secret");
+    current.setUsername("renamed-creator");
+    when(accounts.findByEmail(account.getUsername())).thenReturn(Optional.empty());
+    when(accounts.findByUsername(account.getUsername())).thenReturn(Optional.of(account));
+    when(accounts.findByIdForUpdate(account.getId())).thenReturn(Optional.of(current));
+
+    assertThatThrownBy(
+            () ->
+                primary.authenticateControlUiPrimaryIdentity(
+                    account.getUsername(), "test-only-otp"))
+        .isExactlyInstanceOf(AuthenticationException.class);
+    verifyPrimaryAuthenticationDidNotStart();
+  }
+
+  @Test
   void existingUsernameFallbackStillResolvesAndLocksTheSelectedAccount() {
     when(accounts.findByEmail(account.getUsername())).thenReturn(Optional.empty());
     when(accounts.findByUsername(account.getUsername())).thenReturn(Optional.of(account));
@@ -223,6 +280,12 @@ class AccountControlUiPrimaryAuthenticationTest {
     current.setLoginAuthModes(account.getLoginAuthModes());
     current.setPasswordHash(hash(password));
     return current;
+  }
+
+  private void verifyPrimaryAuthenticationDidNotStart() {
+    verify(challenges, never()).lockAccountChallenge(account.getId());
+    verify(challenges, never()).findByAccountId(account.getId());
+    verify(mapper, never()).toDto(org.mockito.ArgumentMatchers.any(Account.class));
   }
 
   private static String hash(String secret) {

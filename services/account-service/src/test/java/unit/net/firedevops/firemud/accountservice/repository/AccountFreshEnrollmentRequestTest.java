@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import de.mkammerer.argon2.Argon2Factory;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionBirthSource.Category;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest;
@@ -23,6 +22,7 @@ import net.firedevops.firemud.accountservice.repository.AccountFreshEnrollmentRe
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionBirthRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -112,13 +112,12 @@ class AccountFreshEnrollmentRequestTest {
   }
 
   @Test
-  void protectedSourceDeniesMissingAndWritablePinsWithoutInstallingAnything() throws Exception {
+  void nonRootOwnedMountAndRequestControlledMountAreRejected() throws Exception {
+    Assumptions.assumeTrue(
+        ((Number) Files.getAttribute(temporary, "unix:uid")).longValue() != 0,
+        "This unit covers non-root-owned mount and relative-path guards; "
+            + "root-owned protected-pin proof uses the controlled fixture");
     var source = new AccountFreshEnrollmentPolicySource(temporary.toAbsolutePath());
-    assertThatThrownBy(() -> source.read(Category.ACCOUNT_SECURITY_LOCK))
-        .isInstanceOf(IllegalStateException.class);
-    Path pin = temporary.resolve("account_security_lock.pin");
-    Files.writeString(pin, "sha256:" + "0".repeat(64) + "\n");
-    Files.setPosixFilePermissions(pin, PosixFilePermissions.fromString("rw-rw-rw-"));
     assertThatThrownBy(() -> source.read(Category.ACCOUNT_SECURITY_LOCK))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> new AccountFreshEnrollmentPolicySource(Path.of("request-controlled")))

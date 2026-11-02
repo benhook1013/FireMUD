@@ -141,6 +141,44 @@ public final class AccountRecentReauthenticationRepository {
                 row.get("key_id", String.class), row.get("credential_mac", String.class)));
   }
 
+  int countReplayFailures(AccountRecentReauthenticationEvidence evidence) {
+    requireWritableTransaction();
+    Record row =
+        dsl.fetchOne(
+            "SELECT count(*)::integer AS failures FROM account_recent_reauthentication_replay_failures"
+                + " WHERE evidence_id = ? AND request_id = ? AND account_uuid = ? AND purpose = ? AND creation_operation_id = ?",
+            evidence.evidenceId(),
+            evidence.requestId(),
+            evidence.accountId(),
+            evidence.purpose(),
+            evidence.creationOperationId());
+    if (row == null) throw unavailable();
+    Integer count = row.get("failures", Integer.class);
+    if (count == null || count < 0 || count > 5) throw unavailable();
+    return count;
+  }
+
+  void recordReplayFailure(AccountRecentReauthenticationEvidence evidence) {
+    requireWritableTransaction();
+    // The service retains lockRequest across credential comparison and insertion. The SQL guard
+    // independently enforces the same serialization and contiguous bounded history.
+    int next = countReplayFailures(evidence) + 1;
+    if (next > 5
+        || dsl.execute(
+                "INSERT INTO account_recent_reauthentication_replay_failures"
+                    + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, failure_number)"
+                    + " VALUES (?, ?, ?, ?, ?, ?)",
+                evidence.evidenceId(),
+                evidence.requestId(),
+                evidence.accountId(),
+                evidence.purpose(),
+                evidence.creationOperationId(),
+                next)
+            != 1) {
+      throw unavailable();
+    }
+  }
+
   AccountRecentReauthenticationEvidence readExactOriginal(
       AccountRecentReauthenticationEvidence expected) {
     var stored =
