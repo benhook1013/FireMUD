@@ -38,6 +38,41 @@ public final class AccountControlUiAuthority {
     TENANT
   }
 
+  /** Decodes the closed scope values retained by Account-owned Control-UI issuance rows. */
+  public static ScopeKind decodeScope(String value) {
+    if (value == null) {
+      throw new IllegalArgumentException("Account control-ui scope is required");
+    }
+    return switch (value) {
+      case "ACCOUNT" -> ScopeKind.ACCOUNT;
+      case "TENANT" -> ScopeKind.TENANT;
+      default -> throw new IllegalArgumentException("Unknown Account control-ui scope");
+    };
+  }
+
+  /** Decodes the tenant column under its exact Account or tenant scope rule. */
+  public static UUID decodeScopedTenant(ScopeKind scopeKind, UUID tenantId) {
+    if (scopeKind == null) {
+      throw new IllegalArgumentException("Account control-ui scope is required");
+    }
+    return switch (scopeKind) {
+      case TENANT -> {
+        if (tenantId == null
+            || (tenantId.getMostSignificantBits() == 0L
+                && tenantId.getLeastSignificantBits() == 0L)) {
+          throw new IllegalArgumentException("Tenant-scoped Account control-ui requires a tenant");
+        }
+        yield tenantId;
+      }
+      case ACCOUNT -> {
+        if (tenantId != null) {
+          throw new IllegalArgumentException("Account-scoped control-ui must omit its tenant");
+        }
+        yield null;
+      }
+    };
+  }
+
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private final AccountDraftSourceCompositionService sources;
   private final AccountRepository accounts;
