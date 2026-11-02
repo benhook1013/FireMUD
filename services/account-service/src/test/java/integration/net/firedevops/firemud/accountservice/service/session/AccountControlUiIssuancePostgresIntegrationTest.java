@@ -20,6 +20,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
@@ -420,6 +421,9 @@ class AccountControlUiIssuancePostgresIntegrationTest {
       when(primary.accountId()).thenReturn(actor);
       when(authority.actor()).thenReturn(actor);
       when(authority.tenant()).thenReturn(tenant);
+      when(authority.scopeKind()).thenReturn(AccountControlUiAuthority.ScopeKind.TENANT);
+      when(authority.optionalTenantId()).thenReturn(Optional.of(tenant));
+      when(authority.scopedRoles()).thenReturn(Map.of(tenant.toString(), List.of("tenantAdmin")));
       when(authority.authorityTuple())
           .thenReturn(
               Map.of(

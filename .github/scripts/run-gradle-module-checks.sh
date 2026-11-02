@@ -6,10 +6,10 @@ readonly ROOT_DIR
 readonly MODULE="${1:-}"
 readonly PARTITION="${2:-full}"
 if [[ $# -lt 1 || $# -gt 2 || ! "$MODULE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || \
-  ( "$MODULE" == "account-service" && "$PARTITION" != "full" && "$PARTITION" != "1" && "$PARTITION" != "2" ) || \
+  ( "$MODULE" == "account-service" && "$PARTITION" != "full" && ! "$PARTITION" =~ ^[1-4]$ ) || \
   ( "$MODULE" == "game-session-service" && "$PARTITION" != "full" && ! "$PARTITION" =~ ^[1-4]$ ) || \
   ( "$MODULE" != "account-service" && "$MODULE" != "game-session-service" && $# -eq 2 && "$PARTITION" != "full" ) ]]; then
-  echo "usage: run-gradle-module-checks.sh <module-name> [full|partition] (Account: 1-2; Game Session: 1-4)" >&2
+  echo "usage: run-gradle-module-checks.sh <module-name> [full|partition] (Account: 1-4; Game Session: 1-4)" >&2
   exit 64
 fi
 

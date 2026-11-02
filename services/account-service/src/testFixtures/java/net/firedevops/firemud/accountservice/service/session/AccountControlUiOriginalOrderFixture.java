@@ -39,6 +39,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   final AccountJwtJwksTrustedSource publicSource;
   final AccountControlUiSignerFixture signerFixture;
   private final AccountControlUiIssuanceService issuance;
+  private final AccountControlUiIssuanceRepository operations;
   private final AccountControlUiCoordination coordination;
   private final RedisClient accountClient;
   private final Path temporary;
@@ -208,7 +209,12 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             () -> accountClient.connect(ByteArrayCodec.INSTANCE),
             new AcknowledgementRequirements(1, 1, 5000),
             testCatalog());
-    var operations = new AccountControlUiIssuanceRepository(f.dsl);
+    operations =
+        migrationTarget != null
+                && AccountControlUiOwnerSourcesFixture.HISTORICAL_MIGRATION_TARGETS.contains(
+                    migrationTarget)
+            ? new AccountHistoricalControlUiIssuanceRepository(f.dsl)
+            : new AccountControlUiIssuanceRepository(f.dsl);
     publicSource =
         org.mockito.Mockito.spy(
             new AccountJwtJwksTrustedSource(
@@ -242,6 +248,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             serviceClock,
             300_000L,
             AccountControlUiOwnerSourcesFixture.CALLER);
+  }
+
+  /** The same persistence layout used by this fixture's genuine issuance and actor owners. */
+  AccountControlUiIssuanceRepository issuanceRepository() {
+    return operations;
   }
 
   public UUID tenantId() {

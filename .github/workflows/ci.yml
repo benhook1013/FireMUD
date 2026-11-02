@@ -146,7 +146,7 @@ jobs:
                 lightweight_only: false,
               };
             }
-            const slowServicePartitionCounts = { "account-service": 2, "game-session-service": 4 };
+            const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4 };
             outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>
               slowServicePartitionCounts[module]
                 ? Array.from({ length: slowServicePartitionCounts[module] }, (_, index) =>
@@ -1081,6 +1081,10 @@ jobs:
 
       - name: 'Declare Game Session CI partition count: 4'
         if: ${{ matrix.module == 'game-session-service' }}
+        run: ':'
+
+      - name: 'Declare Account CI partition count: 4'
+        if: ${{ matrix.module == 'account-service' }}
         run: ':'
 
       - name: ⬇️ Checkout Code

@@ -206,11 +206,16 @@ class AccountGameplayPrimaryCredentialVerifierTest {
   @ValueSource(strings = {"password", "246810"})
   void existingControlUiPrimaryHookRetainsItsImmediateOtpConsumption(String secret) {
     when(accounts.findByEmail("player@example.com")).thenReturn(Optional.of(account));
+    when(accounts.findByIdForUpdate(account.getId())).thenReturn(Optional.of(account));
     assertThat(
             authority
                 .authenticateControlUiPrimaryIdentity("player@example.com", secret)
                 .accountId())
         .isEqualTo(ACCOUNT_ID);
+    var ownerOrder = org.mockito.Mockito.inOrder(accounts, challenges);
+    ownerOrder.verify(accounts).findByEmail("player@example.com");
+    ownerOrder.verify(accounts).findByIdForUpdate(account.getId());
+    ownerOrder.verify(challenges).lockAccountChallenge(account.getId());
     if (secret.equals("246810")) verify(challenges).delete(challenge);
     else verify(challenges, never()).delete(any());
   }

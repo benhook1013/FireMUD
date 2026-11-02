@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
@@ -21,7 +22,7 @@ import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Genuine durable control-ui owner state. No caller-provided registry or evidence is accepted. */
-public final class AccountControlUiIssuanceRepository {
+public class AccountControlUiIssuanceRepository {
   private static final String TABLE = "account_control_ui_issuance_operations";
   static final long MAX_REDIS_SAFE_INTEGER = 9_007_199_254_740_991L;
   private static final JsonMapper JSON =
@@ -33,8 +34,10 @@ public final class AccountControlUiIssuanceRepository {
   private final DSLContext dsl;
 
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected DSLContext is an internal Account transaction collaborator.")
+      value = {"EI_EXPOSE_REP2", "CT_CONSTRUCTOR_THROW"},
+      justification =
+          "Preserve the required internal DSLContext precondition; package-private persistence"
+              + " seams support historical test fixtures without a runtime schema fallback.")
   public AccountControlUiIssuanceRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl);
   }
@@ -42,20 +45,20 @@ public final class AccountControlUiIssuanceRepository {
   Stored findRequest(UUID requestId) {
     requireTransaction();
     Record row = dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE request_id = ?", requestId);
-    return row == null ? null : new Stored(row);
+    return row == null ? null : decodeStored(row);
   }
 
   Stored findToken(String tokenHash) {
     requireTransaction();
     Record row = dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE token_hash = ?", tokenHash);
-    return row == null ? null : new Stored(row);
+    return row == null ? null : decodeStored(row);
   }
 
   Stored findTokenJti(UUID tokenJti) {
     requireTransaction();
     Objects.requireNonNull(tokenJti, "control-ui token jti is required");
     Record row = dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE token_jti = ?", tokenJti);
-    return row == null ? null : new Stored(row);
+    return row == null ? null : decodeStored(row);
   }
 
   /** Account-owned linearization from the caller's existing current-source transaction. */
@@ -99,6 +102,21 @@ public final class AccountControlUiIssuanceRepository {
     Instant recovery = issuedAt.plusSeconds(60);
     var spec =
         new AccountControlUiSigningSpec(operationId, requestId, jti, source, issuedAt, expiry);
+    var scopeKind = source.scopeKind();
+    Optional<UUID> optionalTenantId = source.optionalTenantId();
+    if (scopeKind == null
+        || optionalTenantId == null
+        || ((scopeKind == AccountControlUiAuthority.ScopeKind.TENANT)
+            != optionalTenantId.isPresent())) {
+      throw denied();
+    }
+    if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+        && (!Map.of().equals(source.authorityTuple().get("tenantAuthorityGeneration"))
+            || !Map.of().equals(source.authorityTuple().get("membershipAuthorityGeneration"))
+            || !source.membershipVersion().isEmpty()
+            || !source.scopedRoles().isEmpty())) {
+      throw denied();
+    }
     OwnerLinearization linearization = captureOwnerLinearization();
     String xid = linearization.transactionId();
     long fence = linearization.sourceFence();
@@ -146,15 +164,7 @@ public final class AccountControlUiIssuanceRepository {
     bundle.put("issuer", "firemud-account-service");
     bundle.put("profile", "control-ui");
     bundle.put("audience", "control-ui");
-    bundle.put(
-        "scope",
-        Map.of(
-            "kind",
-            "TENANT",
-            "accountId",
-            source.actor().toString(),
-            "tenantIds",
-            java.util.List.of(source.tenant().toString())));
+    bundle.put("scope", scope(source, scopeKind, optionalTenantId));
     bundle.put("operation", operation);
     bundle.put(
         "tokenIdentity",
@@ -185,32 +195,27 @@ public final class AccountControlUiIssuanceRepository {
             "freshnessSource",
             hash(source.evidence())));
     int inserted =
-        dsl.execute(
-            "INSERT INTO "
-                + TABLE
-                + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload,"
-                + " caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload,"
-                + " bundle_payload, signer_receipt, issued_at_epoch_second, expires_at_epoch_second,"
-                + " registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
-                + " ON CONFLICT (request_id) DO NOTHING",
-            requestId,
-            operationId,
-            jti,
-            source.actor(),
-            source.tenant(),
-            caller,
-            callerContextId,
-            macKeyId,
-            digest,
-            AccountControlUiAuthority.canonical(spec.claims()),
-            source.evidence(),
-            AccountControlUiAuthority.canonical(bundle),
-            signer.receipt(),
-            issuedAt.getEpochSecond(),
-            expiry.getEpochSecond(),
-            cleanupDeadlineMillis,
-            OffsetDateTime.ofInstant(recovery, java.time.ZoneOffset.UTC));
+        insertPrepared(
+            new Object[] {
+              requestId,
+              operationId,
+              jti,
+              source.actor(),
+              optionalTenantId.orElse(null),
+              scopeKind.name(),
+              caller,
+              callerContextId,
+              macKeyId,
+              digest,
+              AccountControlUiAuthority.canonical(spec.claims()),
+              source.evidence(),
+              AccountControlUiAuthority.canonical(bundle),
+              signer.receipt(),
+              issuedAt.getEpochSecond(),
+              expiry.getEpochSecond(),
+              cleanupDeadlineMillis,
+              OffsetDateTime.ofInstant(recovery, java.time.ZoneOffset.UTC)
+            });
     Stored stored = findRequest(requestId);
     if (inserted != 1 || stored == null || !operationId.equals(stored.operationId)) {
       throw denied();
@@ -220,6 +225,51 @@ public final class AccountControlUiIssuanceRepository {
     registry(stored, signer, "0".repeat(64), false);
     registry(stored, signer, "0".repeat(64), true);
     return stored;
+  }
+
+  // Package-scoped persistence seams keep historical schema fixtures out of the runtime path.
+  int insertPrepared(Object[] values) {
+    return dsl.execute(
+        "INSERT INTO "
+            + TABLE
+            + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid,"
+            + " authorization_scope, caller_workload,"
+            + " caller_context_id, request_mac_key_id, request_digest, claims_payload, source_payload,"
+            + " bundle_payload, signer_receipt, issued_at_epoch_second, expires_at_epoch_second,"
+            + " registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, 'PREPARED')"
+            + " ON CONFLICT (request_id) DO NOTHING",
+        values);
+  }
+
+  Stored decodeStored(Record row) {
+    return new Stored(row);
+  }
+
+  private static Map<String, Object> scope(
+      AccountControlUiAuthority.Snapshot source,
+      AccountControlUiAuthority.ScopeKind scopeKind,
+      Optional<UUID> tenantId) {
+    if (scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+      if (tenantId.isPresent()) {
+        throw denied();
+      }
+      return Map.of(
+          "kind",
+          "ACCOUNT",
+          "accountId",
+          source.actor().toString(),
+          "tenantIds",
+          java.util.List.of());
+    }
+    UUID tenant = tenantId.orElseThrow(AccountControlUiIssuanceRepository::denied);
+    if (!tenant.equals(source.tenant())) {
+      throw denied();
+    }
+    return Map.of(
+        "kind", "TENANT",
+        "accountId", source.actor().toString(),
+        "tenantIds", java.util.List.of(tenant.toString()));
   }
 
   Stored bindCandidate(
@@ -401,8 +451,10 @@ public final class AccountControlUiIssuanceRepository {
     if (row == null) {
       throw denied();
     }
-    Stored current = new Stored(row);
+    Stored current = decodeStored(row);
     if (!original.requestId.equals(current.requestId)
+        || original.scopeKind != current.scopeKind
+        || !Objects.equals(original.tenantId, current.tenantId)
         || !Arrays.equals(original.claims, current.claims)
         || !Arrays.equals(original.sources, current.sources)
         || !Arrays.equals(original.bundle, current.bundle)
@@ -504,6 +556,7 @@ public final class AccountControlUiIssuanceRepository {
 
   static final class Stored {
     final UUID requestId, operationId, jti, accountId, tenantId, callerContextId;
+    final AccountControlUiAuthority.ScopeKind scopeKind;
     final String caller, requestMacKeyId, requestDigest, status, tokenHash;
     final byte[] claims, sources, bundle, signerReceipt, pendingRegistry, activeRegistry;
     final Instant issuedAt, expiresAt, recoveryExpiry;
@@ -514,7 +567,8 @@ public final class AccountControlUiIssuanceRepository {
       operationId = row.get("operation_id", UUID.class);
       jti = row.get("token_jti", UUID.class);
       accountId = row.get("account_uuid", UUID.class);
-      tenantId = row.get("tenant_uuid", UUID.class);
+      scopeKind = scopeKind(row);
+      tenantId = tenantId(row, scopeKind);
       callerContextId = row.get("caller_context_id", UUID.class);
       caller = row.get("caller_workload", String.class);
       requestMacKeyId = row.get("request_mac_key_id", String.class);
@@ -532,6 +586,39 @@ public final class AccountControlUiIssuanceRepository {
       registryCleanupDeadlineEpochMillis =
           row.get("registry_cleanup_deadline_epoch_millis", Long.class);
       recoveryExpiry = row.get("recovery_expires_at", OffsetDateTime.class).toInstant();
+    }
+
+    private static AccountControlUiAuthority.ScopeKind scopeKind(Record row) {
+      String value = row.get("authorization_scope", String.class);
+      try {
+        return AccountControlUiAuthority.decodeScope(value);
+      } catch (IllegalArgumentException malformed) {
+        throw denied();
+      }
+    }
+
+    private static UUID tenantId(Record row, AccountControlUiAuthority.ScopeKind scopeKind) {
+      UUID value = row.get("tenant_uuid", UUID.class);
+      try {
+        return AccountControlUiAuthority.decodeScopedTenant(scopeKind, value);
+      } catch (IllegalArgumentException malformed) {
+        throw denied();
+      }
+    }
+
+    public AccountControlUiAuthority.ScopeKind scopeKind() {
+      return scopeKind;
+    }
+
+    public Optional<UUID> optionalTenantId() {
+      return Optional.ofNullable(tenantId);
+    }
+
+    public UUID tenantId() {
+      if (scopeKind != AccountControlUiAuthority.ScopeKind.TENANT) {
+        throw denied();
+      }
+      return tenantId;
     }
 
     long expiryMillis() {

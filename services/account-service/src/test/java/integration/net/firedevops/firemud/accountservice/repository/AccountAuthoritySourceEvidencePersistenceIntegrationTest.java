@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -25,6 +26,10 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountEvent;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -515,6 +520,202 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
   }
 
   @Test
+  void existingIssuerInitializationReadsExactSourceWithoutWritingThroughPendingOriginalHold() {
+    TestContext context = newTestContext();
+    DSLContext dsl = context.dsl();
+    TransactionTemplate transaction = context.transaction();
+    var generations = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var sources = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+    transaction.executeWithoutResult(status -> sources.initializeIssuerIfAbsent(ISSUER));
+    var original =
+        Objects.requireNonNull(
+            transaction.execute(
+                status ->
+                    sources.appendIssuerAuthorityChange(
+                        ISSUER, "SIGNER_COMPROMISE", "held-issuer-" + UUID.randomUUID())));
+    var originalEvent =
+        transaction.execute(
+            status -> outbox.findEvent(original.checkpoint().outboxStreamKey(), 1L).orElseThrow());
+    var complete =
+        DraftCommitBinding.create(
+            new DraftCommitBinding.TargetProof(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                1,
+                "test-tenant",
+                2,
+                "test-tenant",
+                "NEW_GAME_ROW"),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "test/base",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "test-payload")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                    "region",
+                    "test-region",
+                    "aggregate",
+                    "test-region",
+                    "0")));
+    // Controlled source-storage capture only: this is not authenticated creator authorization.
+    var holder =
+        new DraftAuthorizationFenceBinding(
+            UUID.randomUUID(),
+            complete.requestId(),
+            complete.commitId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            complete.target().canonicalTenantId(),
+            complete.target().canonicalVersionId(),
+            complete.baseCommitId(),
+            "0",
+            complete.canonicalBytes(),
+            complete.canonicalBytes(),
+            complete.digest(),
+            List.of(
+                new SourceEvidence(
+                    SourceKind.ISSUER,
+                    ISSUER,
+                    Long.toString(original.generation()),
+                    Long.toString(original.sourceVersion()),
+                    original.checkpoint().outboxStreamKey(),
+                    Long.toString(original.checkpoint().sequence()),
+                    Objects.requireNonNull(originalEvent).payload())));
+    var fences = new DraftAuthorizationFenceRepository(dsl);
+    transaction.executeWithoutResult(
+        status -> {
+          fences.reserve(holder);
+          fences.claimCommitOrder(holder);
+        });
+    Map<String, List<Map<String, Object>>> retained = new java.util.LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "account_authority_generations",
+            "account_authority_source_records",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events",
+            "account_draft_authorization_source_locks",
+            "account_draft_authorization_fences",
+            "account_draft_authorization_sources",
+            "account_draft_authorization_owner_readbacks")) {
+      retained.put(
+          table,
+          dsl.fetch(
+                  "SELECT to_jsonb(t)::text AS retained, xmin::text AS xmin FROM "
+                      + table
+                      + " t ORDER BY retained")
+              .intoMaps());
+    }
+    var observed = transaction.execute(status -> sources.initializeIssuerIfAbsent(ISSUER));
+    assertThat(observed).isEqualTo(original);
+    assertThatThrownBy(
+            () ->
+                transaction.executeWithoutResult(
+                    status ->
+                        sources.appendIssuerAuthorityChange(
+                            ISSUER,
+                            "SIGNER_COMPROMISE",
+                            "blocked-held-issuer-" + UUID.randomUUID())))
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .hasMessageContaining("Required creator source is held until every original owner settles")
+        .satisfies(
+            failure ->
+                assertThat(((org.postgresql.util.PSQLException) failure).getSQLState())
+                    .isEqualTo("55P03"));
+    assertThat(
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT account_draft_authorization_is_settled(?) AS settled",
+                        holder.operationId()))
+                .get("settled", Boolean.class))
+        .isFalse();
+    for (var entry : retained.entrySet()) {
+      assertThat(
+              dsl.fetch(
+                      "SELECT to_jsonb(t)::text AS retained, xmin::text AS xmin FROM "
+                          + entry.getKey()
+                          + " t ORDER BY retained")
+                  .intoMaps())
+          .as(entry.getKey())
+          .isEqualTo(entry.getValue());
+    }
+  }
+
+  @Test
+  void concurrentFirstIssuerEnrollmentRetainsOneExactSourceBaseline() throws Exception {
+    TestContext context = newTestContext();
+    DSLContext dsl = context.dsl();
+    TransactionTemplate transaction = context.transaction();
+    var sources =
+        new AccountAuthoritySourceEvidenceRepository(
+            dsl,
+            new AccountAuthorityGenerationRepository(dsl),
+            new AccountAuthorityOutboxRepository(dsl));
+    CountDownLatch firstInitialized = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    CompletableFuture<Integer> firstPid = new CompletableFuture<>();
+    CompletableFuture<Integer> secondPid = new CompletableFuture<>();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    var first =
+        executor.submit(
+            () ->
+                transaction.execute(
+                    status -> {
+                      firstPid.complete(
+                          Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                              .get(0, Integer.class));
+                      var baseline = sources.initializeIssuerIfAbsent(ISSUER);
+                      firstInitialized.countDown();
+                      await(releaseFirst, "First issuer enrollment was not released");
+                      return baseline;
+                    }));
+    var second =
+        executor.submit(
+            () -> {
+              await(firstInitialized, "First issuer enrollment did not initialize");
+              return transaction.execute(
+                  status -> {
+                    secondPid.complete(
+                        Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
+                            .get(0, Integer.class));
+                    return sources.initializeIssuerIfAbsent(ISSUER);
+                  });
+            });
+    try {
+      assertThat(firstInitialized.await(30, TimeUnit.SECONDS)).isTrue();
+      awaitLockWait(dsl, secondPid.get(30, TimeUnit.SECONDS), firstPid.get(30, TimeUnit.SECONDS));
+      releaseFirst.countDown();
+      var baseline = first.get(45, TimeUnit.SECONDS);
+      assertThat(second.get(45, TimeUnit.SECONDS)).isEqualTo(baseline);
+      assertThat(baseline.generation()).isEqualTo(1L);
+      assertThat(baseline.checkpoint().sequence()).isZero();
+      for (String table :
+          List.of(
+              "account_authority_generations",
+              "account_authority_source_records",
+              "account_authority_outbox_streams")) {
+        assertThat(dsl.fetchCount(DSL.table(table))).as(table).isEqualTo(1);
+      }
+      assertThat(dsl.fetchCount(DSL.table("account_authority_outbox_events"))).isZero();
+    } finally {
+      releaseFirst.countDown();
+      executor.shutdown();
+      if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
+  @Test
   void retainedOrForgedEmptyStreamsDoNotBecomeFreshSourceBaselines() {
     TestContext context = newTestContext();
     DSLContext dsl = context.dsl();
@@ -550,7 +751,8 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                           retainedIssuer);
                       sources.initializeIssuerIfAbsent(retainedIssuer);
                     }))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(

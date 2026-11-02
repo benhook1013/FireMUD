@@ -48,12 +48,11 @@ def make_plan(module="account-service", run_attempt="2"):
         },
     }
 
-    if module == "game-session-service":
-        for partition in (3, 4):
-            name = f"net.example.Known{partition}Test"
-            plan["tasks"]["test"]["class_universe"].append(name)
-            plan["tasks"]["test"]["expected_test_classes"].append(name)
-            plan["tasks"]["test"]["assignments"][name] = partition
+    for partition in range(3, PARTITION.PARTITION_COUNTS[module] + 1):
+        name = f"net.example.Known{partition}Test"
+        plan["tasks"]["test"]["class_universe"].append(name)
+        plan["tasks"]["test"]["expected_test_classes"].append(name)
+        plan["tasks"]["test"]["assignments"][name] = partition
     return plan
 
 
@@ -301,6 +300,40 @@ def write_compiled_class(directory, class_name, access_flags):
 
 
 class SlowServiceCiPartitionTests(unittest.TestCase):
+    def test_account_plan_uses_measured_four_way_split_weights(self):
+        historical = PARTITION.load_historical_plan("account-service")
+        integration = historical["tasks"]["integrationTest"]
+        definitive_abort = integration["classes"][
+            "net.firedevops.firemud.accountservice.repository.AccountGameSessionDefinitiveAbortCompositionIntegrationTest"
+        ]
+        never_admitted_abort = integration["classes"][
+            "net.firedevops.firemud.accountservice.repository.AccountGameSessionNeverAdmittedAbortCompositionIntegrationTest"
+        ]
+        self.assertEqual(PARTITION.PARTITION_COUNTS["account-service"], 4)
+        self.assertEqual(definitive_abort["partition"], 2)
+        self.assertEqual(definitive_abort["weight_seconds"], 368.22)
+        self.assertTrue(definitive_abort["weight_is_estimate"])
+        self.assertEqual(never_admitted_abort["partition"], 1)
+        self.assertEqual(never_admitted_abort["weight_seconds"], 421.714)
+        self.assertTrue(never_admitted_abort["weight_is_estimate"])
+        plan_document = json.loads(PARTITION.PLAN_PATH.read_text(encoding="utf-8"))
+        provenance = plan_document["weight_provenance"]["account-service"]
+        self.assertEqual(provenance["run_id"], 41318827966)
+        self.assertEqual(
+            provenance["handoff_sha256"],
+            "52efe1d64b011a606d9580d209882e76bb227aec5745bfd71b8a6765af74e220",
+        )
+        self.assertEqual(integration["unknown_class_estimated_weight_seconds"], 26.837)
+        self.assertEqual(historical["tasks"]["test"]["unknown_class_estimated_weight_seconds"], 0.137)
+        self.assertEqual(
+            sum(
+                partition["cases"]
+                for task in historical["tasks"].values()
+                for partition in task["metrics_by_partition"].values()
+            ),
+            2508,
+        )
+
     def test_historical_assignments_and_new_classes_form_complete_disjoint_plans_for_both_services(self):
         for module, task in (
             ("account-service", "integrationTest"),
@@ -510,6 +543,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
         resolved = PARTITION.resolve_effective_artifacts(
             provenance, module, RUN_ID, SOURCE_SHA, "2"
         )
+        self.assertEqual(set(resolved["partitions"]), {"1", "2", "3", "4"})
         self.assertEqual(resolved["partitions"]["1"]["attempt"], 1)
         self.assertEqual(resolved["partitions"]["2"]["attempt"], 2)
         self.assertEqual(resolved["partitions"]["1"]["artifact_id"], 701)
@@ -545,7 +579,7 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     SOURCE_SHA,
                     "2",
                 ),
-                2,
+                4,
             )
             copied = {
                 path.relative_to(verified_classes_dir).as_posix(): path.read_bytes()
@@ -1037,14 +1071,16 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                     PARTITION.verify_aggregate(input_dir, selection_path, verified_classes_dir, module, RUN_ID, SOURCE_SHA, "2")
                 self.assertFalse(verified_classes_dir.exists())
 
-    def test_partition_pair_rejects_incomplete_class_union(self):
+    def test_partition_union_rejects_incomplete_class_union(self):
         plan = make_plan()
-        first = PARTITION.partition_manifest(plan, 1)
-        second = PARTITION.partition_manifest(plan, 2)
-        broken = copy.deepcopy(second)
+        manifests = [
+            PARTITION.partition_manifest(plan, partition)
+            for partition in PARTITION.partitions_for(plan["module"])
+        ]
+        broken = copy.deepcopy(manifests[-1])
         broken["tasks"]["test"]["selected_classes"] = []
         with self.assertRaisesRegex(ValueError, "test class union is incomplete"):
-            PARTITION.validate_partitions([first, broken])
+            PARTITION.validate_partitions([*manifests[:-1], broken])
 
 
 if __name__ == "__main__":

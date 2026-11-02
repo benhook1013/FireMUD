@@ -1,1088 +1,1311 @@
 {
   "atomicity": "Each test-task/suite appears once per option. Nested suites share their enclosing class partition. Whole classes, all methods and lifecycle cycles retained.",
-  "baseline_run": 41131475765,
   "schema_version": 2,
   "services": {
     "account-service": {
-      "partition_count": 2,
+      "partition_count": 4,
       "tasks": {
         "integrationTest": {
           "classes": {
             "integration.net.firedevops.firemud.accountservice.AccountLoggingTestClasspathIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 0.207224
+              "weight_seconds": 0.256
             },
             "integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 37.465626
+              "partition": 3,
+              "weight_seconds": 58.5
             },
             "integration.net.firedevops.firemud.accountservice.authordraft.AccountControlUiSourceGuardPostgresIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 13.200917
+              "weight_seconds": 60.863
             },
             "integration.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 23.569079
+              "partition": 4,
+              "weight_seconds": 33.287
             },
             "integration.net.firedevops.firemud.accountservice.authordraft.AccountDraftFenceHistoryPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 4.390072
+              "partition": 4,
+              "weight_seconds": 5.093
             },
             "integration.net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffPostgresIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 34.625894
+              "weight_seconds": 46.263
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundlePersistenceIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 12.043395
+              "weight_seconds": 16.881
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityCurrentnessIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 4.904294
+              "partition": 3,
+              "weight_seconds": 29.442
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidencePersistenceIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 13.534429
+              "partition": 4,
+              "weight_seconds": 23.181
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountCanonicalJoinScopePersistenceIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 5.286646
+              "partition": 1,
+              "weight_seconds": 11.609
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountControlUiCommittedIssuanceRepositoryIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 9.979531
+              "partition": 3,
+              "weight_seconds": 14.22
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementPersistenceIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 7.73077
+              "partition": 4,
+              "weight_seconds": 12.655
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountFirstJoinAuthorityStorageIntegrationTest": {
               "partition": 1,
-              "weight_seconds": 10.97867
+              "weight_seconds": 16.914
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuancePersistenceIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 37.402831
+              "partition": 1,
+              "weight_seconds": 70.744
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopePersistenceIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 4.206571
+              "weight_seconds": 6.161
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 10.514684
+              "weight_seconds": 7.334
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 26.136
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationPersistenceIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 3.713979
+              "partition": 1,
+              "weight_seconds": 5.576
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountJwtSignerStoragePostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 10.784703
+              "partition": 4,
+              "weight_seconds": 27.123
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountJwtValidatorInventoryPersistenceIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 6.262063
+              "partition": 3,
+              "weight_seconds": 10.669
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 39.132
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture": {
               "partition": 1,
-              "weight_seconds": 20.747488
+              "weight_seconds": 0.0
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixtureTest": {
-              "partition": 1,
-              "weight_seconds": 0.004186
+              "partition": 4,
+              "weight_seconds": 0.032
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountSecuritySourceOwnerGuardPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 3.159987
+              "partition": 3,
+              "weight_seconds": 5.036
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest": {
               "partition": 1,
-              "weight_seconds": 23.273245
+              "weight_seconds": 41.182
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountSourceFoundationV73UpgradePostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 3.34
+              "partition": 4,
+              "weight_seconds": 4.159
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 60.355124
+              "partition": 4,
+              "weight_seconds": 102.511
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 37.241657
+              "partition": 3,
+              "weight_seconds": 67.111
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 40.899818
+              "partition": 4,
+              "weight_seconds": 65.866
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 11.984786
+              "partition": 3,
+              "weight_seconds": 17.754
             },
             "integration.net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 18.580361
+              "partition": 3,
+              "weight_seconds": 34.099
+            },
+            "integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture": {
+              "partition": 2,
+              "weight_seconds": 0.0
             },
             "integration.net.firedevops.firemud.accountservice.service.AccountActorStagingEligibilityPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 4.31123
+              "partition": 3,
+              "weight_seconds": 6.618
             },
             "integration.net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinEventIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 11.461494
+              "partition": 3,
+              "weight_seconds": 18.179
             },
             "integration.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 47.566561
+              "partition": 2,
+              "weight_seconds": 95.325
             },
             "integration.net.firedevops.firemud.accountservice.service.session.AccountGameplayPrimaryCredentialVerifierPostgresIntegrationTest": {
+              "partition": 4,
+              "weight_seconds": 40.994
+            },
+            "integration.net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 28.706
+            },
+            "integration.net.firedevops.firemud.accountservice.service.session.AccountSecurityStateOperationPostgresIntegrationTest": {
               "partition": 1,
-              "weight_seconds": 26.948849
+              "weight_seconds": 62.752
             },
             "integration.net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 2.975788
+              "partition": 2,
+              "weight_seconds": 4.739
             },
             "net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 14.72893
+              "partition": 4,
+              "weight_seconds": 25.457
+            },
+            "net.firedevops.firemud.accountservice.BootstrapCharacterUuidEntityCompositionIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 33.689
             },
             "net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBindingFencePostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 10.588643
+              "partition": 3,
+              "weight_seconds": 22.501
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountBillingPrerequisitesPostgresIntegrationTest": {
+              "partition": 4,
+              "weight_seconds": 18.76
             },
             "net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 15.638761
+              "partition": 3,
+              "weight_seconds": 26.894
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameSessionDefinitiveAbortCompositionIntegrationTest": {
+              "partition": 2,
+              "weight_basis": "Measured testcase-time sum for the 12 mapped provisional-abort/member/history cases; post-split class setup/residual was not measured.",
+              "weight_is_estimate": true,
+              "weight_seconds": 368.22
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameSessionNeverAdmittedAbortCompositionIntegrationTest": {
               "partition": 1,
-              "weight_seconds": 591.433185
+              "weight_basis": "Measured testcase-time sum for the 14 mapped never-admitted negative-settlement cases; post-split class setup/residual was not measured.",
+              "weight_is_estimate": true,
+              "weight_seconds": 421.714
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 110.887704
+              "partition": 4,
+              "weight_seconds": 215.612
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 87.065352
+              "partition": 3,
+              "weight_seconds": 133.737
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionProtectedEntryPrototypeIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 79.31365
+              "partition": 1,
+              "weight_seconds": 112.149
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 47.457
             },
             "net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwnerIntegrationTest": {
               "partition": 1,
-              "weight_seconds": 23.846773
+              "weight_seconds": 29.061
             },
             "net.firedevops.firemud.accountservice.repository.AccountRepositoryIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 56.32996
+              "partition": 4,
+              "weight_seconds": 71.901
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentPostgresIntegrationTest": {
+              "partition": 4,
+              "weight_seconds": 57.586
             },
             "net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 3.09789
+              "weight_seconds": 4.498
             },
             "net.firedevops.firemud.accountservice.repository.CredentialCleanupRepositoryIntegrationTest": {
+              "partition": 3,
+              "weight_seconds": 5.587
+            },
+            "net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidencePostgresIntegrationTest": {
               "partition": 1,
-              "weight_seconds": 2.635997
+              "weight_seconds": 6.894
+            },
+            "net.firedevops.firemud.accountservice.repository.StripeWebhookIntakePostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 18.584
+            },
+            "net.firedevops.firemud.accountservice.service.AccountBillingPrerequisiteConfirmationPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 21.847
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuancePostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 8.004975
+              "partition": 4,
+              "weight_seconds": 11.339
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiOwnerWorkflowPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 12.550639
+              "partition": 4,
+              "weight_seconds": 16.629
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiPositiveOwnerPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 40.733063
+              "partition": 2,
+              "weight_seconds": 70.214
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiPrimaryAuthenticationPostgresIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 5.602017
+              "weight_seconds": 11.579
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryRedisIntegrationTest": {
               "partition": 1,
-              "weight_seconds": 5.430377
+              "weight_seconds": 9.065
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 40.891446
+              "partition": 3,
+              "weight_seconds": 46.658
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationCommitSignerFixture": {
+              "partition": 3,
+              "weight_seconds": 0.0
             },
             "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessStoragePostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 63.838156
+              "partition": 3,
+              "weight_seconds": 102.152
             },
             "net.firedevops.firemud.accountservice.service.session.AccountOriginalDraftOrderPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 158.246344
+              "partition": 4,
+              "weight_seconds": 210.979
             },
             "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationMtlsPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 64.505877
+              "partition": 3,
+              "weight_seconds": 123.737
             },
             "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationPostgresIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 61.821039
+              "weight_seconds": 112.82
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 154.304209
+              "partition": 3,
+              "weight_seconds": 222.14
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionAcquisitionPostgresIntegrationTest": {
-              "partition": 1,
-              "weight_seconds": 10.368162
+              "partition": 2,
+              "weight_seconds": 18.062
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionRepositoryPostgresIntegrationTest": {
               "partition": 2,
-              "weight_seconds": 4.528222
+              "weight_seconds": 8.013
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCapturePostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 2.56762
+              "partition": 3,
+              "weight_seconds": 2.996
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationPostgresIntegrationTest": {
-              "partition": 2,
-              "weight_seconds": 26.549054
+              "partition": 1,
+              "weight_seconds": 26.837
             }
           },
           "metrics_by_partition": {
             "1": {
-              "cases": 214,
-              "suites": 28
+              "cases": 142,
+              "suites": 16
             },
             "2": {
-              "cases": 182,
-              "suites": 32
+              "cases": 103,
+              "suites": 18
+            },
+            "3": {
+              "cases": 97,
+              "suites": 19
+            },
+            "4": {
+              "cases": 169,
+              "suites": 18
             }
           },
-          "unknown_class_estimated_weight_seconds": 12.875778
+          "unknown_class_estimated_weight_seconds": 26.837
         },
         "test": {
           "classes": {
             "net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthorityTest": {
-              "partition": 2,
-              "weight_seconds": 3.298155
+              "partition": 4,
+              "weight_seconds": 2.157
             },
             "net.firedevops.firemud.accountservice.client.AccountOriginalNewFinalAdmissionGrpcReadClientTest": {
-              "partition": 2,
-              "weight_seconds": 0.086253
+              "partition": 4,
+              "weight_seconds": 0.06
             },
             "net.firedevops.firemud.accountservice.client.AccountOriginalNewFinalAdmissionReadClientTest": {
-              "partition": 1,
-              "weight_seconds": 0.015402
+              "partition": 4,
+              "weight_seconds": 0.156
+            },
+            "net.firedevops.firemud.accountservice.client.EntityManagementClientTest": {
+              "partition": 2,
+              "weight_seconds": 1.554
             },
             "net.firedevops.firemud.accountservice.client.GameDesignFreshTenantIdentityClientTest": {
-              "partition": 1,
-              "weight_seconds": 1.628541
+              "partition": 3,
+              "weight_seconds": 1.454
             },
             "net.firedevops.firemud.accountservice.client.GameSessionClientTest": {
               "partition": 2,
-              "weight_seconds": 0.332691
+              "weight_seconds": 0.429
             },
             "net.firedevops.firemud.accountservice.client.LoggingAdminClientTest": {
               "partition": 2,
-              "weight_seconds": 0.265947
+              "weight_seconds": 0.208
             },
             "net.firedevops.firemud.accountservice.client.OwnerApprovedAccountTenantAssociationTest": {
               "partition": 2,
-              "weight_seconds": 0.005134
+              "weight_seconds": 0.007
             },
             "net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClientTest": {
-              "partition": 1,
-              "weight_seconds": 16.737212
+              "partition": 2,
+              "weight_seconds": 15.969
+            },
+            "net.firedevops.firemud.accountservice.client.StripeBillingPrerequisiteObserverTest": {
+              "partition": 3,
+              "weight_seconds": 0.719
             },
             "net.firedevops.firemud.accountservice.client.StripeClientTest": {
-              "partition": 2,
-              "weight_seconds": 0.00308
+              "partition": 4,
+              "weight_seconds": 0.002
+            },
+            "net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserverTest": {
+              "partition": 4,
+              "weight_seconds": 0.465
+            },
+            "net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifierTest": {
+              "partition": 1,
+              "weight_seconds": 0.081
             },
             "net.firedevops.firemud.accountservice.config.AccountJwtJwksApiTransportTest": {
               "partition": 2,
-              "weight_seconds": 2.130657
+              "weight_seconds": 2.659
+            },
+            "net.firedevops.firemud.accountservice.config.AccountJwtReadinessProbeOwnerWorkloadGuardTest": {
+              "partition": 2,
+              "weight_seconds": 0.036
             },
             "net.firedevops.firemud.accountservice.config.AccountJwtReadinessTrustBindingTest": {
-              "partition": 1,
-              "weight_seconds": 0.210499
+              "partition": 4,
+              "weight_seconds": 0.2
+            },
+            "net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBindingTest": {
+              "partition": 3,
+              "weight_seconds": 0.025
             },
             "net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventoryBindingTest": {
-              "partition": 2,
-              "weight_seconds": 0.205365
+              "partition": 3,
+              "weight_seconds": 0.144
             },
             "net.firedevops.firemud.accountservice.config.AccountJwtValidatorInventorySourceTest": {
-              "partition": 1,
-              "weight_seconds": 0.763956
+              "partition": 4,
+              "weight_seconds": 0.867
             },
             "net.firedevops.firemud.accountservice.config.AuthConfigTest": {
-              "partition": 2,
-              "weight_seconds": 0.61404
+              "partition": 1,
+              "weight_seconds": 0.688
             },
             "net.firedevops.firemud.accountservice.controller.AccountControllerTest": {
-              "partition": 1,
-              "weight_seconds": 5.037593
+              "partition": 4,
+              "weight_seconds": 5.612
             },
             "net.firedevops.firemud.accountservice.controller.AuthControllerTest": {
-              "partition": 2,
-              "weight_seconds": 1.692204
+              "partition": 1,
+              "weight_seconds": 4.867
             },
             "net.firedevops.firemud.accountservice.controller.AuthenticationExceptionHandlerTest": {
-              "partition": 2,
-              "weight_seconds": 0.02259
+              "partition": 3,
+              "weight_seconds": 0.013
             },
             "net.firedevops.firemud.accountservice.controller.InternalRuntimeControllerTest": {
               "partition": 1,
-              "weight_seconds": 1.05352
+              "weight_seconds": 1.288
             },
             "net.firedevops.firemud.accountservice.controller.JwksControllerTest": {
               "partition": 1,
-              "weight_seconds": 0.006161
+              "weight_seconds": 0.003
             },
             "net.firedevops.firemud.accountservice.controller.PingControllerTest": {
-              "partition": 1,
-              "weight_seconds": 0.87896
+              "partition": 2,
+              "weight_seconds": 1.059
             },
             "net.firedevops.firemud.accountservice.controller.ProfileControllerTest": {
-              "partition": 2,
-              "weight_seconds": 1.079191
+              "partition": 1,
+              "weight_seconds": 1.751
             },
             "net.firedevops.firemud.accountservice.controller.PublicBootstrapRoutesProdProfileTest": {
               "partition": 2,
-              "weight_seconds": 0.870746
+              "weight_seconds": 1.165
             },
             "net.firedevops.firemud.accountservice.controller.RemovedExternalAccountRouteHttpTest": {
-              "partition": 2,
-              "weight_seconds": 3.824915
+              "partition": 1,
+              "weight_seconds": 3.37
             },
             "net.firedevops.firemud.accountservice.data.TestDataSeederTest": {
-              "partition": 2,
-              "weight_seconds": 1.282502
+              "partition": 3,
+              "weight_seconds": 1.147
             },
             "net.firedevops.firemud.accountservice.dto.AccountJoinDigestTest": {
-              "partition": 1,
-              "weight_seconds": 0.015402
+              "partition": 2,
+              "weight_seconds": 0.013
+            },
+            "net.firedevops.firemud.accountservice.dto.AuthenticationResultTest": {
+              "partition": 3,
+              "weight_seconds": 0.051
             },
             "net.firedevops.firemud.accountservice.entity.AccountIdentityProvenanceTest": {
-              "partition": 2,
-              "weight_seconds": 0.007188
+              "partition": 3,
+              "weight_seconds": 0.006
             },
             "net.firedevops.firemud.accountservice.entity.AccountLoginAuthModesTest": {
-              "partition": 2,
-              "weight_seconds": 0.004107
+              "partition": 4,
+              "weight_seconds": 0.003
             },
             "net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffWorldParticipationTest": {
-              "partition": 1,
-              "weight_seconds": 2.175838
+              "partition": 4,
+              "weight_seconds": 1.737
             },
             "net.firedevops.firemud.accountservice.mapper.AccountMapperTest": {
-              "partition": 2,
-              "weight_seconds": 0.017456
+              "partition": 3,
+              "weight_seconds": 0.011
             },
             "net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 1.152095
+              "partition": 4,
+              "weight_seconds": 1.122
             },
             "net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepositoryTest": {
               "partition": 2,
-              "weight_seconds": 0.107816
+              "weight_seconds": 1.471
             },
             "net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.040046
+              "partition": 2,
+              "weight_seconds": 0.041
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRepositoryTest": {
+              "partition": 3,
+              "weight_seconds": 0.007
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseOwnerTest": {
-              "partition": 1,
-              "weight_seconds": 0.265947
+              "partition": 4,
+              "weight_seconds": 0.274
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionLeaseRepositoryTest": {
               "partition": 1,
-              "weight_seconds": 0.130406
+              "weight_seconds": 0.173
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalAckReceiptCommitExecutorTest": {
-              "partition": 1,
-              "weight_seconds": 2.076236
+              "partition": 3,
+              "weight_seconds": 1.877
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalAckReceiptRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.101655
+              "partition": 4,
+              "weight_seconds": 0.161
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalAckReceiptTestFixtures": {
+              "partition": 4,
+              "weight_seconds": 0.0
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionOriginalCommitExecutorTest": {
-              "partition": 1,
-              "weight_seconds": 0.222821
+              "partition": 3,
+              "weight_seconds": 0.168
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBindingTest": {
               "partition": 1,
-              "weight_seconds": 0.005134
+              "weight_seconds": 0.005
             },
             "net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentityTest": {
+              "partition": 1,
+              "weight_seconds": 0.004
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountHostingPlanCatalogTest": {
+              "partition": 3,
+              "weight_seconds": 0.014
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicyTest": {
               "partition": 2,
-              "weight_seconds": 0.005134
+              "weight_seconds": 0.166
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.018
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountInitialTenantBillingOwnerRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.02
             },
             "net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepositoryTest": {
               "partition": 2,
-              "weight_seconds": 0.160184
+              "weight_seconds": 0.137
             },
             "net.firedevops.firemud.accountservice.repository.AccountJwtReadinessProbeRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.113977
+              "partition": 1,
+              "weight_seconds": 0.088
             },
             "net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 2.534199
+              "partition": 1,
+              "weight_seconds": 2.159
             },
             "net.firedevops.firemud.accountservice.repository.AccountJwtValidatorInventoryRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.098575
+              "partition": 3,
+              "weight_seconds": 0.077
             },
             "net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryTest": {
               "partition": 2,
-              "weight_seconds": 0.024644
+              "weight_seconds": 0.028
             },
             "net.firedevops.firemud.accountservice.repository.AccountOriginalNewBoundGameplayCredentialOwnerTest": {
-              "partition": 2,
-              "weight_seconds": 0.343986
+              "partition": 1,
+              "weight_seconds": 0.449
             },
             "net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.007
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRepositoryTest": {
               "partition": 1,
-              "weight_seconds": 0.005134
+              "weight_seconds": 0.009
             },
             "net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.098575
+              "partition": 2,
+              "weight_seconds": 0.103
             },
             "net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepositoryTest": {
+              "partition": 3,
+              "weight_seconds": 0.779
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateDigestTest": {
+              "partition": 4,
+              "weight_seconds": 0.005
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepositoryTest": {
               "partition": 2,
-              "weight_seconds": 0.234116
+              "weight_seconds": 0.01
+            },
+            "net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityHostingEventTest": {
+              "partition": 3,
+              "weight_seconds": 0.938
             },
             "net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.454883
+              "partition": 2,
+              "weight_seconds": 0.361
             },
             "net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepositoryTest": {
               "partition": 1,
-              "weight_seconds": 0.006161
+              "weight_seconds": 0.006
             },
             "net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.010268
+              "partition": 1,
+              "weight_seconds": 0.009
+            },
+            "net.firedevops.firemud.accountservice.security.AccountJwtSignerMaterializerTlsInterceptorTest": {
+              "partition": 1,
+              "weight_seconds": 0.314
+            },
+            "net.firedevops.firemud.accountservice.security.AccountJwtSignerMaterializerTlsTransportTest": {
+              "partition": 4,
+              "weight_seconds": 2.758
             },
             "net.firedevops.firemud.accountservice.security.GrpcJwtAuthInterceptorTest": {
-              "partition": 2,
-              "weight_seconds": 0.016429
+              "partition": 1,
+              "weight_seconds": 0.013
             },
             "net.firedevops.firemud.accountservice.service.AccountAuditDeliveryJobTest": {
               "partition": 2,
-              "weight_seconds": 0.09036
+              "weight_seconds": 0.119
             },
             "net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinatorTest": {
-              "partition": 1,
-              "weight_seconds": 0.379924
+              "partition": 2,
+              "weight_seconds": 0.538
             },
             "net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReaderTest": {
-              "partition": 2,
-              "weight_seconds": 0.361442
+              "partition": 1,
+              "weight_seconds": 0.537
             },
             "net.firedevops.firemud.accountservice.service.AccountGenerationProjectionRedisContractTest": {
-              "partition": 2,
-              "weight_seconds": 0.717749
+              "partition": 3,
+              "weight_seconds": 0.631
+            },
+            "net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.222
             },
             "net.firedevops.firemud.accountservice.service.ExpiredConnectScopeCleanupJobTest": {
-              "partition": 2,
-              "weight_seconds": 0.10679
+              "partition": 1,
+              "weight_seconds": 0.085
             },
             "net.firedevops.firemud.accountservice.service.ExpiredCredentialCleanupJobTest": {
-              "partition": 2,
-              "weight_seconds": 0.240277
+              "partition": 1,
+              "weight_seconds": 0.225
+            },
+            "net.firedevops.firemud.accountservice.service.StripeWebhookIntakeServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.13
+            },
+            "net.firedevops.firemud.accountservice.service.impl.AccountCredentialPeerGrpcMtlsTest": {
+              "partition": 4,
+              "weight_seconds": 17.906
             },
             "net.firedevops.firemud.accountservice.service.impl.AccountGrpcServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.259786
+              "weight_seconds": 0.462
             },
             "net.firedevops.firemud.accountservice.service.impl.AccountServiceImplTest": {
-              "partition": 2,
-              "weight_seconds": 31.27805
+              "partition": 3,
+              "weight_seconds": 24.756
+            },
+            "net.firedevops.firemud.accountservice.service.impl.DeferredAccountGrpcTransportTest": {
+              "partition": 4,
+              "weight_seconds": 0.347
             },
             "net.firedevops.firemud.accountservice.service.impl.EmailServiceImplTest": {
-              "partition": 1,
-              "weight_seconds": 0.086253
+              "partition": 4,
+              "weight_seconds": 0.094
+            },
+            "net.firedevops.firemud.accountservice.service.impl.LegacySubscriptionContainmentTest": {
+              "partition": 4,
+              "weight_seconds": 0.469
             },
             "net.firedevops.firemud.accountservice.service.impl.NotificationGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.01951
+              "partition": 4,
+              "weight_seconds": 0.097
             },
             "net.firedevops.firemud.accountservice.service.impl.PaymentGrpcServiceTest": {
               "partition": 2,
-              "weight_seconds": 0.032858
+              "weight_seconds": 0.028
             },
             "net.firedevops.firemud.accountservice.service.impl.PaymentServiceImplTest": {
-              "partition": 2,
-              "weight_seconds": 0.089334
+              "partition": 3,
+              "weight_seconds": 0.078
             },
             "net.firedevops.firemud.accountservice.service.impl.PingServiceImplTest": {
               "partition": 2,
-              "weight_seconds": 0.001027
+              "weight_seconds": 0.001
             },
             "net.firedevops.firemud.accountservice.service.impl.PurchaseWorkflowServiceImplTest": {
-              "partition": 2,
-              "weight_seconds": 0.175587
+              "partition": 1,
+              "weight_seconds": 0.153
             },
             "net.firedevops.firemud.accountservice.service.impl.VirtualCurrencyGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.113977
+              "partition": 3,
+              "weight_seconds": 0.017
             },
             "net.firedevops.firemud.accountservice.service.impl.VirtualCurrencyServiceImplTest": {
-              "partition": 1,
-              "weight_seconds": 0.079065
+              "partition": 2,
+              "weight_seconds": 0.069
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiCoordinationTest": {
               "partition": 2,
-              "weight_seconds": 0.719803
+              "weight_seconds": 0.721
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceWorkflowTest": {
               "partition": 2,
-              "weight_seconds": 0.915926
+              "weight_seconds": 0.954
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReaderTest": {
-              "partition": 1,
-              "weight_seconds": 0.10679
+              "partition": 4,
+              "weight_seconds": 0.841
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiResponseCryptographyTest": {
-              "partition": 1,
-              "weight_seconds": 0.01951
+              "partition": 4,
+              "weight_seconds": 0.024
             },
             "net.firedevops.firemud.accountservice.service.session.AccountControlUiSigningAndActorTest": {
-              "partition": 1,
-              "weight_seconds": 0.76601
+              "partition": 4,
+              "weight_seconds": 1.204
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationGrpcServiceTest": {
               "partition": 2,
-              "weight_seconds": 0.679757
+              "weight_seconds": 0.457
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationReadGrpcServiceTest": {
               "partition": 2,
-              "weight_seconds": 0.086253
+              "weight_seconds": 0.084
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationReadServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.251572
+              "partition": 3,
+              "weight_seconds": 0.263
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeAuthorizationRecoveryTest": {
-              "partition": 1,
-              "weight_seconds": 0.17456
+              "partition": 3,
+              "weight_seconds": 0.312
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeSettlementGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.161211
+              "partition": 2,
+              "weight_seconds": 0.185
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeSourceReadGrpcServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.107816
+              "weight_seconds": 0.101
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameLogicIntakeSourceReadServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.00308
+              "partition": 4,
+              "weight_seconds": 0.081
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifierTest": {
               "partition": 2,
-              "weight_seconds": 1.129505
+              "weight_seconds": 2.046
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionLeaseGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.41381
+              "partition": 3,
+              "weight_seconds": 0.462
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionLeaseWorkloadGuardTest": {
-              "partition": 2,
-              "weight_seconds": 0.008215
+              "partition": 1,
+              "weight_seconds": 0.031
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationCommittedIssuanceOwnerTest": {
-              "partition": 1,
-              "weight_seconds": 0.293671
+              "partition": 3,
+              "weight_seconds": 0.555
             },
             "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSignerTest": {
+              "partition": 3,
+              "weight_seconds": 2.243
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSignerTestFixtureFactory": {
               "partition": 1,
-              "weight_seconds": 2.933633
+              "weight_seconds": 0.0
             },
             "net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClientTest": {
+              "partition": 3,
+              "weight_seconds": 0.05
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtJwksPrepublicationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 3.462
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerProtoMapperTest": {
               "partition": 2,
-              "weight_seconds": 0.075985
+              "weight_seconds": 0.067
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeOwnerServiceTest": {
+              "partition": 3,
+              "weight_seconds": 0.415
             },
             "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.187909
+              "weight_seconds": 0.163
             },
             "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessProbeSigningSpecTest": {
-              "partition": 1,
-              "weight_seconds": 0.002054
+              "partition": 2,
+              "weight_seconds": 0.003
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountJwtReadinessReceiverMetadataServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.498
             },
             "net.firedevops.firemud.accountservice.service.session.AccountMountedGameplayCredentialDigestKeySourceTest": {
-              "partition": 2,
-              "weight_seconds": 0.030805
+              "partition": 1,
+              "weight_seconds": 0.028
             },
             "net.firedevops.firemud.accountservice.service.session.AccountMountedJwtSignerBundleTest": {
-              "partition": 2,
-              "weight_seconds": 0.499036
+              "partition": 3,
+              "weight_seconds": 0.527
             },
             "net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyringTest": {
-              "partition": 1,
-              "weight_seconds": 0.007188
+              "partition": 4,
+              "weight_seconds": 0.008
             },
             "net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationReferenceFingerprintTest": {
-              "partition": 1,
-              "weight_seconds": 0.004107
+              "partition": 4,
+              "weight_seconds": 0.006
             },
             "net.firedevops.firemud.accountservice.service.session.AccountOriginalDraftOrderGrpcServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.112951
+              "weight_seconds": 0.277
             },
             "net.firedevops.firemud.accountservice.service.session.AccountOriginalDraftOrderServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.093441
+              "weight_seconds": 0.077
             },
             "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationReadServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.19715
+              "partition": 4,
+              "weight_seconds": 0.173
             },
             "net.firedevops.firemud.accountservice.service.session.AccountPublicationAuthorizationServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.002054
+              "partition": 2,
+              "weight_seconds": 0.002
             },
             "net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptographyTest": {
-              "partition": 1,
-              "weight_seconds": 0.10987
+              "partition": 4,
+              "weight_seconds": 0.109
             },
             "net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyringTest": {
-              "partition": 1,
-              "weight_seconds": 0.02259
+              "partition": 4,
+              "weight_seconds": 0.027
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderGrpcServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.113977
+              "partition": 4,
+              "weight_seconds": 0.128
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.319342
+              "partition": 4,
+              "weight_seconds": 0.291
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationSettlementServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.964187
+              "partition": 3,
+              "weight_seconds": 1.038
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedGameplayAuthorityProjectionTest": {
-              "partition": 1,
-              "weight_seconds": 0.029778
+              "partition": 4,
+              "weight_seconds": 0.032
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationProducerGrpcServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.195096
+              "weight_seconds": 0.197
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationReadGrpcServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.196123
+              "partition": 4,
+              "weight_seconds": 0.211
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationReadServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.124246
+              "partition": 4,
+              "weight_seconds": 0.123
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.002054
+              "partition": 3,
+              "weight_seconds": 0.001
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeAuthorizationServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.156077
+              "partition": 3,
+              "weight_seconds": 0.179
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSettlementGrpcServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.212552
+              "partition": 3,
+              "weight_seconds": 0.219
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSettlementServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.624308
+              "weight_seconds": 0.733
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReadGrpcServiceTest": {
               "partition": 2,
-              "weight_seconds": 0.135541
+              "weight_seconds": 0.089
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReadServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.011295
+              "weight_seconds": 0.008
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationRepositoryTest": {
               "partition": 2,
-              "weight_seconds": 0.009241
+              "weight_seconds": 0.183
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeSourceReservationServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.040046
+              "partition": 3,
+              "weight_seconds": 0.03
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeWorldClosureAuthorizationReadGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.157104
+              "partition": 2,
+              "weight_seconds": 0.16
             },
             "net.firedevops.firemud.accountservice.service.session.AccountSelectedOwnerIntakeWorldClosureAuthorizationReadServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.068797
+              "weight_seconds": 0.05
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionServiceTest": {
-              "partition": 1,
-              "weight_seconds": 3.30945
+              "partition": 3,
+              "weight_seconds": 3.453
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionGrpcServiceTest": {
+              "partition": 4,
+              "weight_seconds": 0.237
+            },
+            "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionGrpcTestFixture": {
               "partition": 2,
-              "weight_seconds": 0.220767
+              "weight_seconds": 0.0
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionManualFactoryTest": {
-              "partition": 1,
-              "weight_seconds": 23.267805
+              "partition": 2,
+              "weight_seconds": 23.218
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.258759
+              "partition": 4,
+              "weight_seconds": 0.582
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAdmissionProtectionWorkloadGuardTest": {
-              "partition": 1,
-              "weight_seconds": 0.00308
+              "partition": 4,
+              "weight_seconds": 0.004
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCaptureRepositoryTest": {
               "partition": 1,
-              "weight_seconds": 0.035939
+              "weight_seconds": 0.051
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCaptureTest": {
-              "partition": 2,
-              "weight_seconds": 0.006161
+              "partition": 3,
+              "weight_seconds": 0.007
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorityBundleTest": {
-              "partition": 1,
-              "weight_seconds": 0.086253
+              "partition": 3,
+              "weight_seconds": 0.113
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.619174
+              "weight_seconds": 0.722
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionServiceTest": {
               "partition": 2,
-              "weight_seconds": 0.169426
+              "weight_seconds": 0.154
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.21974
+              "partition": 3,
+              "weight_seconds": 0.191
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.111924
+              "partition": 3,
+              "weight_seconds": 0.096
             },
             "net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.154023
+              "partition": 2,
+              "weight_seconds": 0.128
             },
             "net.firedevops.firemud.accountservice.service.session.LettuceAccountCoordinationPinnedConnectionProviderTest": {
-              "partition": 1,
-              "weight_seconds": 0.133487
+              "partition": 4,
+              "weight_seconds": 0.131
             },
             "net.firedevops.firemud.accountservice.service.session.SessionServiceImplTest": {
-              "partition": 1,
-              "weight_seconds": 0.120138
+              "partition": 4,
+              "weight_seconds": 0.33
             },
             "net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPkiTest": {
               "partition": 1,
-              "weight_seconds": 1.048386
+              "weight_seconds": 1.025
             },
             "unit.net.firedevops.firemud.accountservice.AccountUuidTextTest": {
-              "partition": 2,
-              "weight_seconds": 0.009241
+              "partition": 4,
+              "weight_seconds": 0.008
             },
             "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcMtlsTest": {
-              "partition": 1,
-              "weight_seconds": 11.298132
+              "partition": 4,
+              "weight_seconds": 12.042
             },
             "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.006161
+              "weight_seconds": 0.007
             },
             "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadServiceTest": {
               "partition": 2,
-              "weight_seconds": 0.014376
+              "weight_seconds": 0.091
             },
             "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftSourceCompositionServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.778332
+              "partition": 4,
+              "weight_seconds": 0.697
             },
             "unit.net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.401488
+              "partition": 1,
+              "weight_seconds": 0.514
             },
             "unit.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceSelectedOwnerIntakeTest": {
-              "partition": 1,
-              "weight_seconds": 0.012322
+              "partition": 4,
+              "weight_seconds": 0.016
             },
             "unit.net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceWorldParticipationTest": {
-              "partition": 2,
-              "weight_seconds": 0.021563
+              "partition": 1,
+              "weight_seconds": 0.033
             },
             "unit.net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfigurationTest": {
-              "partition": 1,
-              "weight_seconds": 0.237196
+              "partition": 2,
+              "weight_seconds": 0.29
             },
             "unit.net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyRepositoryTest": {
               "partition": 1,
-              "weight_seconds": 0.06777
+              "weight_seconds": 0.132
             },
             "unit.net.firedevops.firemud.accountservice.dto.AccountAuthEvidenceBundleTest": {
+              "partition": 4,
+              "weight_seconds": 0.087
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigestTest": {
               "partition": 2,
-              "weight_seconds": 0.014376
+              "weight_seconds": 0.014
+            },
+            "unit.net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequestTest": {
+              "partition": 4,
+              "weight_seconds": 0.046
             },
             "unit.net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2Test": {
               "partition": 2,
-              "weight_seconds": 0.005134
+              "weight_seconds": 0.009
             },
             "unit.net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementCodecTest": {
-              "partition": 1,
-              "weight_seconds": 0.009241
+              "partition": 3,
+              "weight_seconds": 0.009
             },
             "unit.net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResultTest": {
-              "partition": 1,
-              "weight_seconds": 0.002054
+              "partition": 3,
+              "weight_seconds": 0.003
             },
             "unit.net.firedevops.firemud.accountservice.dto.InitialGameplayLoginResultTest": {
-              "partition": 2,
-              "weight_seconds": 0.096521
+              "partition": 3,
+              "weight_seconds": 0.124
             },
             "unit.net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1CodecTest": {
-              "partition": 2,
-              "weight_seconds": 0.002054
+              "partition": 4,
+              "weight_seconds": 0.007
             },
             "unit.net.firedevops.firemud.accountservice.hostedterms.AccountDeploymentEnvironmentBoundaryProviderTest": {
-              "partition": 2,
-              "weight_seconds": 0.004107
+              "partition": 3,
+              "weight_seconds": 0.006
             },
             "unit.net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffTest": {
-              "partition": 1,
-              "weight_seconds": 0.005134
+              "partition": 4,
+              "weight_seconds": 0.011
             },
             "unit.net.firedevops.firemud.accountservice.hostedterms.HostedTermsRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.004107
+              "partition": 2,
+              "weight_seconds": 0.004
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountAuthEvidenceBundleRepositoryTest": {
               "partition": 1,
-              "weight_seconds": 0.008215
+              "weight_seconds": 0.091
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.026697
+              "partition": 3,
+              "weight_seconds": 0.037
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.095495
+              "partition": 3,
+              "weight_seconds": 0.093
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.083173
+              "partition": 4,
+              "weight_seconds": 0.072
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.119111
+              "partition": 1,
+              "weight_seconds": 0.122
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.32653
+              "partition": 4,
+              "weight_seconds": 0.519
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountGameplayTokenIdentityFenceRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.024644
+              "partition": 3,
+              "weight_seconds": 0.025
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepositoryCanonicalTest": {
               "partition": 1,
-              "weight_seconds": 0.002054
+              "weight_seconds": 0.001
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.002054
+              "partition": 3,
+              "weight_seconds": 0.002
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.010268
+              "partition": 4,
+              "weight_seconds": 0.012
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.015402
+              "partition": 1,
+              "weight_seconds": 0.344
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountRepositoryLifecycleSourceTest": {
-              "partition": 2,
-              "weight_seconds": 1.50943
+              "partition": 1,
+              "weight_seconds": 1.354
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.30394
+              "partition": 3,
+              "weight_seconds": 0.411
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.001027
+              "partition": 4,
+              "weight_seconds": 0.002
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepositoryTest": {
               "partition": 1,
-              "weight_seconds": 0.137594
+              "weight_seconds": 0.169
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepositoryTest": {
-              "partition": 1,
-              "weight_seconds": 0.091387
+              "partition": 4,
+              "weight_seconds": 0.084
             },
             "unit.net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepositoryTest": {
+              "partition": 4,
+              "weight_seconds": 0.016
+            },
+            "unit.net.firedevops.firemud.accountservice.security.AccountRuntimeConsumerAuthWiringTest": {
               "partition": 2,
-              "weight_seconds": 0.009241
+              "weight_seconds": 0.264
+            },
+            "unit.net.firedevops.firemud.accountservice.security.EmailVerificationHttpAuthWiringTest": {
+              "partition": 2,
+              "weight_seconds": 0.53
             },
             "unit.net.firedevops.firemud.accountservice.security.RuntimeAccountIdentityGrpcAuthWiringTest": {
-              "partition": 2,
-              "weight_seconds": 0.340905
+              "partition": 3,
+              "weight_seconds": 0.229
             },
             "unit.net.firedevops.firemud.accountservice.service.AccountActorStagingEligibilityServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.09036
+              "partition": 3,
+              "weight_seconds": 0.088
             },
             "unit.net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadbackTest": {
               "partition": 1,
-              "weight_seconds": 0.027724
+              "weight_seconds": 0.014
             },
             "unit.net.firedevops.firemud.accountservice.service.AccountGenerationProjectionRestrictionDispatchTest": {
               "partition": 2,
-              "weight_seconds": 0.00308
+              "weight_seconds": 0.023
             },
             "unit.net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducerTest": {
               "partition": 2,
-              "weight_seconds": 0.007188
+              "weight_seconds": 0.007
             },
             "unit.net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducerCanonicalJoinTest": {
               "partition": 1,
-              "weight_seconds": 0.297779
+              "weight_seconds": 0.299
             },
             "unit.net.firedevops.firemud.accountservice.service.FreshTenantIdentityEnrollmentServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.190989
+              "partition": 4,
+              "weight_seconds": 0.168
             },
             "unit.net.firedevops.firemud.accountservice.service.impl.AccountActorStagingEligibilityGrpcServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.099602
+              "weight_seconds": 0.101
+            },
+            "unit.net.firedevops.firemud.accountservice.service.impl.AccountJwtReadinessProbeOwnerGrpcServiceTest": {
+              "partition": 3,
+              "weight_seconds": 0.492
             },
             "unit.net.firedevops.firemud.accountservice.service.impl.AccountJwtSignerMaterializationServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.309074
+              "partition": 4,
+              "weight_seconds": 1.296
             },
             "unit.net.firedevops.firemud.accountservice.service.impl.RuntimeAccountIdentityGrpcServiceTest": {
               "partition": 1,
-              "weight_seconds": 0.015402
+              "weight_seconds": 0.021
             },
             "unit.net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcServiceTest": {
               "partition": 2,
-              "weight_seconds": 0.093441
+              "weight_seconds": 0.095
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountControlUiCurrentActorVerifierTest": {
               "partition": 1,
-              "weight_seconds": 1.386211
+              "weight_seconds": 0.922
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceRepositoryTest": {
-              "partition": 2,
-              "weight_seconds": 0.094468
+              "partition": 1,
+              "weight_seconds": 0.095
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountControlUiPrimaryAuthenticationTest": {
               "partition": 2,
-              "weight_seconds": 0.13246
+              "weight_seconds": 0.099
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayAuthenticateReceiverTest": {
-              "partition": 1,
-              "weight_seconds": 0.708508
+              "partition": 2,
+              "weight_seconds": 0.654
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwnerTest": {
-              "partition": 1,
-              "weight_seconds": 0.361442
+              "partition": 2,
+              "weight_seconds": 0.327
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayCredentialRequestDigesterTest": {
               "partition": 1,
-              "weight_seconds": 0.002054
+              "weight_seconds": 0.003
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjectionTest": {
-              "partition": 2,
-              "weight_seconds": 0.515465
+              "partition": 4,
+              "weight_seconds": 0.597
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationIssuanceCommitServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.338852
+              "partition": 3,
+              "weight_seconds": 0.28
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClientTest": {
-              "partition": 1,
-              "weight_seconds": 0.544216
+              "partition": 4,
+              "weight_seconds": 0.45
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationResponseEnvelopeServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.117058
+              "partition": 3,
+              "weight_seconds": 0.117
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationResponseRecoveryOwnerTest": {
-              "partition": 1,
-              "weight_seconds": 0.009241
+              "partition": 4,
+              "weight_seconds": 0.091
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationTokenRegistryTest": {
-              "partition": 2,
-              "weight_seconds": 0.06469
+              "partition": 3,
+              "weight_seconds": 0.166
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountGameplayPrimaryCredentialVerifierTest": {
-              "partition": 1,
-              "weight_seconds": 5.618774
+              "partition": 4,
+              "weight_seconds": 6.947
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountJwtJwksTrustedSourceTest": {
+              "partition": 1,
+              "weight_seconds": 0.488
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicyTest": {
               "partition": 2,
-              "weight_seconds": 0.263893
+              "weight_seconds": 0.005
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountSelectedDraftPublicationOrderGrpcMtlsTest": {
-              "partition": 2,
-              "weight_seconds": 16.904584
+              "partition": 1,
+              "weight_seconds": 16.39
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountSelectedPublicationSettlementGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.088307
+              "partition": 2,
+              "weight_seconds": 0.082
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest": {
-              "partition": 2,
-              "weight_seconds": 23.951669
+              "partition": 1,
+              "weight_seconds": 24.156
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.00308
+              "partition": 3,
+              "weight_seconds": 0.084
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcMtlsTest": {
               "partition": 2,
-              "weight_seconds": 22.545949
+              "weight_seconds": 21.768
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.00308
+              "partition": 3,
+              "weight_seconds": 0.004
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementServiceTest": {
-              "partition": 1,
-              "weight_seconds": 0.841995
+              "partition": 2,
+              "weight_seconds": 0.757
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionGrpcServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.145809
+              "partition": 3,
+              "weight_seconds": 0.147
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcMtlsTest": {
-              "partition": 1,
-              "weight_seconds": 11.854669
+              "partition": 3,
+              "weight_seconds": 11.863
             },
             "unit.net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcServiceTest": {
-              "partition": 2,
-              "weight_seconds": 0.006161
+              "partition": 3,
+              "weight_seconds": 0.09
+            },
+            "unit.net.firedevops.firemud.accountservice.service.session.ActivationProtectionGrpcMtlsTestSupport": {
+              "partition": 3,
+              "weight_seconds": 0.0
             }
           },
           "metrics_by_partition": {
             "1": {
-              "cases": 824,
-              "suites": 103
+              "cases": 532,
+              "suites": 60
             },
             "2": {
-              "cases": 891,
-              "suites": 102
+              "cases": 360,
+              "suites": 58
+            },
+            "3": {
+              "cases": 656,
+              "suites": 58
+            },
+            "4": {
+              "cases": 449,
+              "suites": 62
             }
           },
-          "unknown_class_estimated_weight_seconds": 0.113977
+          "unknown_class_estimated_weight_seconds": 0.137
         }
       }
     },
@@ -2589,7 +2812,38 @@
       }
     }
   },
-  "source_assessment": "R1308-independent-runner-partition-assessment",
-  "source_head": "38c0da4fe656c07dad184838d8dcadf370a382c3",
-  "source_option": 2
+  "weight_provenance": {
+    "account-service": {
+      "artifacts": [
+        {
+          "downloaded_bytes": 46133765,
+          "id": 13089711980,
+          "name": "slow-service-ci-partition-41318827966-2cd23ed0bfd8466a54d9d13376a2c989121937bd-attempt-1-account-service-partition-1",
+          "partition": 1,
+          "zip_sha256": "b3ce4c5664b0115bafa43bd486830381e8e85ba728a6c714d309e941a26a24d8"
+        },
+        {
+          "downloaded_bytes": 46799227,
+          "id": 13089144602,
+          "name": "slow-service-ci-partition-41318827966-2cd23ed0bfd8466a54d9d13376a2c989121937bd-attempt-1-account-service-partition-2",
+          "partition": 2,
+          "zip_sha256": "d7f04c46fa75125ce577faa7b143a07f19cac5821c8d495fc574316fa9a70adb"
+        }
+      ],
+      "attempt": 1,
+      "handoff_sha256": "52efe1d64b011a606d9580d209882e76bb227aec5745bfd71b8a6765af74e220",
+      "native_head_sha": "c062c3bd0bafbf6aa28c51cc9868bdde4d8a8bc8",
+      "run_id": 41318827966,
+      "tested_source_sha": "2cd23ed0bfd8466a54d9d13376a2c989121937bd",
+      "unassigned_suite_residual_seconds": 1.749,
+      "unknown_class_fallback": "Median of current-attempt class weights per test task, preserving deterministic least-loaded assignment across four partitions.",
+      "weight_method": "Measured runnable classes use testcase-suite sums from this attempt. The two classes derived from the unsplit dominant class use their mapped testcase-time sums as estimated class weights; the 1.749s suite residual is not assigned to either class."
+    },
+    "game-session-service": {
+      "run_id": 41131475765,
+      "source_assessment": "R1308-independent-runner-partition-assessment",
+      "source_head": "38c0da4fe656c07dad184838d8dcadf370a382c3",
+      "source_option": 2
+    }
+  }
 }

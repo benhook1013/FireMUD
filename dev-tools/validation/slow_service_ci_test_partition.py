@@ -17,7 +17,7 @@ from typing import Any
 
 PLAN_PATH = Path(__file__).with_name("slow_service_ci_test_partition_plan.json")
 SERVICES = ("account-service", "game-session-service")
-PARTITION_COUNTS = {"account-service": 2, "game-session-service": 4}
+PARTITION_COUNTS = {"account-service": 4, "game-session-service": 4}
 
 
 def partitions_for(module: str) -> range:

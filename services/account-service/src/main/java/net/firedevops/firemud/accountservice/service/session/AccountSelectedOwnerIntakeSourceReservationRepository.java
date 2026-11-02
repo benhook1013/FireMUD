@@ -48,9 +48,16 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
   private static final String SETTLEMENTS = "account_selected_owner_intake_settlements";
 
   private final DSLContext dsl;
+  private final AccountControlUiIssuanceRepository issuanceRepository;
 
   public AccountSelectedOwnerIntakeSourceReservationRepository(DSLContext dsl) {
+    this(dsl, new AccountControlUiIssuanceRepository(dsl));
+  }
+
+  AccountSelectedOwnerIntakeSourceReservationRepository(
+      DSLContext dsl, AccountControlUiIssuanceRepository issuanceRepository) {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
+    this.issuanceRepository = Objects.requireNonNull(issuanceRepository, "issuanceRepository");
   }
 
   public enum State {
@@ -881,7 +888,7 @@ public final class AccountSelectedOwnerIntakeSourceReservationRepository {
             "SELECT * FROM account_control_ui_issuance_operations WHERE operation_id = ?",
             operationId);
     if (issuer == null) throw new IllegalStateException("Original creator issuance is unavailable");
-    return new AccountControlUiIssuanceRepository.Stored(issuer);
+    return issuanceRepository.decodeStored(issuer);
   }
 
   private static void requireSameScope(

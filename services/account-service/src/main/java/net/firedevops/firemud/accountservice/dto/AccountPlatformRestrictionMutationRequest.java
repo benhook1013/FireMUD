@@ -162,6 +162,12 @@ public record AccountPlatformRestrictionMutationRequest(
 
   private static void validateOwnerSource(
       Category category, RestrictionState state, SourceKind sourceKind) {
+    if (sourceKind == SourceKind.ACCOUNT_FRESH_ENROLLMENT) {
+      if (state != RestrictionState.NONRESTRICTED) {
+        throw new IllegalArgumentException("Fresh enrollment certifies NONRESTRICTED only");
+      }
+      return;
+    }
     if (category == Category.ACCOUNT_SECURITY_LOCK) {
       if (sourceKind == SourceKind.LOGGING_ADMIN_MODERATION
           || (sourceKind == SourceKind.ACCOUNT_SECURITY_POLICY
@@ -191,6 +197,7 @@ public record AccountPlatformRestrictionMutationRequest(
   public enum SourceKind {
     ACCOUNT_SECURITY_POLICY,
     ACCOUNT_SECURITY_RECOVERY,
-    LOGGING_ADMIN_MODERATION
+    LOGGING_ADMIN_MODERATION,
+    ACCOUNT_FRESH_ENROLLMENT
   }
 }
