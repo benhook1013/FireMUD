@@ -195,6 +195,24 @@ class StripeBillingPrerequisiteObserverTest {
   }
 
   @Test
+  void acceptsAdditionalStripeDocumentedCardBrandsThroughSdkDecoding() {
+    for (String brand : List.of("cartes_bancaires", "eftpos_au", "link")) {
+      String paymentMethod =
+          paymentMethodResponse().replace("\"brand\":\"visa\"", "\"brand\":\"" + brand + "\"");
+      ControlledStripeTransport transport =
+          new ControlledStripeTransport(customerResponse(), paymentMethod);
+
+      StripeBillingPrerequisiteObserver.ObservedBillingPrerequisites observed =
+          assertInstanceOf(
+              StripeBillingPrerequisiteObserver.ObservedBillingPrerequisites.class,
+              observer(transport, fixedClock()).observe(expected()));
+
+      assertEquals(brand, observed.display().brand());
+      assertEquals(2, transport.callCount());
+    }
+  }
+
+  @Test
   void acceptsOnlySupportedCardDisplayFactsWithoutReadingCallerCardData() {
     assertInvalid(
         customerResponse(),
