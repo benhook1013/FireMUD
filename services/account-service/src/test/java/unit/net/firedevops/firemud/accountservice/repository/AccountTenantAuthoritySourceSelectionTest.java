@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -46,7 +47,7 @@ class AccountTenantAuthoritySourceSelectionTest {
     assertThat(selection.kind()).isEqualTo(SourceKind.PAID_HOSTING);
     assertThat(selection.matches(f.event)).isTrue();
     verify(f.repository).readHostingCheckpoint(TENANT, REQUEST);
-    verify(f.repository, never()).readCurrentByTenant(any());
+    verify(f.repository, never()).readCurrentDemoByTenant(any());
   }
 
   @Test
@@ -54,7 +55,7 @@ class AccountTenantAuthoritySourceSelectionTest {
     Fixture f = new Fixture(false);
     assertThat(f.repository.readCurrentSourceSelection(TENANT).kind())
         .isEqualTo(SourceKind.NON_PAID_DEMO);
-    verify(f.repository).readCurrentByTenant(TENANT);
+    verify(f.repository).readCurrentDemoByTenant(TENANT);
     verify(f.repository, never()).readHostingCheckpoint(any(), any());
   }
 
@@ -73,7 +74,7 @@ class AccountTenantAuthoritySourceSelectionTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("unknown");
     verify(f.repository, never()).readHostingCheckpoint(any(), any());
-    verify(f.repository, never()).readCurrentByTenant(any());
+    verify(f.repository, never()).readCurrentDemoByTenant(any());
   }
 
   @Test
@@ -98,6 +99,9 @@ class AccountTenantAuthoritySourceSelectionTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
     assertThatThrownBy(() -> f.repository.readCurrentSourceSelection(TENANT))
         .hasMessageContaining("writable");
+    doCallRealMethod().when(f.repository).readCurrentDemoByTenant(TENANT);
+    assertThatThrownBy(() -> f.repository.readCurrentDemoByTenant(TENANT))
+        .hasMessageContaining("writable");
   }
 
   private static final class Fixture {
@@ -105,6 +109,7 @@ class AccountTenantAuthoritySourceSelectionTest {
     private final Map<String, Object> billing = new LinkedHashMap<>();
     private final AccountTenantAuthorityEventRepository repository;
     private final TenantAuthorityEventV1Codec.Event event;
+    private final byte[] hostingReceipt;
 
     private Fixture(boolean paid) {
       var source =
@@ -125,6 +130,20 @@ class AccountTenantAuthoritySourceSelectionTest {
       UUID billingId;
       String billingDigest;
       if (paid) {
+        // Controlled committed-receipt projection, not a provider observation or paid SQL proof.
+        Map<String, Object> receipt =
+            Map.of(
+                "schemaVersion",
+                "account-hosting-current-receipt/v1",
+                "tenantId",
+                TENANT.toString(),
+                "requestId",
+                REQUEST.toString(),
+                "requestDigest",
+                DIGEST,
+                "hardCutoff",
+                false);
+        hostingReceipt = AccountHostingSubscriptionLifecycleEvidence.encode(receipt);
         var encoded =
             AccountHostingSubscriptionLifecycleEvidence.billing(
                 TENANT,
@@ -132,12 +151,13 @@ class AccountTenantAuthoritySourceSelectionTest {
                 DIGEST,
                 7L,
                 TenantAuthorityEventV1Codec.tenantBillingEventId(REQUEST),
-                Map.of());
+                receipt);
         payload = encoded.payload();
         requestDigest = DIGEST;
         billingId = encoded.eventId;
         billingDigest = encoded.digest();
       } else {
+        hostingReceipt = null;
         var request =
             new DemoTenantEntitlementRequest(
                 REQUEST,
@@ -198,7 +218,7 @@ class AccountTenantAuthoritySourceSelectionTest {
                 if (sql.contains("account_tenant_authority_source_records")) return row(head);
                 if (sql.contains("account_tenant_entitlement_outbox_events")) return row(billing);
                 if (sql.contains("subscription_lifecycle_receipts")) {
-                  return row(Map.of("receipt_payload", new byte[] {'{', '}'}));
+                  return row(Map.of("receipt_payload", hostingReceipt));
                 }
                 throw new AssertionError(sql);
               });
@@ -220,7 +240,7 @@ class AccountTenantAuthoritySourceSelectionTest {
                   mock(FreshTenantIdentityAssociationRepository.class),
                   generations));
       doReturn(event).when(repository).readHostingCheckpoint(TENANT, REQUEST);
-      doReturn(event).when(repository).readCurrentByTenant(TENANT);
+      doReturn(event).when(repository).readCurrentDemoByTenant(TENANT);
       TransactionSynchronizationManager.setActualTransactionActive(true);
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
     }

@@ -154,6 +154,7 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     var scope = f.owner.listRealmScopes(f.token, "tenant", "world").getFirst().scope();
 
     assertThat(Instant.parse(scope.connectScopeExpiresAt())).isEqualTo(bootstrapExpiry);
+    assertThat(f.jwt.absoluteExpiration).isEqualTo(bootstrapExpiry);
     assertThat(f.jwt.parseToken(scope.connectScopeId()).getPayload().getExpiration().toInstant())
         .isEqualTo(bootstrapExpiry);
   }
@@ -408,8 +409,8 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     private final AccountPublicBootstrapEntitlementOwner entitlements =
         mock(AccountPublicBootstrapEntitlementOwner.class);
     private final SessionService sessions = mock(SessionService.class);
-    private final JwtUtil jwt =
-        new JwtUtil("controlled-local-canonical-scope-key-01234567890123456789", 300000L);
+    private final RecordingJwtUtil jwt =
+        new RecordingJwtUtil("controlled-local-canonical-scope-key-01234567890123456789", 300000L);
     private final AtomicBoolean active = new AtomicBoolean(true);
     private final AtomicInteger registryChecks = new AtomicInteger();
     private final AtomicInteger targetReads = new AtomicInteger();
@@ -828,6 +829,20 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     @Override
     public Instant instant() {
       return Instant.now().plus(offset.get());
+    }
+  }
+
+  private static final class RecordingJwtUtil extends JwtUtil {
+    private Instant absoluteExpiration;
+
+    private RecordingJwtUtil(String secret, long expirationMillis) {
+      super(secret, expirationMillis);
+    }
+
+    @Override
+    public String generateToken(String subject, Instant expiresAt, Map<String, Object> claims) {
+      absoluteExpiration = expiresAt;
+      return super.generateToken(subject, expiresAt, claims);
     }
   }
 }

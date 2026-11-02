@@ -205,7 +205,11 @@ public final class AccountSubscriptionIntentRepository {
     return lockProvisioningBinding(requestId, expectedRowVersion, true);
   }
 
-  /** Original-binding lock for provider reconciliation and the consistent internal reader. */
+  /**
+   * Original-binding lock for provider reconciliation and the consistent internal reader. Later
+   * display/availability observations do not invalidate the immutable reserved instrument binding.
+   * This read does not authorize a new provider dispatch.
+   */
   public AccountSubscriptionCurrentRecord lockForLifecycle(
       UUID requestId, long expectedRowVersion) {
     return lockBinding(requestId, expectedRowVersion, true, true);
@@ -234,14 +238,29 @@ public final class AccountSubscriptionIntentRepository {
     var current =
         currentForUpdate(original.tenantId())
             .orElseThrow(() -> new FenceRejectedException("Current subscription is absent"));
+    boolean instrumentVersionAndStateMatch =
+        lifecycle
+            ? instrument.rowVersion() >= original.reservedInstrumentVersion()
+                && (instrument.state() == AccountPaymentInstrumentRecord.State.ATTACHABLE
+                    || instrument.state() == AccountPaymentInstrumentRecord.State.UNAVAILABLE)
+            : instrument.rowVersion() == original.reservedInstrumentVersion()
+                && instrument.state() == AccountPaymentInstrumentRecord.State.ATTACHABLE;
     if (!current.subscriptionId().equals(original.subscriptionId())
+        || !current.tenantId().equals(original.tenantId())
+        || !current.owner().equals(original.owner())
+        || !current.creationRequestId().equals(original.requestId())
+        || !current.paymentInstrumentId().equals(original.paymentInstrumentId())
+        || current.reservedInstrumentVersion() != original.reservedInstrumentVersion()
+        || !current.customerProvisioningRequestId().equals(original.customerProvisioningRequestId())
+        || !current.providerCustomerId().equals(original.providerCustomerId())
         || current.rowVersion() != expectedRowVersion
         || !(lifecycle
             || current.status().equals("pending")
             || (allowProvisioning && current.status().equals("provisioning")))
         || current.supersededAt() != null
-        || instrument.rowVersion() != original.reservedInstrumentVersion()
-        || instrument.state() != AccountPaymentInstrumentRecord.State.ATTACHABLE
+        || !instrument.instrumentUuid().equals(original.paymentInstrumentId())
+        || !instrument.accountUuid().equals(original.owner().accountUuid())
+        || !instrumentVersionAndStateMatch
         || !instrument
             .customerProvisioningRequestId()
             .equals(original.customerProvisioningRequestId())

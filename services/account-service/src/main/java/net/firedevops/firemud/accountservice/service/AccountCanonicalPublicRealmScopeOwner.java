@@ -372,10 +372,13 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     claims.put("evaluatedAt", evaluatedAt.toString());
     claims.put("connectScopeExpiresAt", expiresAt.toString());
     claims.put("jti", UUID.randomUUID().toString());
-    // JwtUtil samples its own wall clock. Validate its actual signed expiry before any retention.
-    long remaining = expiresAt.toEpochMilli() - System.currentTimeMillis();
-    if (remaining <= 0L) throw authUnavailable("Scope signing clock is outside its validity", null);
-    String token = jwt.generateToken(caller.caller().accountUuid().toString(), remaining, claims);
+    // Preserve the owner-selected absolute expiry even if signing starts after a scheduling pause.
+    final String token;
+    try {
+      token = jwt.generateToken(caller.caller().accountUuid().toString(), expiresAt, claims);
+    } catch (IllegalArgumentException expired) {
+      throw authUnavailable("Scope signing clock is outside its validity", null);
+    }
     Claims signed = jwt.parseToken(token).getPayload();
     if (!caller.caller().accountUuid().toString().equals(signed.getSubject())
         || signed.getExpiration() == null

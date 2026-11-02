@@ -699,9 +699,14 @@ public class AccountTenantAuthorityEventRepository {
     return readCurrentSourceSelection(tenantId).checkpoint();
   }
 
-  private Event readCurrentDemoByTenant(UUID tenantId) {
+  /** DEMO-owned current read; retains the same owner transaction and exact source checks. */
+  Event readCurrentDemoByTenant(UUID tenantId) {
     requireTransaction();
     requireTenant(tenantId);
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "DEMO current source requires a writable Account transaction");
+    }
     Record freshIdentity =
         dsl.fetchOne(
             "SELECT canonical_tenant_id FROM account_fresh_tenant_identity_associations "

@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -36,6 +37,11 @@ public class ReloadableJwtUtil extends JwtUtil {
   public String generateToken(
       String subject, long tokenExpirationMillis, Map<String, Object> claims) {
     return delegate.get().generateToken(subject, tokenExpirationMillis, claims);
+  }
+
+  @Override
+  public String generateToken(String subject, Instant expiresAt, Map<String, Object> claims) {
+    return delegate.get().generateToken(subject, expiresAt, claims);
   }
 
   @Override
