@@ -11,7 +11,6 @@ import net.firedevops.firemud.gamedesign.client.AccountTenantCreationCurrentAuth
 import net.firedevops.firemud.gamedesign.repository.AccountAuthorizedTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.AccountAuthorizedTenantCreationRepository.AuthorizedDispatch;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -74,14 +73,13 @@ public final class AccountAuthorizedTenantCreationService {
           "Creation inputs differ from the exact Account original request digest");
     }
 
-    OriginalOutcomeBinding repositoryBinding = toRepositoryBinding(request.binding());
-    Optional<OriginalOutcomeSnapshot> committed =
-        outcomeRepository.readCommitted(repositoryBinding);
+    Binding binding = request.binding();
+    Optional<OriginalOutcomeSnapshot> committed = outcomeRepository.readCommitted(binding);
     if (committed.isPresent()) {
-      return replayTerminal(request, repositoryBinding, committed.orElseThrow());
+      return replayTerminal(request, binding, committed.orElseThrow());
     }
     if (creationRepository
-        .read(repositoryBinding.creationRequestId(), repositoryBinding.targetNamespace())
+        .read(binding.creationRequestId(), binding.targetNamespace())
         .isPresent()) {
       throw new IllegalStateException(
           "A retained Game Design creation cannot be adopted into a new Account original");
@@ -106,7 +104,7 @@ public final class AccountAuthorizedTenantCreationService {
                     "Current Account tenant-creation authorization expired before owner writes");
               }
 
-              OriginalOutcomeSnapshot claimed = outcomeRepository.claimLocked(repositoryBinding);
+              OriginalOutcomeSnapshot claimed = outcomeRepository.claimLocked(binding);
               if (claimed.status() == OutcomeStatus.CREATED) {
                 return WriteDisposition.REPLAY;
               }
@@ -117,16 +115,14 @@ public final class AccountAuthorizedTenantCreationService {
 
               FreshTenantCreationEvidence receipt =
                   creationRepository.createCandidate(
-                      repositoryBinding.targetNamespace(),
-                      repositoryBinding.creationRequestId(),
+                      binding.targetNamespace(),
+                      binding.creationRequestId(),
                       request.sourceGameTenantKey(),
                       request.name(),
                       request.description());
-              outcomeRepository.markCreatedLocked(repositoryBinding, receipt);
+              outcomeRepository.markCreatedLocked(binding, receipt);
               dispatchRepository.recordAuthorizedDispatch(
-                  repositoryBinding,
-                  authorization.readRequestId(),
-                  authorization.validBeforeEpochMillis());
+                  binding, authorization.readRequestId(), authorization.validBeforeEpochMillis());
               return WriteDisposition.CREATED;
             });
     if (disposition == null) {
@@ -136,7 +132,7 @@ public final class AccountAuthorizedTenantCreationService {
     if (disposition == WriteDisposition.CREATED) {
       AuthorizedDispatch dispatch =
           dispatchRepository
-              .readCommitted(repositoryBinding)
+              .readCommitted(binding)
               .orElseThrow(
                   () ->
                       new IllegalStateException(
@@ -149,15 +145,14 @@ public final class AccountAuthorizedTenantCreationService {
     }
     OriginalOutcomeSnapshot terminal =
         outcomeRepository
-            .readCommitted(repositoryBinding)
+            .readCommitted(binding)
             .orElseThrow(
                 () ->
                     new IllegalStateException("Committed Game Design original outcome is absent"));
-    if (!terminal.binding().equals(repositoryBinding)
-        || terminal.status() != OutcomeStatus.CREATED) {
+    if (!terminal.binding().equals(binding) || terminal.status() != OutcomeStatus.CREATED) {
       throw new IllegalStateException("Committed Game Design original outcome is not CREATED");
     }
-    return readAndVerifyReceipt(request, repositoryBinding, terminal);
+    return readAndVerifyReceipt(request, binding, terminal);
   }
 
   /**
@@ -171,12 +166,12 @@ public final class AccountAuthorizedTenantCreationService {
     ownerWrite.executeWithoutResult(
         transaction -> {
           dispatchRepository.applyLocalWriteTimeouts();
-          outcomeRepository.closeNotCreatedLocked(toRepositoryBinding(binding));
+          outcomeRepository.closeNotCreatedLocked(binding);
         });
   }
 
   private FreshTenantCreationEvidence replayTerminal(
-      CandidateRequest request, OriginalOutcomeBinding binding, OriginalOutcomeSnapshot snapshot) {
+      CandidateRequest request, Binding binding, OriginalOutcomeSnapshot snapshot) {
     if (!snapshot.binding().equals(binding)) {
       throw new IllegalStateException("Stored Game Design original binding differs from request");
     }
@@ -190,7 +185,7 @@ public final class AccountAuthorizedTenantCreationService {
   }
 
   private FreshTenantCreationEvidence readAndVerifyReceipt(
-      CandidateRequest request, OriginalOutcomeBinding binding, OriginalOutcomeSnapshot terminal) {
+      CandidateRequest request, Binding binding, OriginalOutcomeSnapshot terminal) {
     FreshTenantCreationEvidence receipt =
         creationRepository
             .read(binding.creationRequestId(), binding.targetNamespace())
@@ -231,16 +226,6 @@ public final class AccountAuthorizedTenantCreationService {
     }
     GameTenantCreationDigest.utf8ByteLength(sourceKey);
     GameTenantCreationDigest.utf8ByteLength(name);
-  }
-
-  private static OriginalOutcomeBinding toRepositoryBinding(Binding binding) {
-    return new OriginalOutcomeBinding(
-        binding.targetNamespace(),
-        binding.creationRequestId(),
-        binding.accountAuthorizationOperationId(),
-        binding.initiatingAccountId(),
-        binding.creationRequestDigest(),
-        binding.accountAuthorizationDigest());
   }
 
   private static void requireOutsideSql() {

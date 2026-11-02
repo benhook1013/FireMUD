@@ -3,7 +3,7 @@ package net.firedevops.firemud.gamedesign.repository;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -68,9 +68,7 @@ public final class AccountAuthorizedTenantCreationRepository {
   /** Inserts the Account response correlation and deadline in the V30/V1033 owner transaction. */
   @Transactional(propagation = Propagation.MANDATORY)
   public void recordAuthorizedDispatch(
-      OriginalOutcomeBinding binding,
-      UUID authorizationReadRequestId,
-      long validBeforeEpochMillis) {
+      Binding binding, UUID authorizationReadRequestId, long validBeforeEpochMillis) {
     requireWritableOwnerTransaction();
     AuthorizedDispatch dispatch =
         new AuthorizedDispatch(binding, authorizationReadRequestId, validBeforeEpochMillis);
@@ -92,7 +90,7 @@ public final class AccountAuthorizedTenantCreationRepository {
 
   /** Independently reads only the exact committed Account authorization fence. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
-  public Optional<AuthorizedDispatch> readCommitted(OriginalOutcomeBinding expected) {
+  public Optional<AuthorizedDispatch> readCommitted(Binding expected) {
     Objects.requireNonNull(expected, "expected");
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
@@ -118,7 +116,7 @@ public final class AccountAuthorizedTenantCreationRepository {
 
   private AuthorizedDispatch toDispatch(Record row) {
     return new AuthorizedDispatch(
-        new OriginalOutcomeBinding(
+        new Binding(
             row.get(TARGET_NAMESPACE),
             row.get(CREATION_REQUEST_ID),
             row.get(AUTHORIZATION_OPERATION_ID),
@@ -141,9 +139,7 @@ public final class AccountAuthorizedTenantCreationRepository {
   }
 
   public record AuthorizedDispatch(
-      OriginalOutcomeBinding binding,
-      UUID authorizationReadRequestId,
-      long validBeforeEpochMillis) {
+      Binding binding, UUID authorizationReadRequestId, long validBeforeEpochMillis) {
     public AuthorizedDispatch {
       Objects.requireNonNull(binding, "binding");
       Objects.requireNonNull(authorizationReadRequestId, "authorizationReadRequestId");

@@ -19,9 +19,9 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeGrpcCodec;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -117,8 +117,8 @@ class OriginalTenantCreationOutcomeReadGrpcServiceTest {
 
   @Test
   void refusesPendingMismatchedAndInconsistentOutcomes() {
-    OriginalOutcomeBinding changedBinding =
-        new OriginalOutcomeBinding(
+    Binding changedBinding =
+        new Binding(
             "test",
             REQUEST_ID,
             ACCOUNT_OPERATION_ID,
@@ -270,20 +270,12 @@ class OriginalTenantCreationOutcomeReadGrpcServiceTest {
   }
 
   private static GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest readRequest() {
-    OriginalOutcomeBinding original = binding();
-    return new GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest(
-        READ_ID,
-        new GameTenantCreationOriginalOutcomeEvidence.Binding(
-            original.targetNamespace(),
-            original.creationRequestId(),
-            original.accountAuthorizationOperationId(),
-            original.initiatingAccountId(),
-            original.creationRequestDigest(),
-            original.accountAuthorizationDigest()));
+    Binding original = binding();
+    return new GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest(READ_ID, original);
   }
 
-  private static OriginalOutcomeBinding binding() {
-    return new OriginalOutcomeBinding(
+  private static Binding binding() {
+    return new Binding(
         "test", REQUEST_ID, ACCOUNT_OPERATION_ID, ACCOUNT_ID, CREATION_DIGEST, ACCOUNT_DIGEST);
   }
 

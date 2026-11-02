@@ -20,7 +20,6 @@ import net.firedevops.firemud.gamedesign.client.AccountTenantCreationCurrentAuth
 import net.firedevops.firemud.gamedesign.repository.AccountAuthorizedTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -78,7 +77,7 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
   @Test
   void commitsExactV30V1033ReceiptAndV1034AccountDeadlineFenceAtomically() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = repositoryBinding();
+    Binding binding = repositoryBinding();
     long validBefore = System.currentTimeMillis() + 60_000L;
 
     FreshTenantCreationEvidence receipt =
@@ -113,7 +112,7 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
   @Test
   void commitTimeDeadlineGuardRollsBackTenantAndBothOwnerEvidenceRows() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = repositoryBinding();
+    Binding binding = repositoryBinding();
     long expiredBefore = System.currentTimeMillis() - 1_000L;
 
     assertThatThrownBy(
@@ -147,7 +146,7 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
   @Test
   void tombstoneHoldingSharedIdentityLockBlocksDelayedAuthorizedCreation() throws Exception {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = repositoryBinding();
+    Binding binding = repositoryBinding();
     CountDownLatch tombstoneWritten = new CountDownLatch(1);
     CountDownLatch allowTombstoneCommit = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -350,8 +349,8 @@ class AccountAuthorizedTenantCreationPostgresIntegrationTest {
         java.util.Objects.requireNonNull(fixture.write.getTransactionManager()));
   }
 
-  private static OriginalOutcomeBinding repositoryBinding() {
-    return new OriginalOutcomeBinding(
+  private static Binding repositoryBinding() {
+    return new Binding(
         NAMESPACE, REQUEST_ID, ACCOUNT_OPERATION_ID, ACCOUNT_ID, REQUEST_DIGEST, ACCOUNT_DIGEST);
   }
 

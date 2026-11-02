@@ -778,14 +778,17 @@ DECLARE
     original TEXT;
     anchor TEXT := $anchor$    FOR operation_value IN SELECT DISTINCT s.operation_id
         FROM account_draft_authorization_sources s$anchor$;
-    source_order_guard TEXT := $guard$    FOR operation_value IN SELECT DISTINCT s.creation_operation_id
-        FROM account_tenant_creation_source_order_sources s WHERE s.source_key = ANY(source_keys)
-        ORDER BY s.creation_operation_id LOOP
-        IF NOT account_tenant_creation_source_order_is_settled(operation_value) THEN
-            RAISE EXCEPTION 'Required creator source is held by a pending tenant-creation source order'
-                USING ERRCODE = '55P03';
-        END IF;
-    END LOOP;
+    source_order_guard TEXT := $guard$    IF EXISTS (
+        SELECT 1 FROM account_tenant_creation_source_order_sources source
+        WHERE source.source_key = ANY(source_keys)
+          AND NOT EXISTS (
+              SELECT 1 FROM account_tenant_creation_source_order_settlements settlement
+              WHERE settlement.creation_operation_id = source.creation_operation_id)
+        LIMIT 1
+    ) THEN
+        RAISE EXCEPTION 'Required creator source is held by a pending tenant-creation source order'
+            USING ERRCODE = '55P03';
+    END IF;
 $guard$;
 BEGIN
     SELECT pg_get_functiondef('account_control_ui_hold_required_sources(TEXT[])'::REGPROCEDURE)

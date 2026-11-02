@@ -13,9 +13,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -80,7 +80,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
   @Test
   void realCreationReceiptIsRecordedAndReplayedAsTheExactOriginalOutcome() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
 
     CreatedResult original =
         fixture.inTransaction(
@@ -124,7 +124,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
   @Test
   void missingReadIsNotNoCreationProofAndDurableTombstoneBlocksDelayedCreate() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
 
     assertThat(fixture.outcomeRepository.readCommitted(binding)).isEmpty();
 
@@ -149,7 +149,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
   @Test
   void aRealCreationWinsAndCannotBeFalselyClosedAsNotCreated() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
     FreshTenantCreationEvidence receipt =
         fixture.inTransaction(
             () ->
@@ -171,7 +171,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
   @Test
   void concurrentCloseSerializesBeforeDelayedCreationInsert() throws Exception {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
     CountDownLatch closeHasWritten = new CountDownLatch(1);
     CountDownLatch allowCloseCommit = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -224,7 +224,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
   @Test
   void changedBindingsAndDirectSqlCannotInventRewriteDeleteOrTruncateOutcomes() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
 
     assertThatThrownBy(
             () ->
@@ -282,35 +282,35 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
         fixture.inTransaction(() -> fixture.outcomeRepository.closeNotCreatedLocked(binding));
     var changedBindings =
         java.util.List.of(
-            new OriginalOutcomeBinding(
+            new Binding(
                 binding.targetNamespace(),
                 binding.creationRequestId(),
                 UUID.fromString("44444444-4444-4444-8444-444444444444"),
                 binding.initiatingAccountId(),
                 binding.creationRequestDigest(),
                 binding.accountAuthorizationDigest()),
-            new OriginalOutcomeBinding(
+            new Binding(
                 binding.targetNamespace(),
                 binding.creationRequestId(),
                 binding.accountAuthorizationOperationId(),
                 UUID.fromString("55555555-5555-4555-8555-555555555555"),
                 binding.creationRequestDigest(),
                 binding.accountAuthorizationDigest()),
-            new OriginalOutcomeBinding(
+            new Binding(
                 binding.targetNamespace(),
                 binding.creationRequestId(),
                 binding.accountAuthorizationOperationId(),
                 binding.initiatingAccountId(),
                 binding.creationRequestDigest(),
                 "sha256:" + "b".repeat(64)),
-            new OriginalOutcomeBinding(
+            new Binding(
                 binding.targetNamespace(),
                 binding.creationRequestId(),
                 binding.accountAuthorizationOperationId(),
                 binding.initiatingAccountId(),
                 "sha256:" + "c".repeat(64),
                 binding.accountAuthorizationDigest()));
-    for (OriginalOutcomeBinding changedBinding : changedBindings) {
+    for (Binding changedBinding : changedBindings) {
       assertThatThrownBy(
               () ->
                   fixture.inTransaction(
@@ -359,7 +359,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
   @Test
   void accountAuthorizationOperationCannotBindASecondOriginal() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding firstBinding = binding();
+    Binding firstBinding = binding();
     OriginalOutcomeSnapshot firstOutcome =
         fixture.inTransaction(() -> fixture.outcomeRepository.closeNotCreatedLocked(firstBinding));
     String firstBytesAndXmin = outcomeBytesAndXmin(fixture.dsl, firstBinding);
@@ -368,8 +368,8 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     UUID secondRequestId = UUID.fromString("66666666-6666-4666-8666-666666666666");
     String secondSourceKey = "fresh-outcome-tenant-02";
     String secondName = "Second World";
-    OriginalOutcomeBinding secondBinding =
-        new OriginalOutcomeBinding(
+    Binding secondBinding =
+        new Binding(
             secondNamespace,
             secondRequestId,
             ACCOUNT_OPERATION_ID,
@@ -394,7 +394,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
   @Test
   void predecessorCreationSurvivesV1033AndCannotBeAdoptedOrClosed() {
     Fixture fixture = fixtureBeforeV1033();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
     FreshTenantCreationEvidence receipt =
         fixture.inTransaction(
             () ->
@@ -466,8 +466,8 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     configuration.load().migrate();
   }
 
-  private static OriginalOutcomeBinding binding() {
-    return new OriginalOutcomeBinding(
+  private static Binding binding() {
+    return new Binding(
         NAMESPACE,
         REQUEST_ID,
         ACCOUNT_OPERATION_ID,
@@ -491,7 +491,7 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
     return row.get("row_bytes", String.class) + ":" + row.get("xmin", String.class);
   }
 
-  private static String outcomeBytesAndXmin(DSLContext dsl, OriginalOutcomeBinding binding) {
+  private static String outcomeBytesAndXmin(DSLContext dsl, Binding binding) {
     var row =
         dsl.fetchOne(
             "SELECT row_to_json(original_outcome)::TEXT AS row_bytes, xmin::TEXT AS xmin "
