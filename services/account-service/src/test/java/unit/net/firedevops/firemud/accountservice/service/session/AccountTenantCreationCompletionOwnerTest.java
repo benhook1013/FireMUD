@@ -188,11 +188,96 @@ class AccountTenantCreationCompletionOwnerTest {
   }
 
   @Test
+  void historicalSettlementBetweenSqlPhasesReturnsExactIndependentReadback() throws Exception {
+    var f = new Fixture();
+    f.beforeSignerRead = () -> f.settled = true;
+
+    var result = f.complete();
+
+    assertThat(result.state())
+        .isEqualTo(AccountTenantCreationCompletionOwner.State.CREATED_WITHOUT_ACCOUNT_COMPLETION);
+    assertThat(result.payload()).containsExactly(f.evidence.canonicalBytes());
+    assertThat(result.digest()).isEqualTo(f.evidence.evidenceDigest());
+    verify(f.actors).readAcceptedSignerKey("kid");
+    verify(f.orders, Mockito.times(3)).readSettlement(f.operation);
+    verify(f.orders, never()).settleLocked(any(), any());
+    verify(f.manager, Mockito.times(3)).commit(any());
+    assertNoCreatorEffects(f);
+  }
+
+  @Test
+  void originalCutoffExpiringBetweenSqlPhasesSettlesWithoutCurrentAuthorityOrCreatorWrites()
+      throws Exception {
+    var f = new Fixture();
+    f.beforeSignerRead = () -> f.databaseNow = Instant.ofEpochMilli(Fixture.OPERATION_DEADLINE);
+
+    var result = f.complete();
+
+    assertThat(result.state())
+        .isEqualTo(AccountTenantCreationCompletionOwner.State.CREATED_WITHOUT_ACCOUNT_COMPLETION);
+    assertThat(result.payload()).containsExactly(f.evidence.canonicalBytes());
+    assertThat(result.digest()).isEqualTo(f.evidence.evidenceDigest());
+    verify(f.actors).readAcceptedSignerKey("kid");
+    verify(f.orders).settleLocked(f.holder, f.terminal);
+    verify(f.manager, Mockito.times(3)).commit(any());
+    assertNoCreatorEffects(f);
+  }
+
+  @Test
+  void successfulCompletionVisibleAfterFreshPhaseSettlementLockKeepsPrecedence() throws Exception {
+    var f = new Fixture();
+    var completed = f.complete();
+    Record success = f.resultRow;
+    f.resultRow = null;
+    f.settled = false;
+    f.beforeSignerRead = () -> f.databaseNow = Instant.ofEpochMilli(Fixture.OPERATION_DEADLINE);
+    doAnswer(
+            invocation -> {
+              f.resultRow = success;
+              f.settled = true;
+              return f.evidence;
+            })
+        .when(f.orders)
+        .settleLocked(f.holder, f.terminal);
+    clearInvocations(
+        f.capture,
+        f.identities,
+        f.generations,
+        f.bootstraps,
+        f.parties,
+        f.owners,
+        f.reauth,
+        f.audits,
+        f.recent);
+
+    var replay = f.complete();
+
+    assertThat(replay.state()).isEqualTo(AccountTenantCreationCompletionOwner.State.COMPLETED);
+    assertThat(replay.payload()).containsExactly(completed.payload());
+    assertThat(replay.digest()).isEqualTo(completed.digest());
+    assertNoCreatorEffects(f);
+  }
+
+  @Test
+  void historicalResultObservedInFreshPhaseStillRequiresCommittedReadback() throws Exception {
+    var f = new Fixture();
+    when(f.orders.readSettlement(f.operation))
+        .thenReturn(Optional.empty(), Optional.of(f.evidence), Optional.empty());
+
+    assertThatThrownBy(f::complete).isInstanceOf(IllegalStateException.class);
+
+    verify(f.orders, Mockito.times(3)).readSettlement(f.operation);
+    verify(f.manager, Mockito.times(2)).commit(any());
+    verify(f.manager).rollback(any());
+    assertNoCreatorEffects(f);
+  }
+
+  @Test
   void retainedOriginalReauthenticationCutoffCanCloseBeforeOperationDeadline() throws Exception {
     for (boolean exactCutoff : new boolean[] {false, true}) {
       var f = new Fixture();
       Instant issued = Instant.ofEpochMilli(Fixture.PREPARED_AT).minusSeconds(240);
-      f.originalRecentFields.put("issued_at", issued.atOffset(ZoneOffset.UTC));
+      when(f.retainedRecent.issuedAt()).thenReturn(issued);
       Instant cutoff = issued.plusSeconds(270);
       f.databaseNow = exactCutoff ? cutoff : cutoff.minusNanos(1);
       // Caller handles cannot supply the permanent-cutoff proof or extend its retained bound.
@@ -213,7 +298,7 @@ class AccountTenantCreationCompletionOwnerTest {
     var f = new Fixture();
     var completed = f.complete();
     f.databaseNow = Instant.ofEpochMilli(Fixture.OPERATION_DEADLINE).plusSeconds(1);
-    f.originalRecentFields.clear();
+    when(f.recentEvidence.findByCreationOperation(f.operation)).thenReturn(Optional.empty());
     clearInvocations(
         f.dsl,
         f.capture,
@@ -260,7 +345,7 @@ class AccountTenantCreationCompletionOwnerTest {
     var f = new Fixture();
     f.databaseNow = Instant.ofEpochMilli(Fixture.OPERATION_DEADLINE);
     var first = f.complete();
-    f.originalRecentFields.clear();
+    when(f.recentEvidence.findByCreationOperation(f.operation)).thenReturn(Optional.empty());
     Mockito.doReturn(null).when(f.dsl).fetchOne("SELECT clock_timestamp() AS observed_at");
     var replay = f.complete();
     assertThat(replay.state())
@@ -277,17 +362,22 @@ class AccountTenantCreationCompletionOwnerTest {
 
   @Test
   void missingContradictoryOrUnavailableExpiryEvidenceCannotSettle() throws Exception {
-    for (String field :
-        List.of("evidence_id", "account_uuid", "creation_operation_id", "issued_at")) {
-      var f = new Fixture();
-      f.databaseNow = Instant.ofEpochMilli(Fixture.OPERATION_DEADLINE);
-      f.originalRecentFields.remove(field);
-      assertThatThrownBy(f::complete).isInstanceOf(IllegalStateException.class);
-      verify(f.orders, never()).settleLocked(any(), any());
-      assertNoFreshAuthorityOrCreatorEffects(f);
-    }
+    var missing = new Fixture();
+    when(missing.recentEvidence.findByCreationOperation(missing.operation))
+        .thenReturn(Optional.empty());
+    assertThatThrownBy(missing::complete).isInstanceOf(IllegalStateException.class);
+    verify(missing.orders, never()).settleLocked(any(), any());
+    assertNoFreshAuthorityOrCreatorEffects(missing);
+
+    var unreadable = new Fixture();
+    when(unreadable.recentEvidence.findByCreationOperation(unreadable.operation))
+        .thenThrow(new IllegalStateException("Retained reauthentication unavailable"));
+    assertThatThrownBy(unreadable::complete).isInstanceOf(IllegalStateException.class);
+    verify(unreadable.orders, never()).settleLocked(any(), any());
+    assertNoFreshAuthorityOrCreatorEffects(unreadable);
+
     var mismatched = new Fixture();
-    mismatched.originalRecentFields.put("evidence_id", UUID.randomUUID());
+    when(mismatched.retainedRecent.evidenceId()).thenReturn(UUID.randomUUID());
     assertThatThrownBy(mismatched::complete).isInstanceOf(IllegalStateException.class);
     verify(mismatched.orders, never()).settleLocked(any(), any());
     assertNoFreshAuthorityOrCreatorEffects(mismatched);
@@ -354,9 +444,13 @@ class AccountTenantCreationCompletionOwnerTest {
   }
 
   private static void assertNoFreshAuthorityOrCreatorEffects(Fixture f) {
+    verifyNoInteractions(f.actors);
+    assertNoCreatorEffects(f);
+  }
+
+  private static void assertNoCreatorEffects(Fixture f) {
     verifyNoInteractions(
         f.capture,
-        f.actors,
         f.identities,
         f.generations,
         f.bootstraps,
@@ -403,6 +497,10 @@ class AccountTenantCreationCompletionOwnerTest {
         mock(AccountInitialTenantBillingOwnerRepository.class);
     final AccountRecentReauthenticationService reauth =
         mock(AccountRecentReauthenticationService.class);
+    final AccountRecentReauthenticationRepository recentEvidence =
+        mock(AccountRecentReauthenticationRepository.class);
+    final AccountRecentReauthenticationEvidence retainedRecent =
+        mock(AccountRecentReauthenticationEvidence.class);
     final AccountAuditOutboxRepository audits = mock(AccountAuditOutboxRepository.class);
     final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     final CapturedEnvironmentBoundary environment = mock(CapturedEnvironmentBoundary.class);
@@ -417,9 +515,9 @@ class AccountTenantCreationCompletionOwnerTest {
     final GameTenantCreationOriginalOutcomeEvidence evidence;
     final FreshTenantCreationEvidence receipt;
     Record resultRow;
-    final Map<String, Object> originalRecentFields = new HashMap<>();
     Instant databaseNow = Instant.ofEpochMilli(PREPARED_AT);
     boolean settled;
+    Runnable beforeSignerRead = () -> {};
 
     Fixture() throws Exception {
       when(manager.getTransaction(any()))
@@ -514,43 +612,15 @@ class AccountTenantCreationCompletionOwnerTest {
       when(admitted.receiptPayload()).thenReturn(admissionPayload);
       when(admitted.receiptDigest()).thenReturn("admission");
       when(admissions.readAdmitted(operation)).thenReturn(Optional.of(admitted));
-      UUID recentRequest = UUID.randomUUID();
-      byte[] recentPayload =
-          AccountRecentReauthenticationRepository.requestPayload(
-              recentRequest, account, AccountRecentReauthenticationPolicy.PURPOSE, operation);
-      originalRecentFields.put("request_id", recentRequest);
-      originalRecentFields.put("account_uuid", account);
-      originalRecentFields.put("purpose", AccountRecentReauthenticationPolicy.PURPOSE);
-      originalRecentFields.put("creation_operation_id", operation);
-      originalRecentFields.put("request_payload", recentPayload);
-      originalRecentFields.put(
-          "request_digest", AccountRecentReauthenticationRepository.digest(recentPayload));
-      originalRecentFields.put("evidence_id", recentId);
-      originalRecentFields.put("identity_provenance", "ACCOUNT_REPOSITORY_INSERT");
-      originalRecentFields.put("account_lifecycle_state", "ACTIVE");
-      originalRecentFields.put("effective_policy_version", "controlled");
-      for (String field :
-          List.of(
-              "account_uuid_source_numeric_id",
-              "account_authority_generation",
-              "account_authority_source_version",
-              "issuance_fence",
-              "issuance_fence_source_version",
-              "platform_policy_version",
-              "deployment_policy_version")) {
-        originalRecentFields.put(field, 1L);
-      }
-      originalRecentFields.put("recent_age_seconds", 300L);
-      originalRecentFields.put("max_clock_skew_seconds", 30L);
-      originalRecentFields.put(
-          "issued_at", Instant.ofEpochMilli(PREPARED_AT).atOffset(ZoneOffset.UTC));
-      Record retainedRecent = mock(Record.class);
-      when(retainedRecent.get(anyString(), any(Class.class)))
-          .thenAnswer(invocation -> originalRecentFields.get(invocation.getArgument(0)));
-      when(dsl.fetchOne(
-              "SELECT * FROM account_recent_reauthentication_evidence WHERE creation_operation_id = ?",
-              operation))
-          .thenReturn(retainedRecent);
+      when(retainedRecent.evidenceId()).thenReturn(recentId);
+      when(retainedRecent.accountId()).thenReturn(account);
+      when(retainedRecent.purpose()).thenReturn(AccountRecentReauthenticationPolicy.PURPOSE);
+      when(retainedRecent.creationOperationId()).thenReturn(operation);
+      when(retainedRecent.issuedAt()).thenReturn(Instant.ofEpochMilli(PREPARED_AT));
+      when(retainedRecent.recentAgeSeconds()).thenReturn(300L);
+      when(retainedRecent.maxClockSkewSeconds()).thenReturn(30L);
+      when(recentEvidence.findByCreationOperation(operation))
+          .thenReturn(Optional.of(retainedRecent));
       Record clock = mock(Record.class);
       when(clock.get("observed_at", java.time.OffsetDateTime.class))
           .thenAnswer(invocation -> databaseNow.atOffset(ZoneOffset.UTC));
@@ -603,6 +673,7 @@ class AccountTenantCreationCompletionOwnerTest {
           .thenAnswer(
               invocation -> {
                 assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                beforeSignerRead.run();
                 return new AccountControlUiActorService.AcceptedSignerKey("kid", "fingerprint");
               });
       var captured = mock(AccountTenantCreationOwnerSourceCapture.Captured.class);
@@ -709,6 +780,7 @@ class AccountTenantCreationCompletionOwnerTest {
               parties,
               owners,
               reauth,
+              recentEvidence,
               audits,
               manager)
           .complete(operation, terminal, environment, recent);
