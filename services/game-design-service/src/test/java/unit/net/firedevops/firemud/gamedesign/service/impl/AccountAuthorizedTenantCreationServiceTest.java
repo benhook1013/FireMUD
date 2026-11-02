@@ -373,6 +373,8 @@ class AccountAuthorizedTenantCreationServiceTest {
     verify(dispatchRepository).isAuthorizationCurrent(validBefore);
     verify(outcomeRepository, never()).claimLocked(any());
     verify(creationRepository, never()).createCandidate(any(), any(), any(), any(), any());
+    verify(transactionManager).rollback(any(TransactionStatus.class));
+    verify(transactionManager, never()).commit(any(TransactionStatus.class));
   }
 
   @Test
@@ -420,6 +422,8 @@ class AccountAuthorizedTenantCreationServiceTest {
         .isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(authorizationClient, creationRepository);
     verify(outcomeRepository, never()).markCreatedLocked(any(), any());
+    verify(transactionManager).rollback(any(TransactionStatus.class));
+    verify(transactionManager, never()).commit(any(TransactionStatus.class));
   }
 
   private static AccountAuthorizedTenantCreationService.CandidateRequest candidate() {
