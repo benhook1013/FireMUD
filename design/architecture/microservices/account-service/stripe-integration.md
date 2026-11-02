@@ -17,11 +17,13 @@ Player purchases that grant gameplay value, player-paid game subscriptions, crea
 
 The future direction in [ADR 0179](../../decisions/adr-0179-firemud-managed-creator-commerce-boundary.md) adds no V1 capability or provider scope. Any future managed creator-player transaction would require explicit marketplace opt-in by the Account-owned Creator Party and would use Account for provider reconciliation and entitlement authority; hosted-content acceptance, payment, tenant roles, or billing ownership do not enroll a party. Exact marketplace routes, schemas, fee, payout, and settlement behavior remain unimplemented and must not be inferred from existing payment code.
 
-### Verified webhook intake registration prerequisite
+### Billing owner source registration prerequisites
 
 The verified event inbox contains complete provider payloads that may contain personal data. Registering its intake requires a category-specific finite schedule and minimization/erasure behavior under [ADR 0050's canonical retention registry](../../decisions/adr-0050-versioned-export-retention-and-erasure-policy.md#canonical-retention-registry), including permitted retention, access, legal holds, account deletion and backup treatment. [Account erasure](../../decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md) preserves only the authorized minimum billing evidence; account deletion must not blindly delete unresolved provider evidence.
 
 The current append-only inbox has no processing terminal, guarded payload minimization/erasure path or approved retention schedule. Intake remains unregistered until those owner paths and their physical proof exist. Its immutable raw-payload retention is an unresolved preparation boundary, not an indefinite production retention policy; no TTL or deletion bypass is inferred from this slice.
+
+The billing-customer and saved-method owners have the same prerequisite. Their append-only observation histories retain provider bindings and versioned card-display metadata; customer and instrument rows also retain Account references that currently block deletion. Before registering these sources, their exact categories require approved finite retention schedules, guarded minimization or erasure, and explicit account-deletion and backup treatment in the same canonical retention registry. Card-display history is not automatically necessary settlement evidence. Minimize or erase it when its authorized purpose ends, retaining only the minimum billing evidence authorized by ADR 0043 and any applicable legal hold. The owner must preserve unresolved provider and subscription obligations while completing the Account erasure workflow; neither indefinite Account retention nor bypassing a foreign-key or immutability guard is an acceptable deletion policy. The current owners remain unregistered until these paths and their physical proof exist.
 
 ## Implementation Status
 
