@@ -85,6 +85,7 @@ public final class AccountTenantCreationCompletionOwner {
     this.audits = Objects.requireNonNull(audits);
     transactions = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    transactions.setTimeout(15);
   }
 
   Result complete(
