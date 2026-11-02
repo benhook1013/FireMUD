@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.service.realm;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.accountservice.client.GameSessionCurrentPrivatePlaytestLifecycleReadClient;
@@ -30,9 +29,6 @@ public final class AccountCurrentLifecycleRealmGrantReadOwner {
   private final TransactionTemplate transaction;
   private final String workloadNamespace;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Explicit owner collaborators are intentionally shared.")
   public AccountCurrentLifecycleRealmGrantReadOwner(
       GameSessionCurrentPrivatePlaytestLifecycleReadClient source,
       AccountLifecycleBoundRealmGrantRepository grants,

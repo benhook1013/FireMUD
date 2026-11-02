@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.zaxxer.hikari.HikariDataSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
@@ -31,6 +32,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
@@ -86,7 +88,8 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
           + Path.of("../common-saga/src/main/resources/db/migration/saga")
               .toAbsolutePath()
               .normalize();
-  private final DriverManagerDataSource dataSource;
+  private final DriverManagerDataSource connectionSettings;
+  private final HikariDataSource dataSource;
   private final String schema =
       "gs_abort_composition_" + UUID.randomUUID().toString().replace("-", "");
   private final CanonicalGameplayBindingInventoryRepository repository;
@@ -204,195 +207,215 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
     phaseStartedAt = System.nanoTime();
     this.issuerRedisClient =
         java.util.Objects.requireNonNull(issuerRedisClient, "issuerRedisClient");
-    dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName("org.postgresql.Driver");
-    dataSource.setUrl(
+    connectionSettings = new DriverManagerDataSource();
+    connectionSettings.setDriverClassName("org.postgresql.Driver");
+    connectionSettings.setUrl(
         Objects.requireNonNull(accountDataSource.getUrl(), "Account fixture JDBC URL")
             .replaceAll("currentSchema=[^&]+", "currentSchema=" + schema));
-    dataSource.setUsername(accountDataSource.getUsername());
-    dataSource.setPassword(accountDataSource.getPassword());
-    var migration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .placeholders(java.util.Map.of("serviceSchema", schema))
-            .locations(SERVICE_MIGRATIONS, SHARED_SAGA_MIGRATIONS);
-    if (migrationTarget != null) migration.target(migrationTarget);
-    migration.load().migrate();
-    logElapsedPhase("schema_migration", phaseStartedAt);
-    phaseStartedAt = System.nanoTime();
-    dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
-    var runtime =
-        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
-            dataSource, accountCandidate.tenantId(), "test");
-    target = sealControlledInitialTarget(runtime.playableTarget());
-    identity =
-        new CanonicalGameplayBindingIdentity(
-            accountCandidate.accountId(),
-            accountCandidate.tenantId(),
-            target.playableStateNamespaceId(),
-            accountCandidate.characterId(),
-            target.playableStateScope(),
-            target.canonicalGameInstanceId(),
-            target.gameInstanceId(),
-            accountCandidate.sessionId().toString(),
-            accountCandidate.regionId(),
-            accountCandidate.regionEpoch(),
-            accountCandidate.issuerId(),
-            accountCandidate.issuerAuthGeneration(),
-            accountCandidate.issuerIndexLayoutVersion(),
-            accountCandidate.issuerIndexPartitionCount(),
-            accountCandidate.issuerIndexPartitionCapacity());
-    logElapsedPhase("runtime_target_seed", phaseStartedAt);
-    phaseStartedAt = System.nanoTime();
-    establishActualLegacyDisposition(dsl);
-    if (seedBootstrapMemberCount > 0) {
-      seedQualifiedBootstrapMembers(seedBootstrapMemberCount, migrationTarget);
+    connectionSettings.setUsername(accountDataSource.getUsername());
+    connectionSettings.setPassword(accountDataSource.getPassword());
+    dataSource = new HikariDataSource();
+    try {
+      dataSource.setPoolName("gs-abort-" + schema);
+      dataSource.setDriverClassName("org.postgresql.Driver");
+      dataSource.setJdbcUrl(connectionSettings.getUrl());
+      dataSource.setSchema(schema);
+      dataSource.setUsername(connectionSettings.getUsername());
+      dataSource.setPassword(connectionSettings.getPassword());
+      dataSource.setAutoCommit(true);
+      dataSource.setMinimumIdle(1);
+      dataSource.setMaximumPoolSize(8);
+      var migration =
+          Flyway.configure()
+              .dataSource(dataSource)
+              .schemas(schema)
+              .defaultSchema(schema)
+              .placeholders(java.util.Map.of("serviceSchema", schema))
+              .locations(SERVICE_MIGRATIONS, SHARED_SAGA_MIGRATIONS);
+      if (migrationTarget != null) migration.target(migrationTarget);
+      migration.load().migrate();
+      logElapsedPhase("schema_migration", phaseStartedAt);
+      phaseStartedAt = System.nanoTime();
+      dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+      var runtime =
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
+              dataSource, accountCandidate.tenantId(), "test");
+      target = sealControlledInitialTarget(runtime.playableTarget());
+      identity =
+          new CanonicalGameplayBindingIdentity(
+              accountCandidate.accountId(),
+              accountCandidate.tenantId(),
+              target.playableStateNamespaceId(),
+              accountCandidate.characterId(),
+              target.playableStateScope(),
+              target.canonicalGameInstanceId(),
+              target.gameInstanceId(),
+              accountCandidate.sessionId().toString(),
+              accountCandidate.regionId(),
+              accountCandidate.regionEpoch(),
+              accountCandidate.issuerId(),
+              accountCandidate.issuerAuthGeneration(),
+              accountCandidate.issuerIndexLayoutVersion(),
+              accountCandidate.issuerIndexPartitionCount(),
+              accountCandidate.issuerIndexPartitionCapacity());
+      logElapsedPhase("runtime_target_seed", phaseStartedAt);
+      phaseStartedAt = System.nanoTime();
+      establishActualLegacyDisposition(dsl);
+      if (seedBootstrapMemberCount > 0) {
+        seedQualifiedBootstrapMembers(seedBootstrapMemberCount, migrationTarget);
+      }
+      repository = new CanonicalGameplayBindingInventoryRepository(dsl);
+      if (originalInBootstrap) {
+        repository.prepare(
+            new CanonicalGameplayBindingTransitionRequest(
+                transitionId,
+                UUID.randomUUID(),
+                identity,
+                new CanonicalIssuerReservationFenceEvidence(
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    UUID.randomUUID(),
+                    BigInteger.ONE,
+                    BigInteger.TWO,
+                    BigInteger.ONE),
+                null,
+                null));
+      }
+      logElapsedPhase("legacy_disposition_and_bootstrap_seed", phaseStartedAt);
+      phaseStartedAt = System.nanoTime();
+      BigInteger layoutVersion = identity.issuerIndexLayoutVersion();
+      BigInteger partitionCount = identity.issuerIndexPartitionCount();
+      BigInteger partitionCapacity = identity.issuerIndexPartitionCapacity();
+      String mapping = CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
+      String exactDescriptor =
+          "issuer-layout-descriptor/v1|"
+              + identity.issuerId()
+              + "|"
+              + layoutVersion
+              + "|"
+              + partitionCount
+              + "|"
+              + partitionCapacity
+              + "|"
+              + mapping;
+      var trustedLayout =
+          new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
+              identity.issuerId(),
+              layoutVersion,
+              partitionCount,
+              partitionCapacity,
+              mapping,
+              exactDescriptor.getBytes(StandardCharsets.UTF_8));
+      var sourceCheckpoint =
+          trustedSourceCheckpoint(identity.issuerId(), identity.issuerAuthGeneration());
+      UUID bootstrapRequestId = UUID.randomUUID();
+      var bootstrapIntent =
+          new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
+              .beginInitialBootstrapIntent(bootstrapRequestId, trustedLayout, sourceCheckpoint);
+      initialIssuerState =
+          new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
+              bootstrapIntent.sourceCheckpoint(), stableIncarnation());
+      issuerState = new AtomicReference<>(initialIssuerState);
+      issuerSource = issuerState::get;
+      issuerCatalog =
+          RedisScriptCatalog.fromContributions(
+              List.of(
+                  new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution(),
+                  new CanonicalGameplayIssuerBindingLocalRedisScriptContribution(),
+                  new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution(),
+                  new CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayOriginalNewCandidateClosureRedisScriptContribution()));
+      var partitionOwner =
+          new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
+              issuerRedisClient, issuerCatalog, issuerSource);
+      if (originalInBootstrap) {
+        new CanonicalGameplayIssuerPartitionBuildRepository(dsl)
+            .prepareInitialBuildPlan(bootstrapIntent.operationId(), bootstrapRequestId);
+        var incarnation = initialIssuerState.incarnation();
+        originalBootstrapWork =
+            Optional.of(
+                new CanonicalGameplayIssuerBootstrapMemberOperationRepository(dsl)
+                    .preparePartitionWork(
+                        bootstrapIntent.operationId(),
+                        bootstrapRequestId,
+                        repository
+                            .readProvisionalCasEvidence(transitionId)
+                            .candidateReservation()
+                            .partitionId(),
+                        sourceCheckpoint,
+                        new CanonicalGameplayIssuerBootstrapMemberOperationRepository
+                            .TrustedStableIncarnation(
+                            incarnation.attestorBinding(),
+                            incarnation.acceptedAttestationDigest(),
+                            incarnation.targetDeploymentEvidence(),
+                            incarnation.coordOpsRoAclDigest(),
+                            incarnation.coordRedisConfigObservedDigest())));
+      } else {
+        originalBootstrapWork = Optional.empty();
+      }
+      CanonicalGameplayIssuerInstalledAnchor installedAnchor =
+          new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
+              .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
+      Objects.requireNonNull(afterBootstrap, "afterBootstrap")
+          .accept(connectionSettings, bootstrapIntent);
+      if (migrationTarget != null) {
+        upgradeWithDefaultGameSessionMigrations(MigrationVersion.LATEST, dataSource);
+      }
+      new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
+          .installInitialOpen(installedAnchor, issuerSource);
+      localProjectionRepository =
+          new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource);
+      logElapsedPhase("bootstrap_installation_and_admission_open", phaseStartedAt);
+      phaseStartedAt = System.nanoTime();
+      if (originalInBootstrap) {
+        localOperation = Optional.empty();
+        generation =
+            repository.readProvisionalCasEvidence(transitionId).transition().bindingGeneration();
+        var originalReservationId =
+            repository
+                .readProvisionalCasEvidence(transitionId)
+                .candidateReservation()
+                .reservationId();
+        originalSource =
+            dsl.transactionResult(
+                configuration -> {
+                  var transaction = DSL.using(configuration);
+                  CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+                  var row =
+                      transaction.fetchSingle(
+                          "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ? AND reservation_id = ?",
+                          installedAnchor.bootstrapOperationId(),
+                          originalReservationId);
+                  return CanonicalGameplayIssuerOriginalMemberSourceRepository
+                      .readInstalledInTransaction(
+                          transaction, installedAnchor, initialIssuerState, row);
+                });
+      } else {
+        var request =
+            new CanonicalGameplayIssuerBindingLocalOperation.Request(
+                UUID.randomUUID(), transitionId, identity, null, null);
+        var operation =
+            new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
+                .beginOrResumeOrdinaryNew(request);
+        localOperation = Optional.of(operation);
+        originalSource = CanonicalGameplayIssuerOriginalMemberSource.ordinary(operation);
+        generation = operation.preparedTransition().bindingGeneration();
+        new CanonicalGameplayIssuerBindingLocalRedisOwner(
+                issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
+            .projectAndRead(operation);
+      }
+      logElapsedPhase("ordinary_new_initialization", phaseStartedAt);
+    } catch (RuntimeException | Error failure) {
+      try {
+        dataSource.close();
+      } catch (RuntimeException closeFailure) {
+        failure.addSuppressed(closeFailure);
+      }
+      throw failure;
     }
-    repository = new CanonicalGameplayBindingInventoryRepository(dsl);
-    if (originalInBootstrap) {
-      repository.prepare(
-          new CanonicalGameplayBindingTransitionRequest(
-              transitionId,
-              UUID.randomUUID(),
-              identity,
-              new CanonicalIssuerReservationFenceEvidence(
-                  UUID.randomUUID(),
-                  UUID.randomUUID(),
-                  UUID.randomUUID(),
-                  BigInteger.ONE,
-                  BigInteger.TWO,
-                  BigInteger.ONE),
-              null,
-              null));
-    }
-    logElapsedPhase("legacy_disposition_and_bootstrap_seed", phaseStartedAt);
-    phaseStartedAt = System.nanoTime();
-    BigInteger layoutVersion = identity.issuerIndexLayoutVersion();
-    BigInteger partitionCount = identity.issuerIndexPartitionCount();
-    BigInteger partitionCapacity = identity.issuerIndexPartitionCapacity();
-    String mapping = CanonicalGameplayIssuerLayoutBootstrapIntent.MAPPING_IDENTITY;
-    String exactDescriptor =
-        "issuer-layout-descriptor/v1|"
-            + identity.issuerId()
-            + "|"
-            + layoutVersion
-            + "|"
-            + partitionCount
-            + "|"
-            + partitionCapacity
-            + "|"
-            + mapping;
-    var trustedLayout =
-        new CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor(
-            identity.issuerId(),
-            layoutVersion,
-            partitionCount,
-            partitionCapacity,
-            mapping,
-            exactDescriptor.getBytes(StandardCharsets.UTF_8));
-    var sourceCheckpoint =
-        trustedSourceCheckpoint(identity.issuerId(), identity.issuerAuthGeneration());
-    UUID bootstrapRequestId = UUID.randomUUID();
-    var bootstrapIntent =
-        new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
-            .beginInitialBootstrapIntent(bootstrapRequestId, trustedLayout, sourceCheckpoint);
-    initialIssuerState =
-        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
-            bootstrapIntent.sourceCheckpoint(), stableIncarnation());
-    issuerState = new AtomicReference<>(initialIssuerState);
-    issuerSource = issuerState::get;
-    issuerCatalog =
-        RedisScriptCatalog.fromContributions(
-            List.of(
-                new CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution(),
-                new CanonicalGameplayIssuerBindingLocalRedisScriptContribution(),
-                new CanonicalGameplayIssuerBindingLocalReleaseRedisScriptContribution(),
-                new CanonicalGameplayIssuerBindingLocalRetirementRedisScriptContribution(),
-                new net.firedevops.firemud.gamesession.service
-                    .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
-                new net.firedevops.firemud.gamesession.service
-                    .CanonicalGameplayOriginalNewCandidateClosureRedisScriptContribution()));
-    var partitionOwner =
-        new CanonicalGameplayIssuerBootstrapPartitionRedisOwner(
-            issuerRedisClient, issuerCatalog, issuerSource);
-    if (originalInBootstrap) {
-      new CanonicalGameplayIssuerPartitionBuildRepository(dsl)
-          .prepareInitialBuildPlan(bootstrapIntent.operationId(), bootstrapRequestId);
-      var incarnation = initialIssuerState.incarnation();
-      originalBootstrapWork =
-          Optional.of(
-              new CanonicalGameplayIssuerBootstrapMemberOperationRepository(dsl)
-                  .preparePartitionWork(
-                      bootstrapIntent.operationId(),
-                      bootstrapRequestId,
-                      repository
-                          .readProvisionalCasEvidence(transitionId)
-                          .candidateReservation()
-                          .partitionId(),
-                      sourceCheckpoint,
-                      new CanonicalGameplayIssuerBootstrapMemberOperationRepository
-                          .TrustedStableIncarnation(
-                          incarnation.attestorBinding(),
-                          incarnation.acceptedAttestationDigest(),
-                          incarnation.targetDeploymentEvidence(),
-                          incarnation.coordOpsRoAclDigest(),
-                          incarnation.coordRedisConfigObservedDigest())));
-    } else {
-      originalBootstrapWork = Optional.empty();
-    }
-    CanonicalGameplayIssuerInstalledAnchor installedAnchor =
-        new CanonicalGameplayIssuerBootstrapCoverageOwner(dsl, partitionOwner, issuerSource)
-            .completeInitialBootstrap(bootstrapIntent.operationId(), bootstrapRequestId);
-    Objects.requireNonNull(afterBootstrap, "afterBootstrap").accept(dataSource, bootstrapIntent);
-    if (migrationTarget != null) {
-      upgradeWithDefaultGameSessionMigrations(MigrationVersion.LATEST, dataSource);
-    }
-    new CanonicalGameplayIssuerAdmissionControlRepository(dsl)
-        .installInitialOpen(installedAnchor, issuerSource);
-    localProjectionRepository =
-        new CanonicalGameplayIssuerBindingLocalProjectionRepository(dsl, issuerSource);
-    logElapsedPhase("bootstrap_installation_and_admission_open", phaseStartedAt);
-    phaseStartedAt = System.nanoTime();
-    if (originalInBootstrap) {
-      localOperation = Optional.empty();
-      generation =
-          repository.readProvisionalCasEvidence(transitionId).transition().bindingGeneration();
-      var originalReservationId =
-          repository
-              .readProvisionalCasEvidence(transitionId)
-              .candidateReservation()
-              .reservationId();
-      originalSource =
-          dsl.transactionResult(
-              configuration -> {
-                var transaction = DSL.using(configuration);
-                CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-                var row =
-                    transaction.fetchSingle(
-                        "SELECT * FROM game_session_canonical_issuer_bootstrap_member_operation WHERE bootstrap_operation_id = ? AND reservation_id = ?",
-                        installedAnchor.bootstrapOperationId(),
-                        originalReservationId);
-                return CanonicalGameplayIssuerOriginalMemberSourceRepository
-                    .readInstalledInTransaction(
-                        transaction, installedAnchor, initialIssuerState, row);
-              });
-    } else {
-      var request =
-          new CanonicalGameplayIssuerBindingLocalOperation.Request(
-              UUID.randomUUID(), transitionId, identity, null, null);
-      var operation =
-          new CanonicalGameplayIssuerBindingLocalOperationRepository(dsl, issuerSource)
-              .beginOrResumeOrdinaryNew(request);
-      localOperation = Optional.of(operation);
-      originalSource = CanonicalGameplayIssuerOriginalMemberSource.ordinary(operation);
-      generation = operation.preparedTransition().bindingGeneration();
-      new CanonicalGameplayIssuerBindingLocalRedisOwner(
-              issuerRedisClient, issuerCatalog, localProjectionRepository, issuerSource)
-          .projectAndRead(operation);
-    }
-    logElapsedPhase("ordinary_new_initialization", phaseStartedAt);
   }
 
   static void logElapsedPhase(String phase, long startedAtNanos) {
@@ -989,7 +1012,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
   }
 
   static int upgradeWithDefaultGameSessionMigrations(
-      MigrationVersion migrationTarget, DriverManagerDataSource migrationDataSource) {
+      MigrationVersion migrationTarget, DataSource migrationDataSource) {
     String schema =
         DSL.using(migrationDataSource, SQLDialect.POSTGRES)
             .fetchSingle("SELECT current_schema()")
@@ -1010,7 +1033,7 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
 
   private DriverManagerDataSource dataSourceWithRendering(String timeZone, String byteaOutput) {
     return CanonicalGameplayIssuerTestFixtures.withSessionRendering(
-        dataSource, timeZone, byteaOutput);
+        connectionSettings, timeZone, byteaOutput);
   }
 
   /**
@@ -2168,7 +2191,11 @@ public final class CanonicalGameplayAdmissionAbortCompositionFixture implements 
       try {
         if (memberRedis != null) memberRedis.stop();
       } finally {
-        dsl.execute("DROP SCHEMA \"" + schema + "\" CASCADE");
+        try {
+          dsl.execute("DROP SCHEMA \"" + schema + "\" CASCADE");
+        } finally {
+          dataSource.close();
+        }
       }
     }
   }

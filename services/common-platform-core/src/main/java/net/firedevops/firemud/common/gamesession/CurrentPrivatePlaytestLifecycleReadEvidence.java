@@ -153,12 +153,12 @@ public final class CurrentPrivatePlaytestLifecycleReadEvidence {
     }
   }
 
-  private static void requireBoundText(String value, int maxUtf8Bytes, String name) {
+  private static void requireBoundText(String value, int maxCharacters, String name) {
     if (value == null
         || value.isBlank()
         || !StandardCharsets.UTF_8.newEncoder().canEncode(value)
-        || value.getBytes(StandardCharsets.UTF_8).length > maxUtf8Bytes) {
-      throw new IllegalArgumentException(name + " is missing or exceeds its UTF-8 byte bound");
+        || value.length() > maxCharacters) {
+      throw new IllegalArgumentException(name + " is missing or exceeds its source character bound");
     }
   }
 }

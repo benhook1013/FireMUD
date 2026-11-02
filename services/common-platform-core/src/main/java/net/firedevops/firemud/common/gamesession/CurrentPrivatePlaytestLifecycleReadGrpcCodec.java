@@ -18,7 +18,7 @@ import net.firedevops.firemud.gamesession.v1.ReadCurrentPrivatePlaytestLifecycle
 /** Closed, bounded Account-to-Game-Session codec for current private-playtest source facts. */
 public final class CurrentPrivatePlaytestLifecycleReadGrpcCodec {
   public static final int MAX_REQUEST_WIRE_BYTES = 4096;
-  public static final int MAX_RESPONSE_WIRE_BYTES = 4096;
+  public static final int MAX_RESPONSE_WIRE_BYTES = 8192;
   private static final String REQUEST_SCHEMA =
       "game-session-current-private-playtest-read-request/v1";
   private static final String RESPONSE_SCHEMA =
