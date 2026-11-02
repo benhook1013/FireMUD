@@ -132,11 +132,47 @@ class AccountTenantCreationOwnerSourceCaptureTest {
 
   @Test
   void changedIntentAndMissingAdmissionFailBeforeTermsObservation() throws Exception {
+    for (String field :
+        List.of(
+            "request_id",
+            "creation_operation_id",
+            "game_design_creation_request_id",
+            "initiating_account_uuid",
+            "target_namespace",
+            "source_game_tenant_key",
+            "name",
+            "description",
+            "recent_reauthentication_evidence_id",
+            "creator_party_id",
+            "consent_operation_id",
+            "consent_statement_version",
+            "affirmative_consent",
+            "game_design_request_digest",
+            "request_payload",
+            "request_digest")) {
+      var f = new Fixture();
+      Object changed =
+          switch (field) {
+            case "request_id",
+                "creation_operation_id",
+                "game_design_creation_request_id",
+                "initiating_account_uuid",
+                "recent_reauthentication_evidence_id",
+                "creator_party_id",
+                "consent_operation_id" ->
+                UUID.randomUUID();
+            case "consent_statement_version" -> 2;
+            case "affirmative_consent" -> false;
+            case "request_payload" -> new byte[] {1};
+            case "request_digest" -> "sha256:" + "b".repeat(64);
+            default -> "changed";
+          };
+      f.intentRow.put(field, changed);
+      assertThatThrownBy(f::capture).isInstanceOf(IllegalStateException.class);
+      org.mockito.Mockito.verifyNoInteractions(f.terms);
+    }
+
     var f = new Fixture();
-    f.intentRow.put("creator_party_id", UUID.randomUUID());
-    assertThatThrownBy(f::capture).isInstanceOf(IllegalStateException.class);
-    org.mockito.Mockito.verifyNoInteractions(f.terms);
-    f = new Fixture();
     when(f.dsl.fetchOne(
             "SELECT * FROM account_tenant_creation_admissions WHERE creation_operation_id = ?",
             f.operation))
