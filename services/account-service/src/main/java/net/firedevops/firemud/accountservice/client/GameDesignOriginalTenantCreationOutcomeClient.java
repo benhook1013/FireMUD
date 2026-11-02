@@ -35,7 +35,7 @@ public final class GameDesignOriginalTenantCreationOutcomeClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireAccountMtls(tlsProps),
+        requireFileBackedMtls(tlsProps, "Original tenant outcome read"),
         channelFactory,
         GameDesignOriginalTenantCreationOutcomeClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -48,7 +48,10 @@ public final class GameDesignOriginalTenantCreationOutcomeClient
 
   /** Initializes the normal Account workload TLS client when the owner explicitly enables it. */
   public void init() throws SSLException, IOException {
-    initReloadingClient();
+    requireNoAmbientSql("Original tenant outcome client initialization requires no SQL");
+    initOnce(
+        "Original tenant outcome client is closed",
+        "Original tenant outcome client is not initialized");
   }
 
   @Override
@@ -80,6 +83,7 @@ public final class GameDesignOriginalTenantCreationOutcomeClient
    * failure propagates without inferring an outcome.
    */
   public VerifiedTerminal readOriginal(Binding binding) {
+    requireNoAmbientSql("Original tenant outcome read requires no Account transaction");
     Objects.requireNonNull(binding, "binding");
     if (!workloadNamespace.equals(binding.targetNamespace())) {
       throw new IllegalArgumentException("Original tenant outcome namespace differs from Account");
@@ -88,7 +92,7 @@ public final class GameDesignOriginalTenantCreationOutcomeClient
     GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest request =
         new GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest(UUID.randomUUID(), binding);
     var response =
-        stub()
+        requireInitializedStub("Original tenant outcome client is not initialized")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .resolveOriginalTenantCreationOutcome(
                 GameTenantCreationOriginalOutcomeGrpcCodec.toReadRequest(request));
@@ -100,34 +104,6 @@ public final class GameDesignOriginalTenantCreationOutcomeClient
           "Game Design original tenant outcome does not match the exact read", malformed);
     }
     return new VerifiedTerminal(evidence);
-  }
-
-  private static CommonGrpcClientProperties requireAccountMtls(
-      CommonGrpcClientProperties tlsProps) {
-    if (tlsProps == null) {
-      throw new IllegalArgumentException("Account gRPC TLS configuration is required");
-    }
-    if (tlsProps.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Original tenant outcome reads require Account workload mTLS");
-    }
-    if (!hasText(tlsProps.getCertChain())
-        || !hasText(tlsProps.getPrivateKey())
-        || !hasText(tlsProps.getCaCert())) {
-      throw new IllegalArgumentException(
-          "Original tenant outcome reads require Account certificate, key, and CA files");
-    }
-    if (tlsProps.getCertChain().trim().startsWith("classpath:")
-        || tlsProps.getPrivateKey().trim().startsWith("classpath:")
-        || tlsProps.getCaCert().trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Original tenant outcome reads require file-backed Account workload mTLS");
-    }
-    return tlsProps;
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
   }
 
   /** A terminal evidence value minted only after this client's exact read and codec validation. */
