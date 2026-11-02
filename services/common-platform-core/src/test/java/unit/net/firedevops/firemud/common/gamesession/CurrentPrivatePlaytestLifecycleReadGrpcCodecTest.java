@@ -44,7 +44,8 @@ class CurrentPrivatePlaytestLifecycleReadGrpcCodecTest {
     var response =
         CurrentPrivatePlaytestLifecycleReadGrpcCodec.toResponse(request, Optional.of(source));
     assertThat(response.getSerializedSize()).isGreaterThan(4096).isLessThanOrEqualTo(8192);
-    assertThat(CurrentPrivatePlaytestLifecycleReadGrpcCodec.fromResponse(request, response).current())
+    assertThat(
+            CurrentPrivatePlaytestLifecycleReadGrpcCodec.fromResponse(request, response).current())
         .contains(source);
     assertThatThrownBy(() -> snapshot(request.scope(), "界".repeat(1025), "revision"))
         .isInstanceOf(IllegalArgumentException.class);
@@ -251,7 +252,8 @@ class CurrentPrivatePlaytestLifecycleReadGrpcCodecTest {
   }
 
   private static Snapshot snapshot(Scope scope) {
-    return snapshot(scope, "release-bundle:current-private-proof", "policy-revision:current-private-proof");
+    return snapshot(
+        scope, "release-bundle:current-private-proof", "policy-revision:current-private-proof");
   }
 
   private static Snapshot snapshot(Scope scope, String bundleRef, String logicalRevision) {

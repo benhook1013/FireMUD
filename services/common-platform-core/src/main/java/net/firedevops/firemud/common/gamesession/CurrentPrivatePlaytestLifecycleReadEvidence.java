@@ -158,7 +158,8 @@ public final class CurrentPrivatePlaytestLifecycleReadEvidence {
         || value.isBlank()
         || !StandardCharsets.UTF_8.newEncoder().canEncode(value)
         || value.length() > maxCharacters) {
-      throw new IllegalArgumentException(name + " is missing or exceeds its source character bound");
+      throw new IllegalArgumentException(
+          name + " is missing or exceeds its source character bound");
     }
   }
 }
