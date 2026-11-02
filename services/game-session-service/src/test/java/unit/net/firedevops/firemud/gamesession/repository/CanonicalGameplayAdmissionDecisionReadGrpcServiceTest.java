@@ -20,8 +20,11 @@ import io.grpc.stub.StreamObserver;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisConnectionException;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,13 +33,20 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.security.CanonicalGameplayAdmissionDecisionReadWorkloadGuard;
+import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayAdmissionDecisionReadGrpcService;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionResponse;
 import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionResponse;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsRequest;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -50,6 +60,226 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * separate PostgreSQL test.
  */
 class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
+  @Test
+  void discoveryReturnsOnlyCompleteUnchangedOwnerCollectionRegardlessOfIterationOrder() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    var first = discoveryTarget("first", "First world");
+    var second = discoveryTarget("second", "Second world");
+    when(routes.readVisiblePublicProductionTargets())
+        .thenReturn(List.of(first, second), List.of(second, first));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    var captured =
+        ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+    verify(observer).onNext(captured.capture());
+    verify(observer).onCompleted();
+    verify(observer, never()).onError(any());
+    var result =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
+                discoveryRequest()),
+            captured.getValue());
+    assertThat(result.targets()).hasSize(2);
+    assertThat(result.targets().getFirst().canonicalTenantId())
+        .isEqualTo(second.canonicalTenantId());
+    assertThat(result.targets().getFirst().canonicalGameInstanceId())
+        .isEqualTo(second.canonicalGameInstanceId());
+    assertThat(result.targets().getFirst().ownerProofDigest()).isEqualTo(second.ownerProofDigest());
+    verify(routes, org.mockito.Mockito.times(2)).readVisiblePublicProductionTargets();
+  }
+
+  @Test
+  void discoveryAllowsGenuineEmptyCollectionButNeverDependencyAbsenceAsEmptySuccess() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of());
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    var captured =
+        ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+    verify(observer).onNext(captured.capture());
+    assertThat(captured.getValue().getCurrentTargetsList()).isEmpty();
+    verify(observer).onCompleted();
+    var absent = discoveryObserver();
+    discoveryService(null, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), absent);
+    assertDiscoveryFailure(absent, Status.Code.UNAVAILABLE);
+    when(routes.readVisiblePublicProductionTargets())
+        .thenThrow(
+            new CanonicalPlayerRouteReadService.ReadUnavailableException("private storage detail"));
+    var unavailable = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), unavailable);
+    assertDiscoveryFailure(unavailable, Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void discoveryRejectsChangedContentsMembershipDuplicatesAndOversizedCompleteTarget() {
+    var first = discoveryTarget("first", "First world");
+    var second = discoveryTarget("second", "Second world");
+    for (var changed :
+        List.of(
+            List.<CanonicalPlayableTarget>of(),
+            List.of(first, second),
+            List.of(discoveryTarget("first", "Changed display")),
+            List.of(first, first),
+            List.of(discoveryTarget("first", "x".repeat(64 * 1024))))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(first), changed);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+    }
+  }
+
+  @Test
+  void discoveryAuthenticatesAndRejectsSqlBeforeParsingOrOwnerAccess() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
+    doThrow(Status.PERMISSION_DENIED.asRuntimeException()).when(guard).requireAccountCaller();
+    var denied = discoveryObserver();
+    discoveryService(routes, guard)
+        .listVisiblePublicProductionAdmissionTargets(
+            ListVisiblePublicProductionAdmissionTargetsRequest.getDefaultInstance(), denied);
+    assertDiscoveryFailure(denied, Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(routes);
+    for (boolean synchronization : new boolean[] {false, true}) {
+      var observer = discoveryObserver();
+      try {
+        if (synchronization) TransactionSynchronizationManager.initSynchronization();
+        else TransactionSynchronizationManager.setActualTransactionActive(true);
+        discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+            .listVisiblePublicProductionAdmissionTargets(
+                ListVisiblePublicProductionAdmissionTargetsRequest.getDefaultInstance(), observer);
+        assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+      } finally {
+        TransactionSynchronizationManager.clear();
+      }
+    }
+    verifyNoInteractions(routes);
+  }
+
+  @Test
+  void discoveryRejectsMalformedOrForeignNamespaceBeforeOwnerAccess() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    for (var request :
+        List.of(
+            ListVisiblePublicProductionAdmissionTargetsRequest.getDefaultInstance(),
+            discoveryRequest().toBuilder().setTargetNamespace(0, "foreign").build())) {
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(request, observer);
+      assertDiscoveryFailure(
+          observer,
+          request.getSchemaVersionCount() == 0
+              ? Status.Code.INVALID_ARGUMENT
+              : Status.Code.PERMISSION_DENIED);
+    }
+    verifyNoInteractions(routes);
+  }
+
+  private static CanonicalGameplayAdmissionDecisionReadGrpcService discoveryService(
+      CanonicalPlayerRouteReadService routes,
+      CanonicalGameplayAdmissionDecisionReadWorkloadGuard guard) {
+    return new CanonicalGameplayAdmissionDecisionReadGrpcService(
+        mock(CanonicalGameplayBindingInventoryRepository.class),
+        guard,
+        "test",
+        null,
+        routes,
+        null,
+        null,
+        null);
+  }
+
+  private static ListVisiblePublicProductionAdmissionTargetsRequest discoveryRequest() {
+    return CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryRequest(
+        new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), "test"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static StreamObserver<ListVisiblePublicProductionAdmissionTargetsResponse>
+      discoveryObserver() {
+    return mock(StreamObserver.class);
+  }
+
+  private static void assertDiscoveryFailure(
+      StreamObserver<ListVisiblePublicProductionAdmissionTargetsResponse> observer,
+      Status.Code expected) {
+    var error = ArgumentCaptor.forClass(Throwable.class);
+    verify(observer).onError(error.capture());
+    assertThat(Status.fromThrowable(error.getValue()).getCode()).isEqualTo(expected);
+    assertThat(error.getValue()).hasMessageNotContaining("private storage detail");
+    verify(observer, never()).onNext(any());
+    verify(observer, never()).onCompleted();
+  }
+
+  private static CanonicalPlayableTarget discoveryTarget(String slug, String displayName) {
+    UUID tenant = UUID.nameUUIDFromBytes(("tenant-" + slug).getBytes(StandardCharsets.UTF_8));
+    UUID realm = UUID.nameUUIDFromBytes(("realm-" + slug).getBytes(StandardCharsets.UTF_8));
+    UUID namespace = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    UUID instance = UUID.nameUUIDFromBytes(("instance-" + slug).getBytes(StandardCharsets.UTF_8));
+    UUID version = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    UUID holdId = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    UUID holdFence = UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    String requestId =
+        UUID.nameUUIDFromBytes(("admission-" + slug).getBytes(StandardCharsets.UTF_8)).toString();
+    String digest = "a".repeat(64);
+    var request =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            "test",
+            tenant,
+            "earth",
+            realm,
+            namespace,
+            "SHARED",
+            instance,
+            version,
+            7,
+            requestId,
+            digest,
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            2,
+            null);
+    var hold = new WorldCanonicalInitialAdmissionHold.HoldIdentity(request, holdId, holdFence);
+    return new CanonicalPlayableTarget(
+        "test",
+        slug,
+        tenant,
+        "earth",
+        displayName,
+        realm,
+        "production",
+        "Production",
+        11,
+        71,
+        namespace,
+        "SHARED",
+        instance,
+        version,
+        99,
+        2,
+        3,
+        "d".repeat(64),
+        7,
+        requestId,
+        digest,
+        CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
+        null,
+        holdId,
+        holdFence,
+        hold.holdBindingDigest(),
+        101,
+        "sha256:" + digest,
+        CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+        false,
+        Instant.parse("2026-10-25T00:00:00Z"),
+        "PRESEEDED_ONLY");
+  }
+
   @Test
   void deniesNonAccountCallerBeforeParsingOrRepositoryRead() {
     var repository = mock(CanonicalGameplayBindingInventoryRepository.class);

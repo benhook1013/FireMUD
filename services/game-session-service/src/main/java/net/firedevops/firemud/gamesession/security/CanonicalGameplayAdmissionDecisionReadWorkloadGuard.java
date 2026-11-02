@@ -19,6 +19,13 @@ public final class CanonicalGameplayAdmissionDecisionReadWorkloadGuard
   public static final String NEVER_ADMITTED_METHOD =
       "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/"
           + "GetOriginalNewNeverAdmittedDecision";
+  public static final String TARGET_RESOLUTION_METHOD =
+      "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/ResolvePublishedRealmAdmissionTarget";
+  public static final String PUBLISHED_REALM_METHOD =
+      "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/GetPublishedRealmAdmissionOwnerRead";
+
+  public static final String DISCOVERY_METHOD =
+      "game_session.v1.CanonicalGameplayAdmissionDecisionReadService/ListVisiblePublicProductionAdmissionTargets";
 
   private final String workloadNamespace;
 
@@ -38,6 +45,8 @@ public final class CanonicalGameplayAdmissionDecisionReadWorkloadGuard
     }
     if (SessionContext.hasAuthenticatedCallerContext()
         || SessionContext.isInternalService()
+        || SessionContext.getServiceName() != null
+        || SessionContext.getServiceInstanceId() != null
         || !"account-service".equals(peer.service())
         || !workloadNamespace.equals(peer.namespace())
         || !("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service")
@@ -53,7 +62,11 @@ public final class CanonicalGameplayAdmissionDecisionReadWorkloadGuard
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     Objects.requireNonNull(call, "gRPC server call required");
     String method = call.getMethodDescriptor().getFullMethodName();
-    if (!METHOD.equals(method) && !NEVER_ADMITTED_METHOD.equals(method)) {
+    if (!METHOD.equals(method)
+        && !NEVER_ADMITTED_METHOD.equals(method)
+        && !TARGET_RESOLUTION_METHOD.equals(method)
+        && !PUBLISHED_REALM_METHOD.equals(method)
+        && !DISCOVERY_METHOD.equals(method)) {
       call.close(
           Status.PERMISSION_DENIED.withDescription("Exact Account decision-read method required"),
           new Metadata());

@@ -37,6 +37,71 @@ public class AccountTenantEntitlementOutboxRepository {
     return TenantAuthorityEventV1Codec.tenantBillingStreamKey(canonicalTenantId);
   }
 
+  /**
+   * Production hosting writer over the SAME canonical tenant billing stream; no demo conversion.
+   */
+  AccountHostingSubscriptionLifecycleEvidence.BillingEvent appendHosting(
+      UUID tenantId,
+      UUID requestId,
+      LongFunction<AccountHostingSubscriptionLifecycleEvidence.BillingEvent> factory) {
+    requireTransaction();
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Hosting billing events require a writable owner transaction");
+    }
+    streamKey(tenantId);
+    dsl.execute(
+        "INSERT INTO account_tenant_entitlement_outbox_streams (tenant_uuid, last_sequence) "
+            + "VALUES (?, 0) ON CONFLICT (tenant_uuid) DO NOTHING",
+        tenantId);
+    Record head =
+        dsl.fetchOne(
+            "SELECT last_sequence FROM account_tenant_entitlement_outbox_streams "
+                + "WHERE tenant_uuid = ? FOR UPDATE",
+            tenantId);
+    Record prior =
+        dsl.fetchOne(
+            "SELECT * FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ? AND request_id = ?",
+            tenantId,
+            requestId);
+    long sequence =
+        prior == null
+            ? Math.addExact(nonnegative(head, "last_sequence"), 1L)
+            : positive(prior, "tenant_billing_sequence");
+    var event = Objects.requireNonNull(factory.apply(sequence));
+    if (!tenantId.equals(event.tenantId)
+        || !requestId.equals(event.requestId)
+        || event.sequence != sequence) {
+      throw new IllegalStateException("Hosting event differs from its canonical billing stream");
+    }
+    if (prior != null) {
+      if (!event.eventId.equals(prior.get("event_id", UUID.class))
+          || !event.matches(
+              prior.get("payload", byte[].class), prior.get("event_digest", String.class))) {
+        throw new IllegalStateException("Hosting billing request conflicts with retained evidence");
+      }
+      return event;
+    }
+    if (dsl.execute(
+            "UPDATE account_tenant_entitlement_outbox_streams SET last_sequence = ? WHERE tenant_uuid = ? AND last_sequence = ?",
+            sequence,
+            tenantId,
+            sequence - 1)
+        != 1) {
+      throw new IllegalStateException("Hosting billing stream CAS rejected");
+    }
+    dsl.execute(
+        "INSERT INTO account_tenant_entitlement_outbox_events "
+            + "(tenant_uuid, tenant_billing_sequence, request_id, event_id, event_digest, payload) VALUES (?, ?, ?, ?, ?, ?)",
+        tenantId,
+        sequence,
+        requestId,
+        event.eventId,
+        event.digest(),
+        event.payload());
+    return event;
+  }
+
   /** Appends one event or returns only an exact request and payload replay. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Event append(UUID tenantId, UUID requestId, LongFunction<Event> eventFactory) {

@@ -57,6 +57,40 @@ class CanonicalGameplayAdmissionDecisionReadWorkloadGuardTest {
   }
 
   @Test
+  void publishedAndResolverMethodsRequireTheirExactAccountCertificateAndNoCallerContext() {
+    for (var method :
+        List.of(
+            CanonicalGameplayAdmissionDecisionReadServiceGrpc
+                .getListVisiblePublicProductionAdmissionTargetsMethod(),
+            CanonicalGameplayAdmissionDecisionReadServiceGrpc
+                .getResolvePublishedRealmAdmissionTargetMethod(),
+            CanonicalGameplayAdmissionDecisionReadServiceGrpc
+                .getGetPublishedRealmAdmissionOwnerReadMethod())) {
+      assertThat(invoke(method, peer(NAMESPACE, "account-service")).nextStarts()).isEqualTo(1);
+      assertRejected(invoke(method, null), Status.Code.UNAUTHENTICATED);
+      assertRejected(
+          invoke(method, peer(NAMESPACE, "entity-management-service")),
+          Status.Code.PERMISSION_DENIED);
+      assertRejected(
+          invoke(method, peer("foreign", "account-service")), Status.Code.PERMISSION_DENIED);
+      SessionContext.setContext("account", List.of(), Map.of());
+      assertRejected(
+          invoke(method, peer(NAMESPACE, "account-service")), Status.Code.PERMISSION_DENIED);
+      SessionContext.setContext(null, List.of(), Map.of(), true, "account-service", "instance");
+      assertRejected(
+          invoke(method, peer(NAMESPACE, "account-service")), Status.Code.PERMISSION_DENIED);
+      SessionContext.clear();
+      assertRejected(
+          invoke(
+              method.toBuilder()
+                  .setFullMethodName("other.Service/" + method.getBareMethodName())
+                  .build(),
+              peer(NAMESPACE, "account-service")),
+          Status.Code.PERMISSION_DENIED);
+    }
+  }
+
+  @Test
   void rejectsMissingForeignOrSessionContextIdentityBeforeHandler() {
     var method =
         CanonicalGameplayAdmissionDecisionReadServiceGrpc

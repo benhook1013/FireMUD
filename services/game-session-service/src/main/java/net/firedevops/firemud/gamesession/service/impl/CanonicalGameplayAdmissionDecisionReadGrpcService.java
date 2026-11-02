@@ -6,6 +6,7 @@ import io.grpc.stub.StreamObserver;
 import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisConnectionException;
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.Objects;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
@@ -13,23 +14,37 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryConflictException;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewCandidateClosureRedisOwner;
 import net.firedevops.firemud.gamesession.security.CanonicalGameplayAdmissionDecisionReadWorkloadGuard;
+import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
+import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionDecisionReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionResponse;
 import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionResponse;
+import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadRequest;
+import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadResponse;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsRequest;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsResponse;
+import net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTargetRequest;
+import net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTargetResponse;
 import org.jooq.exception.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Unregistered, non-admitting Account-only read of one exact retained PROVISIONAL decision. */
+/** Unregistered Account-only current-target, published-source and retained-decision reads. */
 public final class CanonicalGameplayAdmissionDecisionReadGrpcService
     extends CanonicalGameplayAdmissionDecisionReadServiceGrpc
         .CanonicalGameplayAdmissionDecisionReadServiceImplBase {
@@ -37,6 +52,10 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
   private final CanonicalGameplayAdmissionDecisionReadWorkloadGuard workloadGuard;
   private final String workloadNamespace;
   private final CanonicalGameplayOriginalNewCandidateClosureRedisOwner closureOwner;
+  private final CanonicalPlayerRouteReadService routeReader;
+  private final CanonicalPublishedPlayerRouteReadService publishedReader;
+  private final CanonicalGameInstanceLaunchAssociationRepository launchReader;
+  private final WorldCanonicalInstanceLifecycleClient world;
 
   public CanonicalGameplayAdmissionDecisionReadGrpcService(
       CanonicalGameplayBindingInventoryRepository repository,
@@ -50,6 +69,19 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       CanonicalGameplayAdmissionDecisionReadWorkloadGuard workloadGuard,
       String workloadNamespace,
       CanonicalGameplayOriginalNewCandidateClosureRedisOwner closureOwner) {
+    this(repository, workloadGuard, workloadNamespace, closureOwner, null, null, null, null);
+  }
+
+  /** Complete strict-source composition; no default registration or World hold is acquired. */
+  public CanonicalGameplayAdmissionDecisionReadGrpcService(
+      CanonicalGameplayBindingInventoryRepository repository,
+      CanonicalGameplayAdmissionDecisionReadWorkloadGuard workloadGuard,
+      String workloadNamespace,
+      CanonicalGameplayOriginalNewCandidateClosureRedisOwner closureOwner,
+      CanonicalPlayerRouteReadService routeReader,
+      CanonicalPublishedPlayerRouteReadService publishedReader,
+      CanonicalGameInstanceLaunchAssociationRepository launchReader,
+      WorldCanonicalInstanceLifecycleClient world) {
     this.repository = Objects.requireNonNull(repository, "Game Session decision owner required");
     this.workloadGuard =
         Objects.requireNonNull(workloadGuard, "Account-only decision-read guard required");
@@ -58,6 +90,319 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
     }
     this.workloadNamespace = workloadNamespace;
     this.closureOwner = closureOwner;
+    this.routeReader = routeReader;
+    this.publishedReader = publishedReader;
+    this.launchReader = launchReader;
+    this.world = world;
+  }
+
+  /** Complete canonical discovery only; this manually composed receiver grants no admission. */
+  @Override
+  public void listVisiblePublicProductionAdmissionTargets(
+      ListVisiblePublicProductionAdmissionTargetsRequest request,
+      StreamObserver<ListVisiblePublicProductionAdmissionTargetsResponse> observer) {
+    Objects.requireNonNull(observer);
+    if (!requireSourceCallerOutsideSql(observer)) return;
+    final CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest parsed;
+    try {
+      if (request == null) {
+        fail(observer, Status.INVALID_ARGUMENT);
+        return;
+      }
+      parsed = CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(request);
+    } catch (IllegalArgumentException malformed) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    } catch (RuntimeException unexpectedParserFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    if (!workloadNamespace.equals(parsed.targetNamespace())) {
+      fail(observer, Status.PERMISSION_DENIED);
+      return;
+    }
+    if (routeReader == null) {
+      fail(observer, Status.UNAVAILABLE);
+      return;
+    }
+    final ListVisiblePublicProductionAdmissionTargetsResponse response;
+    try {
+      var before =
+          routeReader.readVisiblePublicProductionTargets().stream()
+              .map(CanonicalGameplayAdmissionDecisionReadGrpcService::toTarget)
+              .toList();
+      // Validate the complete first read before treating it as an expected collection.
+      CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(parsed, before);
+      var after =
+          routeReader.readVisiblePublicProductionTargets().stream()
+              .map(CanonicalGameplayAdmissionDecisionReadGrpcService::toTarget)
+              .toList();
+      response = CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(parsed, after);
+      if (!new HashSet<>(before).equals(new HashSet<>(after))) {
+        fail(observer, Status.FAILED_PRECONDITION);
+        return;
+      }
+    } catch (RuntimeException failure) {
+      failSource(observer, failure);
+      return;
+    }
+    sendSource(observer, response);
+  }
+
+  @Override
+  public void resolvePublishedRealmAdmissionTarget(
+      ResolvePublishedRealmAdmissionTargetRequest request,
+      StreamObserver<ResolvePublishedRealmAdmissionTargetResponse> observer) {
+    Objects.requireNonNull(observer);
+    if (!requireSourceCallerOutsideSql(observer)) return;
+    if (request == null) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    }
+    final CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector selector;
+    try {
+      selector =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(request);
+    } catch (IllegalArgumentException malformed) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    } catch (RuntimeException unexpectedParserFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    if (!workloadNamespace.equals(selector.targetNamespace())) {
+      fail(observer, Status.PERMISSION_DENIED);
+      return;
+    }
+    if (routeReader == null) {
+      fail(observer, Status.UNAVAILABLE);
+      return;
+    }
+    final ResolvePublishedRealmAdmissionTargetResponse response;
+    try {
+      var before = routeReader.readCurrentTarget(selector.tenantId());
+      CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
+          selector, toTarget(before));
+      var after = routeReader.readCurrentTarget(selector.tenantId());
+      if (!before.equals(after)) {
+        fail(observer, Status.FAILED_PRECONDITION);
+        return;
+      }
+      response =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+              selector, toTarget(after));
+    } catch (RuntimeException failure) {
+      failSource(observer, failure);
+      return;
+    }
+    sendSource(observer, response);
+  }
+
+  @Override
+  public void getPublishedRealmAdmissionOwnerRead(
+      GetPublishedRealmAdmissionOwnerReadRequest request,
+      StreamObserver<GetPublishedRealmAdmissionOwnerReadResponse> observer) {
+    Objects.requireNonNull(observer);
+    if (!requireSourceCallerOutsideSql(observer)) return;
+    if (request == null) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    }
+    final CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmRequest parsed;
+    try {
+      parsed = CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request);
+    } catch (IllegalArgumentException malformed) {
+      fail(observer, Status.INVALID_ARGUMENT);
+      return;
+    } catch (RuntimeException unexpectedParserFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    if (!workloadNamespace.equals(parsed.selector().targetNamespace())) {
+      fail(observer, Status.PERMISSION_DENIED);
+      return;
+    }
+    if (routeReader == null || publishedReader == null || launchReader == null || world == null) {
+      fail(observer, Status.UNAVAILABLE);
+      return;
+    }
+    final GetPublishedRealmAdmissionOwnerReadResponse response;
+    try {
+      var before = routeReader.readCurrentTarget(parsed.selector().canonicalTenantUuid());
+      var launchBefore = readCurrentLaunch(before);
+      var sourceBefore = publishedReader.readCurrent(parsed.selector());
+      var association = launchBefore.association();
+      var descriptor = association.launchBindingEvidence().descriptor();
+      var lifecycleRequest =
+          new WorldCanonicalInstanceLifecycleEvidence.Request(
+              1,
+              parsed.selector().requestUuid(),
+              workloadNamespace,
+              before.canonicalTenantId(),
+              before.worldSlug(),
+              before.canonicalGameInstanceId(),
+              before.playableStateNamespaceId(),
+              before.playableStateScope(),
+              true,
+              association.controlPlaneRequestId(),
+              before.canonicalVersionId(),
+              descriptor.requestDigest(),
+              descriptor.resultDigest(),
+              association.launchBindingEvidence().releaseAttestation().evidenceDigest());
+      requireOutsideSourceSql();
+      var lifecycle = readWorld(lifecycleRequest);
+      if (lifecycle == null
+          || !lifecycleRequest.equals(lifecycle.request())
+          || !"ACTIVE".equals(lifecycle.lifecycleStatus())
+          || lifecycle.lifecycleEpoch() != before.activeWorldEpoch()
+          || !association.launchBindingEvidence().equals(lifecycle.launchBinding())) {
+        fail(observer, Status.FAILED_PRECONDITION);
+        return;
+      }
+      var sourceAfter = publishedReader.readCurrent(parsed.selector());
+      var after = routeReader.readCurrentTarget(parsed.selector().canonicalTenantUuid());
+      if (!before.equals(after)) {
+        fail(observer, Status.FAILED_PRECONDITION);
+        return;
+      }
+      var launchAfter = readCurrentLaunch(after);
+      if (!launchBefore.equals(launchAfter) || !sourceBefore.equals(sourceAfter)) {
+        fail(observer, Status.FAILED_PRECONDITION);
+        return;
+      }
+      response =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
+              parsed, sourceAfter, toTarget(after), lifecycle);
+    } catch (RuntimeException failure) {
+      failSource(observer, failure);
+      return;
+    }
+    sendSource(observer, response);
+  }
+
+  private CanonicalInitialAdmissionLaunchTarget readCurrentLaunch(CanonicalPlayableTarget route) {
+    var launch =
+        launchReader
+            .readForInitialAdmission(
+                workloadNamespace,
+                route.canonicalTenantId(),
+                route.realmId(),
+                route.canonicalGameInstanceId())
+            .orElseThrow(
+                () ->
+                    new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+                        "Current launch source is absent"));
+    var association = launch.association();
+    if (!workloadNamespace.equals(association.targetNamespace())
+        || !route.canonicalTenantId().equals(association.canonicalTenantId())
+        || !route.realmId().equals(launch.realmId())
+        || !route.worldSlug().equals(association.worldSlug())
+        || !route.canonicalGameInstanceId().equals(association.gameInstanceUuid())
+        || !route.playableStateNamespaceId().equals(association.playableStateNamespaceId())
+        || !route.playableStateScope().equals(association.playableStateScope().name())
+        || !association.publicProduction()
+        || association.currentGameInstanceStatus()
+            != CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.RUNNING
+        || !route.canonicalVersionId().equals(launch.canonicalVersionId())
+        || route.gameInstanceId() != launch.gameInstanceId()
+        || route.runtimeVersionId() != launch.runtimeVersionId()
+        || route.gameSessionTenantId() != association.gameSessionTenantId()) {
+      throw new CanonicalPublishedPlayerRouteReadService.StaleAuthorityException(
+          "Current launch differs from pointer source");
+    }
+    return launch;
+  }
+
+  private WorldCanonicalInstanceLifecycleEvidence readWorld(
+      WorldCanonicalInstanceLifecycleEvidence.Request request) {
+    try {
+      return world.read(request);
+    } catch (IllegalStateException failure) {
+      if (failure.getCause() instanceof IllegalArgumentException malformed) {
+        throw new CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException(
+            "World lifecycle response is invalid", malformed);
+      }
+      throw new WorldReadUnavailableException(failure);
+    }
+  }
+
+  private static void requireOutsideSourceSql() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException(
+          "Independent World source read requires no SQL");
+    }
+  }
+
+  private static final class WorldReadUnavailableException extends RuntimeException {
+    private WorldReadUnavailableException(Throwable cause) {
+      super(cause);
+    }
+  }
+
+  private boolean requireSourceCallerOutsideSql(StreamObserver<?> observer) {
+    try {
+      workloadGuard.requireAccountCaller();
+    } catch (StatusRuntimeException denied) {
+      fail(observer, denied.getStatus());
+      return false;
+    } catch (RuntimeException unexpectedGuardFailure) {
+      fail(observer, Status.INTERNAL);
+      return false;
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return false;
+    }
+    return true;
+  }
+
+  private static void failSource(StreamObserver<?> observer, RuntimeException failure) {
+    if (failure instanceof CanonicalPlayerRouteReadService.ReadUnavailableException
+        || failure instanceof WorldReadUnavailableException
+        || failure instanceof CanonicalPublishedPlayerRouteReadService.StorageUnavailableException
+        || failure
+            instanceof CanonicalPublishedPlayerRouteReadService.GameDesignUnavailableException
+        || failure instanceof CannotCreateTransactionException
+        || failure instanceof DataAccessResourceFailureException
+        || failure instanceof TransientDataAccessException) {
+      fail(observer, Status.UNAVAILABLE);
+    } else if (failure instanceof StatusRuntimeException transport) {
+      var code = transport.getStatus().getCode();
+      fail(
+          observer,
+          switch (code) {
+            case UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, ABORTED -> Status.UNAVAILABLE;
+            case NOT_FOUND,
+                FAILED_PRECONDITION,
+                INVALID_ARGUMENT,
+                PERMISSION_DENIED,
+                UNAUTHENTICATED ->
+                Status.FAILED_PRECONDITION;
+            default -> Status.INTERNAL;
+          });
+    } else if (failure instanceof CanonicalPlayerRouteReadService.InvalidAuthorityException
+        || failure instanceof CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException
+        || failure instanceof CanonicalPublishedPlayerRouteReadService.StaleAuthorityException
+        || failure instanceof IllegalArgumentException) {
+      fail(observer, Status.FAILED_PRECONDITION);
+    } else if (failure instanceof DataAccessException
+        || failure instanceof org.springframework.dao.DataAccessException) {
+      fail(observer, hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
+    } else {
+      fail(observer, Status.INTERNAL);
+    }
+  }
+
+  private static <T> void sendSource(StreamObserver<T> observer, T response) {
+    try {
+      observer.onNext(response);
+    } catch (RuntimeException callbackFailure) {
+      fail(observer, Status.INTERNAL);
+      return;
+    }
+    observer.onCompleted();
   }
 
   @Override

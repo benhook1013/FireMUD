@@ -301,13 +301,15 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             }
             observer.onNext(
                 CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
-                    parsed, controlledPublishedEvidence(expected), target()));
+                    parsed,
+                    controlledPublishedEvidence(expected),
+                    target(),
+                    controlledWorldLifecycle(expected)));
             observer.onCompleted();
           }
         };
-    // Both handlers authenticate first; the actual decision-only interceptor intentionally
-    // refuses the separate published-source purpose and cannot guard this test-only combined
-    // adapter.
+    // Both handlers authenticate first. The upstream publication and World lifecycle captures
+    // remain explicitly controlled; the actual retained-decision receiver is unchanged.
     factory.addService(
         ServerInterceptors.interceptForward(
             controlledPublishedSource, new GrpcPeerIdentityInterceptor()));
@@ -422,6 +424,61 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             policies);
     return new net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence(
         selector, target.admissionPointerSnapshotDigest(), controlledProof, complete);
+  }
+
+  /** Actual retained launch binding, with explicitly controlled World runtime/capture facts. */
+  private net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+      controlledWorldLifecycle(
+          net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
+              selector) {
+    var target = target();
+    var launch =
+        new CanonicalGameInstanceLaunchAssociationRepository(binding.dsl(), "test")
+            .readForInitialAdmission(
+                "test",
+                target.canonicalTenantId(),
+                target.realmId(),
+                target.canonicalGameInstanceId())
+            .orElseThrow()
+            .association();
+    var complete = launch.launchBindingEvidence();
+    var descriptor = complete.descriptor();
+    var release = complete.releaseAttestation();
+    var start =
+        net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence.fromStored(
+            release.worldStartLocationEvidence().selectorReceiptBytes());
+    var request =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
+            1,
+            selector.requestUuid(),
+            "test",
+            target.canonicalTenantId(),
+            target.worldSlug(),
+            target.canonicalGameInstanceId(),
+            target.playableStateNamespaceId(),
+            target.playableStateScope(),
+            true,
+            launch.controlPlaneRequestId(),
+            target.canonicalVersionId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest());
+    return new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence(
+        request,
+        complete,
+        start.startLocation(),
+        1L,
+        "ACTIVE",
+        target.activeWorldEpoch(),
+        1L,
+        UUID.nameUUIDFromBytes(
+            ("controlled-world-capture:" + selector.requestUuid())
+                .getBytes(StandardCharsets.UTF_8)),
+        start.graphDigest().substring(7),
+        "sha256:" + "a".repeat(64),
+        java.util.Map.of(
+            UUID.fromString("11111111-1111-4111-8111-111111111111"),
+            UUID.fromString("22222222-2222-4222-8222-222222222222")));
   }
 
   public void installActualCandidate(AccountGameplayAdmissionLeaseEvidence actualLease) {
