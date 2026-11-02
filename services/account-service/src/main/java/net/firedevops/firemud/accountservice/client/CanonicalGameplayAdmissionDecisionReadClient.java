@@ -81,7 +81,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     RequestEvidence expected =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(wireRequest);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .getCanonicalGameplayAdmissionDecision(wireRequest);
     try {
@@ -111,7 +111,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
             transitionId, abandonmentId, lease);
     var expected = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(request);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withMaxInboundMessageSize(
                 AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES)
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
@@ -135,7 +135,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
             readRequestId, workloadNamespace);
     var request = CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryRequest(expected);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withMaxInboundMessageSize(
                 CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_DISCOVERY_RESPONSE_WIRE_BYTES)
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
@@ -165,7 +165,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     var request =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(selector);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withMaxInboundMessageSize(
                 CanonicalGameplayAdmissionDecisionReadGrpcCodec
                     .MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES)
@@ -199,7 +199,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     var expected =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(wireRequest);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withMaxInboundMessageSize(
                 CanonicalGameplayAdmissionDecisionReadGrpcCodec
                     .MAX_PUBLISHED_REALM_RESPONSE_WIRE_BYTES)
@@ -211,6 +211,23 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     } catch (IllegalArgumentException malformed) {
       throw new IllegalStateException(
           "Game Session returned invalid published realm owner evidence", malformed);
+    }
+  }
+
+  private CanonicalGameplayAdmissionDecisionReadServiceGrpc
+          .CanonicalGameplayAdmissionDecisionReadServiceBlockingStub
+      requireAvailableStub() {
+    try {
+      return requireInitializedStub("Gameplay admission decision client is not initialized");
+    } catch (IllegalStateException lifecycleFailure) {
+      throw new ClientUnavailableException(lifecycleFailure);
+    }
+  }
+
+  /** A source read cannot run before explicit initialization or after this client is closed. */
+  public static final class ClientUnavailableException extends IllegalStateException {
+    public ClientUnavailableException(IllegalStateException cause) {
+      super("Canonical gameplay admission decision client is unavailable", cause);
     }
   }
 

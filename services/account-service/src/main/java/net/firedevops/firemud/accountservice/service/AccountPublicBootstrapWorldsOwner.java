@@ -1,7 +1,5 @@
 package net.firedevops.firemud.accountservice.service;
 
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -94,24 +92,10 @@ public final class AccountPublicBootstrapWorldsOwner {
           Objects.requireNonNull(
               targets.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()));
       return List.copyOf(Objects.requireNonNull(result.targets()));
-    } catch (StatusRuntimeException failure) {
-      Status.Code code = Status.fromThrowable(failure).getCode();
-      if (code == Status.Code.UNAVAILABLE
-          || code == Status.Code.DEADLINE_EXCEEDED
-          || code == Status.Code.CANCELLED
-          || code == Status.Code.RESOURCE_EXHAUSTED
-          || code == Status.Code.ABORTED) {
-        throw authUnavailable("Game Session discovery authority is unavailable", failure);
-      }
-      throw admissionPointerUnavailable(failure);
-    } catch (IllegalStateException failure) {
-      String message = failure.getMessage();
-      if ("Gameplay admission decision client is not initialized".equals(message)
-          || "Gameplay admission decision client is closed".equals(message)) {
-        throw authUnavailable("Game Session discovery authority is unavailable", failure);
-      }
-      throw admissionPointerUnavailable(failure);
     } catch (RuntimeException failure) {
+      if (AccountPublicDiscoverySourceFailure.isUnavailable(failure)) {
+        throw authUnavailable("Game Session discovery authority is unavailable", failure);
+      }
       throw admissionPointerUnavailable(failure);
     }
   }

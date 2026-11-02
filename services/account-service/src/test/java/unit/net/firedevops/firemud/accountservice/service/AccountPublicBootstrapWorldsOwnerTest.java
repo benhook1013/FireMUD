@@ -22,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
+import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
@@ -194,6 +195,38 @@ class AccountPublicBootstrapWorldsOwnerTest {
           .thenThrow(failure.asRuntimeException());
       assertCode("AUTH_UNAVAILABLE", () -> f.owner.listWorlds(TOKEN));
       verify(f.entitlements, never()).evaluate(any());
+    }
+  }
+
+  @Test
+  void typedClientLifecycleFailureIsUnavailableWithoutReadingEntitlements() {
+    Fixture f = new Fixture();
+    when(f.targets.listVisiblePublicProductionAdmissionTargets(any()))
+        .thenThrow(new ClientUnavailableException(new IllegalStateException()));
+
+    assertCode("AUTH_UNAVAILABLE", () -> f.owner.listWorlds(TOKEN));
+
+    verifyNoInteractions(f.entitlements);
+  }
+
+  @Test
+  void malformedUnsupportedAndOtherSemanticSourceFailuresRemainPointerUnavailable() {
+    for (RuntimeException failure :
+        List.of(
+            new IllegalStateException("Malformed or mismatched source response"),
+            new IllegalArgumentException("Unsupported source value"),
+            new IllegalStateException(
+                "Malformed source content", Status.UNAVAILABLE.asRuntimeException()),
+            Status.INVALID_ARGUMENT.asRuntimeException(),
+            Status.FAILED_PRECONDITION.asRuntimeException(),
+            Status.UNIMPLEMENTED.asRuntimeException(),
+            Status.PERMISSION_DENIED.asRuntimeException())) {
+      Fixture f = new Fixture();
+      when(f.targets.listVisiblePublicProductionAdmissionTargets(any())).thenThrow(failure);
+
+      assertCode("ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listWorlds(TOKEN));
+
+      verifyNoInteractions(f.entitlements);
     }
   }
 

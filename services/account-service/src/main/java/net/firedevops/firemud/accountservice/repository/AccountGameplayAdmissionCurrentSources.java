@@ -41,6 +41,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>Exact non-admitting recovery uses a separately named caller-only read. That path retains the
  * global issuer/account authority and ACTIVE token checks but deliberately does not require the
  * original tenant membership or entitlement baseline to remain unchanged.
+ *
+ * <p>The NEW lease projection currently supports explicit DEMO entitlements only. Paid current
+ * tenant authority remains readable by the generic membership source, but this DEMO-shaped lease
+ * projection refuses paid hosting rather than decoding it as DEMO or consulting a provider in SQL.
  */
 final class AccountGameplayAdmissionCurrentSources {
   private static final String ACCOUNT_ISSUER = GameSessionAccountDelegationProfile.ISSUER;
@@ -152,8 +156,11 @@ final class AccountGameplayAdmissionCurrentSources {
     lockExactAccountFirst(accountId);
 
     Snapshot snapshot = membershipSnapshots.readCurrent(accountId, targetTenantId);
-    TenantAuthorityEventV1Codec.Event authorityEvent =
-        tenantAuthorityEvents.readCurrentByTenant(targetTenantId);
+    var selected = tenantAuthorityEvents.readCurrentSourceSelection(targetTenantId);
+    if (selected.kind() != AccountTenantAuthorityEventRepository.SourceKind.NON_PAID_DEMO) {
+      throw unavailable();
+    }
+    TenantAuthorityEventV1Codec.Event authorityEvent = selected.checkpoint();
     DemoTenantEntitlementEventV1Codec.Event typedTenantEvent =
         readExactCurrentTenantEntitlement(targetTenantId, authorityEvent);
 

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
@@ -71,9 +72,33 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
   }
 
   private Fixture fixture() throws Exception {
-    Fixture fixture = new Fixture();
+    return fixture(true);
+  }
+
+  private Fixture fixture(boolean initialize) throws Exception {
+    Fixture fixture = new Fixture(initialize);
     initializedClients.add(fixture.client);
     return fixture;
+  }
+
+  @Test
+  void sourceReadsUseTypedUnavailableBeforeInitializationAndAfterClose() throws Exception {
+    for (boolean closed : new boolean[] {false, true}) {
+      Fixture f = fixture(false);
+      if (closed) {
+        f.client.init();
+        f.client.close();
+      }
+
+      assertThatThrownBy(
+              () -> f.client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
+          .isInstanceOf(ClientUnavailableException.class);
+      assertThatThrownBy(() -> f.client.resolvePublishedRealmAdmissionTarget(f.selector))
+          .isInstanceOf(ClientUnavailableException.class);
+      assertThatThrownBy(() -> f.client.readPublishedRealmAdmissionOwner(f.strictSelector()))
+          .isInstanceOf(ClientUnavailableException.class);
+      verifyNoInteractions(f.stub);
+    }
   }
 
   @Test
@@ -115,7 +140,8 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
         .thenReturn(ListVisiblePublicProductionAdmissionTargetsResponse.getDefaultInstance());
     assertThatThrownBy(
             () -> f.client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
   }
 
   @Test
@@ -124,21 +150,25 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
     SessionContext.setContext("account", List.of(), Map.of());
     assertThatThrownBy(
             () -> f.client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     SessionContext.setContext(null, List.of(), Map.of(), true, "account-service", "instance");
     assertThatThrownBy(
             () -> f.client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     SessionContext.clear();
     TransactionSynchronizationManager.initSynchronization();
     assertThatThrownBy(
             () -> f.client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     TransactionSynchronizationManager.clear();
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertThatThrownBy(
             () -> f.client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     verifyNoInteractions(f.stub);
   }
 
@@ -237,9 +267,11 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
     when(f.stub.getPublishedRealmAdmissionOwnerRead(any()))
         .thenReturn(GetPublishedRealmAdmissionOwnerReadResponse.getDefaultInstance());
     assertThatThrownBy(() -> f.client.resolvePublishedRealmAdmissionTarget(f.selector))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     assertThatThrownBy(() -> f.client.readPublishedRealmAdmissionOwner(f.strictSelector()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
   }
 
   @Test
@@ -247,15 +279,19 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
     Fixture f = fixture();
     SessionContext.setContext("account", List.of(), Map.of());
     assertThatThrownBy(() -> f.client.resolvePublishedRealmAdmissionTarget(f.selector))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     assertThatThrownBy(() -> f.client.readPublishedRealmAdmissionOwner(f.strictSelector()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     SessionContext.clear();
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertThatThrownBy(() -> f.client.resolvePublishedRealmAdmissionTarget(f.selector))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     assertThatThrownBy(() -> f.client.readPublishedRealmAdmissionOwner(f.strictSelector()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(ClientUnavailableException.class);
     verifyNoInteractions(f.stub);
   }
 
@@ -283,7 +319,7 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
             5);
     private final CanonicalGameplayAdmissionDecisionReadClient client;
 
-    private Fixture() throws Exception {
+    private Fixture(boolean initialize) throws Exception {
       var tls = pki.clientProperties(tlsDirectory, pki.identity("account"));
       var channels = mock(GrpcChannelFactory.class);
       when(channels.buildChannel(
@@ -294,10 +330,12 @@ class CanonicalGameplayAdmissionDecisionReadClientTest {
               new ServiceEndpointsProperties(), tls, channels, "test");
       // Exercise the real explicit initialization/close lifecycle, then supply a controlled stub.
       // Neither the mocked channel nor these request-mapping cases prove a TLS handshake.
-      client.init();
-      Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
-      field.setAccessible(true);
-      field.set(client, stub);
+      if (initialize) {
+        client.init();
+        Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+        field.setAccessible(true);
+        field.set(client, stub);
+      }
       when(stub.withDeadlineAfter(anyLong(), eq(TimeUnit.SECONDS))).thenReturn(stub);
       when(stub.withMaxInboundMessageSize(anyInt())).thenReturn(stub);
     }

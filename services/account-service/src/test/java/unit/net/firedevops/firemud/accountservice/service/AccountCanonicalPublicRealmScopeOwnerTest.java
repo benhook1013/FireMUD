@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
+import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException;
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
@@ -219,6 +220,50 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     assertCode("AUTH_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "tenant", "world"));
 
     verifyNoInteractions(f.entitlements, f.scopes);
+  }
+
+  @Test
+  void typedClientLifecycleAndUnavailableTransportRefuseBeforeScopeOrEntitlementSources() {
+    for (RuntimeException failure :
+        List.of(
+            new ClientUnavailableException(new IllegalStateException()),
+            Status.UNAVAILABLE.asRuntimeException(),
+            Status.DEADLINE_EXCEEDED.asRuntimeException(),
+            Status.CANCELLED.asRuntimeException(),
+            Status.RESOURCE_EXHAUSTED.asRuntimeException(),
+            Status.ABORTED.asRuntimeException())) {
+      Fixture f = new Fixture(300000L);
+      doThrow(failure).when(f.targets).listVisiblePublicProductionAdmissionTargets(any());
+
+      assertCode("AUTH_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "tenant", "world"));
+
+      verifyNoInteractions(f.entitlements, f.tenants, f.heads, f.memberships, f.scopes);
+      assertThat(f.transactions.started).isZero();
+    }
+  }
+
+  @Test
+  void malformedUnsupportedAndOtherSemanticSourceFailuresCannotRetainAScope() {
+    for (RuntimeException failure :
+        List.of(
+            new IllegalStateException("Malformed or mismatched source response"),
+            new IllegalArgumentException("Unsupported source value"),
+            new IllegalStateException(
+                "Malformed source content", Status.UNAVAILABLE.asRuntimeException()),
+            Status.INVALID_ARGUMENT.asRuntimeException(),
+            Status.FAILED_PRECONDITION.asRuntimeException(),
+            Status.UNIMPLEMENTED.asRuntimeException(),
+            Status.PERMISSION_DENIED.asRuntimeException())) {
+      Fixture f = new Fixture(300000L);
+      doThrow(failure).when(f.targets).listVisiblePublicProductionAdmissionTargets(any());
+
+      assertCode(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          () -> f.owner.listRealmScopes(f.token, "tenant", "world"));
+
+      verifyNoInteractions(f.entitlements, f.tenants, f.heads, f.memberships, f.scopes);
+      assertThat(f.transactions.started).isZero();
+    }
   }
 
   @Test

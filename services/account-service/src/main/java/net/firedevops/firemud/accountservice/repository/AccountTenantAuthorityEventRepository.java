@@ -94,8 +94,8 @@ public class AccountTenantAuthorityEventRepository {
       throw new IllegalStateException("Tenant source differs from the current billing checkpoint");
     }
     byte[] payload = billing.get("payload", byte[].class);
-    if (payload == null) {
-      throw new IllegalStateException("Tenant billing payload is absent");
+    if (payload == null || payload.length == 0 || payload.length > 32768) {
+      throw new IllegalStateException("Tenant billing payload is absent or oversized");
     }
     JsonNode envelope;
     try {
@@ -117,7 +117,8 @@ public class AccountTenantAuthorityEventRepository {
     switch (envelope.path("schemaVersion").asText()) {
       case "account-hosting-subscription-event/v1" -> {
         kind = SourceKind.PAID_HOSTING;
-        if (!digest.equals(AccountHostingSubscriptionLifecycleEvidence.digest(payload))) {
+        var hosting = AccountHostingSubscriptionLifecycleEvidence.verifyBilling(payload);
+        if (!digest.equals(hosting.digest())) {
           throw new IllegalStateException(
               "Hosting billing payload differs from its committed digest");
         }
@@ -140,7 +141,7 @@ public class AccountTenantAuthorityEventRepository {
         if (!digest.equals(DemoTenantEntitlementEventV1Codec.verify(payload).eventDigest())) {
           throw new IllegalStateException("Demo billing payload differs from its committed digest");
         }
-        checkpoint = readCurrentByTenant(tenantId);
+        checkpoint = readCurrentDemoByTenant(tenantId);
       }
       default -> throw new IllegalStateException("Tenant billing source family is unknown");
     }
@@ -543,7 +544,8 @@ public class AccountTenantAuthorityEventRepository {
   }
 
   /**
-   * Verifies the exact event and owning committed receipt, without requiring it to remain latest.
+   * Verifies the exact DEMO event and owning committed DEMO receipt, without requiring it to remain
+   * latest. Hosting receipts use readHostingCheckpoint instead.
    */
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
   public Event readCommittedReceipt(
@@ -624,7 +626,10 @@ public class AccountTenantAuthorityEventRepository {
     return event;
   }
 
-  /** Verifies that a current Account generation is represented by the exact latest source event. */
+  /**
+   * Verifies the exact latest DEMO source against its owning DEMO operation. Hosting currentness
+   * uses readHostingCheckpoint through the shared source selector.
+   */
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
   public Event readCurrentCheckpoint(
       UUID tenantId,
@@ -691,6 +696,10 @@ public class AccountTenantAuthorityEventRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public Event readCurrentByTenant(UUID tenantId) {
+    return readCurrentSourceSelection(tenantId).checkpoint();
+  }
+
+  private Event readCurrentDemoByTenant(UUID tenantId) {
     requireTransaction();
     requireTenant(tenantId);
     Record freshIdentity =

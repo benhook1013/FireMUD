@@ -109,6 +109,25 @@ class AccountTenantEntitlementOutboxRepositoryTest {
             any(Object[].class));
   }
 
+  @Test
+  void sharedCheckpointPreservesTheExactDemoEventAndTypedDemoReader() {
+    DSLContext dsl = mock(DSLContext.class);
+    Event committed = event(true);
+    doReturn(streamProjection(1L), eventProjection(committed), eventProjection(committed))
+        .when(dsl)
+        .fetchOne(anyString(), any(Object[].class));
+    var repository = new AccountTenantEntitlementOutboxRepository(dsl);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThat(repository.readCheckpoint(TENANT_ID))
+        .contains(
+            new AccountTenantEntitlementOutboxRepository.Checkpoint(
+                committed.outboxStreamKey(), 1L, committed.eventId(), committed.eventDigest()));
+    assertThat(repository.readEvent(TENANT_ID, 1L).orElseThrow().payload())
+        .containsExactly(committed.payload());
+    verify(dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
   private static Event event(boolean gameplayAvailable) {
     FreshTenantCreationEvidence source = sourceEvidence();
     DemoTenantEntitlementRequest request =
@@ -162,13 +181,16 @@ class AccountTenantEntitlementOutboxRepositoryTest {
   }
 
   private static Record eventProjection(Event event) {
+    var tenant = DSL.field("tenant_uuid", UUID.class);
     var sequence = DSL.field("tenant_billing_sequence", Long.class);
     var requestId = DSL.field("request_id", UUID.class);
     var eventId = DSL.field("event_id", UUID.class);
     var digest = DSL.field("event_digest", String.class);
     var payload = DSL.field("payload", byte[].class);
     Record projection =
-        DSL.using(SQLDialect.POSTGRES).newRecord(sequence, requestId, eventId, digest, payload);
+        DSL.using(SQLDialect.POSTGRES)
+            .newRecord(tenant, sequence, requestId, eventId, digest, payload);
+    projection.set(tenant, event.canonicalTenantId());
     projection.set(sequence, event.tenantBillingSequence());
     projection.set(requestId, event.requestId());
     projection.set(eventId, event.eventId());

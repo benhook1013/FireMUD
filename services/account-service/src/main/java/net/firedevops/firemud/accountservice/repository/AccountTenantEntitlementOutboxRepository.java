@@ -15,13 +15,21 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
-/** Account-owned per-tenant billing/entitlement event stream for demo entitlement currentness. */
+/** Account-owned shared tenant billing stream; DEMO events retain their explicit typed reader. */
 @Repository
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Account transaction collaborator.")
 public class AccountTenantEntitlementOutboxRepository {
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private final DSLContext dsl;
 
@@ -193,18 +201,51 @@ public class AccountTenantEntitlementOutboxRepository {
       return Optional.empty();
     }
     long sequence = positive(stream, "last_sequence");
-    Event event =
-        readEvent(tenantId, sequence)
-            .orElseThrow(
-                () -> new IllegalStateException("Tenant entitlement checkpoint has no event"));
-    return Optional.of(
-        new Checkpoint(
-            streamKey(tenantId),
-            event.tenantBillingSequence(),
-            event.eventId(),
-            event.eventDigest()));
+    Record row =
+        dsl.fetchOne(
+            "SELECT tenant_uuid, tenant_billing_sequence, request_id, event_id, event_digest, payload "
+                + "FROM account_tenant_entitlement_outbox_events "
+                + "WHERE tenant_uuid = ? AND tenant_billing_sequence = ?",
+            tenantId,
+            sequence);
+    if (row == null
+        || !tenantId.equals(row.get("tenant_uuid", UUID.class))
+        || positive(row, "tenant_billing_sequence") != sequence) {
+      throw new IllegalStateException("Tenant entitlement checkpoint has no exact event");
+    }
+    byte[] payload = row.get("payload", byte[].class);
+    if (payload == null || payload.length == 0 || payload.length > 32768) {
+      throw new IllegalStateException("Tenant billing envelope is absent or oversized");
+    }
+    String schema;
+    try {
+      schema = JSON.readTree(payload).path("schemaVersion").asText();
+    } catch (RuntimeException failure) {
+      throw new IllegalStateException("Tenant billing envelope is malformed", failure);
+    }
+    return switch (schema) {
+      case DemoTenantEntitlementEventV1Codec.SCHEMA_VERSION -> {
+        Event demo = event(tenantId, row);
+        yield Optional.of(
+            new Checkpoint(streamKey(tenantId), sequence, demo.eventId(), demo.eventDigest()));
+      }
+      case "account-hosting-subscription-event/v1" -> {
+        var hosting = AccountHostingSubscriptionLifecycleEvidence.verifyBilling(payload);
+        if (!tenantId.equals(hosting.tenantId)
+            || hosting.sequence != sequence
+            || !hosting.requestId.equals(row.get("request_id", UUID.class))
+            || !hosting.eventId.equals(row.get("event_id", UUID.class))
+            || !hosting.digest().equals(row.get("event_digest", String.class))) {
+          throw new IllegalStateException("Stored hosting billing event differs from its payload");
+        }
+        yield Optional.of(
+            new Checkpoint(streamKey(tenantId), sequence, hosting.eventId, hosting.digest()));
+      }
+      default -> throw new IllegalStateException("Tenant billing source family is unknown");
+    };
   }
 
+  /** DEMO-only event read; hosting callers use the source-neutral checkpoint and owning receipt. */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<Event> readEvent(UUID tenantId, long sequence) {
     requireTransaction();

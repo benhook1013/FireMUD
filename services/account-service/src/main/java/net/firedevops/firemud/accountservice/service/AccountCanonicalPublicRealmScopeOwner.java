@@ -1,8 +1,6 @@
 package net.firedevops.firemud.accountservice.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.time.Clock;
@@ -241,19 +239,8 @@ public final class AccountCanonicalPublicRealmScopeOwner {
       return List.copyOf(response.targets());
     } catch (AuthenticationException failure) {
       throw failure;
-    } catch (StatusRuntimeException failure) {
-      var code = Status.fromThrowable(failure).getCode();
-      if (code == Status.Code.UNAVAILABLE
-          || code == Status.Code.DEADLINE_EXCEEDED
-          || code == Status.Code.CANCELLED
-          || code == Status.Code.RESOURCE_EXHAUSTED
-          || code == Status.Code.ABORTED) {
-        throw authUnavailable("Game Session discovery source is unavailable", failure);
-      }
-      throw pointerUnavailable(failure);
     } catch (RuntimeException failure) {
-      if ("Gameplay admission decision client is not initialized".equals(failure.getMessage())
-          || "Gameplay admission decision client is closed".equals(failure.getMessage())) {
+      if (AccountPublicDiscoverySourceFailure.isUnavailable(failure)) {
         throw authUnavailable("Game Session discovery source is unavailable", failure);
       }
       throw pointerUnavailable(failure);
