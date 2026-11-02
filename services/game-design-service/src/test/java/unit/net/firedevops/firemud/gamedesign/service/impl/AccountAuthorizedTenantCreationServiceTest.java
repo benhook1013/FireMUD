@@ -18,12 +18,15 @@ import io.grpc.Context;
 import io.grpc.Deadline;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongPredicate;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
@@ -75,6 +78,9 @@ class AccountAuthorizedTenantCreationServiceTest {
       mock(AccountAuthorizedTenantCreationRepository.class);
   private final PlatformTransactionManager transactionManager =
       mock(PlatformTransactionManager.class);
+
+  private final List<Long> retryDelays = new ArrayList<>();
+  private LongPredicate retryPause = delayMillis -> true;
 
   @AfterEach
   void clearTransaction() {
@@ -159,6 +165,9 @@ class AccountAuthorizedTenantCreationServiceTest {
             });
 
     assertThat(service().create(candidate())).isEqualTo(receipt());
+    assertThat(retryDelays)
+        .singleElement()
+        .satisfies(delay -> assertThat(delay).isBetween(100L, 149L));
 
     var order = inOrder(authorizationClient, dispatchRepository, creationRepository);
     order.verify(authorizationClient, times(3)).resolveCurrent(BINDING);
@@ -189,6 +198,19 @@ class AccountAuthorizedTenantCreationServiceTest {
     assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable);
 
     verify(authorizationClient, times(3)).resolveCurrent(BINDING);
+    assertThat(retryDelays).hasSize(2).allSatisfy(delay -> assertThat(delay).isBetween(100L, 149L));
+    assertNoOwnerWrites();
+  }
+
+  @Test
+  void deadlineExceededReadRetriesHaveNoAddedDelay() {
+    StatusRuntimeException deadlineExceeded = Status.DEADLINE_EXCEEDED.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING)).thenThrow(deadlineExceeded);
+
+    assertThatThrownBy(() -> service().create(candidate())).isSameAs(deadlineExceeded);
+
+    verify(authorizationClient, times(3)).resolveCurrent(BINDING);
+    assertThat(retryDelays).isEmpty();
     assertNoOwnerWrites();
   }
 
@@ -205,6 +227,7 @@ class AccountAuthorizedTenantCreationServiceTest {
       doThrow(failure).when(authorizationClient).resolveCurrent(BINDING);
       assertThatThrownBy(() -> service().create(candidate())).isSameAs(failure);
       verify(authorizationClient).resolveCurrent(BINDING);
+      assertThat(retryDelays).isEmpty();
       assertNoOwnerWrites();
     }
   }
@@ -212,6 +235,12 @@ class AccountAuthorizedTenantCreationServiceTest {
   @Test
   void incomingDeadlineBelowOneSecondPreventsExtraReadAttempt() {
     assertDeadlinePreventsRetry(999);
+  }
+
+  @Test
+  void incomingDeadlineMustCoverDelayAsWellAsOneSecondReadGuard() {
+    assertDeadlinePreventsRetry(1099);
+    assertThat(retryDelays).isEmpty();
   }
 
   @Test
@@ -266,6 +295,150 @@ class AccountAuthorizedTenantCreationServiceTest {
           () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
       verify(authorizationClient).resolveCurrent(BINDING);
       assertNoOwnerWrites();
+    }
+  }
+
+  @Test
+  void sufficientIncomingDeadlineAllowsDelayAndExactlyOneCreation() {
+    VerifiedAuthorization authorization = prepareFreshCreation();
+    when(authorizationClient.resolveCurrent(BINDING))
+        .thenThrow(Status.UNAVAILABLE.asRuntimeException())
+        .thenReturn(authorization);
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    AtomicLong nanos = new AtomicLong();
+    Deadline deadline =
+        Deadline.after(
+            1150,
+            TimeUnit.MILLISECONDS,
+            new Deadline.Ticker() {
+              @Override
+              public long nanoTime() {
+                return nanos.get();
+              }
+            });
+    retryPause =
+        delayMillis -> {
+          nanos.addAndGet(TimeUnit.MILLISECONDS.toNanos(delayMillis));
+          return true;
+        };
+
+    try (var incoming = Context.current().withDeadline(deadline, scheduler)) {
+      incoming.run(() -> assertThat(service().create(candidate())).isEqualTo(receipt()));
+      verify(authorizationClient, times(2)).resolveCurrent(BINDING);
+      assertThat(retryDelays)
+          .singleElement()
+          .satisfies(delay -> assertThat(delay).isBetween(100L, 149L));
+      verify(creationRepository)
+          .createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+      verify(transactionManager).commit(any(TransactionStatus.class));
+    } finally {
+      scheduler.shutdownNow();
+    }
+  }
+
+  @Test
+  void deadlineBecomingShortDuringDelayPreventsAnotherRead() {
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    AtomicLong nanos = new AtomicLong();
+    Deadline deadline =
+        Deadline.after(
+            2,
+            TimeUnit.SECONDS,
+            new Deadline.Ticker() {
+              @Override
+              public long nanoTime() {
+                return nanos.get();
+              }
+            });
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING)).thenThrow(unavailable);
+    retryPause =
+        delayMillis -> {
+          nanos.set(TimeUnit.MILLISECONDS.toNanos(1001));
+          return true;
+        };
+
+    try (var incoming = Context.current().withDeadline(deadline, scheduler)) {
+      incoming.run(
+          () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertThat(retryDelays).hasSize(1);
+      assertNoOwnerWrites();
+    } finally {
+      scheduler.shutdownNow();
+    }
+  }
+
+  @Test
+  void cancellationDuringDelayPreventsAnotherRead() {
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING)).thenThrow(unavailable);
+    try (var incoming = Context.current().withCancellation()) {
+      retryPause =
+          delayMillis -> {
+            incoming.cancel(null);
+            return true;
+          };
+      incoming.run(
+          () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertThat(retryDelays).hasSize(1);
+      assertNoOwnerWrites();
+    }
+  }
+
+  @Test
+  void interruptionDuringReadPreventsDelayAndAnotherReadWithoutClearingFlag() {
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING))
+        .thenAnswer(
+            invocation -> {
+              Thread.currentThread().interrupt();
+              throw unavailable;
+            });
+    try {
+      assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable);
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertThat(retryDelays).isEmpty();
+      assertNoOwnerWrites();
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
+  void interruptionDuringDelayPreventsAnotherReadEvenWhenPauseReportsSuccess() {
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING)).thenThrow(unavailable);
+    retryPause =
+        delayMillis -> {
+          Thread.currentThread().interrupt();
+          return true;
+        };
+    try {
+      assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable);
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertThat(retryDelays).hasSize(1);
+      assertNoOwnerWrites();
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  @Test
+  void productionPauseRestoresInterruptedFlagAndReportsAbort() throws Exception {
+    var pause =
+        AccountAuthorizedTenantCreationService.class.getDeclaredMethod(
+            "pauseAuthorizationRetry", long.class);
+    pause.setAccessible(true);
+    try {
+      Thread.currentThread().interrupt();
+      assertThat(pause.invoke(null, 100L)).isEqualTo(false);
+      assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    } finally {
+      Thread.interrupted();
     }
   }
 
@@ -390,12 +563,32 @@ class AccountAuthorizedTenantCreationServiceTest {
   }
 
   private AccountAuthorizedTenantCreationService service() {
-    return new AccountAuthorizedTenantCreationService(
-        authorizationClient,
-        creationRepository,
-        outcomeRepository,
-        dispatchRepository,
-        transactionManager);
+    try {
+      var constructor =
+          AccountAuthorizedTenantCreationService.class.getDeclaredConstructor(
+              AccountTenantCreationCurrentAuthorizationClient.class,
+              GameTenantCreationRepository.class,
+              GameTenantCreationOriginalOutcomeRepository.class,
+              AccountAuthorizedTenantCreationRepository.class,
+              PlatformTransactionManager.class,
+              LongPredicate.class);
+      constructor.setAccessible(true);
+      LongPredicate pause =
+          delayMillis -> {
+            assertOutsideSql();
+            retryDelays.add(delayMillis);
+            return retryPause.test(delayMillis);
+          };
+      return constructor.newInstance(
+          authorizationClient,
+          creationRepository,
+          outcomeRepository,
+          dispatchRepository,
+          transactionManager,
+          pause);
+    } catch (ReflectiveOperationException failure) {
+      throw new IllegalStateException(failure);
+    }
   }
 
   @Test
