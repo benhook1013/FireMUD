@@ -3,15 +3,27 @@ package unit.net.firedevops.firemud.gamedesign.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Context;
+import io.grpc.Deadline;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
@@ -24,10 +36,12 @@ import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOu
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.service.impl.AccountAuthorizedTenantCreationService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountAuthorizedTenantCreationServiceTest {
   private static final String NAMESPACE = "creation-owner-test";
@@ -61,6 +75,11 @@ class AccountAuthorizedTenantCreationServiceTest {
       mock(AccountAuthorizedTenantCreationRepository.class);
   private final PlatformTransactionManager transactionManager =
       mock(PlatformTransactionManager.class);
+
+  @AfterEach
+  void clearTransaction() {
+    TransactionSynchronizationManager.clear();
+  }
 
   @Test
   void changedCandidateDigestIsRejectedBeforeOwnerReadsOrAccountCallback() {
@@ -102,26 +121,9 @@ class AccountAuthorizedTenantCreationServiceTest {
   @Test
   void exactCurrentAccountAuthorityPrecedesBoundedAtomicOwnerTransaction() {
     FreshTenantCreationEvidence receipt = receipt();
-    long validBefore = System.currentTimeMillis() + 60_000L;
-    VerifiedAuthorization authorization = mock(VerifiedAuthorization.class);
-    when(authorization.binding()).thenReturn(BINDING);
-    when(authorization.readRequestId()).thenReturn(AUTHORIZATION_READ_ID);
-    when(authorization.validBeforeEpochMillis()).thenReturn(validBefore);
+    VerifiedAuthorization authorization = prepareFreshCreation();
+    long validBefore = authorization.validBeforeEpochMillis();
     when(authorizationClient.resolveCurrent(BINDING)).thenReturn(authorization);
-    when(outcomeRepository.readCommitted(BINDING))
-        .thenReturn(Optional.empty(), Optional.of(createdSnapshot()));
-    when(creationRepository.read(REQUEST_ID, NAMESPACE))
-        .thenReturn(Optional.empty(), Optional.of(receipt));
-    when(dispatchRepository.isAuthorizationCurrent(validBefore)).thenReturn(true);
-    when(outcomeRepository.claimLocked(BINDING)).thenReturn(pendingSnapshot());
-    when(creationRepository.createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION))
-        .thenReturn(receipt);
-    when(outcomeRepository.markCreatedLocked(BINDING, receipt)).thenReturn(createdSnapshot());
-    when(dispatchRepository.readCommitted(BINDING))
-        .thenReturn(
-            Optional.of(new AuthorizedDispatch(BINDING, AUTHORIZATION_READ_ID, validBefore)));
-    when(transactionManager.getTransaction(any(TransactionDefinition.class)))
-        .thenReturn(mock(TransactionStatus.class));
 
     FreshTenantCreationEvidence created = service().create(candidate());
 
@@ -140,6 +142,214 @@ class AccountAuthorizedTenantCreationServiceTest {
         .verify(dispatchRepository)
         .recordAuthorizedDispatch(BINDING, AUTHORIZATION_READ_ID, validBefore);
     verify(transactionManager).commit(any(TransactionStatus.class));
+  }
+
+  @Test
+  void transientReadFailuresRecoverBeforeExactlyOneOwnerWrite() {
+    VerifiedAuthorization authorization = prepareFreshCreation();
+    AtomicInteger attempts = new AtomicInteger();
+    when(authorizationClient.resolveCurrent(BINDING))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideSql();
+              int attempt = attempts.incrementAndGet();
+              if (attempt == 1) throw Status.UNAVAILABLE.asRuntimeException();
+              if (attempt == 2) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+              return authorization;
+            });
+
+    assertThat(service().create(candidate())).isEqualTo(receipt());
+
+    var order = inOrder(authorizationClient, dispatchRepository, creationRepository);
+    order.verify(authorizationClient, times(3)).resolveCurrent(BINDING);
+    order.verify(dispatchRepository).applyLocalWriteTimeouts();
+    order
+        .verify(creationRepository)
+        .createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+    verify(transactionManager).getTransaction(any(TransactionDefinition.class));
+    verify(transactionManager).commit(any(TransactionStatus.class));
+    verify(outcomeRepository).claimLocked(BINDING);
+    verify(creationRepository)
+        .createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+    verify(dispatchRepository)
+        .recordAuthorizedDispatch(
+            BINDING, AUTHORIZATION_READ_ID, authorization.validBeforeEpochMillis());
+  }
+
+  @Test
+  void transientReadExhaustionWithoutIncomingDeadlineStopsAfterThreeAttemptsBeforeWrites() {
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideSql();
+              throw unavailable;
+            });
+
+    assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable);
+
+    verify(authorizationClient, times(3)).resolveCurrent(BINDING);
+    assertNoOwnerWrites();
+  }
+
+  @Test
+  void definitiveAndUnexpectedReadFailuresRemainSingleShot() {
+    for (RuntimeException failure :
+        new RuntimeException[] {
+          Status.FAILED_PRECONDITION.asRuntimeException(),
+          Status.PERMISSION_DENIED.asRuntimeException(),
+          Status.INTERNAL.asRuntimeException(),
+          new IllegalStateException("Unexpected current-authorization failure")
+        }) {
+      clearInvocations(authorizationClient);
+      doThrow(failure).when(authorizationClient).resolveCurrent(BINDING);
+      assertThatThrownBy(() -> service().create(candidate())).isSameAs(failure);
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertNoOwnerWrites();
+    }
+  }
+
+  @Test
+  void incomingDeadlineBelowOneSecondPreventsExtraReadAttempt() {
+    assertDeadlinePreventsRetry(999);
+  }
+
+  @Test
+  void expiredIncomingDeadlinePreventsExtraReadAttempt() {
+    assertDeadlinePreventsRetry(-1);
+  }
+
+  @Test
+  void incomingDeadlineBecomingShortDuringReadPreventsRetry() {
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    AtomicLong nanos = new AtomicLong();
+    Deadline deadline =
+        Deadline.after(
+            2,
+            TimeUnit.SECONDS,
+            new Deadline.Ticker() {
+              @Override
+              public long nanoTime() {
+                return nanos.get();
+              }
+            });
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideSql();
+              nanos.set(TimeUnit.MILLISECONDS.toNanos(1500));
+              throw unavailable;
+            });
+    try (var incoming = Context.current().withDeadline(deadline, scheduler)) {
+      incoming.run(
+          () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertNoOwnerWrites();
+    } finally {
+      scheduler.shutdownNow();
+    }
+  }
+
+  @Test
+  void incomingCancellationDuringReadPreventsRetry() {
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    try (var incoming = Context.current().withCancellation()) {
+      when(authorizationClient.resolveCurrent(BINDING))
+          .thenAnswer(
+              invocation -> {
+                assertOutsideSql();
+                incoming.cancel(null);
+                throw unavailable;
+              });
+      incoming.run(
+          () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertNoOwnerWrites();
+    }
+  }
+
+  private void assertDeadlinePreventsRetry(long remainingMillis) {
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    Deadline deadline =
+        Deadline.after(
+            remainingMillis,
+            TimeUnit.MILLISECONDS,
+            new Deadline.Ticker() {
+              @Override
+              public long nanoTime() {
+                return 0L;
+              }
+            });
+    StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
+    when(authorizationClient.resolveCurrent(BINDING))
+        .thenAnswer(
+            invocation -> {
+              assertOutsideSql();
+              throw unavailable;
+            });
+    try (var incoming = Context.current().withDeadline(deadline, scheduler)) {
+      incoming.run(
+          () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
+      verify(authorizationClient).resolveCurrent(BINDING);
+      assertNoOwnerWrites();
+    } finally {
+      scheduler.shutdownNow();
+    }
+  }
+
+  private VerifiedAuthorization prepareFreshCreation() {
+    FreshTenantCreationEvidence receipt = receipt();
+    long validBefore = System.currentTimeMillis() + 60_000L;
+    VerifiedAuthorization authorization = mock(VerifiedAuthorization.class);
+    when(authorization.binding()).thenReturn(BINDING);
+    when(authorization.readRequestId()).thenReturn(AUTHORIZATION_READ_ID);
+    when(authorization.validBeforeEpochMillis()).thenReturn(validBefore);
+    when(outcomeRepository.readCommitted(BINDING))
+        .thenReturn(Optional.empty(), Optional.of(createdSnapshot()));
+    when(creationRepository.read(REQUEST_ID, NAMESPACE))
+        .thenReturn(Optional.empty(), Optional.of(receipt));
+    when(dispatchRepository.isAuthorizationCurrent(validBefore)).thenReturn(true);
+    when(outcomeRepository.claimLocked(BINDING)).thenReturn(pendingSnapshot());
+    when(creationRepository.createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION))
+        .thenReturn(receipt);
+    when(outcomeRepository.markCreatedLocked(BINDING, receipt)).thenReturn(createdSnapshot());
+    when(dispatchRepository.readCommitted(BINDING))
+        .thenReturn(
+            Optional.of(new AuthorizedDispatch(BINDING, AUTHORIZATION_READ_ID, validBefore)));
+    when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+        .thenAnswer(
+            invocation -> {
+              TransactionSynchronizationManager.setActualTransactionActive(true);
+              return mock(TransactionStatus.class);
+            });
+    doAnswer(
+            invocation -> {
+              TransactionSynchronizationManager.setActualTransactionActive(false);
+              return null;
+            })
+        .when(transactionManager)
+        .commit(any(TransactionStatus.class));
+    doAnswer(
+            invocation -> {
+              TransactionSynchronizationManager.setActualTransactionActive(false);
+              return null;
+            })
+        .when(transactionManager)
+        .rollback(any(TransactionStatus.class));
+    return authorization;
+  }
+
+  private void assertNoOwnerWrites() {
+    verifyNoInteractions(dispatchRepository, transactionManager);
+    verify(outcomeRepository, never()).claimLocked(any());
+    verify(outcomeRepository, never()).markCreatedLocked(any(), any());
+    verify(creationRepository, never()).createCandidate(any(), any(), any(), any(), any());
+  }
+
+  private static void assertOutsideSql() {
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
   }
 
   @Test
