@@ -44,6 +44,47 @@ Account is the sole writer and read authority for non-public realm grants under 
 
 The grant `scopeId`, `outboxStreamKey`, and event `sourceScope` use the shared [canonical grant authority-stream scope codec](../../system-architecture-redis.md#canonical-grant-authority-stream-scope-codec). This API contract owns the five-field semantic identity and lifecycle rules; it does not define a second stream encoding or permit a legacy scope fallback.
 
+#### Realm-grant action-family schema
+
+The closed action-family schema is `firemud.account.realm-grant`, version `1`. Its typed digest schema contains exactly the seven ADR 0047 fields in this canonical order: `actionFamilySchemaId`, `actionFamilySchemaVersion`, `scope`, `target`, `expectedVersion`, `mutation`, and `auditReason`. Nested object values use their declared schema order below when constructing the binary digest preimage, rather than lexicographic sorting. A future raw-token decoder must reject duplicate, unknown, missing-required, wrong-type, malformed-Unicode, trailing, or over-limit input and construct this exact typed schema; this definition does not make raw JSON property order authoritative.
+
+| Field | Required shape and constraint |
+| --- | --- |
+| `actionFamilySchemaId` | String exactly `firemud.account.realm-grant`. |
+| `actionFamilySchemaVersion` | String exactly `1`. |
+| `scope` | Object with exactly `tenantId`, then `targetNamespace`. |
+| `scope.tenantId` | Canonical lowercase, hyphenated, non-nil UUID. |
+| `scope.targetNamespace` | One lowercase ASCII workload namespace label: 1–63 letters or digits, with internal hyphens allowed and no leading or trailing hyphen. |
+| `target` | Object with exactly `accountId`, `worldSlug`, `realmSlug`, then `playtestLifecycleId`. |
+| `target.accountId` | Canonical lowercase, hyphenated, non-nil Account UUID. |
+| `target.worldSlug`, `target.realmSlug` | Lowercase ASCII slug matching `[a-z0-9]+(?:-[a-z0-9]+)*`, 1–120 bytes. |
+| `target.playtestLifecycleId` | Canonical lowercase, hyphenated, non-nil UUID for the exact playtest lifecycle. |
+| `expectedVersion` | Absent for `CREATE`; a positive canonical JSON integer within signed `long` range for `EXTEND`, `REVOKE`, and `REGRANT`. It is the expected grant revision, with absence retained as an explicit digest value. |
+| `mutation` | Object with exactly `operation`, then the conditionally present `grantExpiresAt` member. |
+| `mutation.operation` | String exactly `CREATE`, `EXTEND`, `REVOKE`, or `REGRANT`. |
+| `mutation.grantExpiresAt` | Absent for `REVOKE`; required for the other operations as a UTC instant in the canonical `Instant.toString()` form. The expiry must not exceed the current fork expiry; the immutable action digest does not establish that current value. |
+| `auditReason` | Required NFC-normalized string, nonblank, at most 4,096 normalized UTF-8 bytes. The shared blank set is U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000; U+200B does not make a reason blank. |
+
+`expectedVersion` and `mutation.grantExpiresAt` are absent from the request object in their absent cases, including no `null` substitute, but remain in their declared positions in the digest grammar. The operation-specific expiry and revision constraints apply equally to all four operations. The action target includes the exact five-field grant identity; stream identifiers are derived separately by the shared Redis codec linked above. Stable `requestId`, actor identity, transport credentials, authorization references, reservation data, and Account authority evidence are outside these seven digest fields.
+
+The family retains ADR 0047's default bounded-parser and digest limits below. The typed model implements digest construction; the required raw-token decoder remains unimplemented. Arrays and additional nested values are not part of this schema.
+
+| Limit | Maximum |
+| --- | ---: |
+| Raw UTF-8 JSON input | 16 KiB |
+| Composite nesting depth | 8 |
+| Members in one object | 16 |
+| Elements in one array | 64 |
+| NFC-normalized string or object-key bytes | 4,096 |
+| Raw or canonical numeric bytes | 128 |
+| Numeric scale | 128 |
+| Canonical segment payload | 8,192 bytes |
+| Complete `mutationDigest/v1` preimage | 32 KiB |
+
+The digest is lowercase hexadecimal SHA-256 over ADR 0047's exact seven-field `mutationDigest/v1` preimage; it has no family-specific prefix. A fixed `CREATE` vector uses namespace `prod`, account `11111111-1111-4111-8111-111111111111`, tenant `22222222-2222-4222-8222-222222222222`, world `world`, realm `private-realm`, lifecycle `33333333-3333-4333-8333-333333333333`, absent `expectedVersion`, expiry `2026-11-03T01:00:00.123456789Z`, and reason `invite`; its canonical preimage is 623 bytes and its digest is `02b15bc519f034f7e70ba1a4acef87564d0eb1881555b21272db9d6cc59ae6bc`.
+
+Publishing this digest shape does not make the family executable or supported. The local typed mutation model is not a raw-token decoder, authorization-reference issuer or redeemer, or actor-qualification source. No route is enabled by constructing the data; current lifecycle/fork-expiry authority, caller authorization, required cross-language vectors, and complete owner composition remain prerequisites. Operator/global ingress remains unsupported, and no actor or lifecycle authority may be inferred from this action data.
+
 Every grant has an explicit expiry no later than the fork's current `forkExpiresAt`; effective access is `min(grantExpiresAt, forkExpiresAt)`. The existing target tenant-admin `POST /tenant-admin/tenants/{tenantId}/realm-access-grants/{worldSlug}/{realmSlug}/{playtestLifecycleId}` is the duplicate-safe create-or-extend command: it carries the exact account/lifecycle target, `operation`, requested `grantExpiresAt`, stable `requestId`, and conditional `expectedGrantRevision`. `expectedGrantRevision` is absent for `CREATE`, which is an explicit absent-grant-and-tombstone precondition, and is required for `EXTEND` against the current active-grant revision. Its action-family schema maps that revision presence/value to ADR 0047's typed `expectedVersion`, maps normalized operation and requested-expiry presence/value into typed `mutation`, and uses the exact seven-field `mutationDigest/v1` grammar; an exact request identity with the same digest replays that stored outcome, while changed operation, target, lifecycle, expiry, expected revision, or normalized payload returns `IDEMPOTENCY_CONFLICT` before mutation. Fork extension does not extend grants implicitly, and each grant extension revalidates the current fork expiry and advances the revision. Create, extend, revoke, and deliberate re-grant operations are ordered by the grant revision. Reordered or conflicting requests return the stored outcome or `IDEMPOTENCY_CONFLICT`; revocation retains a tombstone so delayed create/extend retries cannot resurrect access. A later intentional re-grant observes that tombstone and advances beyond it.
 
 Account atomically compares the expected revision with the current grant or retained tombstone, then commits the next revision, any tombstone, the durable request result, and the authority event. A mismatched existing revision, or a failed absent-grant precondition for `CREATE`, returns deterministic `GRANT_REVISION_CONFLICT` with no grant, tombstone, result, or event mutation. Concurrent operations with different request IDs and the same expected revision therefore have exactly one winner; an exact retry is resolved by request identity and `mutationDigest/v1` and replays the stored result without another revision or event.
