@@ -41,7 +41,7 @@ class AccountFreshEnrollmentProtectedPublicationSourceTest {
   }
 
   @Test
-  void exactDigestCannotAuthorizeAnotherCategoryMissingClosureOrWritableArtifact()
+  void exactDigestCannotAuthorizeAnotherCategoryMissingClosureOrWritableArtifactOrPin()
       throws Exception {
     requireControlledRootOwnedFixture();
     var source = new AccountFreshEnrollmentPolicySource(mount.toAbsolutePath());
@@ -58,6 +58,15 @@ class AccountFreshEnrollmentProtectedPublicationSourceTest {
             Category.ACCOUNT_SECURITY_LOCK, artifact(Category.ACCOUNT_SECURITY_LOCK));
     Files.setPosixFilePermissions(
         mount.resolve(digest.substring(7) + ".json"), PosixFilePermissions.fromString("rw-rw-r--"));
+    assertThatThrownBy(() -> source.read(Category.ACCOUNT_SECURITY_LOCK))
+        .isInstanceOf(IllegalStateException.class);
+
+    digest =
+        installControlledArtifact(
+            Category.ACCOUNT_SECURITY_LOCK, artifact(Category.ACCOUNT_SECURITY_LOCK));
+    assertThat(source.read(Category.ACCOUNT_SECURITY_LOCK).digest).isEqualTo(digest);
+    Files.setPosixFilePermissions(
+        mount.resolve("account_security_lock.pin"), PosixFilePermissions.fromString("rw-rw-r--"));
     assertThatThrownBy(() -> source.read(Category.ACCOUNT_SECURITY_LOCK))
         .isInstanceOf(IllegalStateException.class);
   }

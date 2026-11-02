@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -17,6 +18,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -77,10 +79,80 @@ class AccountRecentReauthenticationReplayTest {
     verifyNoInteractions(f.primary, f.crypto);
   }
 
+  @Test
+  void mismatchCommitsFailureBeforeDenialAndDoesNotRunIndependentReadback() {
+    var f = new Fixture();
+    when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("b".repeat(64));
+    assertThatThrownBy(() -> f.service.reauthenticate(f.request(f.operation)))
+        .isInstanceOf(AuthenticationException.class);
+    var order = inOrder(f.repository, f.transactions);
+    order.verify(f.repository).lockRequest(f.requestId);
+    order.verify(f.repository).recordReplayFailure(f.evidence);
+    order.verify(f.transactions).commit(any());
+    verify(f.transactions, never()).rollback(any());
+    verify(f.repository, never()).readExactOriginal(any());
+    verifyNoInteractions(f.primary, f.accounts, f.generations, f.policies);
+  }
+
+  @Test
+  void exhaustedBudgetDeniesWithoutAnyCredentialAccessOrAdditionalFailure() {
+    var f = new Fixture();
+    when(f.repository.countReplayFailures(f.evidence)).thenReturn(5);
+    assertThatThrownBy(() -> f.service.reauthenticate(f.request(f.operation)))
+        .isInstanceOf(AuthenticationException.class);
+    verify(f.repository, never()).findReplayProof(any());
+    verify(f.repository, never()).recordReplayFailure(any());
+    verify(f.transactions).commit(any());
+    verifyNoInteractions(f.crypto, f.primary, f.accounts, f.generations, f.policies);
+  }
+
+  @Test
+  void independentReadbackMismatchCommitsExactlyOneFailureBeforeDenial() {
+    var f = new Fixture();
+    when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("a".repeat(64), "b".repeat(64));
+    assertThatThrownBy(() -> f.service.reauthenticate(f.request(f.operation)))
+        .isInstanceOf(AuthenticationException.class);
+    verify(f.repository, times(2)).lockRequest(f.requestId);
+    verify(f.repository).recordReplayFailure(f.evidence);
+    verify(f.transactions, times(2)).commit(any());
+    verify(f.transactions, never()).rollback(any());
+    var order = inOrder(f.repository, f.transactions);
+    order.verify(f.repository).readExactOriginal(f.evidence);
+    order.verify(f.repository).recordReplayFailure(f.evidence);
+    order.verify(f.transactions).commit(any());
+  }
+
+  @Test
+  void successfulReplayDoesNotResetPriorFailures() {
+    var f = new Fixture();
+    when(f.repository.countReplayFailures(f.evidence)).thenReturn(4);
+    when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("a".repeat(64));
+    assertThat(f.service.reauthenticate(f.request(f.operation))).isSameAs(f.evidence);
+    verify(f.repository, never()).recordReplayFailure(any());
+    verify(f.transactions, times(2)).commit(any());
+  }
+
+  @Test
+  void independentReadbackExhaustionSkipsSecondCredentialCheck() {
+    var f = new Fixture();
+    when(f.repository.countReplayFailures(f.evidence)).thenReturn(4, 5);
+    when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("a".repeat(64));
+    assertThatThrownBy(() -> f.service.reauthenticate(f.request(f.operation)))
+        .isInstanceOf(AuthenticationException.class);
+    verify(f.crypto).recentReauthenticationRequestMac(eq("prior-key"), any());
+    verify(f.repository, never()).recordReplayFailure(any());
+    verify(f.transactions, times(2)).commit(any());
+  }
+
   private static final class Fixture {
     final UUID requestId = UUID.randomUUID(),
         account = UUID.randomUUID(),
         operation = UUID.randomUUID();
+    final PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
     final AccountServiceImpl primary = mock(AccountServiceImpl.class);
     final AccountRepository accounts = mock(AccountRepository.class);
     final AccountAuthorityGenerationRepository generations =
@@ -98,7 +170,6 @@ class AccountRecentReauthenticationReplayTest {
     final AccountRecentReauthenticationService service;
 
     Fixture() {
-      var transactions = mock(PlatformTransactionManager.class);
       when(transactions.getTransaction(any()))
           .thenAnswer(invocation -> mock(TransactionStatus.class));
       when(evidence.requestId()).thenReturn(requestId);

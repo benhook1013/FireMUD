@@ -107,8 +107,7 @@ public final class AccountRecentReauthenticationService {
                 if (existingRequest.isPresent()) {
                   AccountRecentReauthenticationEvidence existing = existingRequest.orElseThrow();
                   requireExactRequest(existing, request);
-                  requireReplayCredentials(existing, credentialRequest);
-                  return Attempt.success(existing);
+                  return replayAttempt(existing, credentialRequest);
                 }
                 if (!PURPOSE.equals(request.purpose)) {
                   throw conflict();
@@ -193,19 +192,37 @@ public final class AccountRecentReauthenticationService {
         throw new AuthenticationException(attempt.denial.code, attempt.denial.message);
       }
       var expected = Objects.requireNonNull(attempt.evidence);
-      return Objects.requireNonNull(
+      Attempt readback =
           transaction.execute(
               ignored -> {
+                evidenceRepository.lockRequest(expected.requestId());
                 var retained = evidenceRepository.readExactOriginal(expected);
-                requireReplayCredentials(retained, credentialRequest);
-                return retained;
-              }));
+                return replayAttempt(retained, credentialRequest);
+              });
+      if (readback == null) throw unavailable();
+      if (readback.denial != null) {
+        throw new AuthenticationException(readback.denial.code, readback.denial.message);
+      }
+      return Objects.requireNonNull(readback.evidence);
     } finally {
       Arrays.fill(credentialRequest, (byte) 0);
     }
   }
 
-  private void requireReplayCredentials(
+  // Both callers hold the original request lock. Denials leave the callback as values so the
+  // independent failure history commits before any exception reaches the caller.
+  private Attempt replayAttempt(AccountRecentReauthenticationEvidence evidence, byte[] request) {
+    if (evidenceRepository.countReplayFailures(evidence) >= 5) {
+      return Attempt.denied("INVALID_CREDENTIALS", "Invalid credentials");
+    }
+    if (!replayCredentialsMatch(evidence, request)) {
+      evidenceRepository.recordReplayFailure(evidence);
+      return Attempt.denied("INVALID_CREDENTIALS", "Invalid credentials");
+    }
+    return Attempt.success(evidence);
+  }
+
+  private boolean replayCredentialsMatch(
       AccountRecentReauthenticationEvidence evidence, byte[] request) {
     var proof =
         evidenceRepository
@@ -217,7 +234,7 @@ public final class AccountRecentReauthenticationService {
       supplied =
           HexFormat.of()
               .parseHex(cryptography.recentReauthenticationRequestMac(proof.keyId(), request));
-      if (!MessageDigest.isEqual(expected, supplied)) throw unavailable();
+      return MessageDigest.isEqual(expected, supplied);
     } finally {
       Arrays.fill(expected, (byte) 0);
       Arrays.fill(supplied, (byte) 0);
