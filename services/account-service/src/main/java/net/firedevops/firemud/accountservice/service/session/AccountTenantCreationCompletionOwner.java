@@ -50,6 +50,7 @@ public final class AccountTenantCreationCompletionOwner {
   private final IndividualCreatorPartyRepository parties;
   private final AccountInitialTenantBillingOwnerRepository owners;
   private final AccountRecentReauthenticationService reauthentication;
+  private final AccountRecentReauthenticationRepository recentEvidence;
   private final AccountAuditOutboxRepository audits;
   private final TransactionTemplate transactions;
 
@@ -67,6 +68,7 @@ public final class AccountTenantCreationCompletionOwner {
       IndividualCreatorPartyRepository parties,
       AccountInitialTenantBillingOwnerRepository owners,
       AccountRecentReauthenticationService reauthentication,
+      AccountRecentReauthenticationRepository recentEvidence,
       AccountAuditOutboxRepository audits,
       PlatformTransactionManager transactionManager) {
     this.dsl = Objects.requireNonNull(dsl);
@@ -82,6 +84,7 @@ public final class AccountTenantCreationCompletionOwner {
     this.parties = Objects.requireNonNull(parties);
     this.owners = Objects.requireNonNull(owners);
     this.reauthentication = Objects.requireNonNull(reauthentication);
+    this.recentEvidence = Objects.requireNonNull(recentEvidence);
     this.audits = Objects.requireNonNull(audits);
     transactions = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -103,16 +106,7 @@ public final class AccountTenantCreationCompletionOwner {
             transactions.execute(
                 status -> {
                   Original original = readOriginal(operationId, terminal);
-                  Result result = readResult(original, terminal);
-                  if (result == null) result = readHistoricalResult(original, terminal);
-                  if (result == null && originalCompletionExpired(original)) {
-                    // This takes the existing source locks without acquiring current authority.
-                    // A completion retaining those locks must finish or roll back first. Recheck
-                    // its committed success while the locks remain held; success always wins.
-                    orders.settleLocked(original.holder, terminal);
-                    result = readResult(original, terminal);
-                    if (result == null) result = historicalResult(terminal);
-                  }
+                  Result result = readRetainedOrExpiredResult(original, terminal);
                   return new Initial(original, result);
                 }));
     if (first.result != null) {
@@ -142,7 +136,7 @@ public final class AccountTenantCreationCompletionOwner {
                 status -> {
                   Original original = readOriginal(operationId, terminal);
                   requireSame(first.original, original);
-                  Result replay = readResult(original, terminal);
+                  Result replay = readRetainedOrExpiredResult(original, terminal);
                   if (replay != null) return replay;
                   // Account-first capture serializes concurrent completion before any Account
                   // creator writes.
@@ -264,17 +258,37 @@ public final class AccountTenantCreationCompletionOwner {
             status -> {
               Original original = readOriginal(operationId, terminal);
               requireSame(first.original, original);
-              Result readback = Objects.requireNonNull(readResult(original, terminal));
-              if (!Arrays.equals(committed.payload, readback.payload)
+              Result readback = readResult(original, terminal);
+              if (committed.state == State.CREATED_WITHOUT_ACCOUNT_COMPLETION) {
+                // A completed original keeps precedence even if it became visible after settling.
+                if (readback != null) return readback;
+                readback = readHistoricalResult(original, terminal);
+              }
+              if (readback == null
+                  || committed.state != readback.state
+                  || !Arrays.equals(committed.payload, readback.payload)
                   || !committed.digest.equals(readback.digest)) throw denied();
               return readback;
             }));
   }
 
+  private Result readRetainedOrExpiredResult(Original original, VerifiedTerminal terminal) {
+    Result result = readResult(original, terminal);
+    if (result == null) result = readHistoricalResult(original, terminal);
+    if (result == null && originalCompletionExpired(original)) {
+      // Existing source locks serialize historical settlement against a successful completion.
+      // Recheck committed success after taking them; no current authority or creator writes occur.
+      orders.settleLocked(original.holder, terminal);
+      result = readResult(original, terminal);
+      if (result == null) result = historicalResult(terminal);
+    }
+    return result;
+  }
+
   private boolean originalCompletionExpired(Original original) {
     var admitted = original.admitted.binding();
     var retained =
-        new AccountRecentReauthenticationRepository(dsl)
+        recentEvidence
             .findByCreationOperation(original.intent.creationOperationId())
             .orElseThrow(AccountTenantCreationCompletionOwner::denied);
     if (!admitted.intentRequestId().equals(original.intent.requestId())
