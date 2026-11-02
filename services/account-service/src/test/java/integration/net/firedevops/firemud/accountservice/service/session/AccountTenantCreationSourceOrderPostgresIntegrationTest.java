@@ -167,6 +167,7 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     UUID creatorPartyId = UUID.randomUUID();
     Fixture firstFixture = fixture(c, account, creatorPartyId);
     Fixture secondFixture = fixture(c, account, creatorPartyId);
+    Fixture unacquiredFixture = fixture(c, account, creatorPartyId);
     List<SourceEvidence> sources = controlledSources(c, firstFixture);
     seedSerializationRows(c, sources);
     var repository = repository(c);
@@ -230,6 +231,25 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     assertThat(c.tx(() -> sourceChangeRepository.inspectSourceChange(change).status()))
         .isEqualTo("WAITING");
     assertThat(c.tx(() -> sourceChangeRepository.sourceMutationPermitted(change))).isFalse();
+    String firstXmin = xmin(c, first.creationOperationId());
+    var recovered =
+        c.tx(
+            () ->
+                repository.acquireLocked(firstFixture.intent(), firstFixture.admitted(), sources));
+    assertThat(recovered.canonicalBytes()).containsExactly(first.canonicalBytes());
+    assertThat(recovered.authorizationDigest()).isEqualTo(first.authorizationDigest());
+    assertThat(xmin(c, first.creationOperationId())).isEqualTo(firstXmin);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        repository.acquireLocked(
+                            unacquiredFixture.intent(), unacquiredFixture.admitted(), sources)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Applicable authority source change is waiting");
+    assertThat(
+            c.tx(() -> repository.readOriginal(unacquiredFixture.intent().creationOperationId())))
+        .isEmpty();
     assertWriterGateDenied(c, "ISSUER:firemud-account-service");
   }
 
@@ -726,7 +746,9 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
                             true)));
 
     UUID issuanceOperationId = UUID.randomUUID();
-    String tokenHash = "e".repeat(64);
+    String tokenHash =
+        issuanceOperationId.toString().replace("-", "")
+            + creationOperationId.toString().replace("-", "");
     byte[] activeRegistry = "test-only-active-registry".getBytes(StandardCharsets.UTF_8);
     long issuedAt = Instant.now().getEpochSecond();
     long tokenExpiry = (issuedAt + 300) * 1000;
@@ -979,7 +1001,7 @@ class AccountTenantCreationSourceOrderPostgresIntegrationTest {
     Account account() {
       Account account = new Account();
       String suffix = UUID.randomUUID().toString();
-      account.setUsername("creation-source-order-" + suffix);
+      account.setUsername("source-order-" + suffix);
       account.setEmail(suffix + "@example.test");
       account.setPasswordHash(hash(PASSWORD));
       account.setRole("player");

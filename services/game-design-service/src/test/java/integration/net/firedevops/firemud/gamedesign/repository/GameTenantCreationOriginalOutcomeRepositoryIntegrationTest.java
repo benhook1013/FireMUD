@@ -347,7 +347,9 @@ class GameTenantCreationOriginalOutcomeRepositoryIntegrationTest {
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("immutable");
     assertThatThrownBy(
-            () -> fixture.dsl.execute("TRUNCATE TABLE game_tenant_creation_original_outcomes"))
+            () ->
+                fixture.dsl.execute(
+                    "TRUNCATE TABLE game_tenant_creation_original_outcomes CASCADE"))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("cannot be truncated");
     assertThat(fixture.outcomeRepository.readCommitted(binding)).contains(closed);

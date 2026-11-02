@@ -49,9 +49,11 @@ import net.firedevops.firemud.gamedesign.v1.OriginalTenantCreationOutcomeReadSer
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveOriginalTenantCreationOutcomeRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveOriginalTenantCreationOutcomeResponse;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class GameDesignOriginalTenantCreationOutcomeClientTest {
   private static final UUID READ_ID = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -64,6 +66,15 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
   private static final UUID TENANT_ID = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final String CREATION_DIGEST = "sha256:" + "a".repeat(64);
   private static final String AUTH_DIGEST = "sha256:" + "b".repeat(64);
+
+  @TempDir private Path defaultTlsDirectory;
+
+  @BeforeEach
+  void copyDefaultTlsResources() throws Exception {
+    copyCertificateResource("dev-cert.pem", defaultTlsDirectory);
+    copyCertificateResource("dev-key.pem", defaultTlsDirectory);
+    copyCertificateResource("dev-ca.pem", defaultTlsDirectory);
+  }
 
   @Test
   void exactCreatedAndNotCreatedReadsReturnOnlyCodecValidatedEvidence() throws Exception {
@@ -231,7 +242,7 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
                 new GameDesignOriginalTenantCreationOutcomeClient(
                     new ServiceEndpointsProperties(), null, channels, "test"))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("TLS configuration");
+        .hasMessageContaining("workload mTLS");
     for (CommonGrpcClientProperties incomplete :
         new CommonGrpcClientProperties[] {
           mtlsPropertiesWith(null, "key", "ca"),
@@ -247,6 +258,17 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
                       new ServiceEndpointsProperties(), incomplete, channels, "test"))
           .isInstanceOf(IllegalArgumentException.class);
     }
+    CommonGrpcClientProperties missingFile =
+        mtlsPropertiesWith(
+            defaultTlsDirectory.resolve("missing-cert.pem").toString(),
+            mtlsProperties().getPrivateKey(),
+            mtlsProperties().getCaCert());
+    assertThatThrownBy(
+            () ->
+                new GameDesignOriginalTenantCreationOutcomeClient(
+                    new ServiceEndpointsProperties(), missingFile, channels, "test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("readable file-backed TLS material");
     for (String namespace : new String[] {null, "", "Upper", "not/a-label"}) {
       assertThatThrownBy(
               () ->
@@ -268,6 +290,12 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
     var client =
         new GameDesignOriginalTenantCreationOutcomeClient(endpoints, tls, channelFactory, "test");
     try {
+      assertThatThrownBy(() -> client.readOriginal(binding()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("not initialized");
+      verifyNoInteractions(channelFactory);
+
+      client.init();
       client.init();
       verify(channelFactory)
           .buildChannel(
@@ -286,6 +314,52 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
       assertThat(uriField.get(interceptor))
           .isEqualTo("spiffe://firemud/ns/test/sa/game-design-service");
     } finally {
+      client.close();
+    }
+    assertThatThrownBy(() -> client.readOriginal(binding()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not initialized");
+    verify(channelFactory, times(1))
+        .buildChannel(
+            eq("game-design-service.internal:6565"),
+            eq(6565),
+            any(CommonGrpcClientProperties.class),
+            eq(true));
+  }
+
+  @Test
+  void rejectsInitializationDuringAmbientSqlBeforeChannelCreation(@TempDir Path directory)
+      throws Exception {
+    GrpcChannelFactory channels = mock(GrpcChannelFactory.class);
+    var client =
+        new GameDesignOriginalTenantCreationOutcomeClient(
+            new ServiceEndpointsProperties(), mtlsProperties(directory), channels, "test");
+    boolean previouslyActive = TransactionSynchronizationManager.isActualTransactionActive();
+    try {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      assertThatThrownBy(client::init)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("requires no SQL");
+      verifyNoInteractions(channels);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(previouslyActive);
+      client.close();
+    }
+  }
+
+  @Test
+  void rejectsReadDuringAmbientSqlBeforeCallingInitializedStub() throws Exception {
+    var stub = mockStub();
+    var client = newClient(stub);
+    boolean previouslyActive = TransactionSynchronizationManager.isActualTransactionActive();
+    try {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      assertThatThrownBy(() -> client.readOriginal(binding()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("requires no Account transaction");
+      verifyNoInteractions(stub);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(previouslyActive);
       client.close();
     }
   }
@@ -315,8 +389,8 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
     assertThat(channel.isTerminated()).isTrue();
   }
 
-  private static void assertRejected(
-      UnaryOperator<ResolveOriginalTenantCreationOutcomeResponse> mutation) throws Exception {
+  private void assertRejected(UnaryOperator<ResolveOriginalTenantCreationOutcomeResponse> mutation)
+      throws Exception {
     var stub = mockStub();
     when(stub.resolveOriginalTenantCreationOutcome(any()))
         .thenAnswer(
@@ -330,7 +404,7 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
         .isInstanceOf(IllegalStateException.class);
   }
 
-  private static GameDesignOriginalTenantCreationOutcomeClient newClient(
+  private GameDesignOriginalTenantCreationOutcomeClient newClient(
       OriginalTenantCreationOutcomeReadServiceGrpc
               .OriginalTenantCreationOutcomeReadServiceBlockingStub
           stub)
@@ -344,6 +418,10 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
     Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     field.setAccessible(true);
     field.set(client, stub);
+    Field initializedField =
+        AbstractReloadingBlockingGrpcClient.class.getDeclaredField("explicitlyInitialized");
+    initializedField.setAccessible(true);
+    initializedField.setBoolean(client, true);
     return client;
   }
 
@@ -409,9 +487,11 @@ class GameDesignOriginalTenantCreationOutcomeClientTest {
         "test", CREATION_ID, AUTH_OPERATION_ID, ACCOUNT_ID, CREATION_DIGEST, AUTH_DIGEST);
   }
 
-  private static CommonGrpcClientProperties mtlsProperties() {
+  private CommonGrpcClientProperties mtlsProperties() {
     return mtlsPropertiesWith(
-        "certs/account-client.crt", "certs/account-client.key", "certs/gamedesign-ca.crt");
+        defaultTlsDirectory.resolve("dev-cert.pem").toString(),
+        defaultTlsDirectory.resolve("dev-key.pem").toString(),
+        defaultTlsDirectory.resolve("dev-ca.pem").toString());
   }
 
   private static CommonGrpcClientProperties mtlsPropertiesWith(String cert, String key, String ca) {

@@ -48,12 +48,16 @@ final class AccountTenantCreationSourceOrderRepository {
 
     // The common source writer/acquirer ordering is exact lexicographic source key order with
     // NOWAIT. Existing source-lock rows must already exist; missing rows are never seeded here.
-    sourceOrdering.requirePublicationAdmission(binding.sources());
+    sourceOrdering.lockProducerSourcesNowait(binding.sources());
 
     Record existing = readOrderRow(binding.creationOperationId());
     if (existing != null) {
       return requireSameOriginal(existing, binding);
     }
+
+    // Admission gates new holders only. Recovery of an immutable original must remain possible
+    // while a source change waits for that same holder to settle.
+    sourceOrdering.requirePublicationAdmission(binding.sources());
 
     requireExactPersistedIntent(intent);
     requireExactPersistedAdmission(binding, suppliedAdmission);
