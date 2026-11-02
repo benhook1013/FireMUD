@@ -59,6 +59,16 @@ public final class StripeHostingWebhookVerifier {
       throw new IllegalArgumentException("Webhook payload must be representable as exact UTF-8");
     }
     Instant receivedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
+    // constructEvent deserializes before checking the signature. Authenticate the exact bytes
+    // first so forged malformed JSON never reaches that parser, and malformed timestamps have
+    // the same typed rejection as other invalid signature headers.
+    try {
+      Webhook.Signature.verifyHeader(
+          rawPayload, signatureHeader, webhookSecret, Webhook.DEFAULT_TOLERANCE, clock);
+    } catch (RuntimeException malformedHeader) {
+      throw new SignatureVerificationException(
+          "Malformed Stripe signature header", signatureHeader);
+    }
     Event event =
         Webhook.constructEvent(
             rawPayload, signatureHeader, webhookSecret, Webhook.DEFAULT_TOLERANCE, clock);
