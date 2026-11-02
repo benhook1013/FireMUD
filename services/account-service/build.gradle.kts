@@ -80,6 +80,8 @@ dependencies {
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
 
+    // Stripe declares Gson runtime-only; typed SDK response fixtures compile against it.
+    testImplementation("com.google.code.gson:gson")
     testImplementation(libs.grpc.inprocess)
     testImplementation(libs.grpc.netty.shaded)
     testImplementation(project(":logging-admin-service"))
