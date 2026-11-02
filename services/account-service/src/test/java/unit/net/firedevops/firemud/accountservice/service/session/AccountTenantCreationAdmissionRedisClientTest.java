@@ -42,6 +42,12 @@ class AccountTenantCreationAdmissionRedisClientTest {
   }
 
   @Test
+  void admissionDescriptorUsesItsDedicatedRedisScriptCategory() {
+    assertThat(AccountTenantCreationAdmissionRedisContract.descriptor().category())
+        .isEqualTo(RedisScriptDescriptor.ScriptCategory.ACCOUNT_TENANT_CREATION_ADMISSION);
+  }
+
+  @Test
   void exactExistingReassertionRequiresWriteAckFreshReadbackAndHeldCallback() throws Exception {
     var f = new Fixture();
     doReturn(0L)
