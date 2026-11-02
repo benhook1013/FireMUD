@@ -15,7 +15,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.StripeBillingPrerequisiteObserver;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord.Observation;
@@ -59,6 +62,7 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
   private static final String PROVIDER_PAYMENT_METHOD_ID = "pm_prerequisite";
   private static final String EVIDENCE_DIGEST = "sha256:" + "a".repeat(64);
   private static final Instant OBSERVED_AT = Instant.parse("2026-11-01T00:00:00Z");
+  private static final Duration MAX_OBSERVATION_AGE = Duration.ofSeconds(10);
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
@@ -119,18 +123,7 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
     CountDownLatch paymentMethodReadsReady = new CountDownLatch(2);
     CountDownLatch releasePaymentMethodReads = new CountDownLatch(1);
     Runnable waitForBothPaymentMethodReads =
-        () -> {
-          paymentMethodReadsReady.countDown();
-          try {
-            if (!releasePaymentMethodReads.await(10, TimeUnit.SECONDS)) {
-              throw new AssertionError("Timed out waiting to release Stripe payment-method reads");
-            }
-          } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            throw new AssertionError(
-                "Interrupted while waiting to release Stripe reads", interrupted);
-          }
-        };
+        blockAtPaymentMethodRead(paymentMethodReadsReady, releasePaymentMethodReads);
     ControlledStripeTransport firstTransport =
         new ControlledStripeTransport(
             customerResponse(context.account(), intent.customerProvisioningRequestId()),
@@ -187,6 +180,129 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
           .contains(confirmed.instrument());
     } finally {
       releasePaymentMethodReads.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS))
+          .as("concurrent confirmation workers finish during cleanup")
+          .isTrue();
+    }
+  }
+
+  @Test
+  void staleProviderObservationAtCommitDoesNotWriteConfirmationEvidence() {
+    Context context = context();
+    AccountBillingCustomerRecord intent = intent(context);
+    ConfirmationRequest request = request(context, intent);
+    ControlledClock ownerClock = new ControlledClock(OBSERVED_AT);
+    ControlledStripeTransport transport =
+        new ControlledStripeTransport(
+            customerResponse(context.account(), intent.customerProvisioningRequestId()),
+            paymentMethodResponse(PROVIDER_PAYMENT_METHOD_ID, PROVIDER_CUSTOMER_ID),
+            () -> ownerClock.set(OBSERVED_AT.plus(MAX_OBSERVATION_AGE).plusNanos(1)));
+    var service =
+        service(
+            context,
+            transport,
+            Clock.fixed(OBSERVED_AT, ZoneOffset.UTC),
+            ownerClock,
+            MAX_OBSERVATION_AGE);
+
+    assertThatThrownBy(() -> service.confirm(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Provider observation is stale or from the future");
+
+    assertThat(transport.callCount()).isEqualTo(2);
+    assertNoConfirmationWrites(context, request, intent);
+  }
+
+  @Test
+  void futureProviderObservationAtCommitDoesNotWriteConfirmationEvidence() {
+    Context context = context();
+    AccountBillingCustomerRecord intent = intent(context);
+    ConfirmationRequest request = request(context, intent);
+    ControlledClock providerClock = new ControlledClock(OBSERVED_AT);
+    ControlledStripeTransport transport =
+        new ControlledStripeTransport(
+            customerResponse(context.account(), intent.customerProvisioningRequestId()),
+            paymentMethodResponse(PROVIDER_PAYMENT_METHOD_ID, PROVIDER_CUSTOMER_ID),
+            () -> providerClock.set(OBSERVED_AT.plusNanos(1)));
+    var service =
+        service(
+            context,
+            transport,
+            providerClock,
+            Clock.fixed(OBSERVED_AT, ZoneOffset.UTC),
+            MAX_OBSERVATION_AGE);
+
+    assertThatThrownBy(() -> service.confirm(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Provider observation is stale or from the future");
+
+    assertThat(transport.callCount()).isEqualTo(2);
+    assertNoConfirmationWrites(context, request, intent);
+  }
+
+  @Test
+  void concurrentHistoricalReplayReturnsOriginalReceiptsAfterObservationExpires() throws Exception {
+    Context context = context();
+    AccountBillingCustomerRecord intent = intent(context);
+    ConfirmationRequest request = request(context, intent);
+    Clock providerClock = Clock.fixed(OBSERVED_AT, ZoneOffset.UTC);
+    ControlledClock ownerClock = new ControlledClock(OBSERVED_AT);
+    CountDownLatch paymentMethodReadsReady = new CountDownLatch(2);
+    CountDownLatch releaseFirstPaymentMethodRead = new CountDownLatch(1);
+    CountDownLatch releaseSecondPaymentMethodRead = new CountDownLatch(1);
+    ControlledStripeTransport firstTransport =
+        new ControlledStripeTransport(
+            customerResponse(context.account(), intent.customerProvisioningRequestId()),
+            paymentMethodResponse(PROVIDER_PAYMENT_METHOD_ID, PROVIDER_CUSTOMER_ID),
+            blockAtPaymentMethodRead(paymentMethodReadsReady, releaseFirstPaymentMethodRead));
+    ControlledStripeTransport secondTransport =
+        new ControlledStripeTransport(
+            customerResponse(context.account(), intent.customerProvisioningRequestId()),
+            paymentMethodResponse(PROVIDER_PAYMENT_METHOD_ID, PROVIDER_CUSTOMER_ID),
+            blockAtPaymentMethodRead(paymentMethodReadsReady, releaseSecondPaymentMethodRead));
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+
+    try {
+      Future<Result> first =
+          executor.submit(
+              () ->
+                  service(context, firstTransport, providerClock, ownerClock, MAX_OBSERVATION_AGE)
+                      .confirm(request));
+      Future<Result> second =
+          executor.submit(
+              () ->
+                  service(context, secondTransport, providerClock, ownerClock, MAX_OBSERVATION_AGE)
+                      .confirm(request));
+
+      assertThat(paymentMethodReadsReady.await(10, TimeUnit.SECONDS))
+          .as("both exact retries pass preflight before either provider read completes")
+          .isTrue();
+      releaseFirstPaymentMethodRead.countDown();
+      ConfirmedConfirmation confirmed = (ConfirmedConfirmation) first.get(10, TimeUnit.SECONDS);
+      List<AccountBillingCustomerRecord> customerHistory =
+          context.customers().readHistory(context.account());
+      List<AccountPaymentInstrumentRecord> instrumentHistory =
+          context.instruments().readHistory(context.account(), request.instrumentUuid());
+
+      ownerClock.set(OBSERVED_AT.plus(MAX_OBSERVATION_AGE).plusNanos(1));
+      releaseSecondPaymentMethodRead.countDown();
+      ReplayedConfirmation replayed = (ReplayedConfirmation) second.get(10, TimeUnit.SECONDS);
+
+      assertThat(replayed.customerReceipt()).isEqualTo(confirmed.customer());
+      assertThat(replayed.instrumentReceipt()).isEqualTo(confirmed.instrument());
+      assertThat(replayed.instrumentReceipt().display())
+          .isEqualTo(confirmed.instrument().display());
+      assertThat(replayed.evidenceDigest()).isEqualTo(confirmed.evidenceDigest());
+      assertThat(context.customers().readHistory(context.account()))
+          .containsExactlyElementsOf(customerHistory);
+      assertThat(context.instruments().readHistory(context.account(), request.instrumentUuid()))
+          .containsExactlyElementsOf(instrumentHistory);
+      assertThat(firstTransport.callCount()).isEqualTo(2);
+      assertThat(secondTransport.callCount()).isEqualTo(2);
+    } finally {
+      releaseFirstPaymentMethodRead.countDown();
+      releaseSecondPaymentMethodRead.countDown();
       executor.shutdownNow();
       assertThat(executor.awaitTermination(10, TimeUnit.SECONDS))
           .as("concurrent confirmation workers finish during cleanup")
@@ -671,16 +787,50 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
 
   private static AccountBillingPrerequisiteConfirmationService service(
       Context context, ControlledStripeTransport transport) {
+    Clock clock = Clock.fixed(OBSERVED_AT, ZoneOffset.UTC);
+    return service(context, transport, clock, clock, MAX_OBSERVATION_AGE);
+  }
+
+  private static AccountBillingPrerequisiteConfirmationService service(
+      Context context,
+      ControlledStripeTransport transport,
+      Clock providerClock,
+      Clock ownerClock,
+      Duration maximumObservationAge) {
     var observer =
         new StripeBillingPrerequisiteObserver(
-            new com.stripe.StripeClient(transport),
-            Clock.fixed(OBSERVED_AT, ZoneOffset.UTC),
-            false);
+            new com.stripe.StripeClient(transport), providerClock, false);
     return new AccountBillingPrerequisiteConfirmationService(
         observer,
         context.customers(),
         context.instruments(),
-        new DataSourceTransactionManager(context.source()));
+        new DataSourceTransactionManager(context.source()),
+        ownerClock,
+        maximumObservationAge);
+  }
+
+  private static Runnable blockAtPaymentMethodRead(
+      CountDownLatch paymentMethodReadsReady, CountDownLatch releasePaymentMethodRead) {
+    return () -> {
+      paymentMethodReadsReady.countDown();
+      try {
+        if (!releasePaymentMethodRead.await(10, TimeUnit.SECONDS)) {
+          throw new AssertionError("Timed out waiting to release Stripe payment-method read");
+        }
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError("Interrupted while waiting to release Stripe read", interrupted);
+      }
+    };
+  }
+
+  private static void assertNoConfirmationWrites(
+      Context context, ConfirmationRequest request, AccountBillingCustomerRecord intent) {
+    assertThat(context.customers().readHistory(context.account())).containsExactly(intent);
+    assertThat(context.instruments().readHistory(context.account(), request.instrumentUuid()))
+        .isEmpty();
+    assertThat(context.instruments().findByOwner(context.account(), request.instrumentUuid()))
+        .isEmpty();
   }
 
   private static ConfirmationRequest request(Context context, AccountBillingCustomerRecord intent) {
@@ -809,6 +959,39 @@ class AccountBillingPrerequisiteConfirmationPostgresIntegrationTest {
       AccountBillingCustomerRepository customers,
       AccountPaymentInstrumentRepository instruments,
       UUID account) {}
+
+  private static final class ControlledClock extends Clock {
+    private final AtomicReference<Instant> current;
+    private final ZoneId zone;
+
+    private ControlledClock(Instant initial) {
+      this(new AtomicReference<>(initial), ZoneOffset.UTC);
+    }
+
+    private ControlledClock(AtomicReference<Instant> current, ZoneId zone) {
+      this.current = current;
+      this.zone = zone;
+    }
+
+    private void set(Instant instant) {
+      current.set(instant);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return new ControlledClock(current, zone);
+    }
+
+    @Override
+    public Instant instant() {
+      return current.get();
+    }
+  }
 
   private static final class ControlledStripeTransport implements StripeResponseGetter {
     private final Map<String, String> responses;

@@ -1,5 +1,7 @@
 package net.firedevops.firemud.accountservice.service;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -38,16 +40,27 @@ public final class AccountBillingPrerequisiteConfirmationService {
   private final StripeBillingPrerequisiteObserver observer;
   private final AccountBillingCustomerRepository customers;
   private final AccountPaymentInstrumentRepository instruments;
+  private final Clock clock;
+  private final Duration maximumObservationAge;
   private final TransactionTemplate transaction;
 
   public AccountBillingPrerequisiteConfirmationService(
       StripeBillingPrerequisiteObserver observer,
       AccountBillingCustomerRepository customers,
       AccountPaymentInstrumentRepository instruments,
-      PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager,
+      Clock clock,
+      Duration maximumObservationAge) {
     this.observer = Objects.requireNonNull(observer, "Stripe observer is required");
     this.customers = Objects.requireNonNull(customers, "customer repository is required");
     this.instruments = Objects.requireNonNull(instruments, "instrument repository is required");
+    this.clock = Objects.requireNonNull(clock, "clock is required");
+    this.maximumObservationAge =
+        Objects.requireNonNull(maximumObservationAge, "maximum observation age is required");
+    if (maximumObservationAge.isZero() || maximumObservationAge.isNegative()) {
+      throw new IllegalArgumentException(
+          "Positive internal observation freshness policy is required");
+    }
     this.transaction =
         new TransactionTemplate(
             Objects.requireNonNull(transactionManager, "transaction manager is required"));
@@ -162,6 +175,7 @@ public final class AccountBillingPrerequisiteConfirmationService {
     if (!(preflight instanceof NewIntent)) {
       throw new IllegalStateException("Billing prerequisite commit returned an unknown preflight");
     }
+    requireFresh(observed);
     if (!observed.accountUuid().equals(current.accountUuid())
         || !observed.customerProvisioningRequestId().equals(current.customerProvisioningRequestId())
         || !observed.providerCustomerId().equals(request.providerCustomerIdHint())
@@ -208,6 +222,15 @@ public final class AccountBillingPrerequisiteConfirmationService {
       throw new ConflictException("Retained wallet evidence conflicts with current Stripe reads");
     }
     return new CommittedRecords(confirmed, retained, false);
+  }
+
+  private void requireFresh(ObservedBillingPrerequisites observed) {
+    Instant now = clock.instant();
+    if (observed.readStartedAt().isAfter(observed.observedAt())
+        || observed.observedAt().isAfter(now)
+        || observed.readStartedAt().isBefore(now.minus(maximumObservationAge))) {
+      throw new IllegalStateException("Provider observation is stale or from the future");
+    }
   }
 
   private static Preflight classifyOriginalOrNewIntent(
