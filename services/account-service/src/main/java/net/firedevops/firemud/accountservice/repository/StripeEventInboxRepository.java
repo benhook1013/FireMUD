@@ -12,6 +12,8 @@ import java.util.Optional;
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier.VerifiedEvent;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -20,6 +22,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class StripeEventInboxRepository {
   private static final String TABLE = "stripe_event_inbox";
+  private static final Logger logger = LoggerFactory.getLogger(StripeEventInboxRepository.class);
 
   private final DSLContext dsl;
 
@@ -27,7 +30,7 @@ public final class StripeEventInboxRepository {
     this.dsl = Objects.requireNonNull(dsl, "DSLContext is required");
   }
 
-  /** Retains a verified event once or returns its original receipt on an exact duplicate. */
+  /** Retains a verified event once or returns its original receipt for a stable duplicate event. */
   public StripeEventInboxRecord retainOrReplay(VerifiedEvent event) {
     requireWritableTransaction();
     Objects.requireNonNull(event, "verified Stripe event is required");
@@ -58,11 +61,21 @@ public final class StripeEventInboxRepository {
           "Stripe event inbox row is absent after conflict-safe insert");
     }
     StripeEventInboxRecord original = retained.orElseThrow();
-    if (!sameVerifiedEvidence(original, event, rawPayload)) {
+    if (!sameStableEventIdentity(original, event)) {
       throw new StripeEventInboxConflictException(event.providerEventId());
     }
-    if (inserted == 1 && !original.receivedAt().equals(event.receivedAt())) {
-      throw new IllegalStateException("Stripe event inbox receipt timestamp changed on readback");
+    if (inserted == 1) {
+      if (!sameInitialReceiptPayload(original, event, rawPayload)) {
+        throw new IllegalStateException("Stripe event inbox first receipt changed on readback");
+      }
+      if (!original.receivedAt().equals(event.receivedAt())) {
+        throw new IllegalStateException("Stripe event inbox receipt timestamp changed on readback");
+      }
+    } else if (!sameRawPayload(original, rawPayload)) {
+      logger.debug(
+          "Verified duplicate Stripe event had different delivery serialization; "
+              + "preserving first receipt: eventId={}",
+          event.providerEventId());
     }
     return original;
   }
@@ -108,16 +121,24 @@ public final class StripeEventInboxRepository {
         required(row.get("processing_status", String.class), "processing status"));
   }
 
-  private static boolean sameVerifiedEvidence(
-      StripeEventInboxRecord retained, VerifiedEvent event, byte[] incomingPayload) {
+  private static boolean sameStableEventIdentity(
+      StripeEventInboxRecord retained, VerifiedEvent event) {
     return retained.providerEventId().equals(event.providerEventId())
-        && Arrays.equals(retained.rawPayload().getBytes(StandardCharsets.UTF_8), incomingPayload)
-        && retained.payloadSha256().equals(event.payloadSha256())
         && retained.eventType().equals(event.eventType())
         && retained.eventCreatedAtEpochSeconds() == event.eventCreatedAtEpochSeconds()
         && Objects.equals(retained.providerApiVersion(), event.providerApiVersion())
         && retained.livemode() == event.livemode()
         && StripeEventInboxRecord.PENDING.equals(retained.processingStatus());
+  }
+
+  private static boolean sameInitialReceiptPayload(
+      StripeEventInboxRecord retained, VerifiedEvent event, byte[] incomingPayload) {
+    return sameRawPayload(retained, incomingPayload)
+        && retained.payloadSha256().equals(event.payloadSha256());
+  }
+
+  private static boolean sameRawPayload(StripeEventInboxRecord retained, byte[] incomingPayload) {
+    return Arrays.equals(retained.rawPayload().getBytes(StandardCharsets.UTF_8), incomingPayload);
   }
 
   private static void requireWritableTransaction() {
