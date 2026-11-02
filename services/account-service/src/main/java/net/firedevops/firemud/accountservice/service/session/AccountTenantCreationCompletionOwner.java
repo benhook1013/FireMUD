@@ -241,7 +241,9 @@ public final class AccountTenantCreationCompletionOwner {
                           new String(payload, StandardCharsets.UTF_8));
                   if (!digest.equals(audit.payloadDigest())) throw denied();
                   orders.settleLocked(original.holder, terminal);
-                  Instant validBefore = validBefore(original, current.capture);
+                  Instant validBefore =
+                      AccountTenantCreationOwnerChecks.currentValidBefore(
+                          original.admitted.binding(), current.capture);
                   dsl.execute(
                       "INSERT INTO "
                           + TABLE
@@ -360,15 +362,13 @@ public final class AccountTenantCreationCompletionOwner {
         terminal.evidence().receipt().orElseThrow(AccountTenantCreationCompletionOwner::denied);
     if (!intent.sourceGameTenantKey().equals(receipt.sourceGameTenantKey())
         || !"NEW_GAME_ROW".equals(receipt.provenanceKind())) throw denied();
-    Record row =
-        dsl.fetchOne(
-            "SELECT * FROM account_control_ui_issuance_operations WHERE operation_id = ?",
-            admitted.binding().issuanceOperationId());
-    if (row == null) throw denied();
-    var issuance = issuances.decodeStored(row);
-    if (!admitted.binding().issuanceOperationId().equals(issuance.operationId)
-        || !intent.initiatingAccountId().equals(issuance.accountId)
-        || !admitted.binding().tokenHash().equals(issuance.tokenHash)) throw denied();
+    var issuance =
+        AccountTenantCreationOwnerChecks.readOriginalIssuance(
+            dsl,
+            issuances,
+            admitted.binding(),
+            intent.initiatingAccountId(),
+            AccountTenantCreationCompletionOwner::denied);
     return new Original(intent, admitted, holder, issuance);
   }
 
@@ -414,19 +414,6 @@ public final class AccountTenantCreationCompletionOwner {
             original.intent.initiatingAccountId(),
             original.holder.creationOperationId(),
             original.holder.authorizationDigest()));
-  }
-
-  private static Instant validBefore(
-      Original original, AccountTenantCreationOwnerSourceCapture.Captured captured) {
-    Instant deadline =
-        Instant.ofEpochMilli(original.admitted.binding().operationDeadlineEpochMillis());
-    var recent = captured.reauthentication();
-    Instant recentDeadline =
-        recent.issuedAt().plusSeconds(recent.recentAgeSeconds() - recent.maxClockSkewSeconds());
-    if (recentDeadline.isBefore(deadline)) deadline = recentDeadline;
-    Instant termsDeadline = captured.currentness().terms().validUntil();
-    if (termsDeadline != null && termsDeadline.isBefore(deadline)) deadline = termsDeadline;
-    return deadline;
   }
 
   private String transactionId() {

@@ -133,7 +133,10 @@ final class AccountTenantCreationDispatchRepository {
               if (!Arrays.equals(locked.canonicalBytes(), current.original.holder.canonicalBytes()))
                 throw denied();
               if (existing(current.original)) return null;
-              long validBefore = deadline(current.original, observed);
+              long validBefore =
+                  AccountTenantCreationOwnerChecks.currentValidBefore(
+                          current.original.admitted.binding(), observed)
+                      .toEpochMilli();
               int inserted =
                   dsl.execute(
                       "INSERT INTO "
@@ -191,15 +194,13 @@ final class AccountTenantCreationDispatchRepository {
         || !intent.requestDigest().equals(holder.intentDigest())
         || !Arrays.equals(admitted.receiptPayload(), holder.admissionPayload())
         || !admitted.receiptDigest().equals(holder.admissionDigest())) throw denied();
-    Record row =
-        dsl.fetchOne(
-            "SELECT * FROM account_control_ui_issuance_operations WHERE operation_id = ?",
-            admitted.binding().issuanceOperationId());
-    if (row == null) throw denied();
-    var issuance = issuances.decodeStored(row);
-    if (!admitted.binding().issuanceOperationId().equals(issuance.operationId)
-        || !intent.initiatingAccountId().equals(issuance.accountId)
-        || !admitted.binding().tokenHash().equals(issuance.tokenHash)) throw denied();
+    var issuance =
+        AccountTenantCreationOwnerChecks.readOriginalIssuance(
+            dsl,
+            issuances,
+            admitted.binding(),
+            intent.initiatingAccountId(),
+            AccountTenantCreationDispatchRepository::denied);
     return new Stored(new Original(intent, admitted, holder), issuance);
   }
 
@@ -235,19 +236,6 @@ final class AccountTenantCreationDispatchRepository {
         || row.get("valid_before_epoch_millis", Long.class) <= 0
         || row.get("valid_before_epoch_millis", Long.class)
             > original.admitted.binding().operationDeadlineEpochMillis()) throw denied();
-  }
-
-  private static long deadline(
-      Original original, AccountTenantCreationOwnerSourceCapture.Captured capture) {
-    Instant deadline =
-        Instant.ofEpochMilli(original.admitted.binding().operationDeadlineEpochMillis());
-    var recent = capture.reauthentication();
-    Instant recentDeadline =
-        recent.issuedAt().plusSeconds(recent.recentAgeSeconds() - recent.maxClockSkewSeconds());
-    if (recentDeadline.isBefore(deadline)) deadline = recentDeadline;
-    Instant termsDeadline = capture.currentness().terms().validUntil();
-    if (termsDeadline != null && termsDeadline.isBefore(deadline)) deadline = termsDeadline;
-    return deadline.toEpochMilli();
   }
 
   private static void requirePrepared(PreparedResult prepared, Original original) {
