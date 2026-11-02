@@ -252,27 +252,66 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
   }
 
   @Test
-  void absentOrUncertainPhysicalEvidenceHasNoAdmissionAndZeroLocalAofCannotBeInserted() {
+  void admissionRequiresExactLocalAndPositiveReplicaAofAndRetainsSuccessfulEvidence() {
     Context c = context();
-    var binding = frozen(c, false);
+    var uncertainBinding = frozen(c, false);
     var repository = new AccountTenantCreationAdmissionRepository(c.dsl);
-    var prepared = c.tx(() -> repository.readPrepared(binding.creationOperationId())).orElseThrow();
+    var prepared =
+        c.tx(() -> repository.readPrepared(uncertainBinding.creationOperationId())).orElseThrow();
     assertThatThrownBy(() -> c.tx(() -> repository.admitLocked(prepared, null)))
         .isInstanceOf(NullPointerException.class);
-    assertThat(c.tx(() -> repository.readAdmitted(binding.creationOperationId()))).isEmpty();
-    assertThatThrownBy(
-            () ->
-                c.tx(
-                    () ->
-                        c.dsl.execute(
-                            "INSERT INTO account_tenant_creation_admissions "
-                                + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, protected_binding_id, qualification_fence) "
-                                + "VALUES (?, ?, ?, 0, 0, 'test-stipulated', 1)",
-                            binding.creationOperationId(),
-                            binding.canonicalReceipt(),
-                            AccountControlUiCoordination.digest(
-                                "SHA-256", binding.canonicalReceipt()))))
-        .isInstanceOf(DataAccessException.class);
+    assertThat(c.tx(() -> repository.readAdmitted(uncertainBinding.creationOperationId())))
+        .isEmpty();
+
+    var admittedBinding = frozen(c, false);
+    insertAdmission(c, admittedBinding);
+    String admittedXmin = xmin(c, admittedBinding.creationOperationId());
+    byte[] admittedReceipt =
+        c.tx(
+                () ->
+                    new AccountTenantCreationAdmissionRepository(c.dsl)
+                        .readAdmitted(admittedBinding.creationOperationId()))
+            .orElseThrow()
+            .receiptPayload();
+    long requestRowsBefore =
+        (long) c.dsl.fetchCount(DSL.table(DSL.name("account_tenant_creation_admission_requests")));
+    long admissionRowsBefore =
+        (long) c.dsl.fetchCount(DSL.table(DSL.name("account_tenant_creation_admissions")));
+    int candidateNumber = 0;
+    for (var counts : List.of(new AofCounts(0, 1), new AofCounts(2, 1), new AofCounts(1, 0))) {
+      var candidate = frozen(c, false);
+      assertThatThrownBy(() -> insertAdmission(c, candidate, counts.local(), counts.replicas()))
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining(
+              counts.local() != 1
+                  ? "account_tenant_creation_admissions_local_aof_count_check"
+                  : "account_tenant_creation_admissions_replica_aof_count_check");
+      assertThat(c.tx(() -> repository.readAdmitted(candidate.creationOperationId()))).isEmpty();
+      assertThat(c.tx(() -> repository.readPrepared(candidate.creationOperationId()))).isPresent();
+
+      // The same frozen SQL fixture succeeds when only the acknowledgement counts are corrected.
+      insertAdmission(c, candidate);
+      candidateNumber++;
+      assertThat(
+              c.tx(() -> repository.readAdmitted(candidate.creationOperationId()))
+                  .orElseThrow()
+                  .receiptPayload())
+          .containsExactly(candidate.canonicalReceipt());
+
+      assertThat(
+              c.tx(() -> repository.readAdmitted(admittedBinding.creationOperationId()))
+                  .orElseThrow()
+                  .receiptPayload())
+          .containsExactly(admittedReceipt);
+      assertThat(xmin(c, admittedBinding.creationOperationId())).isEqualTo(admittedXmin);
+      assertThat(
+              (long)
+                  c.dsl.fetchCount(
+                      DSL.table(DSL.name("account_tenant_creation_admission_requests"))))
+          .isEqualTo(requestRowsBefore + candidateNumber);
+      assertThat((long) c.dsl.fetchCount(DSL.table(DSL.name("account_tenant_creation_admissions"))))
+          .isEqualTo(admissionRowsBefore + candidateNumber);
+    }
   }
 
   private static String xmin(Context c, UUID operation) {
@@ -284,16 +323,25 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
   }
 
   private static void insertAdmission(Context c, AccountTenantCreationAdmissionBinding binding) {
+    insertAdmission(c, binding, 1, 1);
+  }
+
+  private static void insertAdmission(
+      Context c, AccountTenantCreationAdmissionBinding binding, int localAof, int replicaAof) {
     c.tx(
         () ->
             c.dsl.execute(
                 "INSERT INTO account_tenant_creation_admissions "
                     + "(creation_operation_id, receipt_payload, receipt_digest, local_aof_count, replica_aof_count, protected_binding_id, qualification_fence) "
-                    + "VALUES (?, ?, ?, 1, 1, 'test-stipulated-physical-evidence', 7)",
+                    + "VALUES (?, ?, ?, ?, ?, 'test-stipulated-physical-evidence', 7)",
                 binding.creationOperationId(),
                 binding.canonicalReceipt(),
-                AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt())));
+                AccountControlUiCoordination.digest("SHA-256", binding.canonicalReceipt()),
+                localAof,
+                replicaAof));
   }
+
+  private record AofCounts(int local, int replicas) {}
 
   private static AccountTenantCreationAdmissionBinding frozen(Context c, boolean expired) {
     Account account = c.account("PASSWORD");
