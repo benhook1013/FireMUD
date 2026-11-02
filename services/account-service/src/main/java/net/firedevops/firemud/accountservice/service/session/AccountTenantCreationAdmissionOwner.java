@@ -126,7 +126,9 @@ public final class AccountTenantCreationAdmissionOwner {
                   return initial.withPersisted(persisted);
                 }));
 
-    String originalKid = originalKid(frozen.issuance.signerReceipt);
+    String originalKid =
+        AccountTenantCreationOwnerChecks.originalKid(
+            frozen.issuance.signerReceipt, AccountTenantCreationAdmissionOwner::denied);
     AcceptedSignerKey accepted = actors.readAcceptedSignerKey(originalKid);
     AccountControlUiActorService.requireAcceptedSignerKey(frozen.issuance, accepted);
 
@@ -590,12 +592,6 @@ public final class AccountTenantCreationAdmissionOwner {
                     source.kind() == SourceKind.TENANT || source.kind() == SourceKind.MEMBERSHIP)) {
       throw denied();
     }
-  }
-
-  private static String originalKid(byte[] signerReceipt) {
-    Object kid = AccountControlUiIssuanceRepository.object(signerReceipt).get("kid");
-    if (!(kid instanceof String text) || text.isBlank()) throw denied();
-    return text;
   }
 
   private static void requireOwnerTransaction() {

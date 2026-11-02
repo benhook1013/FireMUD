@@ -132,9 +132,8 @@ public final class AccountTenantCreationCompletionOwner {
     }
 
     String kid =
-        (String)
-            AccountControlUiIssuanceRepository.object(first.original.issuance.signerReceipt)
-                .get("kid");
+        AccountTenantCreationOwnerChecks.originalKid(
+            first.original.issuance.signerReceipt, AccountTenantCreationCompletionOwner::denied);
     AcceptedSignerKey accepted = actors.readAcceptedSignerKey(kid);
     AccountControlUiActorService.requireAcceptedSignerKey(first.original.issuance, accepted);
     Result committed =
@@ -325,18 +324,19 @@ public final class AccountTenantCreationCompletionOwner {
       CapturedEnvironmentBoundary environment,
       AccountRecentReauthenticationEvidence recent,
       AcceptedSignerKey accepted) {
-    var actual = capture.captureLocked(original.intent, original.admitted, environment, recent);
-    AccountControlUiActorService.requireAcceptedSignerKey(original.issuance, accepted);
-    if (!Arrays.equals(actual.originalClaims(), original.issuance.claims)
-        || !Arrays.equals(actual.originalSignerReceipt(), original.issuance.signerReceipt)
-        || !original.issuance.operationId.equals(actual.issuanceOperationId())
-        || !original.issuance.jti.equals(actual.tokenJti())
-        || !original.issuance.tokenHash.equals(actual.tokenHash())) throw denied();
-    var held =
-        orders.lockOriginalForCompletionLocked(
-            original.intent, original.admitted, actual.sources());
-    if (!Arrays.equals(held.canonicalBytes(), original.holder.canonicalBytes())) throw denied();
-    return new Current(actual);
+    var checked =
+        AccountTenantCreationOwnerChecks.captureCurrent(
+            capture,
+            orders,
+            original.intent,
+            original.admitted,
+            original.issuance,
+            original.holder,
+            environment,
+            recent,
+            accepted,
+            AccountTenantCreationCompletionOwner::denied);
+    return new Current(checked.captured());
   }
 
   private Original readOriginal(UUID operationId, VerifiedTerminal terminal) {

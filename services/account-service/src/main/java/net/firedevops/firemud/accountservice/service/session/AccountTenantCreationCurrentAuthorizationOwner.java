@@ -65,7 +65,8 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
     Objects.requireNonNull(binding);
     Original first = Objects.requireNonNull(transactions.execute(status -> read(binding)));
     String kid =
-        (String) AccountControlUiIssuanceRepository.object(first.issuance.signerReceipt).get("kid");
+        AccountTenantCreationOwnerChecks.originalKid(
+            first.issuance.signerReceipt, AccountTenantCreationCurrentAuthorizationOwner::denied);
     var accepted = actors.readAcceptedSignerKey(kid);
     AccountControlUiActorService.requireAcceptedSignerKey(first.issuance, accepted);
     var environment = terms.captureCurrentEnvironmentBoundary();
@@ -77,25 +78,21 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
                   same(first, original);
                   // Actual Account-first capture precedes issuer/issuance/source locking. No
                   // network in SQL.
-                  var current =
-                      capture.captureLocked(
-                          original.intent, original.admitted, environment, original.recent);
-                  AccountControlUiActorService.requireAcceptedSignerKey(
-                      original.issuance, accepted);
-                  if (!Arrays.equals(current.originalClaims(), original.issuance.claims)
-                      || !Arrays.equals(
-                          current.originalSignerReceipt(), original.issuance.signerReceipt)
-                      || !original.issuance.operationId.equals(current.issuanceOperationId())
-                      || !original.issuance.jti.equals(current.tokenJti())
-                      || !original.issuance.tokenHash.equals(current.tokenHash())) throw denied();
-                  var held =
-                      orders.lockOriginalForCompletionLocked(
-                          original.intent, original.admitted, current.sources());
-                  if (!Arrays.equals(held.canonicalBytes(), original.holder.canonicalBytes()))
-                    throw denied();
+                  var checked =
+                      AccountTenantCreationOwnerChecks.captureCurrent(
+                          capture,
+                          orders,
+                          original.intent,
+                          original.admitted,
+                          original.issuance,
+                          original.holder,
+                          environment,
+                          original.recent,
+                          accepted,
+                          AccountTenantCreationCurrentAuthorizationOwner::denied);
                   Instant deadline =
                       AccountTenantCreationOwnerChecks.currentValidBefore(
-                          original.admitted.binding(), current);
+                          original.admitted.binding(), checked.captured());
                   Instant dispatchDeadline = Instant.ofEpochMilli(original.dispatchDeadline);
                   if (dispatchDeadline.isBefore(deadline)) deadline = dispatchDeadline;
                   long validBefore = deadline.toEpochMilli();

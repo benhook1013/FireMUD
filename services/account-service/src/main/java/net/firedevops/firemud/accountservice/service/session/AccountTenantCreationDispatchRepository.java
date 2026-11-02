@@ -108,7 +108,8 @@ final class AccountTenantCreationDispatchRepository {
     if (Boolean.TRUE.equals(transactions.execute(status -> existing(first.original))))
       return Optional.empty();
     String kid =
-        (String) AccountControlUiIssuanceRepository.object(first.issuance.signerReceipt).get("kid");
+        AccountTenantCreationOwnerChecks.originalKid(
+            first.issuance.signerReceipt, AccountTenantCreationDispatchRepository::denied);
     var accepted = actors.readAcceptedSignerKey(kid);
     AccountControlUiActorService.requireAcceptedSignerKey(first.issuance, accepted);
     UUID callId = UUID.randomUUID();
@@ -117,25 +118,22 @@ final class AccountTenantCreationDispatchRepository {
             status -> {
               Stored current = read(operation);
               same(first, current);
-              var observed =
-                  capture.captureLocked(
-                      current.original.intent, current.original.admitted, environment, recent);
-              AccountControlUiActorService.requireAcceptedSignerKey(current.issuance, accepted);
-              if (!Arrays.equals(observed.originalClaims(), current.issuance.claims)
-                  || !Arrays.equals(
-                      observed.originalSignerReceipt(), current.issuance.signerReceipt)
-                  || !current.issuance.operationId.equals(observed.issuanceOperationId())
-                  || !current.issuance.jti.equals(observed.tokenJti())
-                  || !current.issuance.tokenHash.equals(observed.tokenHash())) throw denied();
-              var locked =
-                  orders.lockOriginalForCompletionLocked(
-                      current.original.intent, current.original.admitted, observed.sources());
-              if (!Arrays.equals(locked.canonicalBytes(), current.original.holder.canonicalBytes()))
-                throw denied();
+              var checked =
+                  AccountTenantCreationOwnerChecks.captureCurrent(
+                      capture,
+                      orders,
+                      current.original.intent,
+                      current.original.admitted,
+                      current.issuance,
+                      current.original.holder,
+                      environment,
+                      recent,
+                      accepted,
+                      AccountTenantCreationDispatchRepository::denied);
               if (existing(current.original)) return null;
               long validBefore =
                   AccountTenantCreationOwnerChecks.currentValidBefore(
-                          current.original.admitted.binding(), observed)
+                          current.original.admitted.binding(), checked.captured())
                       .toEpochMilli();
               int inserted =
                   dsl.execute(
@@ -145,8 +143,8 @@ final class AccountTenantCreationDispatchRepository {
                           + " VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
                       operation,
                       callId,
-                      locked.canonicalBytes(),
-                      locked.authorizationDigest(),
+                      checked.lockedHolder().canonicalBytes(),
+                      checked.lockedHolder().authorizationDigest(),
                       validBefore);
               if (inserted == 0) {
                 if (!existing(current.original)) throw denied();
