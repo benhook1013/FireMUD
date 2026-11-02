@@ -485,7 +485,7 @@ class AccountControlUiSigningAndActorTest {
         .isEqualTo(f.operationId);
     verify(f.fences, times(2)).lockProducerSourcesNowait(f.snapshot.sources());
     assertThat(f.actors.authenticateAccount(compact).accountId()).isEqualTo(f.actor);
-    verify(f.fences, times(3)).lockProducerSourcesNowait(f.snapshot.sources());
+    verify(f.fences, times(2)).lockProducerSourcesNowait(f.snapshot.sources());
     verify(f.authority, never()).capture(any(), any(), any());
     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
   }
