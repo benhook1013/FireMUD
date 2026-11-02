@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.stripe.exception.SignatureVerificationException;
+import com.stripe.net.Webhook;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.time.Clock;
@@ -23,8 +24,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier;
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier.VerifiedEvent;
 import net.firedevops.firemud.accountservice.service.StripeWebhookIntakeService;
@@ -106,6 +105,59 @@ class StripeWebhookIntakePostgresIntegrationTest {
   }
 
   @Test
+  void changedPendingWebhooksAndSignatureTimestampReturnOriginalReceipt() throws Exception {
+    Context context = context();
+    MutableClock clock = new MutableClock(NOW);
+    StripeWebhookIntakeService service = service(context, clock, context.transactionManager());
+    String originalPayload =
+        eventPayload("evt_delivery_metadata_local", "unrecognized.event", "cus_unknown", 1);
+    StripeEventInboxRecord original =
+        service.accept(
+            originalPayload, signatureHeader(SECRET, originalPayload, NOW.getEpochSecond()));
+
+    clock.set(NOW.plusSeconds(17));
+    String retryPayload =
+        eventPayload("evt_delivery_metadata_local", "unrecognized.event", "cus_unknown", 0);
+    StripeEventInboxRecord retry =
+        service.accept(
+            retryPayload,
+            signatureHeader(SECRET, retryPayload, NOW.plusSeconds(17).getEpochSecond()));
+
+    assertThat(retry).isEqualTo(original);
+    assertThat(retry.rawPayload()).isEqualTo(originalPayload);
+    assertThat(retry.payloadSha256()).isEqualTo(sha256(originalPayload));
+    assertThat(retry.receivedAt()).isEqualTo(NOW);
+    assertThat(retry.processingStatus()).isEqualTo(StripeEventInboxRecord.PENDING);
+    assertThat(countRows(context)).isOne();
+  }
+
+  @Test
+  void differentJsonFormattingWithSameStableEventIdentityReturnsOriginalReceipt() throws Exception {
+    Context context = context();
+    MutableClock clock = new MutableClock(NOW);
+    StripeWebhookIntakeService service = service(context, clock, context.transactionManager());
+    String originalPayload =
+        eventPayload("evt_format_variant_local", "unrecognized.event", "cus_unknown", 0);
+    StripeEventInboxRecord original =
+        service.accept(
+            originalPayload, signatureHeader(SECRET, originalPayload, NOW.getEpochSecond()));
+    clock.set(NOW.plusSeconds(1));
+    String reformattedPayload =
+        reorderedEventPayload("evt_format_variant_local", "unrecognized.event", "cus_unknown");
+
+    StripeEventInboxRecord retry =
+        service.accept(
+            reformattedPayload,
+            signatureHeader(SECRET, reformattedPayload, NOW.plusSeconds(1).getEpochSecond()));
+
+    assertThat(reformattedPayload).isNotEqualTo(originalPayload);
+    assertThat(retry).isEqualTo(original);
+    assertThat(retry.rawPayload()).isEqualTo(originalPayload);
+    assertThat(retry.payloadSha256()).isEqualTo(sha256(originalPayload));
+    assertThat(countRows(context)).isOne();
+  }
+
+  @Test
   void changedPayloadWithSameProviderEventIdConflictsWithoutReplacingEvidence() throws Exception {
     Context context = context();
     MutableClock clock = new MutableClock(NOW);
@@ -136,6 +188,44 @@ class StripeWebhookIntakePostgresIntegrationTest {
   }
 
   @Test
+  void changedApiVersionWithSameProviderEventIdConflictsWithoutReplacingEvidence()
+      throws Exception {
+    Context context = context();
+    MutableClock clock = new MutableClock(NOW);
+    StripeWebhookIntakeService service = service(context, clock, context.transactionManager());
+    String originalPayload =
+        eventPayload("evt_api_version_conflict_local", "unrecognized.event", "sub_original", 0);
+    StripeEventInboxRecord original =
+        service.accept(
+            originalPayload, signatureHeader(SECRET, originalPayload, NOW.getEpochSecond()));
+    String changedPayload =
+        eventPayload(
+            "evt_api_version_conflict_local",
+            "unrecognized.event",
+            "sub_original",
+            "2025-03-31.basil",
+            0);
+    clock.set(NOW.plusSeconds(1));
+
+    StripeEventInboxConflictException conflict =
+        assertThrows(
+            StripeEventInboxConflictException.class,
+            () ->
+                service.accept(
+                    changedPayload,
+                    signatureHeader(SECRET, changedPayload, NOW.plusSeconds(1).getEpochSecond())));
+
+    assertThat(conflict.providerEventId()).isEqualTo("evt_api_version_conflict_local");
+    Record retained = retainedRow(context, "evt_api_version_conflict_local");
+    assertThat(retained.get("raw_payload", byte[].class))
+        .containsExactly(originalPayload.getBytes(StandardCharsets.UTF_8));
+    assertThat(retained.get("payload_sha256", String.class)).isEqualTo(original.payloadSha256());
+    assertThat(retained.get("received_at", java.time.OffsetDateTime.class).toInstant())
+        .isEqualTo(original.receivedAt());
+    assertThat(countRows(context)).isOne();
+  }
+
+  @Test
   void concurrentExactRetriesConvergeOnOneDatabaseUniqueReceipt() throws Exception {
     Context context = context();
     MutableClock clock = new MutableClock(NOW);
@@ -156,6 +246,50 @@ class StripeWebhookIntakePostgresIntegrationTest {
       StripeEventInboxRecord first = result(left);
       StripeEventInboxRecord second = result(right);
       assertThat(second).isEqualTo(first);
+      assertThat(countRows(context)).isOne();
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void concurrentDeliverySerializationVariantsConvergeOnOneImmutableReceipt() throws Exception {
+    Context context = context();
+    MutableClock clock = new MutableClock(NOW);
+    StripeWebhookIntakeService service = service(context, clock, context.transactionManager());
+    String firstPayload =
+        eventPayload("evt_concurrent_variant_local", "other.unknown", "cus_unmapped", 1);
+    String secondPayload =
+        eventPayload("evt_concurrent_variant_local", "other.unknown", "cus_unmapped", 0);
+    String firstSignature = signatureHeader(SECRET, firstPayload, NOW.getEpochSecond());
+    String secondSignature =
+        signatureHeader(SECRET, secondPayload, NOW.plusSeconds(1).getEpochSecond());
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<StripeEventInboxRecord> left =
+          executor.submit(
+              () -> acceptAfterBarrier(service, firstPayload, firstSignature, ready, start));
+      Future<StripeEventInboxRecord> right =
+          executor.submit(
+              () -> acceptAfterBarrier(service, secondPayload, secondSignature, ready, start));
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      StripeEventInboxRecord leftReceipt = result(left);
+      StripeEventInboxRecord rightReceipt = result(right);
+      assertThat(rightReceipt).isEqualTo(leftReceipt);
+      assertThat(leftReceipt.rawPayload()).isIn(firstPayload, secondPayload);
+      assertThat(leftReceipt.payloadSha256()).isEqualTo(sha256(leftReceipt.rawPayload()));
+      assertThat(leftReceipt.receivedAt()).isEqualTo(NOW);
+      assertThat(leftReceipt.processingStatus()).isEqualTo(StripeEventInboxRecord.PENDING);
+      Record retained = retainedRow(context, "evt_concurrent_variant_local");
+      assertThat(retained.get("raw_payload", byte[].class))
+          .containsExactly(leftReceipt.rawPayload().getBytes(StandardCharsets.UTF_8));
+      assertThat(retained.get("payload_sha256", String.class))
+          .isEqualTo(leftReceipt.payloadSha256());
       assertThat(countRows(context)).isOne();
     } finally {
       start.countDown();
@@ -357,24 +491,54 @@ class StripeWebhookIntakePostgresIntegrationTest {
   }
 
   private static String eventPayload(String id, String type, String providerObjectId) {
+    return eventPayload(id, type, providerObjectId, "2025-02-24.acacia", 0);
+  }
+
+  private static String eventPayload(
+      String id, String type, String providerObjectId, int pendingWebhooks) {
+    return eventPayload(id, type, providerObjectId, "2025-02-24.acacia", pendingWebhooks);
+  }
+
+  private static String eventPayload(
+      String id, String type, String providerObjectId, String apiVersion, int pendingWebhooks) {
     return "{\"id\":\""
         + id
-        + "\",\"object\":\"event\",\"api_version\":\"2025-02-24.acacia\","
+        + "\",\"object\":\"event\",\"api_version\":\""
+        + apiVersion
+        + "\","
         + "\"created\":"
         + NOW.getEpochSecond()
         + ",\"data\":{\"object\":{\"id\":\""
         + providerObjectId
-        + "\"}},\"livemode\":false,\"type\":\""
+        + "\"}},\"livemode\":false,\"pending_webhooks\":"
+        + pendingWebhooks
+        + ",\"type\":\""
         + type
         + "\"}";
   }
 
+  private static String reorderedEventPayload(String id, String type, String providerObjectId) {
+    return """
+        {
+          "type": "$TYPE",
+          "pending_webhooks": 0,
+          "livemode": false,
+          "data": {"object": {"id": "$OBJECT"}},
+          "created": $CREATED,
+          "api_version": "2025-02-24.acacia",
+          "object": "event",
+          "id": "$EVENT"
+        }
+        """
+        .replace("$TYPE", type)
+        .replace("$OBJECT", providerObjectId)
+        .replace("$CREATED", Long.toString(NOW.getEpochSecond()))
+        .replace("$EVENT", id);
+  }
+
   private static String signatureHeader(String secret, String payload, long timestamp)
       throws GeneralSecurityException {
-    Mac mac = Mac.getInstance("HmacSHA256");
-    mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-    byte[] signed = (timestamp + "." + payload).getBytes(StandardCharsets.UTF_8);
-    return "t=" + timestamp + ",v1=" + HexFormat.of().formatHex(mac.doFinal(signed));
+    return Webhook.Signature.generateSignatureHeader(payload, secret, timestamp);
   }
 
   private static String sha256(String payload) throws Exception {

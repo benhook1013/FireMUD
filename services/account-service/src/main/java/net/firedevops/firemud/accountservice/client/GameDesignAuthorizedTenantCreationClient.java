@@ -93,18 +93,8 @@ public final class GameDesignAuthorizedTenantCreationClient
       throw new IllegalStateException("Creation network work must be outside SQL");
     Objects.requireNonNull(binding);
     requireUuid(Objects.requireNonNull(callId).toString());
+    GameTenantCreationDigest.validateCandidateInputs(sourceKey, name, description);
     if (!namespace.equals(binding.targetNamespace())
-        || sourceKey == null
-        || sourceKey.isBlank()
-        || sourceKey.length() > 72
-        || sourceKey.codePointCount(0, sourceKey.length()) > 36
-        || name == null
-        || name.length() > 200
-        || name.codePointCount(0, name.length()) > 100
-        || description != null
-            && (description.length() > 510
-                || description.codePointCount(0, description.length()) > 255
-                || GameTenantCreationDigest.utf8ByteLength(description) > 1020)
         || !binding
             .creationRequestDigest()
             .equals(

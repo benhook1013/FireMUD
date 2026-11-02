@@ -48,7 +48,18 @@ public final class StripeBillingPrerequisiteObserver {
   private static final Set<String> CUSTOMER_METADATA_KEYS =
       Set.of(SCHEMA_VERSION_KEY, OPERATION_TYPE_KEY, OPERATION_ID_KEY, ACCOUNT_ID_KEY);
   private static final Set<String> SUPPORTED_CARD_BRANDS =
-      Set.of("amex", "diners", "discover", "jcb", "mastercard", "unionpay", "unknown", "visa");
+      Set.of(
+          "amex",
+          "cartes_bancaires",
+          "diners",
+          "discover",
+          "eftpos_au",
+          "jcb",
+          "link",
+          "mastercard",
+          "unionpay",
+          "unknown",
+          "visa");
 
   private final com.stripe.StripeClient stripeClient;
   private final Clock clock;

@@ -6,7 +6,9 @@ import io.grpc.StatusRuntimeException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongPredicate;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
@@ -25,21 +27,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Unregistered private receiver for exact, currently authorized Account tenant creation. */
 public final class AccountAuthorizedTenantCreationService {
-  private static final int MAX_SOURCE_KEY_CHARS = 72;
-  private static final int MAX_SOURCE_KEY_CODE_POINTS = 36;
-  private static final int MAX_NAME_CHARS = 200;
-  private static final int MAX_NAME_CODE_POINTS = 100;
-  private static final int MAX_DESCRIPTION_CHARS = 510;
-  private static final int MAX_DESCRIPTION_CODE_POINTS = 255;
-  private static final int MAX_DESCRIPTION_UTF8_BYTES = 1020;
   private static final int MAX_AUTHORIZATION_ATTEMPTS = 3;
   private static final long MIN_AUTHORIZATION_RETRY_MILLIS = 1000L;
+  private static final long AUTHORIZATION_RETRY_BASE_DELAY_MILLIS = 100L;
+  private static final long AUTHORIZATION_RETRY_JITTER_BOUND_MILLIS = 50L;
 
   private final AccountTenantCreationCurrentAuthorizationClient authorizationClient;
   private final GameTenantCreationRepository creationRepository;
   private final GameTenantCreationOriginalOutcomeRepository outcomeRepository;
   private final AccountAuthorizedTenantCreationRepository dispatchRepository;
   private final TransactionTemplate ownerWrite;
+  private final LongPredicate authorizationRetryPause;
 
   public AccountAuthorizedTenantCreationService(
       AccountTenantCreationCurrentAuthorizationClient authorizationClient,
@@ -47,6 +45,24 @@ public final class AccountAuthorizedTenantCreationService {
       GameTenantCreationOriginalOutcomeRepository outcomeRepository,
       AccountAuthorizedTenantCreationRepository dispatchRepository,
       PlatformTransactionManager transactionManager) {
+    this(
+        authorizationClient,
+        creationRepository,
+        outcomeRepository,
+        dispatchRepository,
+        transactionManager,
+        AccountAuthorizedTenantCreationService::pauseAuthorizationRetry);
+  }
+
+  AccountAuthorizedTenantCreationService(
+      AccountTenantCreationCurrentAuthorizationClient authorizationClient,
+      GameTenantCreationRepository creationRepository,
+      GameTenantCreationOriginalOutcomeRepository outcomeRepository,
+      AccountAuthorizedTenantCreationRepository dispatchRepository,
+      PlatformTransactionManager transactionManager,
+      LongPredicate authorizationRetryPause) {
+    this.authorizationRetryPause =
+        Objects.requireNonNull(authorizationRetryPause, "authorizationRetryPause");
     this.authorizationClient = Objects.requireNonNull(authorizationClient, "authorizationClient");
     this.creationRepository = Objects.requireNonNull(creationRepository, "creationRepository");
     this.outcomeRepository = Objects.requireNonNull(outcomeRepository, "outcomeRepository");
@@ -170,14 +186,38 @@ public final class AccountAuthorizedTenantCreationService {
       } catch (StatusRuntimeException failure) {
         Status.Code code = failure.getStatus().getCode();
         if (attempt >= MAX_AUTHORIZATION_ATTEMPTS
-            || code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED
-            || incoming.isCancelled()
-            || incoming.getDeadline() != null
-                && incoming.getDeadline().timeRemaining(TimeUnit.MILLISECONDS)
-                    < MIN_AUTHORIZATION_RETRY_MILLIS) {
+            || code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
+          throw failure;
+        }
+        long delayMillis =
+            code == Status.Code.UNAVAILABLE
+                ? AUTHORIZATION_RETRY_BASE_DELAY_MILLIS
+                    + ThreadLocalRandom.current().nextLong(AUTHORIZATION_RETRY_JITTER_BOUND_MILLIS)
+                : 0L;
+        if (!hasAuthorizationRetryBudget(incoming, delayMillis)
+            || delayMillis > 0L && !authorizationRetryPause.test(delayMillis)
+            || !hasAuthorizationRetryBudget(incoming, 0L)) {
           throw failure;
         }
       }
+    }
+  }
+
+  private static boolean hasAuthorizationRetryBudget(Context incoming, long delayMillis) {
+    return !incoming.isCancelled()
+        && !Thread.currentThread().isInterrupted()
+        && (incoming.getDeadline() == null
+            || incoming.getDeadline().timeRemaining(TimeUnit.NANOSECONDS)
+                >= TimeUnit.MILLISECONDS.toNanos(MIN_AUTHORIZATION_RETRY_MILLIS + delayMillis));
+  }
+
+  private static boolean pauseAuthorizationRetry(long delayMillis) {
+    try {
+      Thread.sleep(delayMillis);
+      return true;
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      return false;
     }
   }
 
@@ -232,26 +272,8 @@ public final class AccountAuthorizedTenantCreationService {
   }
 
   private static void validateCandidate(CandidateRequest request) {
-    String sourceKey = request.sourceGameTenantKey();
-    String name = request.name();
-    String description = request.description();
-    if (sourceKey.isBlank()
-        || sourceKey.length() > MAX_SOURCE_KEY_CHARS
-        || sourceKey.codePointCount(0, sourceKey.length()) > MAX_SOURCE_KEY_CODE_POINTS) {
-      throw new IllegalArgumentException("sourceGameTenantKey exceeds the owner bounds");
-    }
-    if (name.length() > MAX_NAME_CHARS
-        || name.codePointCount(0, name.length()) > MAX_NAME_CODE_POINTS) {
-      throw new IllegalArgumentException("name exceeds the owner bounds");
-    }
-    if (description != null
-        && (description.length() > MAX_DESCRIPTION_CHARS
-            || description.codePointCount(0, description.length()) > MAX_DESCRIPTION_CODE_POINTS
-            || GameTenantCreationDigest.utf8ByteLength(description) > MAX_DESCRIPTION_UTF8_BYTES)) {
-      throw new IllegalArgumentException("description exceeds the owner bounds");
-    }
-    GameTenantCreationDigest.utf8ByteLength(sourceKey);
-    GameTenantCreationDigest.utf8ByteLength(name);
+    GameTenantCreationDigest.validateCandidateInputs(
+        request.sourceGameTenantKey(), request.name(), request.description());
   }
 
   private static void requireOutsideSql() {
