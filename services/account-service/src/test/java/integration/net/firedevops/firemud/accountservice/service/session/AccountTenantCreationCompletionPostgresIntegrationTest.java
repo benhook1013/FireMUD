@@ -21,6 +21,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
@@ -230,43 +234,16 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         .thenReturn(row);
     // This rollback test controls the original owner inputs; only the constituent identity and
     // generation writes are physical. Keep the new original-expiry observation live as well.
-    UUID recentRequest = UUID.randomUUID();
-    byte[] recentPayload =
-        AccountRecentReauthenticationRepository.requestPayload(
-            recentRequest, account, AccountRecentReauthenticationPolicy.PURPOSE, operation);
-    var recentFields = new LinkedHashMap<String, Object>();
-    recentFields.put("request_id", recentRequest);
-    recentFields.put("account_uuid", account);
-    recentFields.put("purpose", AccountRecentReauthenticationPolicy.PURPOSE);
-    recentFields.put("creation_operation_id", operation);
-    recentFields.put("request_payload", recentPayload);
-    recentFields.put(
-        "request_digest", AccountRecentReauthenticationRepository.digest(recentPayload));
-    recentFields.put("evidence_id", recentId);
-    recentFields.put("identity_provenance", "ACCOUNT_REPOSITORY_INSERT");
-    recentFields.put("account_lifecycle_state", "ACTIVE");
-    recentFields.put("effective_policy_version", "controlled");
-    for (String field :
-        List.of(
-            "account_uuid_source_numeric_id",
-            "account_authority_generation",
-            "account_authority_source_version",
-            "issuance_fence",
-            "issuance_fence_source_version",
-            "platform_policy_version",
-            "deployment_policy_version")) {
-      recentFields.put(field, 1L);
-    }
-    recentFields.put("recent_age_seconds", 300L);
-    recentFields.put("max_clock_skew_seconds", 30L);
-    recentFields.put("issued_at", Instant.ofEpochMilli(1899999900000L).atOffset(ZoneOffset.UTC));
-    Record retainedRecent = mock(Record.class);
-    when(retainedRecent.get(org.mockito.ArgumentMatchers.anyString(), any(Class.class)))
-        .thenAnswer(invocation -> recentFields.get(invocation.getArgument(0)));
-    when(dsl.fetchOne(
-            "SELECT * FROM account_recent_reauthentication_evidence WHERE creation_operation_id = ?",
-            operation))
-        .thenReturn(retainedRecent);
+    var recentEvidence = mock(AccountRecentReauthenticationRepository.class);
+    var retainedRecent = mock(AccountRecentReauthenticationEvidence.class);
+    when(retainedRecent.evidenceId()).thenReturn(recentId);
+    when(retainedRecent.accountId()).thenReturn(account);
+    when(retainedRecent.purpose()).thenReturn(AccountRecentReauthenticationPolicy.PURPOSE);
+    when(retainedRecent.creationOperationId()).thenReturn(operation);
+    when(retainedRecent.issuedAt()).thenReturn(Instant.ofEpochMilli(1899999900000L));
+    when(retainedRecent.recentAgeSeconds()).thenReturn(300L);
+    when(retainedRecent.maxClockSkewSeconds()).thenReturn(30L);
+    when(recentEvidence.findByCreationOperation(operation)).thenReturn(Optional.of(retainedRecent));
     Record ownerClock = mock(Record.class);
     when(ownerClock.get("observed_at", OffsetDateTime.class))
         .thenReturn(Instant.ofEpochMilli(1899999900001L).atOffset(ZoneOffset.UTC));
@@ -318,6 +295,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             mock(IndividualCreatorPartyRepository.class),
             mock(AccountInitialTenantBillingOwnerRepository.class),
             mock(AccountRecentReauthenticationService.class),
+            recentEvidence,
             mock(AccountAuditOutboxRepository.class),
             manager);
     assertThatThrownBy(
@@ -464,6 +442,139 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     assertAtomicRows(c, 0);
     assertThat(c.dsl.fetchCount(DSL.table("account_recent_reauthentication_consumptions")))
         .isZero();
+  }
+
+  @Test
+  void concurrentHistoricalSettlementBetweenSqlPhasesReturnsExactCommittedHistory()
+      throws Exception {
+    StorageContext c = storageContext(15, 0);
+    var fixture = storageFixture(c);
+    var initialPhaseCommitted = new CountDownLatch(1);
+    var resumeFreshPhase = new CountDownLatch(1);
+    var assembled =
+        assembleStoredOwner(
+            c,
+            fixture,
+            new AccountAuditOutboxRepository(c.dsl),
+            () -> {
+              initialPhaseCommitted.countDown();
+              try {
+                if (!resumeFreshPhase.await(30, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Completion phase release timed out");
+                }
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Completion phase wait interrupted", interrupted);
+              }
+            });
+    var executor = Executors.newSingleThreadExecutor();
+    try {
+      var pending =
+          executor.submit(
+              () ->
+                  assembled.owner.complete(
+                      fixture.intent.creationOperationId(),
+                      assembled.terminal,
+                      assembled.environment,
+                      assembled.recent));
+      assertThat(initialPhaseCommitted.await(10, TimeUnit.SECONDS)).isTrue();
+      awaitOriginalCutoff(c, assembled.recent);
+      var historical =
+          assembled.owner.complete(
+              fixture.intent.creationOperationId(),
+              assembled.terminal,
+              assembled.environment,
+              assembled.recent);
+      var settlement =
+          c.dsl.fetch(
+              "SELECT *, xmin::text AS settled_xmin FROM account_tenant_creation_source_order_settlements");
+      assertThat(settlement).hasSize(1);
+      resumeFreshPhase.countDown();
+      var resumed = pending.get(10, TimeUnit.SECONDS);
+
+      assertThat(resumed.state())
+          .isEqualTo(AccountTenantCreationCompletionOwner.State.CREATED_WITHOUT_ACCOUNT_COMPLETION);
+      assertThat(resumed.state()).isEqualTo(historical.state());
+      assertThat(resumed.payload()).containsExactly(historical.payload());
+      assertThat(resumed.digest()).isEqualTo(historical.digest());
+      assertThat(
+              c.dsl.fetch(
+                  "SELECT *, xmin::text AS settled_xmin FROM account_tenant_creation_source_order_settlements"))
+          .isEqualTo(settlement);
+      assertNoAccountCompletion(c, assembled);
+    } finally {
+      resumeFreshPhase.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void originalCutoffExpiringDuringSignerReadSettlesBeforeAnyFreshCreatorWrite() {
+    StorageContext c = storageContext(15, 0);
+    var fixture = storageFixture(c);
+    var recent =
+        c.tx(
+            () ->
+                c.evidenceRepository
+                    .findByCreationOperation(fixture.intent.creationOperationId())
+                    .orElseThrow());
+    var crossedCutoffDuringSignerRead = new AtomicBoolean();
+    var assembled =
+        assembleStoredOwner(
+            c,
+            fixture,
+            new AccountAuditOutboxRepository(c.dsl),
+            () -> {
+              awaitOriginalCutoff(c, recent);
+              crossedCutoffDuringSignerRead.set(true);
+            });
+
+    var result =
+        assembled.owner.complete(
+            fixture.intent.creationOperationId(),
+            assembled.terminal,
+            assembled.environment,
+            assembled.recent);
+
+    assertThat(result.state())
+        .isEqualTo(AccountTenantCreationCompletionOwner.State.CREATED_WITHOUT_ACCOUNT_COMPLETION);
+    assertThat(result.payload()).containsExactly(assembled.terminal.evidence().canonicalBytes());
+    assertThat(result.digest()).isEqualTo(assembled.terminal.evidence().evidenceDigest());
+    assertThat(crossedCutoffDuringSignerRead).isTrue();
+    assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_source_order_settlements")))
+        .isEqualTo(1);
+    assertNoAccountCompletion(c, assembled);
+  }
+
+  private static void awaitOriginalCutoff(
+      StorageContext c, AccountRecentReauthenticationEvidence recent) {
+    // Wait on the genuine database clock; immutable owner rows and clock functions stay intact.
+    Instant cutoff =
+        recent.issuedAt().plusSeconds(recent.recentAgeSeconds() - recent.maxClockSkewSeconds());
+    c.tx(
+        () -> {
+          c.dsl.execute("SET LOCAL statement_timeout = '20s'");
+          return c.dsl.fetch(
+              "SELECT pg_sleep(GREATEST(0.0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
+              OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
+        });
+  }
+
+  private static void assertNoAccountCompletion(StorageContext c, StoredOwner assembled) {
+    assertAtomicRows(c, 0);
+    for (String table :
+        List.of(
+            "account_canonical_tenant_identity_claims",
+            "account_recent_reauthentication_consumptions",
+            "account_audit_outbox")) {
+      assertThat(c.dsl.fetchCount(DSL.table(table))).as(table).isZero();
+    }
+    assertThat(
+            c.dsl.fetchCount(
+                DSL.table("account_authority_generations"),
+                DSL.field("scope_kind").in("TENANT", "MEMBERSHIP")))
+        .isZero();
+    org.mockito.Mockito.verifyNoInteractions(assembled.capture);
   }
 
   @Test
@@ -684,6 +795,14 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
    */
   private static StoredOwner assembleStoredOwner(
       StorageContext c, StorageFixture fixture, AccountAuditOutboxRepository audit) {
+    return assembleStoredOwner(c, fixture, audit, () -> {});
+  }
+
+  private static StoredOwner assembleStoredOwner(
+      StorageContext c,
+      StorageFixture fixture,
+      AccountAuditOutboxRepository audit,
+      Runnable beforeSignerRead) {
     var dsl = c.dsl;
     var intent = fixture.intent;
     var recent =
@@ -760,6 +879,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         .thenAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              beforeSignerRead.run();
               return new AccountControlUiActorService.AcceptedSignerKey(
                   "test-key", "test-fingerprint");
             });
@@ -832,6 +952,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             new IndividualCreatorPartyRepository(dsl, identities, bootstrapOperations),
             new AccountInitialTenantBillingOwnerRepository(dsl),
             c.service,
+            c.evidenceRepository,
             audit,
             c.manager);
     var dispatches =
@@ -852,7 +973,13 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     when(prepared.sourceOrderBinding()).thenReturn(holderBytes);
     when(prepared.authorizationDigest()).thenReturn(authorizationDigest);
     return new StoredOwner(
-        owner, terminal, mock(CapturedEnvironmentBoundary.class), recent, dispatches, prepared);
+        owner,
+        terminal,
+        mock(CapturedEnvironmentBoundary.class),
+        recent,
+        dispatches,
+        prepared,
+        capture);
   }
 
   private record StoredOwner(
@@ -861,7 +988,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
       CapturedEnvironmentBoundary environment,
       AccountRecentReauthenticationEvidence recent,
       AccountTenantCreationDispatchRepository dispatches,
-      AccountTenantCreationAdmissionOwner.PreparedResult prepared) {}
+      AccountTenantCreationAdmissionOwner.PreparedResult prepared,
+      AccountTenantCreationOwnerSourceCapture capture) {}
 
   private static void seedSerializationRows(StorageContext context, List<SourceEvidence> sources) {
     context.tx(
