@@ -21,10 +21,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Real Account/primary/source transactions and current-restriction denial, not positive issuance.
- * The separate global Account has no tenant membership. Existing fixture creator/legal inputs and
- * deployment identity remain controlled setup. No current restriction row, private owner-proof
- * bypass, committed signer or positive registry receipt is manufactured. Public restriction commit
- * remains unavailable, so the complete positive signer/Coordination/actor path is not established.
+ * The separate uncertified global Account has no tenant membership or current restriction
+ * projection. Existing creator/legal and deployment inputs remain controlled. No current
+ * restriction row, private owner-proof bypass, committed signer or positive registry receipt is
+ * manufactured here. The certified signer/Coordination/actor composition is defined separately in
+ * AccountControlUiPositiveOwnerPostgresIntegrationTest, with its own qualification limits.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountGlobalControlUiIssuancePostgresIntegrationTest {
