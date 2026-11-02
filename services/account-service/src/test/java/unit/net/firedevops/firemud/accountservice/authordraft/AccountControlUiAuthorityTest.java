@@ -163,9 +163,12 @@ class AccountControlUiAuthorityTest {
     var context = new AccountCaptureContext();
     when(context.roleRow.get("global_roles", String[].class)).thenReturn(null);
     assertThatThrownBy(context::capture).isInstanceOf(IllegalStateException.class);
+    when(context.roleRow.get("global_roles", String[].class)).thenReturn(new String[0]);
+    context.capture();
     context.account.setLifecycleState(AccountLifecycleState.SECURITY_LOCKED);
     assertThatThrownBy(context::capture).isInstanceOf(IllegalStateException.class);
     context.account.setLifecycleState(AccountLifecycleState.ACTIVE);
+    context.capture();
     context.account.setAccountUuidSourceNumericId(99L);
     assertThatThrownBy(context::capture).isInstanceOf(IllegalStateException.class);
   }

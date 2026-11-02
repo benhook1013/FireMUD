@@ -766,33 +766,14 @@ CREATE TRIGGER account_tenant_creation_source_order_settlement_no_truncate
     BEFORE TRUNCATE ON account_tenant_creation_source_order_settlements
     FOR EACH STATEMENT EXECUTE FUNCTION account_tenant_creation_source_order_no_mutation();
 
--- Extend the assembled V87 writer exclusion in-place. Actual owner UPDATE/DELETE/INSERT and
--- TRUNCATE guards keep deriving exact old/new source scopes; this adds only the new pending holder.
-CREATE OR REPLACE FUNCTION account_control_ui_hold_required_sources(source_keys TEXT[])
-RETURNS VOID LANGUAGE plpgsql AS $$
+-- Add only the tenant-creation pending holder to the fully assembled writer gate. Preserve the
+-- earlier publication, intake, admission, and participation exclusions and their lock order.
+DO $migration$
 DECLARE
-    source_key_value TEXT;
-    operation_value UUID;
-BEGIN
-    FOR source_key_value IN SELECT value FROM
-        (SELECT DISTINCT value FROM unnest(source_keys) value WHERE value IS NOT NULL) exact_keys
-        ORDER BY account_publication_authorization_source_sort_key(value) LOOP
-        INSERT INTO account_draft_authorization_source_locks(source_key)
-            VALUES (source_key_value) ON CONFLICT DO NOTHING;
-        PERFORM source_key FROM account_draft_authorization_source_locks
-            WHERE source_key = source_key_value FOR UPDATE NOWAIT;
-    END LOOP;
-    FOR operation_value IN SELECT DISTINCT s.operation_id
-        FROM account_draft_authorization_sources s WHERE s.source_key = ANY(source_keys)
-        ORDER BY s.operation_id LOOP
-        PERFORM operation_id FROM account_draft_authorization_fences
-            WHERE operation_id = operation_value FOR UPDATE NOWAIT;
-        IF NOT account_draft_authorization_is_settled(operation_value) THEN
-            RAISE EXCEPTION 'Required creator source is held until every original owner settles'
-                USING ERRCODE = '55P03';
-        END IF;
-    END LOOP;
-    FOR operation_value IN SELECT DISTINCT s.creation_operation_id
+    original TEXT;
+    anchor TEXT := $anchor$    FOR operation_value IN SELECT DISTINCT s.operation_id
+        FROM account_draft_authorization_sources s$anchor$;
+    source_order_guard TEXT := $guard$    FOR operation_value IN SELECT DISTINCT s.creation_operation_id
         FROM account_tenant_creation_source_order_sources s WHERE s.source_key = ANY(source_keys)
         ORDER BY s.creation_operation_id LOOP
         IF NOT account_tenant_creation_source_order_is_settled(operation_value) THEN
@@ -800,6 +781,14 @@ BEGIN
                 USING ERRCODE = '55P03';
         END IF;
     END LOOP;
+$guard$;
+BEGIN
+    SELECT pg_get_functiondef('account_control_ui_hold_required_sources(TEXT[])'::REGPROCEDURE)
+        INTO STRICT original;
+    IF (length(original) - length(replace(original, anchor, ''))) / length(anchor) <> 1 THEN
+        RAISE EXCEPTION 'Expected exactly one assembled Account Draft source-writer anchor';
+    END IF;
+    EXECUTE replace(original, anchor, source_order_guard || anchor);
 END;
-$$;
+$migration$;
 -- [jooq ignore stop]
