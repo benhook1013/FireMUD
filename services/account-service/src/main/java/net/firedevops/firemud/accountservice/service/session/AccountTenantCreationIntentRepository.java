@@ -128,6 +128,42 @@ public final class AccountTenantCreationIntentRepository {
     return Optional.of(original);
   }
 
+  /** Reads and compares the exact durable original row without granting any authority. */
+  static boolean matchesExactPersistedOriginal(DSLContext dsl, OriginalIntent intent) {
+    Objects.requireNonNull(dsl, "Account tenant-creation SQL owner is required");
+    Objects.requireNonNull(intent, "persisted original tenant-creation intent is required");
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM " + TABLE + " WHERE creation_operation_id = ? AND request_id = ?",
+            intent.creationOperationId(),
+            intent.requestId());
+    return row != null
+        && intent.creationOperationId().equals(row.get("creation_operation_id", UUID.class))
+        && intent.requestId().equals(row.get("request_id", UUID.class))
+        && intent
+            .gameDesignCreationRequestId()
+            .equals(row.get("game_design_creation_request_id", UUID.class))
+        && intent.initiatingAccountId().equals(row.get("initiating_account_uuid", UUID.class))
+        && intent.targetNamespace().equals(row.get("target_namespace", String.class))
+        && intent.sourceGameTenantKey().equals(row.get("source_game_tenant_key", String.class))
+        && intent.name().equals(row.get("name", String.class))
+        && Objects.equals(intent.description(), row.get("description", String.class))
+        && intent
+            .recentReauthenticationEvidenceId()
+            .equals(row.get("recent_reauthentication_evidence_id", UUID.class))
+        && intent.creatorPartyId().equals(row.get("creator_party_id", UUID.class))
+        && intent.consentOperationId().equals(row.get("consent_operation_id", UUID.class))
+        && Integer.valueOf(intent.consentStatementVersion())
+            .equals(row.get("consent_statement_version", Integer.class))
+        && Boolean.valueOf(intent.affirmativeConsent())
+            .equals(row.get("affirmative_consent", Boolean.class))
+        && intent
+            .gameDesignRequestDigest()
+            .equals(row.get("game_design_request_digest", String.class))
+        && Arrays.equals(intent.requestPayload(), row.get("request_payload", byte[].class))
+        && intent.requestDigest().equals(row.get("request_digest", String.class));
+  }
+
   private Record findByRequestId(UUID requestId) {
     return dsl.fetchOne("SELECT * FROM " + TABLE + " WHERE request_id = ?", requestId);
   }
@@ -184,7 +220,26 @@ public final class AccountTenantCreationIntentRepository {
         request.description());
   }
 
-  private static byte[] canonicalRequestPayload(Request request) {
+  static byte[] canonicalRequestPayload(OriginalIntent original) {
+    Objects.requireNonNull(original, "original tenant-creation intent is required");
+    return canonicalRequestPayload(
+        new Request(
+            original.requestId(),
+            original.creationOperationId(),
+            original.gameDesignCreationRequestId(),
+            original.initiatingAccountId(),
+            original.targetNamespace(),
+            original.sourceGameTenantKey(),
+            original.name(),
+            original.description(),
+            original.recentReauthenticationEvidenceId(),
+            original.creatorPartyId(),
+            original.consentOperationId(),
+            original.consentStatementVersion(),
+            original.affirmativeConsent()));
+  }
+
+  static byte[] canonicalRequestPayload(Request request) {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       frame(output, REQUEST_DOMAIN);

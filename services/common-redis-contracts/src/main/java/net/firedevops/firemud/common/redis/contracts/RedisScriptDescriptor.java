@@ -27,6 +27,10 @@ public record RedisScriptDescriptor(
 
   public static final String NO_PAYLOAD_VERSION = "none";
   public static final String LEGACY_PAYLOAD_VERSION = "legacy";
+  private static final String FULL_KEY_ANCHOR_SCRIPT_ID = "account-tenant-creation-admission.v1";
+  private static final String FULL_KEY_ANCHOR_OWNER = "account-service";
+  private static final String FULL_KEY_ANCHOR_TOKEN_PREFIX = "session:auth:token:";
+  private static final String FULL_KEY_ANCHOR_RECEIPT_PREFIX = "session:auth:creation-admission:";
 
   private static final Pattern SCRIPT_ID_PATTERN =
       Pattern.compile("[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)*\\.v[1-9][0-9]*");
@@ -116,6 +120,15 @@ public record RedisScriptDescriptor(
             || keys.get(1).hashTagDeclaration() != HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG)) {
       throw new IllegalArgumentException(
           "full-key anchor slot binding requires exactly an anchor then its tagged companion");
+    }
+    if (fullKeyCompanion
+        && (!FULL_KEY_ANCHOR_SCRIPT_ID.equals(scriptId)
+            || !FULL_KEY_ANCHOR_OWNER.equals(owner)
+            || role != RedisRole.COORDINATION
+            || !FULL_KEY_ANCHOR_TOKEN_PREFIX.equals(keys.get(0).ownedPrefix())
+            || !FULL_KEY_ANCHOR_RECEIPT_PREFIX.equals(keys.get(1).ownedPrefix()))) {
+      throw new IllegalArgumentException(
+          "full-key anchor slot binding is reserved for the Account tenant-creation admission descriptor");
     }
     if (!fullKeyCompanion
         && keys.size() > 1

@@ -1,8 +1,6 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -314,7 +312,7 @@ final class AccountTenantCreationSourceOrderBinding {
     if (intent.consentStatementVersion() <= 0 || !intent.affirmativeConsent()) {
       throw conflict("Affirmative versioned tenant-creation consent is required");
     }
-    byte[] canonicalRequest = canonicalRequestPayload(intent);
+    byte[] canonicalRequest = AccountTenantCreationIntentRepository.canonicalRequestPayload(intent);
     if (!Arrays.equals(canonicalRequest, intent.requestPayload())
         || !DraftAuthorizationFenceBinding.digest(canonicalRequest).equals(intent.requestDigest())
         || !GameTenantCreationDigest.requestDigest(
@@ -326,56 +324,6 @@ final class AccountTenantCreationSourceOrderBinding {
             .equals(intent.gameDesignRequestDigest())) {
       throw conflict("Original tenant-creation intent bytes or digest differ");
     }
-  }
-
-  private static byte[] canonicalRequestPayload(OriginalIntent intent) {
-    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-    try (DataOutputStream output = new DataOutputStream(bytes)) {
-      frame(output, "account-tenant-creation-intent-request/v1");
-      frame(output, "requestId");
-      frame(output, intent.requestId().toString());
-      frame(output, "creationOperationId");
-      frame(output, intent.creationOperationId().toString());
-      frame(output, "gameDesignCreationRequestId");
-      frame(output, intent.gameDesignCreationRequestId().toString());
-      frame(output, "initiatingAccountId");
-      frame(output, intent.initiatingAccountId().toString());
-      frame(output, "targetNamespace");
-      frame(output, intent.targetNamespace());
-      frame(output, "sourceGameTenantKey");
-      frame(output, intent.sourceGameTenantKey());
-      frame(output, "name");
-      frame(output, intent.name());
-      frame(output, "description");
-      frame(output, intent.description() == null ? "ABSENT" : "PRESENT");
-      if (intent.description() != null) {
-        frame(output, intent.description());
-      }
-      frame(output, "recentReauthenticationEvidenceId");
-      frame(output, intent.recentReauthenticationEvidenceId().toString());
-      frame(output, "creatorPartyId");
-      frame(output, intent.creatorPartyId().toString());
-      frame(output, "consentOperationId");
-      frame(output, intent.consentOperationId().toString());
-      frame(output, "consentStatementVersion");
-      frame(output, Integer.toString(intent.consentStatementVersion()));
-      frame(output, "affirmativeConsent");
-      frame(output, Boolean.toString(intent.affirmativeConsent()));
-    } catch (IOException impossible) {
-      throw new IllegalStateException(
-          "Unable to encode original tenant-creation request", impossible);
-    }
-    return bytes.toByteArray();
-  }
-
-  private static void frame(DataOutputStream output, String value) throws IOException {
-    String exact = Objects.requireNonNull(value);
-    byte[] encoded = exact.getBytes(StandardCharsets.UTF_8);
-    if (GameTenantCreationDigest.utf8ByteLength(exact) != encoded.length) {
-      throw new IllegalArgumentException("Creation inputs must contain valid Unicode");
-    }
-    output.writeInt(encoded.length);
-    output.write(encoded);
   }
 
   private static IntentFields parseIntentPayload(byte[] payload) {

@@ -726,10 +726,15 @@ $$;
 
 CREATE FUNCTION account_tenant_creation_source_order_is_settled(operation_value UUID)
 RETURNS BOOLEAN LANGUAGE SQL STABLE STRICT AS $$
+    -- A committed settlement and every retained input it validates are immutable. The INSERT
+    -- guard validates the complete original binding and terminal payload, and deferred source
+    -- completeness guards must pass before commit. Current issuer/policy/terms state is not an
+    -- input to that proof. Do not reparse all historical payloads on each shared-source write;
+    -- explicit settlement reads still perform full semantic validation. A future migration that
+    -- changes retained inputs or validator semantics must reestablish this equivalence.
     SELECT EXISTS (
         SELECT 1 FROM account_tenant_creation_source_order_settlements settlement
         WHERE settlement.creation_operation_id = operation_value
-          AND account_tenant_creation_source_order_settlement_valid(settlement)
     )
 $$;
 

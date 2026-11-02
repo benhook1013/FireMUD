@@ -155,4 +155,4 @@ CREATE TRIGGER account_initial_billing_owner_no_truncate
 CREATE TRIGGER account_tenant_billing_owner_initial_insert_guard
     BEFORE INSERT ON account_tenant_billing_owners
     FOR EACH ROW EXECUTE FUNCTION account_tenant_billing_owner_initial_insert_guard();
--- [jooq ignore end]
+-- [jooq ignore stop]

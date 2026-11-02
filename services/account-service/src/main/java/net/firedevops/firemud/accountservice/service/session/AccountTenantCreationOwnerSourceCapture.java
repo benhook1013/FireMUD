@@ -8,7 +8,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
@@ -193,37 +192,7 @@ final class AccountTenantCreationOwnerSourceCapture {
   }
 
   private void requireExactPersistedIntent(OriginalIntent intent) {
-    Record row =
-        dsl.fetchOne(
-            "SELECT * FROM account_tenant_creation_original_intents "
-                + "WHERE creation_operation_id = ? AND request_id = ?",
-            intent.creationOperationId(),
-            intent.requestId());
-    if (row == null
-        || !intent.creationOperationId().equals(row.get("creation_operation_id", UUID.class))
-        || !intent.requestId().equals(row.get("request_id", UUID.class))
-        || !intent
-            .gameDesignCreationRequestId()
-            .equals(row.get("game_design_creation_request_id", UUID.class))
-        || !intent.initiatingAccountId().equals(row.get("initiating_account_uuid", UUID.class))
-        || !intent.targetNamespace().equals(row.get("target_namespace", String.class))
-        || !intent.sourceGameTenantKey().equals(row.get("source_game_tenant_key", String.class))
-        || !intent.name().equals(row.get("name", String.class))
-        || !Objects.equals(intent.description(), row.get("description", String.class))
-        || !intent
-            .recentReauthenticationEvidenceId()
-            .equals(row.get("recent_reauthentication_evidence_id", UUID.class))
-        || !intent.creatorPartyId().equals(row.get("creator_party_id", UUID.class))
-        || !intent.consentOperationId().equals(row.get("consent_operation_id", UUID.class))
-        || !Integer.valueOf(intent.consentStatementVersion())
-            .equals(row.get("consent_statement_version", Integer.class))
-        || !Boolean.valueOf(intent.affirmativeConsent())
-            .equals(row.get("affirmative_consent", Boolean.class))
-        || !intent
-            .gameDesignRequestDigest()
-            .equals(row.get("game_design_request_digest", String.class))
-        || !Arrays.equals(intent.requestPayload(), row.get("request_payload", byte[].class))
-        || !intent.requestDigest().equals(row.get("request_digest", String.class))) {
+    if (!AccountTenantCreationIntentRepository.matchesExactPersistedOriginal(dsl, intent)) {
       throw denied();
     }
   }
