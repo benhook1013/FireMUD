@@ -342,6 +342,36 @@ class AccountControlUiSigningAndActorTest {
   }
 
   @Test
+  void accountActorAuthenticationObservesCurrentSourcesWithoutProducerFence() throws Exception {
+    Fixture f = new Fixture(true);
+    String compact = f.sign(f.claims);
+    f.owner(compact);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new byte[] {12};
+            })
+        .when(f.registry)
+        .readActive(anyString());
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return f.snapshot;
+            })
+        .when(f.authority)
+        .captureAccount(f.actor);
+
+    var actor = f.actors.authenticateAccount(compact);
+
+    assertThat(actor.accountId()).isEqualTo(f.actor);
+    assertThat(actor.issuanceOperationId()).isEqualTo(f.operationId);
+    assertThat(actor.tokenHash()).isEqualTo(f.stored.tokenHash);
+    verify(f.authority).captureAccount(f.actor);
+    verify(f.fences, never()).lockProducerSourcesNowait(any());
+    verify(f.authority, never()).capture(any(), any(), any());
+  }
+
+  @Test
   void accountActorRejectsChangedSourceOrRoleAndNeverInvokesMutation() throws Exception {
     Fixture f = new Fixture(true);
     String compact = f.sign(f.claims);
@@ -354,6 +384,8 @@ class AccountControlUiSigningAndActorTest {
                     current -> {
                       throw new AssertionError("mutation must not run");
                     }))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> f.actors.authenticateAccount(compact))
         .isInstanceOf(IllegalStateException.class);
     when(f.snapshot.evidence()).thenReturn(new byte[] {7});
     when(f.snapshot.globalRoles()).thenReturn(List.of());
@@ -453,7 +485,7 @@ class AccountControlUiSigningAndActorTest {
         .isEqualTo(f.operationId);
     verify(f.fences, times(2)).lockProducerSourcesNowait(f.snapshot.sources());
     assertThat(f.actors.authenticateAccount(compact).accountId()).isEqualTo(f.actor);
-    verify(f.fences, times(3)).lockProducerSourcesNowait(f.snapshot.sources());
+    verify(f.fences, times(2)).lockProducerSourcesNowait(f.snapshot.sources());
     verify(f.authority, never()).capture(any(), any(), any());
     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
   }

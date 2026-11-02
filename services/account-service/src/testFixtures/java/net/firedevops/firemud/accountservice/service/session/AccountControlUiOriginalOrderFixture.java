@@ -211,7 +211,8 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             testCatalog());
     operations =
         migrationTarget != null
-                && List.of("160.1", "1006", "1007", "1009", "1010").contains(migrationTarget)
+                && AccountControlUiOwnerSourcesFixture.HISTORICAL_MIGRATION_TARGETS.contains(
+                    migrationTarget)
             ? new AccountHistoricalControlUiIssuanceRepository(f.dsl)
             : new AccountControlUiIssuanceRepository(f.dsl);
     publicSource =

@@ -208,7 +208,7 @@ class AccountGlobalControlUiScopePostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration", "classpath:db/migration/saga")
+        .locations("classpath:db/migration")
         .target(MigrationVersion.fromVersion(target))
         .load();
   }

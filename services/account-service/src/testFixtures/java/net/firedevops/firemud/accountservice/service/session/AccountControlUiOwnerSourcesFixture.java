@@ -86,6 +86,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 /** Real Account source/auth owners with explicitly stipulated upstream creator/legal inputs. */
 final class AccountControlUiOwnerSourcesFixture {
   private static final String NAMESPACE = "control-ui-owner-proof";
+  private static final String CONTROLLED_POLICY_SOURCE_ROOT =
+      "/controlled-test/owner-protected-mount";
+  static final List<String> HISTORICAL_MIGRATION_TARGETS =
+      List.of("160.1", "1006", "1007", "1009", "1010");
   static final String CALLER =
       "spiffe://firemud/ns/control-ui-owner-proof/sa/logging-admin-service";
   public static final String OTP = "test-only-original-creator-otp";
@@ -143,12 +147,7 @@ final class AccountControlUiOwnerSourcesFixture {
       UUID tenant,
       String migrationTarget)
       throws Exception {
-    if (migrationTarget != null
-        && !"160.1".equals(migrationTarget)
-        && !"1006".equals(migrationTarget)
-        && !"1007".equals(migrationTarget)
-        && !"1009".equals(migrationTarget)
-        && !"1010".equals(migrationTarget)) {
+    if (migrationTarget != null && !HISTORICAL_MIGRATION_TARGETS.contains(migrationTarget)) {
       throw new IllegalArgumentException(
           "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read, 1009 selected-owner predecessor, or 1010 selected-publication closure predecessor is supported");
     }
@@ -518,29 +517,17 @@ final class AccountControlUiOwnerSourcesFixture {
       assertThat(row.get("policy_rule", String.class)).isEqualTo("CERTIFY_NEW_ACTIVE_ACCOUNT");
       assertThat(row.get("closure_rule", String.class)).isEqualTo("EXACT_FRESH_INSERT_ONLY");
       assertThat(row.get("source_identity", String.class)).isEqualTo(owner);
-      assertThat(row.get("source_root", String.class))
-          .isEqualTo("/controlled-test/owner-protected-mount");
+      assertThat(row.get("source_root", String.class)).isEqualTo(CONTROLLED_POLICY_SOURCE_ROOT);
       byte[] publicationBytes =
-          AccountControlUiAuthority.canonical(
-              Map.of(
-                  "schemaVersion",
-                  "account-fresh-enrollment-policy/v1",
-                  "category",
-                  categoryValue,
-                  "sourceIdentity",
-                  owner,
-                  "publicationId",
-                  publication.toString(),
-                  "revision",
-                  "1",
-                  "policyId",
-                  policy.toString(),
-                  "policyRule",
-                  "CERTIFY_NEW_ACTIVE_ACCOUNT",
-                  "closureId",
-                  closure.toString(),
-                  "closureRule",
-                  "EXACT_FRESH_INSERT_ONLY"));
+          canonicalPolicyPublicationBytes(
+              category,
+              owner,
+              publication,
+              1,
+              policy,
+              "CERTIFY_NEW_ACTIVE_ACCOUNT",
+              closure,
+              "EXACT_FRESH_INSERT_ONLY");
       assertThat(row.get("publication_digest", String.class))
           .isEqualTo("sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes));
       assertThat(row.get("publication_bytes", byte[].class)).containsExactly(publicationBytes);
@@ -557,26 +544,15 @@ final class AccountControlUiOwnerSourcesFixture {
     }
     UUID publication = UUID.randomUUID(), policy = UUID.randomUUID(), closure = UUID.randomUUID();
     byte[] publicationBytes =
-        AccountControlUiAuthority.canonical(
-            Map.of(
-                "schemaVersion",
-                "account-fresh-enrollment-policy/v1",
-                "category",
-                categoryValue,
-                "sourceIdentity",
-                owner,
-                "publicationId",
-                publication.toString(),
-                "revision",
-                "1",
-                "policyId",
-                policy.toString(),
-                "policyRule",
-                "CERTIFY_NEW_ACTIVE_ACCOUNT",
-                "closureId",
-                closure.toString(),
-                "closureRule",
-                "EXACT_FRESH_INSERT_ONLY"));
+        canonicalPolicyPublicationBytes(
+            category,
+            owner,
+            publication,
+            1,
+            policy,
+            "CERTIFY_NEW_ACTIVE_ACCOUNT",
+            closure,
+            "EXACT_FRESH_INSERT_ONLY");
     dsl.execute(
         "INSERT INTO account_fresh_enrollment_policy_publications"
             + " (publication_id, category, revision, policy_id, closure_id, policy_rule, closure_rule,"
@@ -587,13 +563,44 @@ final class AccountControlUiOwnerSourcesFixture {
         policy,
         closure,
         owner,
-        "/controlled-test/owner-protected-mount",
+        CONTROLLED_POLICY_SOURCE_ROOT,
         "sha256:" + AccountControlUiIssuanceRepository.hash(publicationBytes),
         publicationBytes);
     dsl.execute(
         "INSERT INTO account_fresh_enrollment_policy_current (category, publication_id, revision) VALUES (?, ?, 1)",
         categoryValue,
         publication);
+  }
+
+  private static byte[] canonicalPolicyPublicationBytes(
+      Category category,
+      String owner,
+      UUID publication,
+      long revision,
+      UUID policy,
+      String policyRule,
+      UUID closure,
+      String closureRule) {
+    return AccountControlUiAuthority.canonical(
+        Map.of(
+            "schemaVersion",
+            "account-fresh-enrollment-policy/v1",
+            "category",
+            category.storageValue(),
+            "sourceIdentity",
+            owner,
+            "publicationId",
+            publication.toString(),
+            "revision",
+            Long.toString(revision),
+            "policyId",
+            policy.toString(),
+            "policyRule",
+            policyRule,
+            "closureId",
+            closure.toString(),
+            "closureRule",
+            closureRule));
   }
 
   /** Stores an actual hashed email-OTP challenge for the separate Account's real primary path. */

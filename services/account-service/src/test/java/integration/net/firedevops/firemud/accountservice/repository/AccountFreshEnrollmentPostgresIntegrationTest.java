@@ -353,12 +353,19 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
     CountDownLatch shared = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
     CountDownLatch writerStarted = new CountDownLatch(1);
+    AtomicReference<Integer> readerPid = new AtomicReference<>();
+    AtomicReference<Integer> writerPid = new AtomicReference<>();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var reader =
           executor.submit(
               () ->
                   context.transaction.execute(
                       status -> {
+                        int backendPid =
+                            Objects.requireNonNull(
+                                    context.dsl.fetchOne("SELECT pg_backend_pid() AS pid"))
+                                .get("pid", Integer.class);
+                        readerPid.set(backendPid);
                         new AccountFreshEnrollmentPolicyRepository(context.dsl)
                             .lockCurrentPolicies();
                         shared.countDown();
@@ -371,6 +378,11 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
               () ->
                   context.transaction.executeWithoutResult(
                       status -> {
+                        int backendPid =
+                            Objects.requireNonNull(
+                                    context.dsl.fetchOne("SELECT pg_backend_pid() AS pid"))
+                                .get("pid", Integer.class);
+                        writerPid.set(backendPid);
                         writerStarted.countDown();
                         controlledPublication(
                             context,
@@ -380,8 +392,13 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
                             "CLOSED");
                       }));
       assertThat(writerStarted.await(10, TimeUnit.SECONDS)).isTrue();
-      assertThatThrownBy(() -> writer.get(200, TimeUnit.MILLISECONDS))
-          .isInstanceOf(java.util.concurrent.TimeoutException.class);
+      assertThat(readerPid.get()).isNotNull();
+      assertThat(writerPid.get()).isNotNull();
+      assertThat(
+              awaitPostgresBlocking(
+                  context, writerPid.get(), readerPid.get(), 10, TimeUnit.SECONDS))
+          .isTrue();
+      assertThat(writer.isDone()).isFalse();
       release.countDown();
       assertThat(reader.get(10, TimeUnit.SECONDS)).isNotNull();
       writer.get(10, TimeUnit.SECONDS);
@@ -673,6 +690,21 @@ class AccountFreshEnrollmentPostgresIntegrationTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(exception);
     }
+  }
+
+  private static boolean awaitPostgresBlocking(
+      Context context, int waiterPid, int blockerPid, long timeout, TimeUnit unit) {
+    long deadline = System.nanoTime() + unit.toNanos(timeout);
+    do {
+      Boolean blocked =
+          Objects.requireNonNull(
+                  context.dsl.fetchOne(
+                      "SELECT ? = ANY(pg_blocking_pids(?)) AS blocked", blockerPid, waiterPid))
+              .get("blocked", Boolean.class);
+      if (Boolean.TRUE.equals(blocked)) return true;
+      Thread.yield();
+    } while (System.nanoTime() < deadline);
+    return false;
   }
 
   private static AccountFreshEnrollmentRequest request() {
