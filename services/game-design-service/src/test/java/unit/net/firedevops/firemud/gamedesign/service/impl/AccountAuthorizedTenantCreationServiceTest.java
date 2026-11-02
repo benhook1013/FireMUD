@@ -3,12 +3,15 @@ package unit.net.firedevops.firemud.gamedesign.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -18,15 +21,36 @@ import io.grpc.Context;
 import io.grpc.Deadline;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.stub.ServerCallStreamObserver;
+import io.grpc.stub.StreamObserver;
+import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongPredicate;
+import net.firedevops.firemud.account.v1.ResolveCurrentTenantCreationAuthorizationRequest;
+import net.firedevops.firemud.account.v1.ResolveCurrentTenantCreationAuthorizationResponse;
+import net.firedevops.firemud.account.v1.TenantCreationCurrentAuthorizationReadServiceGrpc;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.tenant.CurrentTenantCreationAuthorizationGrpcCodec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
@@ -41,6 +65,7 @@ import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
 import net.firedevops.firemud.gamedesign.service.impl.AccountAuthorizedTenantCreationService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -186,6 +211,120 @@ class AccountAuthorizedTenantCreationServiceTest {
   }
 
   @Test
+  void actualReadDeadlineExpiryRetriesWithinFiveSecondDispatchBeforeExactlyOneCreation(
+      @TempDir Path directory) throws Exception {
+    VerifiedAuthorization expected = prepareFreshCreation();
+    long validBefore = expected.validBeforeEpochMillis();
+    var readIds = new ConcurrentLinkedQueue<UUID>();
+    var failures = new ConcurrentLinkedQueue<Status.Code>();
+    var firstReadCancelled = new CountDownLatch(1);
+    var successfulReadId = new AtomicReference<UUID>();
+    var firstReadBudgetNanos = new AtomicLong();
+    var remainingDispatchBudgetNanos = new AtomicLong();
+    var endpoint =
+        new TenantCreationCurrentAuthorizationReadServiceGrpc
+            .TenantCreationCurrentAuthorizationReadServiceImplBase() {
+          @Override
+          public void resolveCurrentTenantCreationAuthorization(
+              ResolveCurrentTenantCreationAuthorizationRequest request,
+              StreamObserver<ResolveCurrentTenantCreationAuthorizationResponse> observer) {
+            var decoded = CurrentTenantCreationAuthorizationGrpcCodec.decodeRequest(request);
+            readIds.add(decoded.readRequestId());
+            if (readIds.size() == 1) {
+              firstReadBudgetNanos.set(
+                  Objects.requireNonNull(Context.current().getDeadline())
+                      .timeRemaining(TimeUnit.NANOSECONDS));
+              ((ServerCallStreamObserver<ResolveCurrentTenantCreationAuthorizationResponse>)
+                      observer)
+                  .setOnCancelHandler(firstReadCancelled::countDown);
+              // Send no response or error: the actual client-side read deadline must expire.
+              return;
+            }
+            successfulReadId.set(decoded.readRequestId());
+            observer.onNext(
+                CurrentTenantCreationAuthorizationGrpcCodec.response(
+                    decoded.readRequestId(), decoded.binding(), validBefore));
+            observer.onCompleted();
+          }
+        };
+    var tls = new CommonGrpcClientProperties();
+    tls.setCertChain(Files.createFile(directory.resolve("client.crt")).toString());
+    tls.setPrivateKey(Files.createFile(directory.resolve("client.key")).toString());
+    tls.setCaCert(Files.createFile(directory.resolve("ca.crt")).toString());
+    var client =
+        spy(
+            new AccountTenantCreationCurrentAuthorizationClient(
+                new ServiceEndpointsProperties(), tls, mock(GrpcChannelFactory.class), NAMESPACE));
+    // Loopback transport controls timing; exact peer pinning has separate client wiring proof.
+    var server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .directExecutor()
+            .addService(endpoint)
+            .build()
+            .start();
+    var channel =
+        NettyChannelBuilder.forAddress("127.0.0.1", server.getPort())
+            .usePlaintext()
+            .directExecutor()
+            .build();
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    try (client) {
+      var stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+      stubField.setAccessible(true);
+      stubField.set(
+          client, TenantCreationCurrentAuthorizationReadServiceGrpc.newBlockingStub(channel));
+      var initialized =
+          AbstractReloadingBlockingGrpcClient.class.getDeclaredField("explicitlyInitialized");
+      initialized.setAccessible(true);
+      initialized.setBoolean(client, true);
+      doAnswer(
+              invocation -> {
+                try {
+                  return invocation.callRealMethod();
+                } catch (StatusRuntimeException failure) {
+                  failures.add(failure.getStatus().getCode());
+                  remainingDispatchBudgetNanos.set(
+                      Objects.requireNonNull(Context.current().getDeadline())
+                          .timeRemaining(TimeUnit.NANOSECONDS));
+                  throw failure;
+                }
+              })
+          .when(client)
+          .resolveCurrent(BINDING);
+      when(dispatchRepository.readCommitted(BINDING))
+          .thenAnswer(
+              invocation ->
+                  Optional.of(
+                      new AuthorizedDispatch(BINDING, successfulReadId.get(), validBefore)));
+
+      try (var incoming = Context.current().withDeadlineAfter(5, TimeUnit.SECONDS, scheduler)) {
+        incoming.run(() -> assertThat(service(client).create(candidate())).isEqualTo(receipt()));
+        assertThat(incoming.isCancelled()).isFalse();
+        assertThat(readIds).hasSize(2).doesNotHaveDuplicates();
+        assertThat(failures).containsExactly(Status.Code.DEADLINE_EXCEEDED);
+        assertThat(firstReadBudgetNanos.get()).isBetween(1L, TimeUnit.MILLISECONDS.toNanos(1500));
+        assertThat(remainingDispatchBudgetNanos.get())
+            .isGreaterThanOrEqualTo(TimeUnit.SECONDS.toNanos(1));
+        assertThat(firstReadCancelled.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(retryDelays).isEmpty();
+        verify(client, times(2)).resolveCurrent(BINDING);
+        verify(creationRepository)
+            .createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+        verify(outcomeRepository).claimLocked(BINDING);
+        verify(dispatchRepository)
+            .recordAuthorizedDispatch(BINDING, successfulReadId.get(), validBefore);
+        verify(transactionManager).commit(any(TransactionStatus.class));
+      }
+    } finally {
+      scheduler.shutdownNow();
+      channel.shutdownNow();
+      server.shutdownNow();
+      channel.awaitTermination(5, TimeUnit.SECONDS);
+      server.awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  @Test
   void transientReadExhaustionWithoutIncomingDeadlineStopsAfterThreeAttemptsBeforeWrites() {
     StatusRuntimeException unavailable = Status.UNAVAILABLE.asRuntimeException();
     when(authorizationClient.resolveCurrent(BINDING))
@@ -250,7 +389,7 @@ class AccountAuthorizedTenantCreationServiceTest {
 
   @Test
   void incomingDeadlineBecomingShortDuringReadPreventsRetry() {
-    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    var scheduler = nonFiringDeadlineScheduler();
     AtomicLong nanos = new AtomicLong();
     Deadline deadline =
         Deadline.after(
@@ -275,8 +414,6 @@ class AccountAuthorizedTenantCreationServiceTest {
           () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
       verify(authorizationClient).resolveCurrent(BINDING);
       assertNoOwnerWrites();
-    } finally {
-      scheduler.shutdownNow();
     }
   }
 
@@ -304,7 +441,7 @@ class AccountAuthorizedTenantCreationServiceTest {
     when(authorizationClient.resolveCurrent(BINDING))
         .thenThrow(Status.UNAVAILABLE.asRuntimeException())
         .thenReturn(authorization);
-    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    var scheduler = nonFiringDeadlineScheduler();
     AtomicLong nanos = new AtomicLong();
     Deadline deadline =
         Deadline.after(
@@ -331,14 +468,12 @@ class AccountAuthorizedTenantCreationServiceTest {
       verify(creationRepository)
           .createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
       verify(transactionManager).commit(any(TransactionStatus.class));
-    } finally {
-      scheduler.shutdownNow();
     }
   }
 
   @Test
   void deadlineBecomingShortDuringDelayPreventsAnotherRead() {
-    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    var scheduler = nonFiringDeadlineScheduler();
     AtomicLong nanos = new AtomicLong();
     Deadline deadline =
         Deadline.after(
@@ -364,8 +499,6 @@ class AccountAuthorizedTenantCreationServiceTest {
       verify(authorizationClient).resolveCurrent(BINDING);
       assertThat(retryDelays).hasSize(1);
       assertNoOwnerWrites();
-    } finally {
-      scheduler.shutdownNow();
     }
   }
 
@@ -443,7 +576,7 @@ class AccountAuthorizedTenantCreationServiceTest {
   }
 
   private void assertDeadlinePreventsRetry(long remainingMillis) {
-    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    var scheduler = nonFiringDeadlineScheduler();
     Deadline deadline =
         Deadline.after(
             remainingMillis,
@@ -466,9 +599,18 @@ class AccountAuthorizedTenantCreationServiceTest {
           () -> assertThatThrownBy(() -> service().create(candidate())).isSameAs(unavailable));
       verify(authorizationClient).resolveCurrent(BINDING);
       assertNoOwnerWrites();
-    } finally {
-      scheduler.shutdownNow();
     }
+  }
+
+  private static ScheduledExecutorService nonFiringDeadlineScheduler() {
+    // Context schedules once using its initial remaining time. Fake-ticker tests advance only
+    // that ticker; a real scheduler would independently cancel them using elapsed wall time.
+    var scheduler = mock(ScheduledExecutorService.class);
+    ScheduledFuture<?> scheduledCancellation = mock(ScheduledFuture.class);
+    doReturn(scheduledCancellation)
+        .when(scheduler)
+        .schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    return scheduler;
   }
 
   private VerifiedAuthorization prepareFreshCreation() {
@@ -563,6 +705,11 @@ class AccountAuthorizedTenantCreationServiceTest {
   }
 
   private AccountAuthorizedTenantCreationService service() {
+    return service(authorizationClient);
+  }
+
+  private AccountAuthorizedTenantCreationService service(
+      AccountTenantCreationCurrentAuthorizationClient currentAuthorizationClient) {
     try {
       var constructor =
           AccountAuthorizedTenantCreationService.class.getDeclaredConstructor(
@@ -580,7 +727,7 @@ class AccountAuthorizedTenantCreationServiceTest {
             return retryPause.test(delayMillis);
           };
       return constructor.newInstance(
-          authorizationClient,
+          currentAuthorizationClient,
           creationRepository,
           outcomeRepository,
           dispatchRepository,

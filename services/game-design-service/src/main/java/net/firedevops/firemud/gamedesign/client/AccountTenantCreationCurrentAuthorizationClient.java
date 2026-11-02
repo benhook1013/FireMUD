@@ -25,7 +25,7 @@ public final class AccountTenantCreationCurrentAuthorizationClient
     extends AbstractReloadingBlockingGrpcClient<
         TenantCreationCurrentAuthorizationReadServiceGrpc
             .TenantCreationCurrentAuthorizationReadServiceBlockingStub> {
-  private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final long CALL_DEADLINE_MILLIS = 1500L;
 
   private final String workloadNamespace;
   private final GrpcServerPeerIdentityClientInterceptor peerIdentityInterceptor;
@@ -91,7 +91,7 @@ public final class AccountTenantCreationCurrentAuthorizationClient
     var response =
         requireInitializedStub(
                 "Account tenant-creation authorization client is not initialized and available")
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadlineAfter(CALL_DEADLINE_MILLIS, TimeUnit.MILLISECONDS)
             .resolveCurrentTenantCreationAuthorization(request);
     final CurrentTenantCreationAuthorizationGrpcCodec.Authorization authorization;
     try {

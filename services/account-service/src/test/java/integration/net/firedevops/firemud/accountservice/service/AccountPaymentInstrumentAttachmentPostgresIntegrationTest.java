@@ -103,6 +103,20 @@ class AccountPaymentInstrumentAttachmentPostgresIntegrationTest {
         .hasMessageContaining("changed binding");
     assertThat(f.instruments().readHistory(f.request().accountUuid(), f.request().instrumentUuid()))
         .containsExactly(observed.receipt(), unavailable);
+    int methodReadsBeforeReusedInstrument = f.transport().methodReads.get();
+    Request differentRequestForOccupiedInstrument =
+        new Request(
+            UUID.randomUUID(),
+            f.request().instrumentUuid(),
+            f.request().accountUuid(),
+            f.request().providerPaymentMethodId());
+    assertThatThrownBy(() -> f.service().retainSavedMethod(differentRequestForOccupiedInstrument))
+        .hasMessageContaining("Explicit instrument UUID already has a retained owner row");
+    assertThat(f.transport().paths).isEmpty();
+    assertThat(f.transport().methodReads.get()).isEqualTo(methodReadsBeforeReusedInstrument);
+    assertThat(f.instruments().readHistory(f.request().accountUuid(), f.request().instrumentUuid()))
+        .containsExactly(observed.receipt(), unavailable);
+    assertThat(f.sql().fetchCount(DSL.table("payment_instrument"))).isEqualTo(1);
   }
 
   @Test
