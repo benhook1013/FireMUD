@@ -1008,7 +1008,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     Account account() {
       Account account = new Account();
       String suffix = UUID.randomUUID().toString();
-      account.setUsername("creation-source-order-" + suffix);
+      account.setUsername("completion-" + suffix);
       account.setEmail(suffix + "@example.test");
       account.setPasswordHash(hash(PASSWORD));
       account.setRole("player");
