@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
@@ -44,6 +45,7 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService.Disposition;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
@@ -846,7 +848,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             () ->
                 c.service.reauthenticate(
                     c.request(account, requestId, operationId, "wrong-secret")))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(AuthenticationException.class);
     assertThatThrownBy(
             () ->
                 c.service.reauthenticate(
@@ -857,7 +859,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
                         operationId,
                         "different@example.test",
                         PASSWORD)))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(AuthenticationException.class);
     var exact =
         c.service.reauthenticate(
             new AccountRecentReauthenticationService.Request(
@@ -885,6 +887,174 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .isEqualTo(1);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isZero();
+  }
+
+  @Test
+  void replayBudgetPersistsAcrossFailuresAndSuccessfulRetryWithoutRenewingOtpEvidence() {
+    Context c = context();
+    Account account = c.account("EMAIL_OTP");
+    c.challenge(account);
+    UUID requestId = UUID.randomUUID(), operationId = UUID.randomUUID();
+    var request = c.request(account, requestId, operationId, OTP);
+    var original = c.service.reauthenticate(request);
+    Record retained = c.evidenceRow(original.evidenceId());
+    Record proof =
+        c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials");
+    for (int failure = 1; failure <= 5; failure++) {
+      assertThatThrownBy(
+              () -> c.service.reauthenticate(c.request(account, requestId, operationId, "wrong")))
+          .isInstanceOf(AuthenticationException.class);
+      assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+          .isEqualTo(failure);
+      if (failure < 5) {
+        c.clock.set(BASE.plusSeconds(failure * 100L));
+        var replay = c.service.reauthenticate(request);
+        assertThat(replay.evidenceId()).isEqualTo(original.evidenceId());
+        assertThat(replay.issuedAt()).isEqualTo(original.issuedAt());
+        assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+            .isEqualTo(failure);
+      }
+    }
+    // Even the exact original credential cannot recover after exhaustion; no new OTP is consumed.
+    AccountEmailLoginChallenge replacement = c.challenge(account);
+    for (int retry = 0; retry < 3; retry++) {
+      assertThatThrownBy(() -> c.service.reauthenticate(request))
+          .isInstanceOf(AuthenticationException.class);
+    }
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isEqualTo(5L);
+    assertThat(c.evidenceRow(original.evidenceId())).isEqualTo(retained);
+    assertThat(c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials"))
+        .isEqualTo(proof);
+    assertThat(c.challenges.findByAccountId(account.getId())).contains(replacement);
+  }
+
+  @Test
+  void concurrentCredentialGuessesSerializeAndCommitOnlyFiveFailures() throws Exception {
+    Context c = context();
+    Account account = c.account("EMAIL_OTP");
+    c.challenge(account);
+    UUID requestId = UUID.randomUUID(), operationId = UUID.randomUUID();
+    var original = c.service.reauthenticate(c.request(account, requestId, operationId, OTP));
+    Record retained = c.evidenceRow(original.evidenceId());
+    var executor = Executors.newFixedThreadPool(4);
+    var start = new CountDownLatch(1);
+    var attempts = new ArrayList<java.util.concurrent.Future<?>>();
+    try {
+      for (int i = 0; i < 12; i++) {
+        attempts.add(
+            executor.submit(
+                () -> {
+                  awaitLatch(start);
+                  assertThatThrownBy(
+                          () ->
+                              c.service.reauthenticate(
+                                  c.request(account, requestId, operationId, "wrong")))
+                      .isInstanceOf(AuthenticationException.class);
+                }));
+      }
+      start.countDown();
+      for (var attempt : attempts) attempt.get(10, TimeUnit.SECONDS);
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isEqualTo(5L);
+    assertThat(c.evidenceRow(original.evidenceId())).isEqualTo(retained);
+    assertThatThrownBy(
+            () -> c.service.reauthenticate(c.request(account, requestId, operationId, OTP)))
+        .isInstanceOf(AuthenticationException.class);
+  }
+
+  @Test
+  void replayFailureHistoryRejectsResetGapsTupleSubstitutionAndExcessAndSupportsRollback() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    var original =
+        c.service.reauthenticate(
+            c.request(account, UUID.randomUUID(), UUID.randomUUID(), PASSWORD));
+    String insert =
+        "INSERT INTO account_recent_reauthentication_replay_failures"
+            + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, failure_number)"
+            + " VALUES (?, ?, ?, ?, ?, ?)";
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            insert,
+                            original.evidenceId(),
+                            original.requestId(),
+                            original.accountId(),
+                            original.purpose(),
+                            original.creationOperationId(),
+                            2)))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            insert,
+                            original.evidenceId(),
+                            UUID.randomUUID(),
+                            original.accountId(),
+                            original.purpose(),
+                            original.creationOperationId(),
+                            1)))
+        .isInstanceOf(DataAccessException.class);
+    c.transaction.executeWithoutResult(
+        status -> {
+          c.dsl.execute(
+              insert,
+              original.evidenceId(),
+              original.requestId(),
+              original.accountId(),
+              original.purpose(),
+              original.creationOperationId(),
+              1);
+          status.setRollbackOnly();
+        });
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isZero();
+    for (int failure = 1; failure <= 5; failure++) {
+      int number = failure;
+      c.tx(
+          () ->
+              c.dsl.execute(
+                  insert,
+                  original.evidenceId(),
+                  original.requestId(),
+                  original.accountId(),
+                  original.purpose(),
+                  original.creationOperationId(),
+                  number));
+    }
+    for (String mutation :
+        java.util.List.of(
+            "UPDATE account_recent_reauthentication_replay_failures SET failure_number = 1",
+            "DELETE FROM account_recent_reauthentication_replay_failures",
+            "TRUNCATE account_recent_reauthentication_replay_failures")) {
+      assertThatThrownBy(() -> c.tx(() -> c.dsl.execute(mutation)))
+          .isInstanceOf(DataAccessException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.dsl.execute(
+                            insert,
+                            original.evidenceId(),
+                            original.requestId(),
+                            original.accountId(),
+                            original.purpose(),
+                            original.creationOperationId(),
+                            6)))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isEqualTo(5L);
   }
 
   @Test
@@ -930,6 +1100,8 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .locations("classpath:db/migration")
         .load()
         .migrate();
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isZero();
     assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
     assertThatThrownBy(
             () -> c.service.reauthenticate(c.request(account, requestId, operationId, PASSWORD)))
@@ -953,6 +1125,52 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
         .isEqualTo(1);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_credentials"))
         .isZero();
+  }
+
+  @Test
+  void forwardBudgetMigrationPreservesPreviouslyCommittedProofAndStartsWithNoFailures() {
+    Context c = contextAtVersion(true, MigrationVersion.fromVersion("1018.1"));
+    Account account = c.account("PASSWORD");
+    UUID requestId = UUID.randomUUID(), operationId = UUID.randomUUID();
+    UUID evidenceId =
+        c.tx(
+            () -> {
+              UUID id = insertEvidenceWithoutMac(c, account, requestId, operationId);
+              c.dsl.execute(
+                  "INSERT INTO account_recent_reauthentication_replay_credentials"
+                      + " (evidence_id, request_id, account_uuid, purpose, creation_operation_id, key_id, credential_mac)"
+                      + " VALUES (?, ?, ?, 'SELF_SERVICE_GAME_CREATION', ?, 'mac1', ?)",
+                  id,
+                  requestId,
+                  account.getAccountUuid(),
+                  operationId,
+                  "a".repeat(64));
+              return id;
+            });
+    Record original = c.evidenceRow(evidenceId);
+    Record proof =
+        c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials");
+    Flyway.configure()
+        .dataSource(c.source)
+        .schemas(c.source.getSchema())
+        .defaultSchema(c.source.getSchema())
+        .placeholders(Map.of("serviceSchema", c.source.getSchema()))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertThat(c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials"))
+        .isEqualTo(proof);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isZero();
+    assertThatThrownBy(
+            () -> c.service.reauthenticate(c.request(account, requestId, operationId, PASSWORD)))
+        .isInstanceOf(AuthenticationException.class);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isEqualTo(1L);
+    assertThat(c.evidenceRow(evidenceId)).isEqualTo(original);
+    assertThat(c.dsl.fetchOne("SELECT * FROM account_recent_reauthentication_replay_credentials"))
+        .isEqualTo(proof);
   }
 
   @Test
@@ -1001,6 +1219,8 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
                 c.service.reauthenticate(
                     c.request(account, requestId, UUID.randomUUID(), "not-the-secret")))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_replay_failures"))
+        .isZero();
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence"))
         .isEqualTo(1L);
   }

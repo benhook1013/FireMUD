@@ -1,10 +1,9 @@
-package unit.net.firedevops.firemud.accountservice.service.session;
+package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
-import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy.DeploymentValue;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy.PlatformValue;
 import org.junit.jupiter.api.Test;
