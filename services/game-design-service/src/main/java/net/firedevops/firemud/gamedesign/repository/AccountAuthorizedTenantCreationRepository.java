@@ -9,8 +9,6 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -43,7 +41,6 @@ public final class AccountAuthorizedTenantCreationRepository {
   }
 
   /** Applies database bounds before taking the shared original-outcome identity lock. */
-  @Transactional(propagation = Propagation.MANDATORY)
   public void applyLocalWriteTimeouts() {
     requireWritableOwnerTransaction();
     dsl.execute("SET LOCAL lock_timeout = '3s'");
@@ -51,7 +48,6 @@ public final class AccountAuthorizedTenantCreationRepository {
   }
 
   /** Uses a fresh database clock before any receiver-side mutation. */
-  @Transactional(propagation = Propagation.MANDATORY)
   public boolean isAuthorizationCurrent(long validBeforeEpochMillis) {
     requireWritableOwnerTransaction();
     if (validBeforeEpochMillis <= 0) {
@@ -66,7 +62,6 @@ public final class AccountAuthorizedTenantCreationRepository {
   }
 
   /** Inserts the Account response correlation and deadline in the V30/V1033 owner transaction. */
-  @Transactional(propagation = Propagation.MANDATORY)
   public void recordAuthorizedDispatch(
       Binding binding, UUID authorizationReadRequestId, long validBeforeEpochMillis) {
     requireWritableOwnerTransaction();
@@ -89,7 +84,6 @@ public final class AccountAuthorizedTenantCreationRepository {
   }
 
   /** Independently reads only the exact committed Account authorization fence. */
-  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public Optional<AuthorizedDispatch> readCommitted(Binding expected) {
     Objects.requireNonNull(expected, "expected");
     if (TransactionSynchronizationManager.isActualTransactionActive()) {

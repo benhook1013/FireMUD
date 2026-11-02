@@ -93,16 +93,11 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
                           original.intent, original.admitted, current.sources());
                   if (!Arrays.equals(held.canonicalBytes(), original.holder.canonicalBytes()))
                     throw denied();
-                  Instant deadline = Instant.ofEpochMilli(original.dispatchDeadline);
-                  var recent = current.reauthentication();
-                  Instant recentDeadline =
-                      recent
-                          .issuedAt()
-                          .plusSeconds(recent.recentAgeSeconds() - recent.maxClockSkewSeconds());
-                  if (recentDeadline.isBefore(deadline)) deadline = recentDeadline;
-                  Instant termsDeadline = current.currentness().terms().validUntil();
-                  if (termsDeadline != null && termsDeadline.isBefore(deadline))
-                    deadline = termsDeadline;
+                  Instant deadline =
+                      AccountTenantCreationOwnerChecks.currentValidBefore(
+                          original.admitted.binding(), current);
+                  Instant dispatchDeadline = Instant.ofEpochMilli(original.dispatchDeadline);
+                  if (dispatchDeadline.isBefore(deadline)) deadline = dispatchDeadline;
                   long validBefore = deadline.toEpochMilli();
                   requireTime(original, validBefore);
                   return new Authorization(binding, validBefore);
@@ -148,15 +143,13 @@ public final class AccountTenantCreationCurrentAuthorizationOwner {
         || !recent.evidenceId().equals(intent.recentReauthenticationEvidenceId())
         || !recent.evidenceId().equals(admitted.binding().reauthenticationEvidenceId())
         || orders.readSettlement(operation).isPresent()) throw denied();
-    Record row =
-        dsl.fetchOne(
-            "SELECT * FROM account_control_ui_issuance_operations WHERE operation_id = ?",
-            admitted.binding().issuanceOperationId());
-    if (row == null) throw denied();
-    var issuance = issuances.decodeStored(row);
-    if (!issuance.operationId.equals(admitted.binding().issuanceOperationId())
-        || !issuance.accountId.equals(binding.initiatingAccountId())
-        || !issuance.tokenHash.equals(admitted.binding().tokenHash())) throw denied();
+    var issuance =
+        AccountTenantCreationOwnerChecks.readOriginalIssuance(
+            dsl,
+            issuances,
+            admitted.binding(),
+            binding.initiatingAccountId(),
+            AccountTenantCreationCurrentAuthorizationOwner::denied);
     Record dispatch =
         dsl.fetchOne(
             "SELECT * FROM account_tenant_creation_dispatch_intents WHERE creation_operation_id = ?",
