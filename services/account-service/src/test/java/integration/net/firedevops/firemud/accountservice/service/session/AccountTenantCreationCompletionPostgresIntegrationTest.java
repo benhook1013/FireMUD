@@ -8,12 +8,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2Factory;
+import io.grpc.Status;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +24,8 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.client.GameDesignAuthorizedTenantCreationClient;
+import net.firedevops.firemud.accountservice.client.GameDesignOriginalTenantCreationOutcomeClient;
 import net.firedevops.firemud.accountservice.client.GameDesignOriginalTenantCreationOutcomeClient.VerifiedTerminal;
 import net.firedevops.firemud.accountservice.creatorparty.CreatorPartyEncoding;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyRepository;
@@ -64,6 +68,7 @@ import org.flywaydb.core.Flyway;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
@@ -442,6 +447,80 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         .isPresent();
     assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_dispatch_intents")))
         .isEqualTo(1);
+  }
+
+  @Test
+  void liveClaimAndUnclaimedOriginalKeepPendingWithoutClosingOrChangingRetainedRows() {
+    StorageContext c = storageContext();
+    for (boolean claimed : new boolean[] {false, true}) {
+      var fixture = storageFixture(c);
+      var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
+      UUID operation = fixture.intent.creationOperationId();
+      if (claimed) {
+        assertThat(
+                assembled.dispatches.claim(
+                    assembled.prepared, assembled.environment, assembled.recent))
+            .isPresent();
+      }
+      var original = assembled.dispatches.readOriginal(operation);
+      Map<String, Result<Record>> retained = new LinkedHashMap<>();
+      for (String table :
+          List.of(
+              "account_tenant_creation_original_intents",
+              "account_tenant_creation_admission_requests",
+              "account_tenant_creation_admissions",
+              "account_tenant_creation_source_orders",
+              "account_tenant_creation_dispatch_intents")) {
+        retained.put(
+            table,
+            c.dsl.fetch(
+                "SELECT *, xmin::text AS original_xmin FROM "
+                    + table
+                    + " ORDER BY creation_operation_id"));
+      }
+      var admission = mock(AccountTenantCreationAdmissionOwner.class);
+      var creation = mock(GameDesignAuthorizedTenantCreationClient.class);
+      var outcomes = mock(GameDesignOriginalTenantCreationOutcomeClient.class);
+      var completion = mock(AccountTenantCreationCompletionOwner.class);
+      when(outcomes.readOriginal(original.binding()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                throw Status.NOT_FOUND.asRuntimeException();
+              });
+      var coordinator =
+          new AccountTenantCreationCoordinator(
+              admission,
+              assembled.dispatches,
+              creation,
+              outcomes,
+              completion,
+              new AccountTenantCreationSourceOrderRepository(
+                  c.dsl, new DraftAuthorizationFenceRepository(c.dsl)),
+              c.manager);
+      assertThat(assembled.dispatches.isDispatchWindowClosed(original)).isFalse();
+      for (int retry = 0; retry < 2; retry++) {
+        assertThat(coordinator.recover(operation, assembled.recent, assembled.environment).state())
+            .isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
+      }
+      org.mockito.Mockito.verifyNoInteractions(admission, creation, completion);
+      retained.forEach(
+          (table, rows) ->
+              assertThat(
+                      c.dsl.fetch(
+                          "SELECT *, xmin::text AS original_xmin FROM "
+                              + table
+                              + " ORDER BY creation_operation_id"))
+                  .as(table)
+                  .isEqualTo(rows));
+      assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_dispatch_intents")))
+          .isEqualTo(claimed ? 1 : 0);
+      assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_completions"))).isZero();
+      assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_source_order_settlements")))
+          .isZero();
+      assertThat(c.dsl.fetchCount(DSL.table("account_recent_reauthentication_consumptions")))
+          .isZero();
+    }
   }
 
   private static void assertAtomicRowsBeforeFinal(StorageContext c) {

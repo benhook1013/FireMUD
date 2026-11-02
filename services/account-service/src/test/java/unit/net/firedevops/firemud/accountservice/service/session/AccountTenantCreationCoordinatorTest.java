@@ -34,10 +34,11 @@ class AccountTenantCreationCoordinatorTest {
     var order = Mockito.inOrder(f.admission, f.dispatches, f.creation, f.outcomes, f.completion);
     order.verify(f.admission).start("jwt", f.request, f.recent, f.environment);
     order.verify(f.dispatches).claim(f.prepared, f.environment, f.recent);
-    order.verify(f.creation).create(f.call, f.binding, "fresh", "Game", null, f.deadline);
+    order.verify(f.creation).create(f.call, f.binding, "fresh", "Game", null, Fixture.DEADLINE);
     order.verify(f.outcomes).readOriginal(f.binding);
     order.verify(f.completion).complete(f.operation, f.terminal, f.environment, f.recent);
     verify(f.creation, never()).closeOriginal(any());
+    verify(f.dispatches, never()).isDispatchWindowClosed(any());
   }
 
   @Test
@@ -46,20 +47,69 @@ class AccountTenantCreationCoordinatorTest {
     when(f.creation.create(any(), any(), any(), any(), any(), Mockito.anyLong()))
         .thenThrow(Status.UNAVAILABLE.asRuntimeException());
     assertThat(f.start().state()).isEqualTo(AccountTenantCreationCoordinator.State.COMPLETED);
-    verify(f.creation).create(f.call, f.binding, "fresh", "Game", null, f.deadline);
+    verify(f.creation).create(f.call, f.binding, "fresh", "Game", null, Fixture.DEADLINE);
     verify(f.outcomes).readOriginal(f.binding);
   }
 
   @Test
-  void existingClaimAndUnknownTerminalNeverReauthenticateReadmitOrRedispatch() {
+  void exactRetryWithCreatedTerminalResolvesImmediatelyWithoutWaitingForDispatchCutoff() {
+    var f = new Fixture();
+    when(f.dispatches.hasClaim(f.operation)).thenReturn(true);
+    assertThat(f.start().state()).isEqualTo(AccountTenantCreationCoordinator.State.COMPLETED);
+    assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
+        .isEqualTo(AccountTenantCreationCoordinator.State.COMPLETED);
+    verify(f.outcomes, Mockito.times(2)).readOriginal(f.binding);
+    verify(f.completion, Mockito.times(2))
+        .complete(f.operation, f.terminal, f.environment, f.recent);
+    verify(f.dispatches, never()).isDispatchWindowClosed(any());
+    verify(f.dispatches, never()).claim(any(), any(), any());
+    verifyNoInteractions(f.creation, f.admission, f.orders);
+  }
+
+  @Test
+  void exactConcurrentRetryBeforeDispatchDeadlineNeverClosesReadmitsOrRedispatches() {
     var f = new Fixture();
     when(f.dispatches.hasClaim(f.operation)).thenReturn(true);
     when(f.outcomes.readOriginal(f.binding)).thenThrow(Status.NOT_FOUND.asRuntimeException());
     assertThat(f.start().state()).isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
     verifyNoInteractions(f.admission, f.completion);
-    verify(f.creation).closeOriginal(f.binding);
+    verify(f.dispatches).isDispatchWindowClosed(f.original);
+    verifyNoInteractions(f.creation, f.orders);
     verify(f.creation, never()).create(any(), any(), any(), any(), any(), Mockito.anyLong());
     verify(f.dispatches, never()).claim(any(), any(), any());
+  }
+
+  @Test
+  void lostCreateReplyAndAbsentOrNonterminalHistoryBeforeDeadlineRetainsPendingOriginal() {
+    for (Status status : new Status[] {Status.NOT_FOUND, Status.FAILED_PRECONDITION}) {
+      var f = new Fixture();
+      when(f.creation.create(any(), any(), any(), any(), any(), Mockito.anyLong()))
+          .thenThrow(Status.DEADLINE_EXCEEDED.asRuntimeException());
+      when(f.outcomes.readOriginal(f.binding)).thenThrow(status.asRuntimeException());
+      assertThat(f.start().state()).isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
+      assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
+          .isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
+      verify(f.creation).create(f.call, f.binding, "fresh", "Game", null, Fixture.DEADLINE);
+      verify(f.creation, never()).closeOriginal(any());
+      verifyNoInteractions(f.orders, f.completion);
+    }
+  }
+
+  @Test
+  void unknownContradictoryOrUnavailableDeadlineNeverClosesOrResends() {
+    for (RuntimeException failure :
+        new RuntimeException[] {
+          new IllegalStateException("Unknown or contradictory retained claim"),
+          new org.jooq.exception.DataAccessException("Clock read failed"),
+          new org.springframework.transaction.CannotCreateTransactionException("SQL unavailable")
+        }) {
+      var f = new Fixture();
+      when(f.outcomes.readOriginal(f.binding)).thenThrow(Status.NOT_FOUND.asRuntimeException());
+      when(f.dispatches.isDispatchWindowClosed(f.original)).thenThrow(failure);
+      assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
+          .isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
+      verifyNoInteractions(f.creation, f.orders, f.completion, f.admission);
+    }
   }
 
   @Test
@@ -89,6 +139,7 @@ class AccountTenantCreationCoordinatorTest {
     verify(f.orders).settleLocked(f.holder, f.terminal);
     verify(f.orders).readSettlement(f.operation);
     verifyNoInteractions(f.admission, f.creation, f.completion);
+    verify(f.dispatches, never()).isDispatchWindowClosed(any());
   }
 
   @Test
@@ -115,12 +166,14 @@ class AccountTenantCreationCoordinatorTest {
     when(f.outcomes.readOriginal(f.binding))
         .thenThrow(Status.NOT_FOUND.asRuntimeException())
         .thenReturn(f.terminal);
+    when(f.dispatches.isDispatchWindowClosed(f.original)).thenReturn(true);
     when(f.orders.readOriginal(f.operation)).thenReturn(Optional.of(f.holder));
     when(f.orders.readSettlement(f.operation)).thenReturn(Optional.of(negative));
     assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
         .isEqualTo(AccountTenantCreationCoordinator.State.NOT_CREATED);
-    var order = Mockito.inOrder(f.outcomes, f.creation, f.orders);
+    var order = Mockito.inOrder(f.outcomes, f.dispatches, f.creation, f.orders);
     order.verify(f.outcomes).readOriginal(f.binding);
+    order.verify(f.dispatches).isDispatchWindowClosed(f.original);
     order.verify(f.creation).closeOriginal(f.binding);
     order.verify(f.outcomes).readOriginal(f.binding);
     order.verify(f.orders).settleLocked(f.holder, f.terminal);
@@ -134,6 +187,7 @@ class AccountTenantCreationCoordinatorTest {
       when(f.outcomes.readOriginal(f.binding))
           .thenThrow(Status.FAILED_PRECONDITION.asRuntimeException())
           .thenReturn(f.terminal);
+      when(f.dispatches.isDispatchWindowClosed(f.original)).thenReturn(true);
       Mockito.doThrow(failure.asRuntimeException()).when(f.creation).closeOriginal(f.binding);
       assertThat(f.coordinator.recover(f.operation, f.recent, f.environment).state())
           .isEqualTo(AccountTenantCreationCoordinator.State.COMPLETED);
@@ -150,6 +204,7 @@ class AccountTenantCreationCoordinatorTest {
       when(f.outcomes.readOriginal(f.binding))
           .thenThrow(
               Status.NOT_FOUND.asRuntimeException(), Status.UNAVAILABLE.asRuntimeException());
+      when(f.dispatches.isDispatchWindowClosed(f.original)).thenReturn(true);
       if (lostAck)
         Mockito.doThrow(Status.UNAVAILABLE.asRuntimeException())
             .when(f.creation)
@@ -167,7 +222,7 @@ class AccountTenantCreationCoordinatorTest {
         requestId = UUID.randomUUID(),
         gdRequest = UUID.randomUUID();
     final UUID account = UUID.randomUUID();
-    final long deadline = System.currentTimeMillis() + 60000;
+    static final long DEADLINE = 1900000000000L;
     final AccountTenantCreationIntentRepository.Request request =
         new AccountTenantCreationIntentRepository.Request(
             requestId,
@@ -204,6 +259,7 @@ class AccountTenantCreationCoordinatorTest {
         mock(AccountRecentReauthenticationEvidence.class);
     final CapturedEnvironmentBoundary environment = mock(CapturedEnvironmentBoundary.class);
     final VerifiedTerminal terminal = mock(VerifiedTerminal.class);
+    final AccountTenantCreationDispatchRepository.Original original;
     final AccountTenantCreationCoordinator coordinator;
 
     Fixture() {
@@ -250,8 +306,8 @@ class AccountTenantCreationCoordinatorTest {
               digest,
               new byte[] {1},
               "sha256:" + "b".repeat(64),
-              Instant.now());
-      var original =
+              Instant.ofEpochMilli(DEADLINE - 60000));
+      original =
           new AccountTenantCreationDispatchRepository.Original(
               intent, mock(AccountTenantCreationAdmissionRepository.Admitted.class), holder);
       when(holder.outcomeBinding()).thenReturn(binding);
@@ -260,10 +316,10 @@ class AccountTenantCreationCoordinatorTest {
       var initial = mock(AccountTenantCreationDispatchRepository.InitialDispatch.class);
       when(initial.original()).thenReturn(original);
       when(initial.callId()).thenReturn(call);
-      when(initial.validBefore()).thenReturn(deadline);
+      when(initial.validBefore()).thenReturn(DEADLINE);
       when(admission.start("jwt", request, recent, environment)).thenReturn(prepared);
       when(dispatches.claim(prepared, environment, recent)).thenReturn(Optional.of(initial));
-      when(creation.create(call, binding, "fresh", "Game", null, deadline)).thenReturn(receipt);
+      when(creation.create(call, binding, "fresh", "Game", null, DEADLINE)).thenReturn(receipt);
       when(terminal.binding()).thenReturn(binding);
       when(terminal.evidence()).thenReturn(evidence);
       when(outcomes.readOriginal(binding)).thenReturn(terminal);

@@ -14,8 +14,10 @@ import net.firedevops.firemud.accountservice.service.session.AccountTenantCreati
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository.Request;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Outcome;
+import org.jooq.exception.DataAccessException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -125,7 +127,18 @@ final class AccountTenantCreationCoordinator {
     } catch (IllegalStateException uncertainRead) {
       return null;
     }
-    // Absence is not evidence. Explicitly serialize future-create exclusion at the GD owner.
+    // An absent/nonterminal outcome can still belong to the valid in-flight initial dispatch.
+    // Only the Account database clock and exact retained binding can establish its finite cutoff.
+    try {
+      if (!dispatches.isDispatchWindowClosed(original)) return null;
+    } catch (IllegalStateException
+        | IllegalArgumentException
+        | DataAccessException
+        | org.springframework.dao.DataAccessException
+        | TransactionException uncertainDeadline) {
+      return null;
+    }
+    // After the cutoff, serialize future-create exclusion at the GD owner. Absence is not proof.
     try {
       creation.closeOriginal(original.binding());
     } catch (StatusRuntimeException | IllegalStateException uncertainClosure) {
