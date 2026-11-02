@@ -131,6 +131,14 @@ tasks.withType<Test>().configureEach {
     }
 }
 
+tasks.named<Test>("integrationTest") {
+    // Isolate fixture statics in separate JVMs; JUnit methods remain serial within each suite.
+    // Keep other platforms' existing single-fork behavior and respect a one-worker invocation.
+    if (System.getProperty("os.name").lowercase().startsWith("linux")) {
+        maxParallelForks = minOf(2, gradle.startParameter.maxWorkerCount)
+    }
+}
+
 val migrationDriverMainClass =
     "net.firedevops.firemud.gamesession.repository.CanonicalGameplayMigrationDriverLauncher"
 val migrationDriverDistribution = layout.buildDirectory.dir("distributions/game-session-migration-driver")

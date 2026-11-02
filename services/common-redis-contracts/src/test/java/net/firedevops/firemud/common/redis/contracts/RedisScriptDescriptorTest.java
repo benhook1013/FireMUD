@@ -8,6 +8,112 @@ import org.junit.jupiter.api.Test;
 
 class RedisScriptDescriptorTest {
   @Test
+  void fullKeyAnchorRequiresExactlyOneOrderedExplicitCompanion() {
+    var anchor =
+        new RedisScriptDescriptor.KeySpec(
+            "tokenRecord",
+            "session:auth:token:",
+            RedisScriptDescriptor.HashTagDeclaration.FULL_KEY_ANCHOR);
+    var companion =
+        new RedisScriptDescriptor.KeySpec(
+            "creationReceipt",
+            "session:auth:creation-admission:",
+            RedisScriptDescriptor.HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG);
+    var accountAdmission =
+        fullKeyDescriptor(
+            "account-tenant-creation-admission.v1",
+            "account-service",
+            RedisScriptDescriptor.RedisRole.COORDINATION,
+            List.of(anchor, companion));
+    assertThat(accountAdmission.category())
+        .isEqualTo(RedisScriptDescriptor.ScriptCategory.ACCOUNT_TENANT_CREATION_ADMISSION);
+    assertThat(accountAdmission.keys()).containsExactly(anchor, companion);
+    var ordinary =
+        new RedisScriptDescriptor.KeySpec(
+            "ordinary", "session:other:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED);
+    var secondOrdinary =
+        new RedisScriptDescriptor.KeySpec(
+            "other", "session:another:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED);
+    assertThat(descriptor(null, null, List.of(ordinary, secondOrdinary), null, null).keys())
+        .containsExactly(ordinary, secondOrdinary);
+    for (var invalid :
+        List.of(
+            List.of(anchor),
+            List.of(companion),
+            List.of(companion, anchor),
+            List.of(anchor, ordinary),
+            List.of(ordinary, companion),
+            List.of(anchor, companion, ordinary))) {
+      assertThatThrownBy(
+              () ->
+                  fullKeyDescriptor(
+                      "account-tenant-creation-admission.v1",
+                      "account-service",
+                      RedisScriptDescriptor.RedisRole.COORDINATION,
+                      invalid))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("full-key anchor slot binding");
+    }
+  }
+
+  @Test
+  void fullKeyAnchorIsReservedForExactAccountTenantCreationDescriptor() {
+    var anchor =
+        new RedisScriptDescriptor.KeySpec(
+            "tokenRecord",
+            "session:auth:token:",
+            RedisScriptDescriptor.HashTagDeclaration.FULL_KEY_ANCHOR);
+    var companion =
+        new RedisScriptDescriptor.KeySpec(
+            "creationReceipt",
+            "session:auth:creation-admission:",
+            RedisScriptDescriptor.HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG);
+    var exactKeys = List.of(anchor, companion);
+
+    assertReservedPairRejected(
+        "other-admission.v1",
+        "account-service",
+        RedisScriptDescriptor.RedisRole.COORDINATION,
+        exactKeys);
+    assertReservedPairRejected(
+        "account-tenant-creation-admission.v1",
+        "other-service",
+        RedisScriptDescriptor.RedisRole.COORDINATION,
+        exactKeys);
+    assertReservedPairRejected(
+        "account-tenant-creation-admission.v1",
+        "account-service",
+        RedisScriptDescriptor.RedisRole.CACHE_RATE_LIMIT,
+        exactKeys);
+    assertReservedPairRejected(
+        "account-tenant-creation-admission.v1",
+        "account-service",
+        RedisScriptDescriptor.RedisRole.COORDINATION,
+        RedisScriptDescriptor.ScriptCategory.SESSION_CAS,
+        exactKeys);
+    assertReservedPairRejected(
+        "account-tenant-creation-admission.v1",
+        "account-service",
+        RedisScriptDescriptor.RedisRole.COORDINATION,
+        List.of(
+            new RedisScriptDescriptor.KeySpec(
+                "tokenRecord",
+                "session:auth:tokens:",
+                RedisScriptDescriptor.HashTagDeclaration.FULL_KEY_ANCHOR),
+            companion));
+    assertReservedPairRejected(
+        "account-tenant-creation-admission.v1",
+        "account-service",
+        RedisScriptDescriptor.RedisRole.COORDINATION,
+        List.of(
+            anchor,
+            new RedisScriptDescriptor.KeySpec(
+                "creationReceipt",
+                "session:auth:creation-receipts:",
+                RedisScriptDescriptor.HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG)));
+  }
+
+  @Test
   void acceptsValidDescriptorAndReturnsImmutableDeclarationCopies() {
     RedisScriptDescriptor descriptor = descriptor();
 
@@ -184,13 +290,120 @@ class RedisScriptDescriptorTest {
       String sha256,
       List<RedisScriptDescriptor.ArgumentSpec> arguments,
       List<RedisScriptDescriptor.OutcomeSpec> outcomes) {
-    return new RedisScriptDescriptor(
+    return descriptorWithCoexistence(
         "account.control-ui.v1",
+        "account-service",
+        RedisScriptDescriptor.RedisRole.COORDINATION,
+        supportedCoexistence,
+        legacyPayloadShape,
+        keys,
+        resourcePath,
+        sha256,
+        arguments,
+        outcomes);
+  }
+
+  private static RedisScriptDescriptor fullKeyDescriptor(
+      String scriptId,
+      String owner,
+      RedisScriptDescriptor.RedisRole role,
+      List<RedisScriptDescriptor.KeySpec> keys) {
+    return fullKeyDescriptor(
+        scriptId,
+        owner,
+        role,
+        RedisScriptDescriptor.ScriptCategory.ACCOUNT_TENANT_CREATION_ADMISSION,
+        keys);
+  }
+
+  private static RedisScriptDescriptor fullKeyDescriptor(
+      String scriptId,
+      String owner,
+      RedisScriptDescriptor.RedisRole role,
+      RedisScriptDescriptor.ScriptCategory category,
+      List<RedisScriptDescriptor.KeySpec> keys) {
+    return descriptorWithCoexistence(
+        scriptId,
+        owner,
+        role,
+        List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "v1")),
+        null,
+        keys,
+        null,
+        null,
+        null,
+        null,
+        category);
+  }
+
+  private static void assertReservedPairRejected(
+      String scriptId,
+      String owner,
+      RedisScriptDescriptor.RedisRole role,
+      List<RedisScriptDescriptor.KeySpec> keys) {
+    assertReservedPairRejected(
+        scriptId,
+        owner,
+        role,
+        RedisScriptDescriptor.ScriptCategory.ACCOUNT_TENANT_CREATION_ADMISSION,
+        keys);
+  }
+
+  private static void assertReservedPairRejected(
+      String scriptId,
+      String owner,
+      RedisScriptDescriptor.RedisRole role,
+      RedisScriptDescriptor.ScriptCategory category,
+      List<RedisScriptDescriptor.KeySpec> keys) {
+    assertThatThrownBy(() -> fullKeyDescriptor(scriptId, owner, role, category, keys))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("reserved for the Account tenant-creation admission descriptor");
+  }
+
+  private static RedisScriptDescriptor descriptorWithCoexistence(
+      String scriptId,
+      String owner,
+      RedisScriptDescriptor.RedisRole role,
+      List<RedisScriptDescriptor.SupportedCoexistence> supportedCoexistence,
+      String legacyPayloadShape,
+      List<RedisScriptDescriptor.KeySpec> keys,
+      String resourcePath,
+      String sha256,
+      List<RedisScriptDescriptor.ArgumentSpec> arguments,
+      List<RedisScriptDescriptor.OutcomeSpec> outcomes) {
+    return descriptorWithCoexistence(
+        scriptId,
+        owner,
+        role,
+        supportedCoexistence,
+        legacyPayloadShape,
+        keys,
+        resourcePath,
+        sha256,
+        arguments,
+        outcomes,
+        RedisScriptDescriptor.ScriptCategory.SESSION_CAS);
+  }
+
+  private static RedisScriptDescriptor descriptorWithCoexistence(
+      String scriptId,
+      String owner,
+      RedisScriptDescriptor.RedisRole role,
+      List<RedisScriptDescriptor.SupportedCoexistence> supportedCoexistence,
+      String legacyPayloadShape,
+      List<RedisScriptDescriptor.KeySpec> keys,
+      String resourcePath,
+      String sha256,
+      List<RedisScriptDescriptor.ArgumentSpec> arguments,
+      List<RedisScriptDescriptor.OutcomeSpec> outcomes,
+      RedisScriptDescriptor.ScriptCategory category) {
+    return new RedisScriptDescriptor(
+        scriptId,
         resourcePath == null ? "redis/account/control-ui.lua" : resourcePath,
         sha256 == null ? "a".repeat(64) : sha256,
-        "account-service",
+        owner,
         "account_coord_app",
-        RedisScriptDescriptor.RedisRole.COORDINATION,
+        role,
         keys == null
             ? List.of(
                 new RedisScriptDescriptor.KeySpec(
@@ -201,7 +414,7 @@ class RedisScriptDescriptorTest {
         arguments == null
             ? List.of(new RedisScriptDescriptor.ArgumentSpec("requestId"))
             : arguments,
-        RedisScriptDescriptor.ScriptCategory.SESSION_CAS,
+        category,
         outcomes == null
             ? List.of(
                 new RedisScriptDescriptor.OutcomeSpec(

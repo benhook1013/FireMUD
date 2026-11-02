@@ -420,10 +420,6 @@ final class ActivationProtectionGrpcMtlsTestSupport {
 
   record ClientResource(ManagedChannel channel) implements AutoCloseable {
     @Override
-    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-        value = "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT",
-        justification =
-            "ManagedChannel.shutdownNow performs channel shutdown; termination is checked below.")
     public void close() throws InterruptedException {
       channel.shutdownNow();
       if (!channel.awaitTermination(2, TimeUnit.SECONDS)) {

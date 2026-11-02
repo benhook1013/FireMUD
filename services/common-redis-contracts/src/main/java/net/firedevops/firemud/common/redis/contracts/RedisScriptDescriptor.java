@@ -27,6 +27,10 @@ public record RedisScriptDescriptor(
 
   public static final String NO_PAYLOAD_VERSION = "none";
   public static final String LEGACY_PAYLOAD_VERSION = "legacy";
+  private static final String FULL_KEY_ANCHOR_SCRIPT_ID = "account-tenant-creation-admission.v1";
+  private static final String FULL_KEY_ANCHOR_OWNER = "account-service";
+  private static final String FULL_KEY_ANCHOR_TOKEN_PREFIX = "session:auth:token:";
+  private static final String FULL_KEY_ANCHOR_RECEIPT_PREFIX = "session:auth:creation-admission:";
 
   private static final Pattern SCRIPT_ID_PATTERN =
       Pattern.compile("[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)*\\.v[1-9][0-9]*");
@@ -103,7 +107,32 @@ public record RedisScriptDescriptor(
           "legacyPayloadShape is only valid when a legacy payload is supported");
     }
 
-    if (keys.size() > 1
+    boolean fullKeyCompanion =
+        keys.stream()
+            .anyMatch(
+                key ->
+                    key.hashTagDeclaration() == HashTagDeclaration.FULL_KEY_ANCHOR
+                        || key.hashTagDeclaration()
+                            == HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG);
+    if (fullKeyCompanion
+        && (keys.size() != 2
+            || keys.get(0).hashTagDeclaration() != HashTagDeclaration.FULL_KEY_ANCHOR
+            || keys.get(1).hashTagDeclaration() != HashTagDeclaration.EXACT_FULL_KEY_ANCHOR_TAG)) {
+      throw new IllegalArgumentException(
+          "full-key anchor slot binding requires exactly an anchor then its tagged companion");
+    }
+    if (fullKeyCompanion
+        && (!FULL_KEY_ANCHOR_SCRIPT_ID.equals(scriptId)
+            || !FULL_KEY_ANCHOR_OWNER.equals(owner)
+            || role != RedisRole.COORDINATION
+            || category != ScriptCategory.ACCOUNT_TENANT_CREATION_ADMISSION
+            || !FULL_KEY_ANCHOR_TOKEN_PREFIX.equals(keys.get(0).ownedPrefix())
+            || !FULL_KEY_ANCHOR_RECEIPT_PREFIX.equals(keys.get(1).ownedPrefix()))) {
+      throw new IllegalArgumentException(
+          "full-key anchor slot binding is reserved for the Account tenant-creation admission descriptor");
+    }
+    if (!fullKeyCompanion
+        && keys.size() > 1
         && keys.stream().anyMatch(key -> key.hashTagDeclaration() != HashTagDeclaration.REQUIRED)) {
       throw new IllegalArgumentException(
           "every KEYS declaration in a multi-key script must require a hash tag");
@@ -133,12 +162,17 @@ public record RedisScriptDescriptor(
 
   public enum HashTagDeclaration {
     NOT_REQUIRED,
-    REQUIRED
+    REQUIRED,
+    /** Untagged first key whose complete bytes are the Redis Cluster hash input. */
+    FULL_KEY_ANCHOR,
+    /** Second key whose sole nonempty hash tag equals the complete first key, byte for byte. */
+    EXACT_FULL_KEY_ANCHOR_TAG
   }
 
   public enum ScriptCategory {
     TICK_LOCK,
     TIMER_QUEUE,
+    ACCOUNT_TENANT_CREATION_ADMISSION,
     SESSION_CAS,
     SESSION_ACCOUNT_INDEX,
     SESSION_ISSUER_INDEX,

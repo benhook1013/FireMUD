@@ -51,6 +51,61 @@ class DraftAuthorizationFenceBindingCodecTest {
           + "\"sourceProvenanceKind\":\"NEW_GAME_ROW\"}}";
 
   @Test
+  void recentReauthenticationPolicySourcesUseOnlyClosedScopesAndRoundTripExactly() {
+    for (String scope :
+        List.of("SELF_SERVICE_GAME_CREATION/PLATFORM", "SELF_SERVICE_GAME_CREATION/DEPLOYMENT")) {
+      SourceEvidence original =
+          new SourceEvidence(
+              SourceKind.RECENT_REAUTH_POLICY,
+              scope,
+              null,
+              "7",
+              null,
+              null,
+              utf8("account-recent-reauthentication-policy-source/v1\n" + scope));
+
+      assertThat(original.key()).isEqualTo("RECENT_REAUTH_POLICY:" + scope);
+      assertThat(SourceEvidence.fromStored(original.canonicalBytes()).canonicalBytes())
+          .containsExactly(original.canonicalBytes());
+    }
+
+    for (String unsupportedScope :
+        List.of("PLATFORM", "OTHER/PLATFORM", "SELF_SERVICE_GAME_CREATION/OTHER")) {
+      assertThatThrownBy(
+              () ->
+                  new SourceEvidence(
+                      SourceKind.RECENT_REAUTH_POLICY,
+                      unsupportedScope,
+                      null,
+                      "1",
+                      null,
+                      null,
+                      new byte[] {1}))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Unsupported recent reauthentication policy scope");
+    }
+  }
+
+  @Test
+  void recentReauthenticationPolicySourcesRejectInventedGenerationAndCheckpoints() {
+    for (var fields :
+        List.of(new String[] {"1", null, null}, new String[] {null, "invented-stream", "1"})) {
+      assertThatThrownBy(
+              () ->
+                  new SourceEvidence(
+                      SourceKind.RECENT_REAUTH_POLICY,
+                      "SELF_SERVICE_GAME_CREATION/PLATFORM",
+                      fields[0],
+                      "1",
+                      fields[1],
+                      fields[2],
+                      new byte[] {1}))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Reauthentication policy has no generation or checkpoint");
+    }
+  }
+
+  @Test
   void preservesV57ProducerGoldenBytesAndDigestAndRoundTripsEveryField() {
     DraftAuthorizationFenceBinding original = binding(List.of(source()));
     byte[] golden = goldenBytes();

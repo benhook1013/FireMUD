@@ -320,7 +320,8 @@ public record DraftAuthorizationFenceBinding(
     MEMBERSHIP,
     GLOBAL_ROLES,
     CREATOR_PARTY,
-    HOSTED_TERMS
+    HOSTED_TERMS,
+    RECENT_REAUTH_POLICY
   }
 
   /**
@@ -354,6 +355,17 @@ public record DraftAuthorizationFenceBinding(
         }
         canonicalUuid(pair[0]);
         canonicalUuid(pair[1]);
+      }
+      if (kind == SourceKind.RECENT_REAUTH_POLICY
+          && !List.of(
+                  "SELF_SERVICE_GAME_CREATION/PLATFORM", "SELF_SERVICE_GAME_CREATION/DEPLOYMENT")
+              .contains(scopeId)) {
+        throw new IllegalArgumentException("Unsupported recent reauthentication policy scope");
+      }
+      if (kind == SourceKind.RECENT_REAUTH_POLICY
+          && (generation != null || checkpointStream != null || checkpointSequence != null)) {
+        throw new IllegalArgumentException(
+            "Reauthentication policy has no generation or checkpoint");
       }
       if (generation != null) {
         decimal(generation, false);

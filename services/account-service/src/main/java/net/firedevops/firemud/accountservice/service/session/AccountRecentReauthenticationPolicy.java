@@ -5,8 +5,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.DateTimeException;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 
 /** Account-owned versioned platform/deployment policy for tenantless game creation reauth. */
 public final class AccountRecentReauthenticationPolicy {
@@ -40,6 +44,52 @@ public final class AccountRecentReauthenticationPolicy {
                             .getBytes(StandardCharsets.UTF_8)));
     return new Effective(
         platform.version(), deployment.version(), effectiveAge, effectiveSkew, version);
+  }
+
+  static List<SourceEvidence> sourceEvidence(PlatformValue platform, DeploymentValue deployment) {
+    Objects.requireNonNull(platform, "Current platform policy is required");
+    Objects.requireNonNull(deployment, "Current deployment policy is required");
+    return List.of(
+            sourceEvidence(
+                "PLATFORM",
+                platform.version(),
+                platform.recentAgeSeconds(),
+                platform.maxClockSkewSeconds()),
+            sourceEvidence(
+                "DEPLOYMENT",
+                deployment.version(),
+                deployment.recentAgeSeconds(),
+                deployment.maxClockSkewSeconds()))
+        .stream()
+        .sorted(Comparator.comparing(SourceEvidence::key))
+        .toList();
+  }
+
+  private static SourceEvidence sourceEvidence(
+      String policyScope, long version, long recentAgeSeconds, long maxClockSkewSeconds) {
+    String scope = PURPOSE + "/" + policyScope;
+    String value =
+        "account-recent-reauthentication-policy-source/v1\n"
+            + "owner=ACCOUNT\n"
+            + "purpose="
+            + PURPOSE
+            + "\nscope="
+            + scope
+            + "\nversion="
+            + version
+            + "\nrecentAgeSeconds="
+            + recentAgeSeconds
+            + "\nmaxClockSkewSeconds="
+            + maxClockSkewSeconds
+            + "\n";
+    return new SourceEvidence(
+        SourceKind.RECENT_REAUTH_POLICY,
+        scope,
+        null,
+        Long.toString(version),
+        null,
+        null,
+        value.getBytes(StandardCharsets.UTF_8));
   }
 
   private static void requireBounded(long version, long ageSeconds, long skewSeconds) {

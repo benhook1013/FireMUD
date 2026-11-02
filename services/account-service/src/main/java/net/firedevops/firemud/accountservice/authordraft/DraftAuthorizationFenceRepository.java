@@ -269,6 +269,7 @@ public final class DraftAuthorizationFenceRepository {
     requireNoPendingGameLogicIntake(sources);
     requireNoPendingSelectedOwnerIntakeSourceRead(sources);
     requireNoPendingWorldParticipation(sources);
+    requireNoPendingTenantCreationSourceOrder(sources);
     for (UUID operationId : affectedOperations(sources)) {
       Record row = readOperation(operationId);
       if (row == null) {
@@ -311,6 +312,7 @@ public final class DraftAuthorizationFenceRepository {
             .toList();
     lockDisclosureSources(sources);
     requireNoPendingWorldParticipation(sources);
+    requireNoPendingTenantCreationSourceOrder(sources);
   }
 
   private void requireNoAuthorizedDisclosure(List<SourceEvidence> sources) {
@@ -394,6 +396,27 @@ public final class DraftAuthorizationFenceRepository {
               "SELECT source.operation_id FROM account_selected_owner_intake_source_read_sources source "
                   + "WHERE source.source_key = ? "
                   + "AND account_selected_owner_intake_source_read_is_pending(source.operation_id)",
+              source.key())
+          .isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private void requireNoPendingTenantCreationSourceOrder(List<SourceEvidence> sources) {
+    if (hasPendingTenantCreationSourceOrder(sources)) {
+      throw new IllegalStateException("Tenant-creation source order remains pending");
+    }
+  }
+
+  private boolean hasPendingTenantCreationSourceOrder(List<SourceEvidence> sources) {
+    for (SourceEvidence source : sources) {
+      if (!dsl.fetch(
+              "SELECT source_row.creation_operation_id FROM "
+                  + "account_tenant_creation_source_order_sources source_row "
+                  + "WHERE source_row.source_key = ? AND NOT "
+                  + "account_tenant_creation_source_order_is_settled(source_row.creation_operation_id)",
               source.key())
           .isEmpty()) {
         return true;
@@ -898,7 +921,8 @@ public final class DraftAuthorizationFenceRepository {
     if (hasPendingPublication(sources)
         || hasPendingGameLogicIntake(sources)
         || hasPendingWorldParticipation(sources)
-        || hasPendingSelectedOwnerIntakeSourceRead(sources)) {
+        || hasPendingSelectedOwnerIntakeSourceRead(sources)
+        || hasPendingTenantCreationSourceOrder(sources)) {
       return false;
     }
     for (UUID operation : affectedOperations(sources)) {

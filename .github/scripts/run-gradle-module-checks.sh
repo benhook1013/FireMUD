@@ -39,7 +39,7 @@ if [[ ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" ) 
     --runner "$ROOT_DIR/gradlew" -- \
     --max-workers=2 \
     '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
-    "${PREPARE_TASKS[@]}" -PfullCheck
+    "${PREPARE_TASKS[@]}" -PfullCheck --profile
   python3 "$ROOT_DIR/dev-tools/validation/slow_service_ci_test_partition.py" plan \
     --module "$MODULE" \
     --partition "$PARTITION" \

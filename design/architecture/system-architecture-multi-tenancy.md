@@ -183,6 +183,7 @@ Pointer freshness and cutover rules:
 
 - Players have a **single platform account** managed by the **Account Service**.
 - Registration creates only that global account and its security identity. It does not select a tenant or implicitly create membership, roles, a tenant profile, a character, an entitlement, or gameplay authority; the explicit public-game `JOIN` contract creates membership.
+- Fresh tenant creation does not infer billing ownership from creator identity or membership. The initial Account-owned binding and its creation-time consent are defined by [Subscription Management](./microservices/account-service/subscription-management.md#initial-billing-owner-establishment) and reasoned by [ADR 0044](./decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md); the binding alone creates no membership or tenant gameplay/hosting entitlement.
 - Authentication is global at the `accountId` level. Tenant-owned reads and writes check the requested `tenantId` against the account’s allowed tenants; platform-global account and security records remain account-scoped and must not require a synthetic or unrelated `tenantId`.
 - The same account can join multiple games. Each game is identified by a `tenantId`.
 - `tenantId` is the authoritative tenant identifier owned by the Game Design Service. Identifier naming and format conventions are defined in [Identifier Glossary](./system-architecture-identifier-glossary.md).

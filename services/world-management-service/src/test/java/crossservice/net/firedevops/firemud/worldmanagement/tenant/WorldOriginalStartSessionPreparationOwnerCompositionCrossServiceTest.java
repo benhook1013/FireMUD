@@ -5366,23 +5366,54 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         new AccountPublicationAuthorizationBinding.PreallocationInput(
             original.actorAccountId(), selected),
         Arrays.stream(SourceKind.values())
-            .map(
-                kind ->
-                    new SourceEvidence(
-                        kind,
-                        switch (kind) {
-                          case ACCOUNT, GLOBAL_ROLES -> original.actorAccountId().toString();
-                          case TENANT -> source.canonicalTenantId().toString();
-                          case MEMBERSHIP ->
-                              original.actorAccountId() + "/" + source.canonicalTenantId();
-                          default -> "TEST_ONLY-" + kind;
-                        },
-                        "1",
-                        "1",
-                        null,
-                        null,
-                        ("TEST_ONLY-" + kind).getBytes(StandardCharsets.UTF_8)))
+            .flatMap(
+                kind -> {
+                  if (kind == SourceKind.RECENT_REAUTH_POLICY) {
+                    return java.util.stream.Stream.of(
+                        recentReauthenticationPolicyEvidence("PLATFORM", 300L, 30L),
+                        recentReauthenticationPolicyEvidence("DEPLOYMENT", 240L, 30L));
+                  }
+                  return java.util.stream.Stream.of(
+                      new SourceEvidence(
+                          kind,
+                          switch (kind) {
+                            case ACCOUNT, GLOBAL_ROLES -> original.actorAccountId().toString();
+                            case TENANT -> source.canonicalTenantId().toString();
+                            case MEMBERSHIP ->
+                                original.actorAccountId() + "/" + source.canonicalTenantId();
+                            default -> "TEST_ONLY-" + kind;
+                          },
+                          "1",
+                          "1",
+                          null,
+                          null,
+                          ("TEST_ONLY-" + kind).getBytes(StandardCharsets.UTF_8)));
+                })
             .toList());
+  }
+
+  private static SourceEvidence recentReauthenticationPolicyEvidence(
+      String policyScope, long recentAgeSeconds, long maxClockSkewSeconds) {
+    String scope = "SELF_SERVICE_GAME_CREATION/" + policyScope;
+    String value =
+        "account-recent-reauthentication-policy-source/v1\n"
+            + "owner=ACCOUNT\n"
+            + "purpose=SELF_SERVICE_GAME_CREATION\n"
+            + "scope="
+            + scope
+            + "\nversion=1\nrecentAgeSeconds="
+            + recentAgeSeconds
+            + "\nmaxClockSkewSeconds="
+            + maxClockSkewSeconds
+            + "\n";
+    return new SourceEvidence(
+        SourceKind.RECENT_REAUTH_POLICY,
+        scope,
+        null,
+        "1",
+        null,
+        null,
+        value.getBytes(StandardCharsets.UTF_8));
   }
 
   private static GameDesignPublicationTerminalEvidence commitControlledPublicationTerminal(
