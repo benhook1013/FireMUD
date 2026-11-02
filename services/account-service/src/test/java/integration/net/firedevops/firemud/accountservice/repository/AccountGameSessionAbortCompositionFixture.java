@@ -228,7 +228,7 @@ abstract class AccountGameSessionAbortCompositionFixture {
       } catch (Exception | Error setupFailure) {
         try {
           close();
-        } catch (Exception cleanupFailure) {
+        } catch (Throwable cleanupFailure) {
           setupFailure.addSuppressed(cleanupFailure);
         }
         throw setupFailure;

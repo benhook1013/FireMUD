@@ -590,28 +590,20 @@ public class AccountControlUiIssuanceRepository {
 
     private static AccountControlUiAuthority.ScopeKind scopeKind(Record row) {
       String value = row.get("authorization_scope", String.class);
-      if (value == null) {
+      try {
+        return AccountControlUiAuthority.decodeScope(value);
+      } catch (IllegalArgumentException malformed) {
         throw denied();
       }
-      return switch (value) {
-        case "ACCOUNT" -> AccountControlUiAuthority.ScopeKind.ACCOUNT;
-        case "TENANT" -> AccountControlUiAuthority.ScopeKind.TENANT;
-        default -> throw denied();
-      };
     }
 
     private static UUID tenantId(Record row, AccountControlUiAuthority.ScopeKind scopeKind) {
       UUID value = row.get("tenant_uuid", UUID.class);
-      if (scopeKind == AccountControlUiAuthority.ScopeKind.TENANT) {
-        if (value == null || isNil(value)) {
-          throw denied();
-        }
-        return value;
-      }
-      if (value != null) {
+      try {
+        return AccountControlUiAuthority.decodeScopedTenant(scopeKind, value);
+      } catch (IllegalArgumentException malformed) {
         throw denied();
       }
-      return null;
     }
 
     public AccountControlUiAuthority.ScopeKind scopeKind() {
@@ -648,10 +640,6 @@ public class AccountControlUiIssuanceRepository {
     public String toString() {
       return "AccountControlUiIssuanceRepository.Stored[redacted]";
     }
-  }
-
-  private static boolean isNil(UUID value) {
-    return value.getMostSignificantBits() == 0L && value.getLeastSignificantBits() == 0L;
   }
 
   public record OwnerLinearization(String transactionId, long sourceFence) {
