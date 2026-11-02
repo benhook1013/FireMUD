@@ -3,9 +3,9 @@ package net.firedevops.firemud.gamedesign.repository;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository.CreationRequestConflictException;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -24,7 +24,6 @@ public final class GameTenantCreationOriginalOutcomeRepository {
   private static final String PENDING = "PENDING";
   private static final String CREATED = "CREATED";
   private static final String NOT_CREATED = "NOT_CREATED";
-  private static final Pattern DNS_LABEL = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Table<?> OUTCOME_TABLE =
       DSL.table(DSL.name("game_tenant_creation_original_outcomes"));
@@ -59,7 +58,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
    * committed pre-migration V30 operation is never adopted into a new Account binding.
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public OriginalOutcomeSnapshot claimLocked(OriginalOutcomeBinding binding) {
+  public OriginalOutcomeSnapshot claimLocked(Binding binding) {
     requireActiveOwnerTransaction();
     validateBinding(binding);
     lockIdentity(binding);
@@ -86,7 +85,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public OriginalOutcomeSnapshot markCreatedLocked(
-      OriginalOutcomeBinding binding, FreshTenantCreationEvidence receipt) {
+      Binding binding, FreshTenantCreationEvidence receipt) {
     requireActiveOwnerTransaction();
     validateBinding(binding);
     Objects.requireNonNull(receipt, "receipt");
@@ -134,7 +133,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
    * ensure that this transition cannot race with or follow a creation operation.
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public OriginalOutcomeSnapshot closeNotCreatedLocked(OriginalOutcomeBinding binding) {
+  public OriginalOutcomeSnapshot closeNotCreatedLocked(Binding binding) {
     requireActiveOwnerTransaction();
     validateBinding(binding);
     lockIdentity(binding);
@@ -178,7 +177,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
    * outcome was found; it is not evidence that no creation occurred.
    */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
-  public Optional<OriginalOutcomeSnapshot> readCommitted(OriginalOutcomeBinding binding) {
+  public Optional<OriginalOutcomeSnapshot> readCommitted(Binding binding) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
           "Fresh tenant original outcome read requires a committed-outcome owner read");
@@ -196,7 +195,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
     return Optional.of(snapshot);
   }
 
-  private void insertPending(OriginalOutcomeBinding binding) {
+  private void insertPending(Binding binding) {
     int inserted =
         dsl.insertInto(OUTCOME_TABLE)
             .set(TARGET_NAMESPACE, binding.targetNamespace())
@@ -212,7 +211,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
     }
   }
 
-  private Record findOutcome(OriginalOutcomeBinding binding) {
+  private Record findOutcome(Binding binding) {
     return dsl.selectFrom(OUTCOME_TABLE)
         .where(
             TARGET_NAMESPACE
@@ -221,7 +220,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
         .fetchOne();
   }
 
-  private boolean hasCreationOperation(OriginalOutcomeBinding binding) {
+  private boolean hasCreationOperation(Binding binding) {
     return dsl.fetchExists(
         dsl.selectOne()
             .from(OPERATION_TABLE)
@@ -231,7 +230,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
                     .and(CREATION_REQUEST_ID.eq(binding.creationRequestId()))));
   }
 
-  private OriginalOutcomeSnapshot requireOutcome(OriginalOutcomeBinding binding) {
+  private OriginalOutcomeSnapshot requireOutcome(Binding binding) {
     Record record = findOutcome(binding);
     if (record == null) {
       throw new IllegalStateException("Fresh tenant original outcome is missing");
@@ -242,8 +241,8 @@ public final class GameTenantCreationOriginalOutcomeRepository {
   }
 
   private OriginalOutcomeSnapshot toSnapshot(Record record) {
-    OriginalOutcomeBinding binding =
-        new OriginalOutcomeBinding(
+    Binding binding =
+        new Binding(
             record.get(TARGET_NAMESPACE),
             record.get(CREATION_REQUEST_ID),
             record.get(ACCOUNT_AUTHORIZATION_OPERATION_ID),
@@ -265,7 +264,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
         record.get(CREATION_EVIDENCE_DIGEST));
   }
 
-  private void lockIdentity(OriginalOutcomeBinding binding) {
+  private void lockIdentity(Binding binding) {
     dsl.fetch(
         "SELECT lock_game_tenant_creation_identity(?, ?)",
         binding.targetNamespace(),
@@ -283,12 +282,11 @@ public final class GameTenantCreationOriginalOutcomeRepository {
     }
   }
 
-  private void validateBinding(OriginalOutcomeBinding binding) {
+  private void validateBinding(Binding binding) {
     Objects.requireNonNull(binding, "binding");
   }
 
-  private void requireReceiptBinding(
-      OriginalOutcomeBinding binding, FreshTenantCreationEvidence receipt) {
+  private void requireReceiptBinding(Binding binding, FreshTenantCreationEvidence receipt) {
     if (!binding.targetNamespace().equals(receipt.targetNamespace())
         || !binding.creationRequestId().equals(receipt.creationRequestId())
         || !binding.creationRequestDigest().equals(receipt.requestDigest())) {
@@ -297,17 +295,10 @@ public final class GameTenantCreationOriginalOutcomeRepository {
     }
   }
 
-  private void requireSameBinding(OriginalOutcomeBinding stored, OriginalOutcomeBinding requested) {
+  private void requireSameBinding(Binding stored, Binding requested) {
     if (!stored.equals(requested)) {
       throw new CreationRequestConflictException(
           "Fresh tenant original identity was reused with changed Account or request binding");
-    }
-  }
-
-  private static void validateNamespace(String targetNamespace) {
-    Objects.requireNonNull(targetNamespace, "targetNamespace");
-    if (!DNS_LABEL.matcher(targetNamespace).matches()) {
-      throw new IllegalArgumentException("targetNamespace must be one lowercase DNS label");
     }
   }
 
@@ -315,30 +306,6 @@ public final class GameTenantCreationOriginalOutcomeRepository {
     Objects.requireNonNull(value, label);
     if (NIL_UUID.equals(value)) {
       throw new IllegalArgumentException(label + " must not be nil");
-    }
-  }
-
-  /** The six immutable fields that identify this internal original attempt. */
-  public record OriginalOutcomeBinding(
-      String targetNamespace,
-      UUID creationRequestId,
-      UUID accountAuthorizationOperationId,
-      UUID initiatingAccountId,
-      String creationRequestDigest,
-      String accountAuthorizationDigest) {
-    public OriginalOutcomeBinding {
-      validateNamespace(targetNamespace);
-      requireNonNil(creationRequestId, "creationRequestId");
-      requireNonNil(accountAuthorizationOperationId, "accountAuthorizationOperationId");
-      requireNonNil(initiatingAccountId, "initiatingAccountId");
-      if (!GameTenantCreationDigest.isDigest(creationRequestDigest)) {
-        throw new IllegalArgumentException(
-            "creationRequestDigest must be a lowercase SHA-256 digest");
-      }
-      if (!GameTenantCreationDigest.isDigest(accountAuthorizationDigest)) {
-        throw new IllegalArgumentException(
-            "accountAuthorizationDigest must be a lowercase SHA-256 digest");
-      }
     }
   }
 
@@ -350,7 +317,7 @@ public final class GameTenantCreationOriginalOutcomeRepository {
 
   /** Typed immutable readback of the exact original outcome row. */
   public record OriginalOutcomeSnapshot(
-      OriginalOutcomeBinding binding,
+      Binding binding,
       OutcomeStatus status,
       UUID creationOperationId,
       String creationEvidenceDigest) {

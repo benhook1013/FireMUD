@@ -12,7 +12,6 @@ import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvi
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeGrpcCodec;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -72,12 +71,8 @@ public final class OriginalTenantCreationOutcomeReadGrpcService
 
     final OriginalOutcomeSnapshot snapshot;
     try {
-      OriginalOutcomeBinding repositoryBinding = toRepositoryBinding(readRequest.binding());
-      if (!toEvidenceBinding(repositoryBinding).equals(readRequest.binding())) {
-        failPrecondition(responseObserver);
-        return;
-      }
-      Optional<OriginalOutcomeSnapshot> stored = outcomeRepository.readCommitted(repositoryBinding);
+      Optional<OriginalOutcomeSnapshot> stored =
+          outcomeRepository.readCommitted(readRequest.binding());
       if (stored.isEmpty()) {
         responseObserver.onError(
             Status.NOT_FOUND
@@ -86,7 +81,7 @@ public final class OriginalTenantCreationOutcomeReadGrpcService
         return;
       }
       snapshot = stored.orElseThrow();
-      if (!toEvidenceBinding(snapshot.binding()).equals(readRequest.binding())) {
+      if (!snapshot.binding().equals(readRequest.binding())) {
         failPrecondition(responseObserver);
         return;
       }
@@ -126,7 +121,7 @@ public final class OriginalTenantCreationOutcomeReadGrpcService
       }
       evidence =
           new GameTenantCreationOriginalOutcomeEvidence(
-              1, toEvidenceBinding(snapshot.binding()), Outcome.NOT_CREATED, Optional.empty());
+              1, snapshot.binding(), Outcome.NOT_CREATED, Optional.empty());
     } else if (snapshot.status() == OutcomeStatus.CREATED) {
       if (committedReceipt.isEmpty()) {
         failPrecondition(responseObserver);
@@ -143,7 +138,7 @@ public final class OriginalTenantCreationOutcomeReadGrpcService
       }
       evidence =
           new GameTenantCreationOriginalOutcomeEvidence(
-              1, toEvidenceBinding(snapshot.binding()), Outcome.CREATED, Optional.of(receipt));
+              1, snapshot.binding(), Outcome.CREATED, Optional.of(receipt));
     } else {
       failPrecondition(responseObserver);
       return;
@@ -165,28 +160,6 @@ public final class OriginalTenantCreationOutcomeReadGrpcService
     return peer != null
         && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
         && peer.uri().equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service");
-  }
-
-  private static OriginalOutcomeBinding toRepositoryBinding(
-      GameTenantCreationOriginalOutcomeEvidence.Binding binding) {
-    return new OriginalOutcomeBinding(
-        binding.targetNamespace(),
-        binding.creationRequestId(),
-        binding.accountAuthorizationOperationId(),
-        binding.initiatingAccountId(),
-        binding.creationRequestDigest(),
-        binding.accountAuthorizationDigest());
-  }
-
-  private static GameTenantCreationOriginalOutcomeEvidence.Binding toEvidenceBinding(
-      OriginalOutcomeBinding binding) {
-    return new GameTenantCreationOriginalOutcomeEvidence.Binding(
-        binding.targetNamespace(),
-        binding.creationRequestId(),
-        binding.accountAuthorizationOperationId(),
-        binding.initiatingAccountId(),
-        binding.creationRequestDigest(),
-        binding.accountAuthorizationDigest());
   }
 
   private static void failPrecondition(

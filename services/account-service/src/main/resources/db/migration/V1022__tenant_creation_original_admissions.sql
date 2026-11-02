@@ -39,8 +39,8 @@ CREATE TABLE account_tenant_creation_admissions (
     receipt_payload BYTEA NOT NULL CHECK (octet_length(receipt_payload) BETWEEN 1 AND 8192),
     receipt_digest VARCHAR(64) NOT NULL
         CHECK (receipt_digest = encode(sha256(receipt_payload), 'hex')),
-    local_aof_count BIGINT NOT NULL CHECK (local_aof_count >= 1),
-    replica_aof_count BIGINT NOT NULL CHECK (replica_aof_count >= 0),
+    local_aof_count BIGINT NOT NULL CHECK (local_aof_count = 1),
+    replica_aof_count BIGINT NOT NULL CHECK (replica_aof_count >= 1),
     protected_binding_id VARCHAR(256) NOT NULL
         CHECK (length(protected_binding_id) > 0 AND protected_binding_id = btrim(protected_binding_id)),
     qualification_fence BIGINT NOT NULL CHECK (qualification_fence > 0),

@@ -13,10 +13,10 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeGrpcCodec;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.service.impl.OriginalTenantCreationOutcomeReadGrpcService;
 import net.firedevops.firemud.gamedesign.v1.ResolveOriginalTenantCreationOutcomeRequest;
@@ -63,7 +63,7 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
   @Test
   void resolvesCreatedOutcomeWithActualV30ReceiptWithoutChangingCommittedRows() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
     Created original =
         fixture.inTransaction(
             () -> {
@@ -98,7 +98,7 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
   @Test
   void resolvesOnlyDurableNotCreatedTombstoneAndLeavesItUnchanged() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
     String tombstoneState =
         fixture.inTransaction(
             () -> {
@@ -127,7 +127,7 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
   @Test
   void missingOutcomeRemainsNotFoundAndDoesNotInferOrWriteNoCreation() {
     Fixture fixture = fixture();
-    OriginalOutcomeBinding binding = binding();
+    Binding binding = binding();
     String before = rowState(fixture.dsl, binding);
 
     ResolveOriginalTenantCreationOutcomeRequest request = request(binding);
@@ -146,7 +146,7 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
   void changedAuthorizationDigestRefusesRealRetainedTerminalsWithoutChangingSqlState() {
     for (boolean created : new boolean[] {true, false}) {
       Fixture fixture = fixture();
-      OriginalOutcomeBinding original = binding();
+      Binding original = binding();
       fixture.inTransaction(
           () -> {
             if (created) {
@@ -161,8 +161,8 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
             return true;
           });
       String before = rowState(fixture.dsl, original);
-      OriginalOutcomeBinding changed =
-          new OriginalOutcomeBinding(
+      Binding changed =
+          new Binding(
               original.targetNamespace(), original.creationRequestId(),
               original.accountAuthorizationOperationId(), original.initiatingAccountId(),
               original.creationRequestDigest(), "sha256:" + "c".repeat(64));
@@ -219,7 +219,7 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
     return new Fixture(dsl, outcomes, creation, service, transactionTemplate);
   }
 
-  private static String rowState(DSLContext dsl, OriginalOutcomeBinding binding) {
+  private static String rowState(DSLContext dsl, Binding binding) {
     var outcome =
         dsl.fetchOne(
             "SELECT row_to_json(original_outcome)::TEXT AS row_bytes, xmin::TEXT AS xmin "
@@ -248,8 +248,8 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
         : row.get("row_bytes", String.class) + ":" + row.get("xmin", String.class);
   }
 
-  private static OriginalOutcomeBinding binding() {
-    return new OriginalOutcomeBinding(
+  private static Binding binding() {
+    return new Binding(
         NAMESPACE,
         REQUEST_ID,
         ACCOUNT_OPERATION_ID,
@@ -259,18 +259,9 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
         ACCOUNT_DIGEST);
   }
 
-  private static ResolveOriginalTenantCreationOutcomeRequest request(
-      OriginalOutcomeBinding binding) {
+  private static ResolveOriginalTenantCreationOutcomeRequest request(Binding binding) {
     return GameTenantCreationOriginalOutcomeGrpcCodec.toReadRequest(
-        new GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest(
-            UUID.randomUUID(),
-            new GameTenantCreationOriginalOutcomeEvidence.Binding(
-                binding.targetNamespace(),
-                binding.creationRequestId(),
-                binding.accountAuthorizationOperationId(),
-                binding.initiatingAccountId(),
-                binding.creationRequestDigest(),
-                binding.accountAuthorizationDigest())));
+        new GameTenantCreationOriginalOutcomeGrpcCodec.ReadRequest(UUID.randomUUID(), binding));
   }
 
   private static ReadObserver resolve(
