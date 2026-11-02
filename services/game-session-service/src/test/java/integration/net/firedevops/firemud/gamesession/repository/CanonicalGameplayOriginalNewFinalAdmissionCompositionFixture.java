@@ -426,7 +426,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         selector, target.admissionPointerSnapshotDigest(), controlledProof, complete);
   }
 
-  /** Actual retained launch binding, with explicitly controlled World runtime/capture facts. */
+  /** Retained launch descriptor and publication selector with controlled World capture facts. */
   private net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
       controlledWorldLifecycle(
           net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence.Request
@@ -441,12 +441,74 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                 target.canonicalGameInstanceId())
             .orElseThrow()
             .association();
-    var complete = launch.launchBindingEvidence();
-    var descriptor = complete.descriptor();
-    var release = complete.releaseAttestation();
+    var descriptor = launch.launchBindingEvidence().descriptor();
+    // The stored Game Session launch release is intentionally minimal. Rebuild the controlled
+    // World binding from this target's retained complete publication, keeping the actual launch
+    // descriptor and using its retained start-location selector rather than a guessed room.
+    byte[] policyBytes =
+        java.util.Objects.requireNonNull(
+            binding
+                .dsl()
+                .fetchSingle(
+                    "SELECT complete_policy_set_evidence FROM game_session_canonical_realm_catalog "
+                        + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
+                    "test",
+                    target.canonicalTenantId(),
+                    target.realmId())
+                .get(0, byte[].class),
+            "Controlled complete publication fixture is required");
+    var publishedSet =
+        net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec.decode(
+            policyBytes);
+    var publishedRelease =
+        net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.fromStored(
+                publishedSet.terminalEvidenceBytes())
+            .releaseContent();
+    var worldSelector = publishedRelease.worldStartLocationEvidence();
+    var participants =
+        publishedRelease.participantDigests().stream()
+            .map(
+                participant ->
+                    new net.firedevops.firemud.common.gamedesign
+                        .AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        false,
+                        null,
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigest() != null,
+                        participant.abilitySchemaDigest()))
+            .toList();
+    var release =
+        net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.create(
+            descriptor.targetNamespace(),
+            descriptor.resultDigest(),
+            descriptor.canonicalTenantId(),
+            publishedRelease.canonicalVersionId(),
+            descriptor.worldSlug(),
+            descriptor.authoredWorldSourceOperationId(),
+            descriptor.authoredWorldSourceEvidenceDigest(),
+            descriptor.launchDescriptorId(),
+            descriptor.publishedReleaseBundleRef(),
+            descriptor.versionStateEpoch(),
+            publishedRelease.publishWorkflowId(),
+            worldSelector.request().appliedCommitId(),
+            participants,
+            publishedRelease.manifestHash(),
+            publishedRelease.manifestSchemaVersion(),
+            publishedRelease.requiredManifestAssetKeys(),
+            publishedRelease.artifactDigests(),
+            publishedRelease.commandDefinitions(),
+            descriptor.generationConfigRevision(),
+            worldSelector);
+    var complete =
+        new net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence(
+            descriptor, release);
     var start =
         net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence.fromStored(
-            release.worldStartLocationEvidence().selectorReceiptBytes());
+            worldSelector.selectorReceiptBytes());
     var request =
         new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
             1,

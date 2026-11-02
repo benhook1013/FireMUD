@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -28,18 +29,26 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
+import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.AccountPlayerBootstrapCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
@@ -48,6 +57,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
+import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -74,8 +84,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Real pre-V1028 Account SQL, demo mutations, source-head selection and discovery composition.
  * Bootstrap JWT signing uses a local test key and the actual caller verifier/persisted Account; the
  * active-session registry and complete Game Session collection are controlled inputs. Fresh Game
- * Design evidence is imported as a fixture, not obtained from an authenticated owner call. This
- * proves neither paid hosting, workload provenance, a World hold nor gameplay admission.
+ * Design evidence is imported as a fixture, not obtained from an authenticated owner call. The
+ * canonical public-scope cases additionally use real membership/pair and V2 scope persistence. This
+ * proves neither paid hosting, issuer custody, workload provenance, a World hold, private support
+ * nor gameplay admission; a retained selector is not PLAYER entitlement or JOIN permission.
  */
 class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
   private static final String NAMESPACE = "demo-worlds-proof";
@@ -85,6 +97,7 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
       List.of(
           "accounts",
           "account_tenant_membership",
+          "account_membership_pair_authority",
           "account_connect_scope_records",
           "account_join_operations",
           "account_audit_outbox",
@@ -249,6 +262,168 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
     verify(f.sessions, times(2)).isAccountSessionActive(f.account.getId(), f.token);
   }
 
+  @Test
+  void absentMembershipAndClosedEnrollmentPersistOnlyTheExactCanonicalPublicSelectorScope() {
+    Fixture f = fixture();
+    DemoTenant tenant = f.demo("scope-proof", true);
+    f.targetReads(List.of(tenant.target()), List.of(tenant.target()));
+    Map<String, String> before = f.snapshot();
+
+    var result =
+        f.realmScopes
+            .listRealmScopes(f.token, tenant.target().tenantSlug(), tenant.target().worldSlug())
+            .getFirst();
+
+    var scope = result.scope();
+    assertThat(result.target()).isEqualTo(tenant.target());
+    assertThat(result.membership().accountId()).isEqualTo(f.account.getAccountUuid());
+    assertThat(result.membership().tenantId()).isEqualTo(tenant.tenantId());
+    assertThat(result.membership().current()).isEmpty();
+    assertThat(result.entitlement().sourceKind()).isEqualTo(SourceKind.NON_PAID_DEMO);
+    assertThat(result.entitlement().gameplayAvailable()).isTrue();
+    assertThat(result.entitlement().allowPublicJoin()).isFalse();
+    assertThat(result.entitlement().tenantBillingSequence())
+        .isEqualTo(tenant.snapshot().tenantBillingSequence());
+    assertThat(scope.accountId()).isEqualTo(f.account.getAccountUuid());
+    assertThat(scope.tenantId()).isEqualTo(tenant.tenantId());
+    assertThat(scope.realmId()).isEqualTo(tenant.target().realmId());
+    assertThat(scope.playableStateNamespaceId())
+        .isEqualTo(tenant.target().playableStateNamespaceId());
+    assertThat(scope.gameInstanceId()).isEqualTo(tenant.target().canonicalGameInstanceId());
+    assertThat(scope.playableStateScope()).isEqualTo("SHARED");
+    var signed = f.jwt.parseToken(scope.connectScopeId()).getPayload();
+    assertThat(signed.getSubject()).isEqualTo(f.account.getAccountUuid().toString());
+    assertThat(signed.get("accountId")).isEqualTo(f.account.getAccountUuid().toString());
+    assertThat(JwtClaims.requireText(signed.get("aud"), "aud"))
+        .isEqualTo("bootstrap-connect-scope");
+    assertThat(signed.get("targetClass")).isEqualTo("PUBLIC_PRODUCTION");
+    assertThat(JwtClaims.requireLong(signed.get("scopeDigestVersion"), "scopeDigestVersion", false))
+        .isEqualTo(2L);
+    assertThat(signed.get("tenantId")).isEqualTo(tenant.tenantId().toString());
+    assertThat(signed.get("gameInstanceId"))
+        .isEqualTo(tenant.target().canonicalGameInstanceId().toString());
+    assertThat(signed.get("evaluatedAt")).isEqualTo(scope.evaluatedAt());
+    assertThat(signed.get("connectScopeExpiresAt")).isEqualTo(scope.connectScopeExpiresAt());
+    assertThat(signed.getExpiration().toInstant())
+        .isEqualTo(Instant.parse(scope.connectScopeExpiresAt()));
+    assertThat(signed.getExpiration().toInstant())
+        .isBeforeOrEqualTo(f.jwt.parseToken(f.token).getPayload().getExpiration().toInstant());
+    assertThat(f.inTransaction(() -> f.scopes.findCanonical(scope.connectScopeId()).orElseThrow()))
+        .isEqualTo(scope);
+    String tokenHash = AccountJoinDigest.tokenHash(scope.connectScopeId());
+    var evidence =
+        f.inTransaction(() -> f.scopes.findCanonicalEvidenceByTokenHash(tokenHash).orElseThrow());
+    assertThat(evidence.scopeTokenHash()).isEqualTo(tokenHash);
+    assertThat(evidence.privateAccountId()).isEqualTo(f.account.getId());
+    assertThat(evidence.scopeDigestVersion()).isEqualTo(2);
+    assertThat(evidence.scopeDigest()).isEqualTo(AccountJoinDigest.scopeV2(scope));
+    assertThat(evidence.tenantProvenance().kind())
+        .isEqualTo(AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN);
+    assertThat(evidence.tenantProvenance().legacyTenantId()).isNull();
+    assertThat(evidence.tenantProvenance().sourceOperationId())
+        .isEqualTo(tenant.source().operationId());
+    assertThat(evidence.tenantProvenance().digest()).isEqualTo(tenant.source().evidenceDigest());
+    var row =
+        Objects.requireNonNull(
+            f.dsl.fetchOne(
+                "SELECT * FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                tokenHash));
+    assertThat(row.get("account_uuid", UUID.class)).isEqualTo(f.account.getAccountUuid());
+    assertThat(row.get("tenant_uuid", UUID.class)).isEqualTo(tenant.tenantId());
+    assertThat(row.get("game_instance_uuid", UUID.class))
+        .isEqualTo(tenant.target().canonicalGameInstanceId());
+    assertThat(row.get("tenant_id")).isNull();
+    assertThat(row.get("game_instance_id")).isNull();
+    assertThat(row.get("playable_state_namespace_id")).isNull();
+    assertThat(row.get("snapshot_digest", String.class))
+        .isEqualTo(AccountJoinDigest.scopeV2(scope));
+    Map<String, String> after = f.snapshot();
+    before.forEach(
+        (table, original) -> {
+          if (!table.equals("account_connect_scope_records")) {
+            assertThat(after.get(table)).as("unchanged %s", table).isEqualTo(original);
+          }
+        });
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl.fetchOne("SELECT COUNT(*) FROM account_connect_scope_records"))
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    f.assertNoMembershipPairJoinOrPaidReads();
+    verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
+  }
+
+  @Test
+  void actualDemoMutationDuringScopeTargetRereadRefusesBeforeAnySelectorWrite() {
+    Fixture f = fixture();
+    DemoTenant tenant = f.demo("scope-head-race", true);
+    f.targetReads(List.of(tenant.target()), List.of(tenant.target()));
+    AtomicReference<Map<String, String>> afterMutation = new AtomicReference<>();
+    f.onSecondTargetRead =
+        () -> {
+          DemoTenantEntitlementSnapshot updated = f.update(tenant, false);
+          assertThat(updated.tenantBillingSequence())
+              .isEqualTo(tenant.snapshot().tenantBillingSequence() + 1L);
+          afterMutation.set(f.snapshot());
+        };
+
+    assertCode(
+        "ENTITLEMENT_UNAVAILABLE",
+        () ->
+            f.realmScopes.listRealmScopes(
+                f.token, tenant.target().tenantSlug(), tenant.target().worldSlug()));
+
+    assertThat(afterMutation.get()).isNotNull();
+    assertThat(f.snapshot()).isEqualTo(afterMutation.get());
+    f.assertNoAdmissionRowsOrPaidReads();
+    f.assertNoMembershipPairJoinOrPaidReads();
+    verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
+  }
+
+  @Test
+  void actualCanonicalScopeInsertFailureRollsBackWithoutScopeOrOtherAuthorityMutation() {
+    Fixture f = fixture();
+    DemoTenant tenant = f.demo("scope-insert-failure", true);
+    f.targetReads(List.of(tenant.target()), List.of(tenant.target()));
+    // The function and trigger belong only to this test's disposable schema. AFTER INSERT
+    // ensures PostgreSQL staged the actual row before aborting the same physical transaction.
+    f.dsl.execute(
+        "CREATE FUNCTION reject_test_canonical_scope_insert() RETURNS trigger LANGUAGE plpgsql AS $$ "
+            + "BEGIN IF NEW.scope_digest_version = 2 THEN "
+            + "RAISE EXCEPTION 'controlled canonical scope insert refusal' USING ERRCODE = '23514'; "
+            + "END IF; RETURN NEW; END; $$");
+    f.dsl.execute(
+        "CREATE TRIGGER reject_test_canonical_scope_insert AFTER INSERT ON account_connect_scope_records "
+            + "FOR EACH ROW EXECUTE FUNCTION reject_test_canonical_scope_insert()");
+    Map<String, String> before = f.snapshot();
+
+    AuthenticationException failure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            AuthenticationException.class,
+            () ->
+                f.realmScopes.listRealmScopes(
+                    f.token, tenant.target().tenantSlug(), tenant.target().worldSlug()));
+
+    assertThat(failure.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    SQLException sql =
+        Objects.requireNonNull(sqlFailure(failure), "Expected actual PostgreSQL refusal");
+    assertThat(sql.getSQLState()).isEqualTo("23514");
+    assertThat(sql.getMessage()).contains("controlled canonical scope insert refusal");
+    assertThat(f.snapshot()).isEqualTo(before);
+    f.assertNoAdmissionRowsOrPaidReads();
+    f.assertNoMembershipPairJoinOrPaidReads();
+    // A fresh transaction remains usable after the failed owner transaction was rolled back.
+    assertThat(f.inTransaction(() -> f.demos.readCurrent(tenant.tenantId())))
+        .isEqualTo(tenant.snapshot());
+  }
+
+  private static SQLException sqlFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sql) return sql;
+    }
+    return null;
+  }
+
   private Fixture fixture() {
     String schema = "demo_worlds_" + UUID.randomUUID().toString().replace("-", "");
     ownedSchemas.add(schema);
@@ -277,6 +452,7 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
     private final DSLContext dsl;
     private final TransactionTemplate transaction;
     private final AccountRepository accounts;
+    private final AccountConnectScopeRepository scopes;
     private final FreshTenantIdentityAssociationRepository tenants;
     private final AccountAuthorityGenerationRepository generations;
     private final AccountTenantAuthorityEventRepository sources;
@@ -289,8 +465,10 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
     private final AtomicBoolean sessionActive = new AtomicBoolean(true);
     private final DatabaseClock clock;
     private final Account account;
+    private final JwtUtil jwt;
     private final String token;
     private final AccountPublicBootstrapWorldsOwner worlds;
+    private final AccountCanonicalPublicRealmScopeOwner realmScopes;
     private final AtomicInteger targetReadCount = new AtomicInteger();
     private long sourceRowId;
     private Runnable onSecondTargetRead = () -> {};
@@ -317,7 +495,7 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
       fresh.setPasswordHash("controlled-unused-password-verifier");
       fresh.setRole("player");
       account = inTransaction(() -> accounts.save(fresh));
-      JwtUtil jwt = new JwtUtil("controlled-local-bootstrap-key-01234567890123456789", 300000L);
+      jwt = new JwtUtil("controlled-local-bootstrap-key-01234567890123456789", 300000L);
       token =
           jwt.generateToken(
               account.getAccountUuid().toString(),
@@ -334,6 +512,31 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
       var entitlement =
           new AccountPublicBootstrapEntitlementOwner(sources, hosting, demos, transactions, clock);
       worlds = new AccountPublicBootstrapWorldsOwner(caller, targets, entitlement, clock);
+      var pairs = new AccountMembershipPairAuthorityRepository(dsl);
+      var memberships = new AccountTenantMembershipRepository(dsl, accounts, tenants, pairs);
+      var retainedIdentities =
+          new AccountTenantIdentityResolver(
+              new ApprovedLegacyTenantAssociationRepository(
+                  dsl, new LegacyTenantSourceEvidence(dsl), NAMESPACE),
+              NAMESPACE);
+      scopes = new AccountConnectScopeRepository(dsl, retainedIdentities, tenants);
+      var tokenProperties = new AccountTokenProperties();
+      tokenProperties.setConnectScopeExpirationMs(120000L);
+      realmScopes =
+          new AccountCanonicalPublicRealmScopeOwner(
+              caller,
+              targets,
+              entitlement,
+              accounts,
+              memberships,
+              tenants,
+              sources,
+              scopes,
+              jwt,
+              tokenProperties,
+              clock,
+              transactions,
+              NAMESPACE);
       assertThat(
               Objects.requireNonNull(
                       dsl.fetchOne("SELECT to_regclass('subscription_lifecycle_receipts')"))
@@ -427,6 +630,20 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
           List.of(
               "account_tenant_membership",
               "account_connect_scope_records",
+              "account_join_operations")) {
+        assertThat(
+                Objects.requireNonNull(dsl.fetchOne("SELECT COUNT(*) FROM " + table))
+                    .get(0, Long.class))
+            .isZero();
+      }
+      verifyNoInteractions(hosting);
+    }
+
+    private void assertNoMembershipPairJoinOrPaidReads() {
+      for (String table :
+          List.of(
+              "account_tenant_membership",
+              "account_membership_pair_authority",
               "account_join_operations")) {
         assertThat(
                 Objects.requireNonNull(dsl.fetchOne("SELECT COUNT(*) FROM " + table))
