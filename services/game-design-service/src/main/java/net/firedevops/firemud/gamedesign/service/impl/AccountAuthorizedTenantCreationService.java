@@ -1,8 +1,12 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import io.grpc.Context;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
@@ -28,6 +32,8 @@ public final class AccountAuthorizedTenantCreationService {
   private static final int MAX_DESCRIPTION_CHARS = 510;
   private static final int MAX_DESCRIPTION_CODE_POINTS = 255;
   private static final int MAX_DESCRIPTION_UTF8_BYTES = 1020;
+  private static final int MAX_AUTHORIZATION_ATTEMPTS = 3;
+  private static final long MIN_AUTHORIZATION_RETRY_MILLIS = 1000L;
 
   private final AccountTenantCreationCurrentAuthorizationClient authorizationClient;
   private final GameTenantCreationRepository creationRepository;
@@ -87,7 +93,7 @@ public final class AccountAuthorizedTenantCreationService {
 
     // This authenticated Account call is deliberately before the write transaction and shared
     // V30/V1033 identity lock. Prepared source digests and request DTOs are never permission.
-    VerifiedAuthorization authorization = authorizationClient.resolveCurrent(request.binding());
+    VerifiedAuthorization authorization = resolveCurrentAuthorization(binding);
     if (!authorization.binding().equals(request.binding())
         || authorization.validBeforeEpochMillis() <= System.currentTimeMillis()) {
       throw new IllegalStateException(
@@ -153,6 +159,26 @@ public final class AccountAuthorizedTenantCreationService {
       throw new IllegalStateException("Committed Game Design original outcome is not CREATED");
     }
     return readAndVerifyReceipt(request, binding, terminal);
+  }
+
+  private VerifiedAuthorization resolveCurrentAuthorization(Binding binding) {
+    Context incoming = Context.current();
+    for (int attempt = 1; ; attempt++) {
+      try {
+        // Every invocation performs a fresh authenticated read, before any owner transaction.
+        return authorizationClient.resolveCurrent(binding);
+      } catch (StatusRuntimeException failure) {
+        Status.Code code = failure.getStatus().getCode();
+        if (attempt >= MAX_AUTHORIZATION_ATTEMPTS
+            || code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED
+            || incoming.isCancelled()
+            || incoming.getDeadline() != null
+                && incoming.getDeadline().timeRemaining(TimeUnit.MILLISECONDS)
+                    < MIN_AUTHORIZATION_RETRY_MILLIS) {
+          throw failure;
+        }
+      }
+    }
   }
 
   /**

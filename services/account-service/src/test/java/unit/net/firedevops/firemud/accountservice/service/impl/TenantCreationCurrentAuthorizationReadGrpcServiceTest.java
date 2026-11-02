@@ -12,6 +12,7 @@ import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.ResolveCurrentTenantCreationAuthorizationRequest;
 import net.firedevops.firemud.account.v1.ResolveCurrentTenantCreationAuthorizationResponse;
 import net.firedevops.firemud.accountservice.service.impl.TenantCreationCurrentAuthorizationReadGrpcService;
@@ -22,6 +23,9 @@ import net.firedevops.firemud.common.tenant.CurrentTenantCreationAuthorizationGr
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Binding;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /** Handler guard/closed-message proof; peer contexts here are stipulated, not physical mTLS. */
 class TenantCreationCurrentAuthorizationReadGrpcServiceTest {
@@ -103,6 +107,36 @@ class TenantCreationCurrentAuthorizationReadGrpcServiceTest {
     assertThat(unavailable.response).isNull();
   }
 
+  @ParameterizedTest
+  @MethodSource("ownerFailures")
+  void outagesAndUnexpectedFailuresHaveDistinctBoundedStatuses(
+      RuntimeException failure, Status.Code expected) {
+    when(owner.resolve(binding)).thenThrow(failure);
+    var result = call(request(), PEER);
+    assertThat(result.error).isEqualTo(expected);
+    assertThat(result.response).isNull();
+    assertThat(result.complete).isFalse();
+    assertThat(result.description).isNotBlank().doesNotContain("internal-debug-details");
+  }
+
+  private static Stream<Arguments> ownerFailures() {
+    return Stream.of(
+        Arguments.of(
+            new org.jooq.exception.DataAccessException("internal-debug-details"),
+            Status.Code.UNAVAILABLE),
+        Arguments.of(
+            new org.springframework.dao.DataAccessResourceFailureException(
+                "internal-debug-details"),
+            Status.Code.UNAVAILABLE),
+        Arguments.of(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "internal-debug-details"),
+            Status.Code.UNAVAILABLE),
+        Arguments.of(new NullPointerException("internal-debug-details"), Status.Code.INTERNAL),
+        Arguments.of(new ClassCastException("internal-debug-details"), Status.Code.INTERNAL),
+        Arguments.of(new RuntimeException("internal-debug-details"), Status.Code.INTERNAL));
+  }
+
   private ResolveCurrentTenantCreationAuthorizationRequest request() {
     return ResolveCurrentTenantCreationAuthorizationRequest.newBuilder()
         .setSchemaVersion(1)
@@ -131,6 +165,7 @@ class TenantCreationCurrentAuthorizationReadGrpcServiceTest {
       implements StreamObserver<ResolveCurrentTenantCreationAuthorizationResponse> {
     private ResolveCurrentTenantCreationAuthorizationResponse response;
     private Status.Code error;
+    private String description;
     private boolean complete;
 
     @Override
@@ -141,6 +176,7 @@ class TenantCreationCurrentAuthorizationReadGrpcServiceTest {
     @Override
     public void onError(Throwable failure) {
       error = Status.fromThrowable(failure).getCode();
+      description = Status.fromThrowable(failure).getDescription();
     }
 
     @Override

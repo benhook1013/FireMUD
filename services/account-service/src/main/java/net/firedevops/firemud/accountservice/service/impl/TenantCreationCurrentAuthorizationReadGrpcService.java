@@ -66,9 +66,16 @@ public final class TenantCreationCurrentAuthorizationReadGrpcService
           Status.FAILED_PRECONDITION
               .withDescription("Current original creation authorization unavailable")
               .asRuntimeException());
-    } catch (RuntimeException unavailable) {
+    } catch (org.springframework.transaction.TransactionException
+        | org.springframework.dao.DataAccessException
+        | org.jooq.exception.DataAccessException unavailable) {
       responseObserver.onError(
           Status.UNAVAILABLE.withDescription("Account owner unavailable").asRuntimeException());
+    } catch (RuntimeException failure) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Account owner could not evaluate current authorization")
+              .asRuntimeException());
     }
   }
 }
