@@ -960,7 +960,9 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                             true)));
 
     UUID issuanceOperationId = UUID.randomUUID();
-    String tokenHash = "e".repeat(64);
+    String tokenHash =
+        AccountControlUiCoordination.digest(
+            "SHA-256", issuanceOperationId.toString().getBytes(StandardCharsets.UTF_8));
     byte[] activeRegistry = "test-only-active-registry".getBytes(StandardCharsets.UTF_8);
     long issuedAt = Instant.now().getEpochSecond();
     long tokenExpiry = (issuedAt + 300) * 1000;
