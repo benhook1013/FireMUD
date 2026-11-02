@@ -129,6 +129,42 @@ class AccountAuthorizedTenantCreationGrpcServiceTest {
     verifyNoInteractions(owner);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Status.Code.class,
+      names = {"UNAVAILABLE", "DEADLINE_EXCEEDED", "CANCELLED"})
+  void mapsTransientAccountAuthorizationFailureToUnavailableWithoutPartialResult(Status.Code code) {
+    assertAuthorizationDependencyFailure(code, Status.Code.UNAVAILABLE);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Status.Code.class,
+      names = {"FAILED_PRECONDITION", "PERMISSION_DENIED"})
+  void retainsDefinitiveAccountAuthorityRefusalAsFailedPrecondition(Status.Code code) {
+    assertAuthorizationDependencyFailure(code, Status.Code.FAILED_PRECONDITION);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Status.Code.class,
+      names = {"INTERNAL", "UNKNOWN", "UNIMPLEMENTED"})
+  void retainsUnexpectedDependencyFailureAsInternal(Status.Code code) {
+    assertAuthorizationDependencyFailure(code, Status.Code.INTERNAL);
+  }
+
+  private void assertAuthorizationDependencyFailure(Status.Code source, Status.Code expected) {
+    when(owner.create(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(
+            Status.fromCode(source)
+                .withDescription("private upstream failure")
+                .asRuntimeException());
+    Dispatch result = call(request().build(), ACCOUNT_URI);
+    assertThat(result.failure()).isEqualTo(expected);
+    assertThat(result.response()).isNull();
+    assertThat(result.completed()).isFalse();
+  }
+
   private static CreateAuthorizedTenantRequest.Builder request() {
     return CreateAuthorizedTenantRequest.newBuilder()
         .setSchemaVersion(1)

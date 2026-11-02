@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import com.google.protobuf.Empty;
 import com.google.protobuf.Message;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Optional;
 import java.util.UUID;
@@ -76,6 +77,9 @@ public final class AccountAuthorizedTenantCreationGrpcService
           Status.FAILED_PRECONDITION
               .withDescription("Exact current Account tenant-creation authority is unavailable")
               .asRuntimeException());
+      return;
+    } catch (StatusRuntimeException dependency) {
+      responseObserver.onError(authorizationDependencyStatus(dependency).asRuntimeException());
       return;
     } catch (RuntimeException failure) {
       responseObserver.onError(storageFailureStatus(failure).asRuntimeException());
@@ -183,9 +187,6 @@ public final class AccountAuthorizedTenantCreationGrpcService
             request.getSourceGameTenantKey(),
             request.getName(),
             request.hasDescription() ? request.getDescription() : null);
-    if (request.getSerializedSize() > MAX_REQUEST_BYTES) {
-      throw new IllegalArgumentException("Tenant-creation request exceeds its byte bound");
-    }
     return candidate;
   }
 
@@ -216,6 +217,20 @@ public final class AccountAuthorizedTenantCreationGrpcService
     if (!message.getUnknownFields().asMap().isEmpty()) {
       throw new IllegalArgumentException("Unknown tenant-creation wire fields");
     }
+  }
+
+  private static Status authorizationDependencyStatus(StatusRuntimeException failure) {
+    return switch (failure.getStatus().getCode()) {
+      case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED ->
+          Status.UNAVAILABLE.withDescription(
+              "Account tenant-creation authority is temporarily unavailable");
+      case FAILED_PRECONDITION, PERMISSION_DENIED ->
+          Status.FAILED_PRECONDITION.withDescription(
+              "Exact current Account tenant-creation authority is unavailable");
+      default ->
+          Status.INTERNAL.withDescription(
+              "Account tenant-creation authority could not be evaluated");
+    };
   }
 
   private static Status storageFailureStatus(Throwable failure) {

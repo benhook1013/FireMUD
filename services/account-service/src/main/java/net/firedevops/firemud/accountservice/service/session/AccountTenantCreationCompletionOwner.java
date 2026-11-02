@@ -102,9 +102,33 @@ public final class AccountTenantCreationCompletionOwner {
             transactions.execute(
                 status -> {
                   Original original = readOriginal(operationId, terminal);
-                  return new Initial(original, readResult(original, terminal));
+                  Result result = readResult(original, terminal);
+                  if (result == null) result = readHistoricalResult(original, terminal);
+                  if (result == null && originalCompletionExpired(original)) {
+                    // This takes the existing source locks without acquiring current authority.
+                    // A completion retaining those locks must finish or roll back first. Recheck
+                    // its committed success while the locks remain held; success always wins.
+                    orders.settleLocked(original.holder, terminal);
+                    result = readResult(original, terminal);
+                    if (result == null) result = historicalResult(terminal);
+                  }
+                  return new Initial(original, result);
                 }));
-    if (first.result != null) return first.result;
+    if (first.result != null) {
+      if (first.result.state == State.COMPLETED) return first.result;
+      // Expose terminal-only recovery only after independent committed original/settlement reads.
+      return Objects.requireNonNull(
+          transactions.execute(
+              status -> {
+                Original original = readOriginal(operationId, terminal);
+                requireSame(first.original, original);
+                Result success = readResult(original, terminal);
+                if (success != null) return success;
+                Result historical = readHistoricalResult(original, terminal);
+                if (historical == null) throw denied();
+                return historical;
+              }));
+    }
 
     String kid =
         (String)
@@ -245,6 +269,54 @@ public final class AccountTenantCreationCompletionOwner {
             }));
   }
 
+  private boolean originalCompletionExpired(Original original) {
+    var admitted = original.admitted.binding();
+    var retained =
+        new AccountRecentReauthenticationRepository(dsl)
+            .findByCreationOperation(original.intent.creationOperationId())
+            .orElseThrow(AccountTenantCreationCompletionOwner::denied);
+    if (!admitted.intentRequestId().equals(original.intent.requestId())
+        || !admitted.actorAccountId().equals(original.intent.initiatingAccountId())
+        || !admitted
+            .reauthenticationEvidenceId()
+            .equals(original.intent.recentReauthenticationEvidenceId())
+        || !retained.evidenceId().equals(admitted.reauthenticationEvidenceId())
+        || !retained.creationOperationId().equals(original.intent.creationOperationId())
+        || !retained.accountId().equals(original.intent.initiatingAccountId())
+        || !AccountRecentReauthenticationPolicy.PURPOSE.equals(retained.purpose())) throw denied();
+    Instant cutoff = Instant.ofEpochMilli(admitted.operationDeadlineEpochMillis());
+    Instant recentCutoff =
+        retained
+            .issuedAt()
+            .plusSeconds(retained.recentAgeSeconds() - retained.maxClockSkewSeconds());
+    if (recentCutoff.isBefore(cutoff)) cutoff = recentCutoff;
+    Record clock = dsl.fetchOne("SELECT clock_timestamp() AS observed_at");
+    OffsetDateTime observed = clock == null ? null : clock.get("observed_at", OffsetDateTime.class);
+    if (observed == null) throw denied();
+    Instant now = observed.toInstant();
+    if (now.isBefore(Instant.ofEpochMilli(admitted.preparedAtEpochMillis()))
+        || now.isBefore(retained.issuedAt())) throw denied();
+    return !now.isBefore(cutoff);
+  }
+
+  private static Result historicalResult(VerifiedTerminal terminal) {
+    return new Result(
+        State.CREATED_WITHOUT_ACCOUNT_COMPLETION,
+        terminal.evidence().canonicalBytes(),
+        terminal.evidence().evidenceDigest());
+  }
+
+  private Result readHistoricalResult(Original original, VerifiedTerminal terminal) {
+    var settled = orders.readSettlement(original.intent.creationOperationId());
+    if (settled.isEmpty()) return null;
+    if (!Arrays.equals(settled.orElseThrow().canonicalBytes(), terminal.evidence().canonicalBytes())
+        || !settled.orElseThrow().evidenceDigest().equals(terminal.evidence().evidenceDigest()))
+      throw denied();
+    // A committed settlement excludes every later fresh completion through the existing holder
+    // gate. A successful atomic completion was checked first; replay needs no fresh clock proof.
+    return historicalResult(terminal);
+  }
+
   private Current current(
       Original original,
       CapturedEnvironmentBoundary environment,
@@ -324,7 +396,7 @@ public final class AccountTenantCreationCompletionOwner {
             .orElseThrow(AccountTenantCreationCompletionOwner::denied);
     if (!Arrays.equals(settlement.canonicalBytes(), terminal.evidence().canonicalBytes()))
       throw denied();
-    return new Result(payload, resultDigest);
+    return new Result(State.COMPLETED, payload, resultDigest);
   }
 
   private static FreshTenantCreatorEvidence creator(
@@ -440,14 +512,25 @@ public final class AccountTenantCreationCompletionOwner {
     }
   }
 
-  /** Historical data only, replayed without reconsumption or new creator writes. */
+  enum State {
+    COMPLETED,
+    CREATED_WITHOUT_ACCOUNT_COMPLETION
+  }
+
+  /** Historical data only; terminal-only payloads are GD facts, never Account completion grants. */
   static final class Result {
+    private final State state;
     private final byte[] payload;
     private final String digest;
 
-    private Result(byte[] payload, String digest) {
+    private Result(State state, byte[] payload, String digest) {
+      this.state = state;
       this.payload = payload.clone();
       this.digest = digest;
+    }
+
+    State state() {
+      return state;
     }
 
     byte[] payload() {

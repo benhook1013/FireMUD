@@ -10,8 +10,10 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.FileBackedMtls;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
@@ -37,7 +39,11 @@ public final class GameDesignAuthorizedTenantCreationClient
       CommonGrpcClientProperties tls,
       GrpcChannelFactory channels,
       String namespace) {
-    super(endpoints, requireMtls(tls), channels, GameDesignAuthorizedTenantCreationClient.class);
+    super(
+        endpoints,
+        FileBackedMtls.require(tls, "Authorized tenant creation"),
+        channels,
+        GameDesignAuthorizedTenantCreationClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(namespace))
       throw new IllegalArgumentException("Canonical workload namespace required");
     this.namespace = namespace;
@@ -47,7 +53,10 @@ public final class GameDesignAuthorizedTenantCreationClient
   }
 
   public void init() throws SSLException, IOException {
-    initReloadingClient();
+    requireNoAmbientSql("Authorized tenant creation client initialization requires no SQL");
+    initOnce(
+        "Authorized tenant creation client is closed",
+        "Authorized tenant creation client is not initialized");
   }
 
   @Override
@@ -63,9 +72,11 @@ public final class GameDesignAuthorizedTenantCreationClient
   @Override
   protected TenantCreationServiceGrpc.TenantCreationServiceBlockingStub buildStub(
       ManagedChannel channel) {
+    String expectedPeer = "spiffe://firemud/ns/" + namespace + "/sa/game-design-service";
     return TenantCreationServiceGrpc.newBlockingStub(ClientInterceptors.intercept(channel, peer))
         .withMaxInboundMessageSize(MAX_BYTES)
         .withMaxOutboundMessageSize(MAX_BYTES)
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeer))
         .withCompression("gzip");
   }
 
@@ -124,7 +135,7 @@ public final class GameDesignAuthorizedTenantCreationClient
     if (request.getSerializedSize() > MAX_BYTES)
       throw new IllegalArgumentException("Creation request exceeds wire budget");
     var response =
-        stub()
+        requireInitializedStub("Authorized tenant creation client is not initialized")
             .withDeadlineAfter(Math.min(MAX_CALL_MILLIS, remaining), TimeUnit.MILLISECONDS)
             .createAuthorizedTenant(request);
     return decode(callId, binding, sourceKey, response);
@@ -147,7 +158,7 @@ public final class GameDesignAuthorizedTenantCreationClient
     if (request.getSerializedSize() > MAX_BYTES)
       throw new IllegalArgumentException("Original closure exceeds wire budget");
     var ack =
-        stub()
+        requireInitializedStub("Authorized tenant creation client is not initialized")
             .withDeadlineAfter(MAX_CALL_MILLIS, TimeUnit.MILLISECONDS)
             .closeOriginalTenantCreation(request);
     if (ack == null || !ack.getUnknownFields().asMap().isEmpty())
@@ -204,20 +215,5 @@ public final class GameDesignAuthorizedTenantCreationClient
     if (new UUID(0, 0).equals(uuid) || !uuid.toString().equals(value))
       throw new IllegalArgumentException("Canonical non-nil UUID required");
     return uuid;
-  }
-
-  private static CommonGrpcClientProperties requireMtls(CommonGrpcClientProperties tls) {
-    if (tls == null
-        || tls.isPlaintext()
-        || !file(tls.getCertChain())
-        || !file(tls.getPrivateKey())
-        || !file(tls.getCaCert())) {
-      throw new IllegalArgumentException("File-backed Account workload mTLS required");
-    }
-    return tls;
-  }
-
-  private static boolean file(String path) {
-    return path != null && !path.isBlank() && !path.trim().startsWith("classpath:");
   }
 }

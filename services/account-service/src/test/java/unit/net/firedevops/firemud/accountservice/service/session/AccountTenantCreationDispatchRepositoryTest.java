@@ -41,7 +41,7 @@ class AccountTenantCreationDispatchRepositoryTest {
     var f = new Fixture();
     var first = f.claim().orElseThrow();
     assertThat(first.callId()).isNotNull();
-    assertThat(first.validBefore()).isGreaterThan(System.currentTimeMillis());
+    assertThat(first.validBefore()).isEqualTo(Fixture.DISPATCH_DEADLINE);
     assertThat(f.repository.hasClaim(f.operation)).isTrue();
     assertThat(f.claim()).isEmpty();
     verify(f.dsl).execute(anyString(), any(Object[].class));
@@ -70,6 +70,87 @@ class AccountTenantCreationDispatchRepositoryTest {
     assertThatThrownBy(f::claim).isInstanceOf(IllegalStateException.class);
     assertThat(f.row).isNull();
     verify(f.dsl, org.mockito.Mockito.never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void retainedDispatchClosesOnlyAtExactDatabaseClockCutoff() {
+    var f = new Fixture();
+    var dispatch = f.claim().orElseThrow();
+    Instant cutoff = Instant.ofEpochMilli(dispatch.validBefore());
+    f.observe(cutoff.minusNanos(1));
+    assertThat(f.repository.isDispatchWindowClosed(dispatch.original())).isFalse();
+    f.observe(cutoff);
+    assertThat(f.repository.isDispatchWindowClosed(dispatch.original())).isTrue();
+    f.observe(cutoff.plusNanos(1));
+    assertThat(f.repository.isDispatchWindowClosed(dispatch.original())).isTrue();
+    assertThat(f.claim()).isEmpty();
+    verify(f.dsl).execute(anyString(), any(Object[].class));
+    verify(f.actors).readAcceptedSignerKey("kid");
+  }
+
+  @Test
+  void noClaimWaitsForImmutableOperationDeadlineSoConcurrentFirstClaimKeepsItsWindow() {
+    var f = new Fixture();
+    var original = f.repository.readOriginal(f.operation);
+    Instant cutoff =
+        Instant.ofEpochMilli(original.admitted().binding().operationDeadlineEpochMillis());
+    f.observe(Instant.ofEpochMilli(Fixture.DISPATCH_DEADLINE));
+    assertThat(f.repository.isDispatchWindowClosed(original)).isFalse();
+    f.observe(cutoff.minusNanos(1));
+    assertThat(f.repository.isDispatchWindowClosed(original)).isFalse();
+    f.observe(cutoff);
+    assertThat(f.repository.isDispatchWindowClosed(original)).isTrue();
+    assertThat(f.row).isNull();
+    verify(f.dsl, org.mockito.Mockito.never()).execute(anyString(), any(Object[].class));
+    org.mockito.Mockito.verifyNoInteractions(f.actors, f.capture);
+  }
+
+  @Test
+  void unknownOutOfBoundsOrContradictoryClaimNeverEstablishesClosure() {
+    for (Long deadline : new Long[] {null, 0L, -1L, 1900000000000L, Long.MAX_VALUE}) {
+      assertClaimRefused("valid_before_epoch_millis", deadline);
+    }
+    assertClaimRefused("authorization_binding_payload", new byte[] {99});
+    assertClaimRefused("authorization_digest", "different");
+    assertClaimRefused("creation_operation_id", UUID.randomUUID());
+    assertClaimRefused("dispatch_call_id", null);
+    assertClaimRefused("dispatch_call_id", new UUID(0L, 0L));
+  }
+
+  @Test
+  void missingOriginalOrDatabaseClockAndChangedHolderNeverEstablishClosure() {
+    var f = new Fixture();
+    var original = f.repository.readOriginal(f.operation);
+    org.mockito.Mockito.doReturn(null)
+        .when(f.dsl)
+        .fetchOne("SELECT clock_timestamp() AS observed_at");
+    assertThatThrownBy(() -> f.repository.isDispatchWindowClosed(original))
+        .isInstanceOf(IllegalStateException.class);
+    when(f.admissions.readAdmitted(f.operation)).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> f.repository.isDispatchWindowClosed(original))
+        .isInstanceOf(IllegalStateException.class);
+
+    var changed = new Fixture();
+    var retained = changed.repository.readOriginal(changed.operation);
+    var holder = mock(AccountTenantCreationSourceOrderBinding.class);
+    when(holder.intentPayload()).thenReturn(new byte[] {1});
+    when(holder.intentDigest()).thenReturn("intent");
+    when(holder.admissionPayload()).thenReturn(new byte[] {2});
+    when(holder.admissionDigest()).thenReturn("admission");
+    when(holder.canonicalBytes()).thenReturn(new byte[] {99});
+    when(changed.orders.readOriginal(changed.operation)).thenReturn(Optional.of(holder));
+    assertThatThrownBy(() -> changed.repository.isDispatchWindowClosed(retained))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  private static void assertClaimRefused(String field, Object value) {
+    var f = new Fixture();
+    var dispatch = f.claim().orElseThrow();
+    f.claimFields.put(field, value);
+    f.observe(Instant.ofEpochMilli(2000000000000L));
+    assertThatThrownBy(() -> f.repository.isDispatchWindowClosed(dispatch.original()))
+        .as(field)
+        .isInstanceOf(IllegalStateException.class);
   }
 
   private static final class Fixture {
@@ -101,6 +182,9 @@ class AccountTenantCreationDispatchRepositoryTest {
     final AccountRecentReauthenticationEvidence recent =
         mock(AccountRecentReauthenticationEvidence.class);
     final AccountTenantCreationDispatchRepository repository;
+    static final long DISPATCH_DEADLINE = 1899999940000L;
+    final Map<String, Object> claimFields = new HashMap<>();
+    final Record clock = mock(Record.class);
     Record row;
     boolean hideClaim;
     int commits;
@@ -202,11 +286,12 @@ class AccountTenantCreationDispatchRepositoryTest {
       when(observed.tokenHash()).thenReturn("d".repeat(64));
       when(observed.sources()).thenReturn(List.of());
       when(observed.reauthentication()).thenReturn(recent);
-      when(recent.issuedAt()).thenReturn(Instant.now());
+      when(recent.issuedAt()).thenReturn(Instant.ofEpochMilli(1899999900000L));
       when(recent.recentAgeSeconds()).thenReturn(300L);
       when(recent.maxClockSkewSeconds()).thenReturn(30L);
       var currentness = mock(AccountHostedTermsService.EnvironmentBoundCurrentness.class);
       var terms = mock(AccountHostedTermsService.CurrentnessEvidence.class);
+      when(terms.validUntil()).thenReturn(Instant.ofEpochMilli(DISPATCH_DEADLINE));
       when(currentness.terms()).thenReturn(terms);
       when(observed.currentness()).thenReturn(currentness);
       when(capture.captureLocked(intent, admitted, environment, recent)).thenReturn(observed);
@@ -214,24 +299,26 @@ class AccountTenantCreationDispatchRepositoryTest {
               "SELECT * FROM account_tenant_creation_dispatch_intents WHERE creation_operation_id = ?",
               operation))
           .thenAnswer(invocation -> hideClaim ? null : row);
-      Record clock = mock(Record.class);
-      when(clock.get("observed_at", java.time.OffsetDateTime.class))
-          .thenReturn(Instant.now().atOffset(ZoneOffset.UTC));
-      when(dsl.fetchOne("SELECT clock_timestamp() AS observed_at")).thenReturn(clock);
+      observe(Instant.ofEpochMilli(1899999900000L));
+      when(dsl.fetchOne("SELECT clock_timestamp() AS observed_at"))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+                return clock;
+              });
       when(dsl.execute(anyString(), any(Object[].class)))
           .thenAnswer(
               invocation -> {
                 assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
                 Object[] values = (Object[]) invocation.getRawArguments()[1];
-                Map<String, Object> fields = new HashMap<>();
-                fields.put("creation_operation_id", values[0]);
-                fields.put("dispatch_call_id", values[1]);
-                fields.put("authorization_binding_payload", values[2]);
-                fields.put("authorization_digest", values[3]);
-                fields.put("valid_before_epoch_millis", values[4]);
+                claimFields.put("creation_operation_id", values[0]);
+                claimFields.put("dispatch_call_id", values[1]);
+                claimFields.put("authorization_binding_payload", values[2]);
+                claimFields.put("authorization_digest", values[3]);
+                claimFields.put("valid_before_epoch_millis", values[4]);
                 row = mock(Record.class);
                 when(row.get(anyString(), any(Class.class)))
-                    .thenAnswer(read -> fields.get(read.getArgument(0)));
+                    .thenAnswer(read -> claimFields.get(read.getArgument(0)));
                 return 1;
               });
       repository =
@@ -241,6 +328,11 @@ class AccountTenantCreationDispatchRepositoryTest {
 
     Optional<AccountTenantCreationDispatchRepository.InitialDispatch> claim() {
       return repository.claim(prepared, environment, recent);
+    }
+
+    void observe(Instant instant) {
+      when(clock.get("observed_at", java.time.OffsetDateTime.class))
+          .thenReturn(instant.atOffset(ZoneOffset.UTC));
     }
   }
 }

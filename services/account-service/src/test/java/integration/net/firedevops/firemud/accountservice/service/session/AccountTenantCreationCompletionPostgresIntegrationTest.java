@@ -8,12 +8,14 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2Factory;
+import io.grpc.Status;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +24,8 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.client.GameDesignAuthorizedTenantCreationClient;
+import net.firedevops.firemud.accountservice.client.GameDesignOriginalTenantCreationOutcomeClient;
 import net.firedevops.firemud.accountservice.client.GameDesignOriginalTenantCreationOutcomeClient.VerifiedTerminal;
 import net.firedevops.firemud.accountservice.creatorparty.CreatorPartyEncoding;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyRepository;
@@ -64,6 +68,7 @@ import org.flywaydb.core.Flyway;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
@@ -158,6 +163,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     when(intent.creationOperationId()).thenReturn(operation);
     when(intent.requestId()).thenReturn(request);
     when(intent.initiatingAccountId()).thenReturn(account);
+    when(intent.recentReauthenticationEvidenceId()).thenReturn(recentId);
     when(intent.requestPayload()).thenReturn(new byte[] {1});
     when(intent.requestDigest()).thenReturn("sha256:" + "b".repeat(64));
     when(intent.sourceGameTenantKey()).thenReturn("rollback");
@@ -222,6 +228,49 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             "SELECT * FROM account_control_ui_issuance_operations WHERE operation_id = ?",
             issuanceId))
         .thenReturn(row);
+    // This rollback test controls the original owner inputs; only the constituent identity and
+    // generation writes are physical. Keep the new original-expiry observation live as well.
+    UUID recentRequest = UUID.randomUUID();
+    byte[] recentPayload =
+        AccountRecentReauthenticationRepository.requestPayload(
+            recentRequest, account, AccountRecentReauthenticationPolicy.PURPOSE, operation);
+    var recentFields = new LinkedHashMap<String, Object>();
+    recentFields.put("request_id", recentRequest);
+    recentFields.put("account_uuid", account);
+    recentFields.put("purpose", AccountRecentReauthenticationPolicy.PURPOSE);
+    recentFields.put("creation_operation_id", operation);
+    recentFields.put("request_payload", recentPayload);
+    recentFields.put(
+        "request_digest", AccountRecentReauthenticationRepository.digest(recentPayload));
+    recentFields.put("evidence_id", recentId);
+    recentFields.put("identity_provenance", "ACCOUNT_REPOSITORY_INSERT");
+    recentFields.put("account_lifecycle_state", "ACTIVE");
+    recentFields.put("effective_policy_version", "controlled");
+    for (String field :
+        List.of(
+            "account_uuid_source_numeric_id",
+            "account_authority_generation",
+            "account_authority_source_version",
+            "issuance_fence",
+            "issuance_fence_source_version",
+            "platform_policy_version",
+            "deployment_policy_version")) {
+      recentFields.put(field, 1L);
+    }
+    recentFields.put("recent_age_seconds", 300L);
+    recentFields.put("max_clock_skew_seconds", 30L);
+    recentFields.put("issued_at", Instant.ofEpochMilli(1899999900000L).atOffset(ZoneOffset.UTC));
+    Record retainedRecent = mock(Record.class);
+    when(retainedRecent.get(org.mockito.ArgumentMatchers.anyString(), any(Class.class)))
+        .thenAnswer(invocation -> recentFields.get(invocation.getArgument(0)));
+    when(dsl.fetchOne(
+            "SELECT * FROM account_recent_reauthentication_evidence WHERE creation_operation_id = ?",
+            operation))
+        .thenReturn(retainedRecent);
+    Record ownerClock = mock(Record.class);
+    when(ownerClock.get("observed_at", OffsetDateTime.class))
+        .thenReturn(Instant.ofEpochMilli(1899999900001L).atOffset(ZoneOffset.UTC));
+    when(dsl.fetchOne("SELECT clock_timestamp() AS observed_at")).thenReturn(ownerClock);
     var actors = mock(AccountControlUiActorService.class);
     when(actors.readAcceptedSignerKey("kid"))
         .thenAnswer(
@@ -334,6 +383,90 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   @Test
+  void expiredCreatedSettlesSharedSourceHoldWithoutAnyAccountCreatorCompletion() {
+    StorageContext c = storageContext(15, 0);
+    var fixture = storageFixture(c);
+    var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
+    var orders =
+        new AccountTenantCreationSourceOrderRepository(
+            c.dsl, new DraftAuthorizationFenceRepository(c.dsl));
+    var holder =
+        c.tx(() -> orders.readOriginal(fixture.intent.creationOperationId()).orElseThrow());
+    var sourceOrders = new DraftAuthorizationFenceRepository(c.dsl);
+    var change =
+        new DraftAuthorizationFenceRepository.SourceChange(
+            UUID.randomUUID(),
+            holder.sources(),
+            "waiting source change".getBytes(StandardCharsets.UTF_8));
+    assertThat(c.tx(() -> sourceOrders.requestSourceChange(change))).isFalse();
+    var originals = new LinkedHashMap<String, Result<Record>>();
+    for (String table :
+        List.of(
+            "account_tenant_creation_original_intents",
+            "account_tenant_creation_admission_requests",
+            "account_tenant_creation_admissions",
+            "account_tenant_creation_source_orders")) {
+      originals.put(table, c.dsl.fetch("SELECT *, xmin::text AS original_xmin FROM " + table));
+    }
+    // Let the actual original policy deadline close. This neither rewrites owner time nor
+    // disables immutable-row/expiry guards; the short policy is established before issuance.
+    Instant cutoff =
+        assembled
+            .recent
+            .issuedAt()
+            .plusSeconds(
+                assembled.recent.recentAgeSeconds() - assembled.recent.maxClockSkewSeconds());
+    c.tx(
+        () -> {
+          c.dsl.execute("SET LOCAL statement_timeout = '20s'");
+          return c.dsl.fetch(
+              "SELECT pg_sleep(GREATEST(0.0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
+              OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC));
+        });
+    var historical =
+        assembled.owner.complete(
+            fixture.intent.creationOperationId(),
+            assembled.terminal,
+            assembled.environment,
+            assembled.recent);
+    assertThat(historical.state().name()).isEqualTo("CREATED_WITHOUT_ACCOUNT_COMPLETION");
+    assertThat(historical.payload())
+        .containsExactly(assembled.terminal.evidence().canonicalBytes());
+    assertThat(historical.digest()).isEqualTo(assembled.terminal.evidence().evidenceDigest());
+    assertThat(c.tx(() -> sourceOrders.sourceMutationPermitted(change))).isTrue();
+    assertThat(c.tx(() -> orders.readPending(null, 10))).isEmpty();
+    assertAtomicRows(c, 0);
+    assertThat(c.dsl.fetchCount(DSL.table("account_recent_reauthentication_consumptions")))
+        .isZero();
+    assertThat(c.dsl.fetchCount(DSL.table("account_audit_outbox"))).isZero();
+    var settled =
+        c.dsl.fetch(
+            "SELECT *, xmin::text AS settled_xmin FROM account_tenant_creation_source_order_settlements");
+    assertThat(settled).hasSize(1);
+    var replay =
+        assembled.owner.complete(
+            fixture.intent.creationOperationId(),
+            assembled.terminal,
+            assembled.environment,
+            assembled.recent);
+    assertThat(replay.state()).isEqualTo(historical.state());
+    assertThat(replay.payload()).containsExactly(historical.payload());
+    assertThat(replay.digest()).isEqualTo(historical.digest());
+    assertThat(
+            c.dsl.fetch(
+                "SELECT *, xmin::text AS settled_xmin FROM account_tenant_creation_source_order_settlements"))
+        .isEqualTo(settled);
+    originals.forEach(
+        (table, rows) ->
+            assertThat(c.dsl.fetch("SELECT *, xmin::text AS original_xmin FROM " + table))
+                .as(table)
+                .isEqualTo(rows));
+    assertAtomicRows(c, 0);
+    assertThat(c.dsl.fetchCount(DSL.table("account_recent_reauthentication_consumptions")))
+        .isZero();
+  }
+
+  @Test
   void failureAfterActualOwnerReauthAndAuditWritesRollsBackEveryNewTenantConstituent() {
     StorageContext c = storageContext();
     var fixture = storageFixture(c);
@@ -442,6 +575,80 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
         .isPresent();
     assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_dispatch_intents")))
         .isEqualTo(1);
+  }
+
+  @Test
+  void liveClaimAndUnclaimedOriginalKeepPendingWithoutClosingOrChangingRetainedRows() {
+    StorageContext c = storageContext();
+    for (boolean claimed : new boolean[] {false, true}) {
+      var fixture = storageFixture(c);
+      var assembled = assembleStoredOwner(c, fixture, new AccountAuditOutboxRepository(c.dsl));
+      UUID operation = fixture.intent.creationOperationId();
+      if (claimed) {
+        assertThat(
+                assembled.dispatches.claim(
+                    assembled.prepared, assembled.environment, assembled.recent))
+            .isPresent();
+      }
+      var original = assembled.dispatches.readOriginal(operation);
+      Map<String, Result<Record>> retained = new LinkedHashMap<>();
+      for (String table :
+          List.of(
+              "account_tenant_creation_original_intents",
+              "account_tenant_creation_admission_requests",
+              "account_tenant_creation_admissions",
+              "account_tenant_creation_source_orders",
+              "account_tenant_creation_dispatch_intents")) {
+        retained.put(
+            table,
+            c.dsl.fetch(
+                "SELECT *, xmin::text AS original_xmin FROM "
+                    + table
+                    + " ORDER BY creation_operation_id"));
+      }
+      var admission = mock(AccountTenantCreationAdmissionOwner.class);
+      var creation = mock(GameDesignAuthorizedTenantCreationClient.class);
+      var outcomes = mock(GameDesignOriginalTenantCreationOutcomeClient.class);
+      var completion = mock(AccountTenantCreationCompletionOwner.class);
+      when(outcomes.readOriginal(original.binding()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                throw Status.NOT_FOUND.asRuntimeException();
+              });
+      var coordinator =
+          new AccountTenantCreationCoordinator(
+              admission,
+              assembled.dispatches,
+              creation,
+              outcomes,
+              completion,
+              new AccountTenantCreationSourceOrderRepository(
+                  c.dsl, new DraftAuthorizationFenceRepository(c.dsl)),
+              c.manager);
+      assertThat(assembled.dispatches.isDispatchWindowClosed(original)).isFalse();
+      for (int retry = 0; retry < 2; retry++) {
+        assertThat(coordinator.recover(operation, assembled.recent, assembled.environment).state())
+            .isEqualTo(AccountTenantCreationCoordinator.State.PENDING);
+      }
+      org.mockito.Mockito.verifyNoInteractions(admission, creation, completion);
+      retained.forEach(
+          (table, rows) ->
+              assertThat(
+                      c.dsl.fetch(
+                          "SELECT *, xmin::text AS original_xmin FROM "
+                              + table
+                              + " ORDER BY creation_operation_id"))
+                  .as(table)
+                  .isEqualTo(rows));
+      assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_dispatch_intents")))
+          .isEqualTo(claimed ? 1 : 0);
+      assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_completions"))).isZero();
+      assertThat(c.dsl.fetchCount(DSL.table("account_tenant_creation_source_order_settlements")))
+          .isZero();
+      assertThat(c.dsl.fetchCount(DSL.table("account_recent_reauthentication_consumptions")))
+          .isZero();
+    }
   }
 
   private static void assertAtomicRowsBeforeFinal(StorageContext c) {
@@ -879,6 +1086,10 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
   }
 
   private static StorageContext storageContext() {
+    return storageContext(300, 30);
+  }
+
+  private static StorageContext storageContext(int recentAgeSeconds, int maxClockSkewSeconds) {
     String schema = "creation_source_order_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
@@ -901,7 +1112,11 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
           dsl.execute(
               "INSERT INTO account_recent_reauthentication_policy_values "
                   + "(policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) "
-                  + "VALUES ('PLATFORM', 1, 300, 30), ('DEPLOYMENT', 1, 300, 30)");
+                  + "VALUES ('PLATFORM', 1, ?, ?), ('DEPLOYMENT', 1, ?, ?)",
+              recentAgeSeconds,
+              maxClockSkewSeconds,
+              recentAgeSeconds,
+              maxClockSkewSeconds);
           dsl.execute(
               "INSERT INTO account_recent_reauthentication_policy_current "
                   + "(policy_scope, policy_version) VALUES ('PLATFORM', 1), ('DEPLOYMENT', 1)");

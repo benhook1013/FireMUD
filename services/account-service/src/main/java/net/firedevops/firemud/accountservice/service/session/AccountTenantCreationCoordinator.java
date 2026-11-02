@@ -14,8 +14,10 @@ import net.firedevops.firemud.accountservice.service.session.AccountTenantCreati
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository.Request;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationOriginalOutcomeEvidence.Outcome;
+import org.jooq.exception.DataAccessException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -113,7 +115,12 @@ final class AccountTenantCreationCoordinator {
     // A late historical CREATED result cannot bypass those checks or consume new authority here.
     var result =
         completion.complete(original.intent().creationOperationId(), terminal, environment, recent);
-    return new Result(State.COMPLETED, result.payload(), result.digest());
+    State state =
+        switch (result.state()) {
+          case COMPLETED -> State.COMPLETED;
+          case CREATED_WITHOUT_ACCOUNT_COMPLETION -> State.CREATED_WITHOUT_ACCOUNT_COMPLETION;
+        };
+    return new Result(state, result.payload(), result.digest());
   }
 
   private VerifiedTerminal readOrCloseOriginal(Original original) {
@@ -125,7 +132,18 @@ final class AccountTenantCreationCoordinator {
     } catch (IllegalStateException uncertainRead) {
       return null;
     }
-    // Absence is not evidence. Explicitly serialize future-create exclusion at the GD owner.
+    // An absent/nonterminal outcome can still belong to the valid in-flight initial dispatch.
+    // Only the Account database clock and exact retained binding can establish its finite cutoff.
+    try {
+      if (!dispatches.isDispatchWindowClosed(original)) return null;
+    } catch (IllegalStateException
+        | IllegalArgumentException
+        | DataAccessException
+        | org.springframework.dao.DataAccessException
+        | TransactionException uncertainDeadline) {
+      return null;
+    }
+    // After the cutoff, serialize future-create exclusion at the GD owner. Absence is not proof.
     try {
       creation.closeOriginal(original.binding());
     } catch (StatusRuntimeException | IllegalStateException uncertainClosure) {
@@ -191,7 +209,8 @@ final class AccountTenantCreationCoordinator {
   enum State {
     PENDING,
     NOT_CREATED,
-    COMPLETED
+    COMPLETED,
+    CREATED_WITHOUT_ACCOUNT_COMPLETION
   }
 
   static final class Result {
