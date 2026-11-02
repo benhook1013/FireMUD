@@ -117,6 +117,8 @@ raise SystemExit(0)
             raise SystemExit(f"{module}/{partition} did not prepare the module test classes")
         if "--max-workers=2" not in prepare:
             raise SystemExit(f"{module}/{partition} changed the two-worker preparation setting")
+        if prepare.count("--profile") != 1:
+            raise SystemExit(f"{module}/{partition} did not profile test-class preparation")
         expected_selector = [
             str(root / "dev-tools/validation/slow_service_ci_test_partition.py"),
             "plan", "--module", module, "--partition", partition,
@@ -643,6 +645,19 @@ for artifact_path in (
 ):
     require_contains(slow_partition_artifact_step, ("with", "path"), artifact_path, "ci workflow")
 
+gradle_profile_step = find_step(
+    ci, "build-and-test", "Upload Gradle Task Profile", "ci workflow"
+)
+require_equal(gradle_profile_step, ("if",), "always()", "ci workflow")
+require_equal(
+    gradle_profile_step,
+    ("with", "name"),
+    "gradle-profile-${{ matrix.module }}-${{ matrix.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+    "ci workflow",
+)
+require_contains(gradle_profile_step, ("with", "path"), "build/reports/profile/", "ci workflow")
+require_equal(gradle_profile_step, ("with", "retention-days"), "14", "ci workflow")
+
 for module, job_id, display, prefix in (
     ("account-service", "account-coverage-aggregate", "Account", "ACCOUNT"),
     ("game-session-service", "game-session-coverage-aggregate", "Game Session", "GAME_SESSION"),
@@ -1042,6 +1057,23 @@ require_equal(
 
 gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
 root_configuration, subproject_configuration = gradle_build.split("subprojects {", 1)
+game_session_build = (
+    Path(sys.argv[6]).resolve().parent / "services/game-session-service/build.gradle.kts"
+)
+game_session_build_text = game_session_build.read_text(encoding="utf-8")
+linux_integration_fork_policy = re.search(
+    r'tasks\.named<Test>\("integrationTest"\)\s*\{\s*'
+    r'if \(System\.getProperty\("os\.name"\)\.lowercase\(\)\.startsWith\("linux"\)\)\s*\{\s*'
+    r'maxParallelForks = minOf\(2,\s*gradle\.startParameter\.maxWorkerCount\)\s*'
+    r'\}\s*\}',
+    re.sub(r"//[^\n]*", "", game_session_build_text),
+    re.DOTALL,
+)
+if linux_integration_fork_policy is None:
+    raise SystemExit(
+        "game-session-service/build.gradle.kts: integration forks must be Linux-only, "
+        "capped at two and Gradle workers, with serial methods"
+    )
 if re.findall(r"JavaLanguageVersion\.of\((\d+)\)", gradle_build) != ["25", "25", "25"]:
     raise SystemExit("build.gradle.kts: root, Buf, and subproject toolchains must all select Java 25")
 if re.findall(r"options\.release\.set\((\d+)\)", gradle_build) != ["25", "25"]:
