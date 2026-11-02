@@ -325,6 +325,40 @@ public class GameSessionCanonicalRealmCatalogRepository {
   }
 
   /**
+   * Reads retained initial catalog evidence within an existing owner transaction. This does not
+   * establish a committed outcome for a new catalog write or lock authority for a mutation.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public CanonicalRealmCatalogSnapshot readRetainedInitialPublicProduction(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      UUID creationRequestId,
+      long catalogRevision) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException("Retained catalog evidence requires an owner transaction");
+    }
+    requireReadSelector(targetNamespace, canonicalTenantId);
+    requireNonNil(realmId, "realmId");
+    requireNonNil(creationRequestId, "creationRequestId");
+    if (catalogRevision != INITIAL_CATALOG_REVISION) {
+      throw new CatalogConflictException("Retained initial catalog revision must be exactly one");
+    }
+    Record record =
+        dsl.selectFrom(CATALOG)
+            .where(
+                TARGET_NAMESPACE
+                    .eq(targetNamespace)
+                    .and(CANONICAL_TENANT_ID.eq(canonicalTenantId))
+                    .and(REALM_ID.eq(realmId))
+                    .and(CREATION_REQUEST_ID.eq(creationRequestId))
+                    .and(CATALOG_REVISION.eq(catalogRevision)))
+            .fetchOne();
+    return requireExactInitialPublicProduction(
+        record, targetNamespace, canonicalTenantId, realmId, creationRequestId);
+  }
+
+  /**
    * Locks and fully verifies one exact initial public-production catalog row in the caller's owner
    * transaction. The returned snapshot is produced by the same validation used for committed
    * catalog reads; callers must compare it with their committed preflight snapshot.

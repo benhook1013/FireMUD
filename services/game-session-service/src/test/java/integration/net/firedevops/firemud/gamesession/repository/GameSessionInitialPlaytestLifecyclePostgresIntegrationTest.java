@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
@@ -45,6 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Physical initial allocation/read proof using actual GS source/catalog/preparation owners and SQL.
@@ -59,6 +61,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   private static final String NAMESPACE = "initial-playtest-proof";
   private static final String TABLE = "game_session_initial_playtest_preparations";
+  private static final tools.jackson.databind.ObjectMapper POLICY_JSON =
+      JsonMapper.builder().build();
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -122,6 +126,38 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         .isEqualTo(context.published().target().canonicalVersionId());
     assertThat(preparation.source().publishedReleaseBundleDigest())
         .isEqualTo(context.published().publishedReleaseBundleDigest());
+    var selectedPolicy = preparation.source().targetPolicy();
+    assertThat(selectedPolicy.source().policy().worldSlug()).isEqualTo(request.worldSlug());
+    assertThat(selectedPolicy.source().policy().realmSlug()).isEqualTo(request.realmSlug());
+    assertThat(selectedPolicy.source().policy().visible()).isTrue();
+    assertThat(selectedPolicy.source().policy().publicProduction()).isFalse();
+    assertThat(selectedPolicy.source().policy().stateScope())
+        .isEqualTo(RealmEntryPolicy.StateScope.ISOLATED);
+    assertThat(
+            selectedPolicy
+                .source()
+                .policy()
+                .canonicalJson()
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        .containsExactly(
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT target_policy_canonical_json FROM "
+                                + TABLE
+                                + " WHERE request_id = ?",
+                            request.requestId()))
+                .get("target_policy_canonical_json", byte[].class));
+    assertThat(selectedPolicy)
+        .isEqualTo(
+            context.published().policies().stream()
+                .filter(
+                    candidate ->
+                        candidate.source().policy().worldSlug().equals(request.worldSlug())
+                            && candidate.source().policy().realmSlug().equals(request.realmSlug()))
+                .findFirst()
+                .orElseThrow());
     assertThat(context.prepare(request)).isEqualTo(new Allocation(preparation, true));
     var snapshot = context.read(request, preparation.playtestLifecycleId());
     assertThat(snapshot.preparation()).isEqualTo(preparation);
@@ -278,6 +314,76 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
           .isInstanceOf(SourceUnavailableException.class);
     }
     assertThat(context.count()).isZero();
+  }
+
+  @Test
+  void onlyExactVisiblePrivateIsolatedPublishedTargetPolicyCanAllocate() {
+    List<List<RealmEntryPolicy>> invalidPolicySets =
+        List.of(
+            List.of(),
+            List.of(privatePolicy("private-playtest", "source-world", false, false, "ISOLATED")),
+            List.of(privatePolicy("private-playtest", "source-world", true, false, "SHARED")),
+            List.of(
+                privatePolicy(
+                    "private-playtest", "source-world", true, false, "ISOLATED", "Other World")),
+            List.of(privatePolicy("another-target", "source-world", true, false, "ISOLATED")),
+            List.of(privatePolicy("private-playtest", "another-world", true, false, "ISOLATED")));
+    for (List<RealmEntryPolicy> policies : invalidPolicySets) {
+      Context context = context(true, policies);
+      Request request =
+          context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(600));
+      assertThatThrownBy(() -> context.prepare(request))
+          .isInstanceOf(SourceUnavailableException.class);
+      assertThat(context.count()).isZero();
+    }
+  }
+
+  @Test
+  void sqlGuardRejectsTargetPolicyBytesNotSelectedFromRetainedPublishedSet() {
+    Context context = context(true);
+    Request original =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    context.prepare(original);
+    Request tampered =
+        context.request(UUID.randomUUID(), original.realmSlug(), original.forkExpiresAt());
+    byte[] storedPolicy =
+        Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT target_policy_canonical_json FROM "
+                            + TABLE
+                            + " WHERE request_id = ?",
+                        original.requestId()))
+            .get("target_policy_canonical_json", byte[].class);
+    String changedPolicy =
+        new String(storedPolicy, java.nio.charset.StandardCharsets.UTF_8)
+            .replace("\"realmSlug\":\"private-playtest\"", "\"realmSlug\":\"other-target\"");
+    assertThat(changedPolicy)
+        .isNotEqualTo(new String(storedPolicy, java.nio.charset.StandardCharsets.UTF_8));
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    "INSERT INTO "
+                                        + TABLE
+                                        + " (request_id, request_preimage, request_digest, target_namespace, canonical_tenant_id, world_slug, realm_slug, initialization_mode, preparation_state, playtest_state_generation, fork_expiry_second, fork_expiry_nano, fork_expiry_text, source_catalog_realm_id, source_catalog_request_id, source_catalog_revision, source_catalog_receipt_digest, source_intake_operation_id, source_intake_receipt_digest, source_operation_id, source_evidence_digest, canonical_version_id, published_release_bundle_ref, published_release_bundle_digest, source_policy_set_digest, source_policy_carrier_digest, target_policy_id, target_policy_source_commit_id, target_policy_source_revision_id, target_policy_logical_revision_id, target_policy_digest, target_policy_canonical_json, target_policy_schema_version, target_policy_world_slug, target_policy_realm_slug, target_policy_visible, target_policy_world_display_name, target_policy_public_production, target_policy_state_scope, target_policy_realm_display_name, target_policy_entry_policy) "
+                                        + "SELECT ?, ?, ?, target_namespace, canonical_tenant_id, world_slug, realm_slug, initialization_mode, preparation_state, playtest_state_generation, fork_expiry_second, fork_expiry_nano, fork_expiry_text, source_catalog_realm_id, source_catalog_request_id, source_catalog_revision, source_catalog_receipt_digest, source_intake_operation_id, source_intake_receipt_digest, source_operation_id, source_evidence_digest, canonical_version_id, published_release_bundle_ref, published_release_bundle_digest, source_policy_set_digest, source_policy_carrier_digest, target_policy_id, target_policy_source_commit_id, target_policy_source_revision_id, target_policy_logical_revision_id, target_policy_digest, ?, target_policy_schema_version, target_policy_world_slug, target_policy_realm_slug, target_policy_visible, target_policy_world_display_name, target_policy_public_production, target_policy_state_scope, target_policy_realm_display_name, target_policy_entry_policy FROM "
+                                        + TABLE
+                                        + " WHERE request_id = ?",
+                                    tampered.requestId(),
+                                    tampered.canonicalPreimage(),
+                                    tampered.requestDigest(),
+                                    changedPolicy.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                    original.requestId())))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining("Selected private target policy differs");
+    assertThat(context.count()).isEqualTo(1);
   }
 
   @Test
@@ -506,6 +612,18 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     assertThat(context.count()).isZero();
   }
 
+  @Test
+  void canonicalPublicPolicyCannotQualifyAsPrivatePlaytestTarget() {
+    Context context = context(true);
+    Request publicTarget =
+        context.request(
+            UUID.randomUUID(), context.catalog().realmSlug(), context.now().plusSeconds(3600));
+    assertThatThrownBy(() -> context.prepare(publicTarget))
+        .isInstanceOf(
+            GameSessionInitialPlaytestLifecycleRepository.SourceUnavailableException.class);
+    assertThat(context.count()).isZero();
+  }
+
   private static void await(CountDownLatch latch) {
     try {
       if (!latch.await(30, TimeUnit.SECONDS))
@@ -531,6 +649,12 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   }
 
   private Context context(boolean withSource) {
+    return context(
+        withSource,
+        List.of(privatePolicy("private-playtest", "source-world", true, false, "ISOLATED")));
+  }
+
+  private Context context(boolean withSource, List<RealmEntryPolicy> privatePolicies) {
     String schema = "initial_playtest_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(postgres.getJdbcUrl());
@@ -623,13 +747,56 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             "controlled-publish-" + UUID.randomUUID(),
             "release-bundle:" + version,
             "generation-1",
-            3L);
+            3L,
+            privatePolicies);
     var catalogs = new GameSessionCanonicalRealmCatalogRepository(dsl);
     var preparedCatalog = catalogs.prepareInitialPublicProduction(catalogRequest, published);
     var catalog =
         Objects.requireNonNull(
             transaction.execute(status -> catalogs.createInitialPublicProduction(preparedCatalog)));
     return new Context(dsl, transaction, repository, catalog, published);
+  }
+
+  private static RealmEntryPolicy privatePolicy(
+      String realmSlug,
+      String worldSlug,
+      boolean visible,
+      boolean publicProduction,
+      String stateScope) {
+    return privatePolicy(
+        realmSlug, worldSlug, visible, publicProduction, stateScope, "Source World");
+  }
+
+  private static RealmEntryPolicy privatePolicy(
+      String realmSlug,
+      String worldSlug,
+      boolean visible,
+      boolean publicProduction,
+      String stateScope,
+      String worldDisplayName) {
+    try {
+      String json =
+          new String(
+              net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+                  "{\"entryPolicy\":\"PRESEEDED_ONLY\",\"realmDisplayName\":\"Private Playtest\",\"realmSlug\":\""
+                      + realmSlug
+                      + "\",\"publicProduction\":"
+                      + publicProduction
+                      + ",\"schemaVersion\":1,\"stateScope\":\""
+                      + stateScope
+                      + "\",\"visible\":"
+                      + visible
+                      + ",\"worldDisplayName\":\""
+                      + worldDisplayName
+                      + "\",\"worldSlug\":\""
+                      + worldSlug
+                      + "\"}"),
+              java.nio.charset.StandardCharsets.UTF_8);
+      return RealmEntryPolicy.parseCanonical(json, POLICY_JSON);
+    } catch (java.io.IOException malformed) {
+      throw new IllegalStateException(
+          "Controlled private policy fixture encoding failed", malformed);
+    }
   }
 
   private record Context(

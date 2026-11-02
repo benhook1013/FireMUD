@@ -31,6 +31,21 @@ CREATE TABLE game_session_initial_playtest_preparations (
     published_release_bundle_digest VARCHAR(71) NOT NULL CHECK (published_release_bundle_digest ~ '^sha256:[0-9a-f]{64}$'),
     source_policy_set_digest VARCHAR(71) NOT NULL CHECK (source_policy_set_digest ~ '^sha256:[0-9a-f]{64}$'),
     source_policy_carrier_digest VARCHAR(71) NOT NULL CHECK (source_policy_carrier_digest ~ '^sha256:[0-9a-f]{64}$'),
+    target_policy_id UUID NOT NULL CHECK (target_policy_id <> '00000000-0000-0000-0000-000000000000'::UUID),
+    target_policy_source_commit_id UUID NOT NULL CHECK (target_policy_source_commit_id <> '00000000-0000-0000-0000-000000000000'::UUID),
+    target_policy_source_revision_id UUID NOT NULL CHECK (target_policy_source_revision_id <> '00000000-0000-0000-0000-000000000000'::UUID),
+    target_policy_logical_revision_id VARCHAR(128) NOT NULL CHECK (char_length(target_policy_logical_revision_id) BETWEEN 1 AND 128 AND target_policy_logical_revision_id !~ '^[[:space:]]*$'),
+    target_policy_digest VARCHAR(71) NOT NULL CHECK (target_policy_digest ~ '^sha256:[0-9a-f]{64}$'),
+    target_policy_canonical_json BYTEA NOT NULL CHECK (octet_length(target_policy_canonical_json) BETWEEN 1 AND 4096),
+    target_policy_schema_version INTEGER NOT NULL CHECK (target_policy_schema_version IN (1, 2, 3)),
+    target_policy_world_slug VARCHAR(120) NOT NULL CHECK (target_policy_world_slug = world_slug),
+    target_policy_realm_slug VARCHAR(120) NOT NULL CHECK (target_policy_realm_slug = realm_slug),
+    target_policy_visible BOOLEAN NOT NULL CHECK (target_policy_visible),
+    target_policy_world_display_name VARCHAR(200) NOT NULL CHECK (char_length(target_policy_world_display_name) BETWEEN 1 AND 100 AND octet_length(target_policy_world_display_name) <= 400 AND target_policy_world_display_name !~ '^[[:space:]]*$'),
+    target_policy_public_production BOOLEAN NOT NULL CHECK (NOT target_policy_public_production),
+    target_policy_state_scope VARCHAR(16) NOT NULL CHECK (target_policy_state_scope = 'ISOLATED'),
+    target_policy_realm_display_name VARCHAR(200) NOT NULL CHECK (char_length(target_policy_realm_display_name) BETWEEN 1 AND 100 AND octet_length(target_policy_realm_display_name) <= 400 AND target_policy_realm_display_name !~ '^[[:space:]]*$'),
+    target_policy_entry_policy VARCHAR(32) NOT NULL CHECK (target_policy_entry_policy IN ('PRESEEDED_ONLY', 'PLAYER_CREATED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     CHECK (playtest_lifecycle_id <> playable_state_namespace_id),
     FOREIGN KEY (target_namespace, source_catalog_realm_id)
@@ -60,6 +75,9 @@ DECLARE
     payload_bytes BYTEA;
     payload TEXT;
     policy JSONB;
+    selected_policy_count INTEGER;
+    selected_policy_json TEXT;
+    selected_policy JSONB;
     marker TEXT := 'game-design-published-realm-policy-carrier/v1';
     fields TEXT[];
     item TEXT;
@@ -146,6 +164,31 @@ BEGIN
         OR policy->>'publishedReleaseBundleDigest' IS DISTINCT FROM NEW.published_release_bundle_digest
         OR policy->>'policySetDigest' IS DISTINCT FROM NEW.source_policy_set_digest THEN
         RAISE EXCEPTION 'Initial playtest build differs from exact retained published source' USING ERRCODE = '23514';
+    END IF;
+    SELECT count(*), max(policy_item.value->'source'->>'canonicalPolicyJson')
+      INTO selected_policy_count, selected_policy_json
+      FROM jsonb_array_elements(policy->'policies') AS policy_item(value)
+     WHERE policy_item.value->>'policyId' = NEW.target_policy_id::TEXT
+       AND policy_item.value->>'policyDigest' = NEW.target_policy_digest
+       AND policy_item.value->'source'->>'commitId' = NEW.target_policy_source_commit_id::TEXT
+       AND policy_item.value->'source'->>'revisionId' = NEW.target_policy_source_revision_id::TEXT
+       AND policy_item.value->'source'->>'logicalRevisionId' = NEW.target_policy_logical_revision_id;
+    IF selected_policy_count <> 1 OR selected_policy_json IS NULL
+       OR convert_to(selected_policy_json, 'UTF8') IS DISTINCT FROM NEW.target_policy_canonical_json THEN
+        RAISE EXCEPTION 'Selected private target policy differs from the exact retained published policy set' USING ERRCODE = '23514';
+    END IF;
+    selected_policy := selected_policy_json::JSONB;
+    IF selected_policy->>'schemaVersion' IS DISTINCT FROM NEW.target_policy_schema_version::TEXT
+       OR selected_policy->>'worldSlug' IS DISTINCT FROM NEW.target_policy_world_slug
+       OR selected_policy->>'realmSlug' IS DISTINCT FROM NEW.target_policy_realm_slug
+       OR selected_policy->>'visible' IS DISTINCT FROM 'true'
+       OR selected_policy->>'worldDisplayName' IS DISTINCT FROM NEW.target_policy_world_display_name
+       OR NEW.target_policy_world_display_name IS DISTINCT FROM intake.world_display_name
+       OR selected_policy->>'publicProduction' IS DISTINCT FROM 'false'
+       OR selected_policy->>'stateScope' IS DISTINCT FROM NEW.target_policy_state_scope
+       OR selected_policy->>'realmDisplayName' IS DISTINCT FROM NEW.target_policy_realm_display_name
+       OR selected_policy->>'entryPolicy' IS DISTINCT FROM NEW.target_policy_entry_policy THEN
+        RAISE EXCEPTION 'Selected private target policy semantics differ from the exact retained policy bytes' USING ERRCODE = '23514';
     END IF;
     IF NEW.fork_expiry_second + NEW.fork_expiry_nano / 1000000000.0 <= extract(epoch FROM clock_timestamp()) THEN
         RAISE EXCEPTION 'Initial playtest fork expiry must be future' USING ERRCODE = '23514';

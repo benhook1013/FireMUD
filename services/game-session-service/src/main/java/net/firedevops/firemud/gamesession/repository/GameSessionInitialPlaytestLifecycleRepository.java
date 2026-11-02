@@ -2,6 +2,9 @@ package net.firedevops.firemud.gamesession.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -9,33 +12,47 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
+import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Durable initial FRESH playtest allocation, deliberately unregistered and non-admissible.
  *
  * <p>The composing owner must authenticate and authorize its real caller. A retained canonical
- * public source catalog supplies authored-world and published-build evidence only. It does not
- * supply private access, a completed playtest, owner manifests, isolation proof or admission. Every
- * successful new request allocates a new lifecycle and namespace internally and remains PREPARING.
- * Seeded/snapshot initialization, reset and admission are unavailable at this boundary.
+ * public source catalog supplies authored-world/build evidence and the complete immutable Human
+ * policy set. The request must select an exact visible non-public ISOLATED target policy from that
+ * set. This source qualification grants no private access, completed playtest, owner manifests,
+ * isolation proof or admission. Every successful new request allocates a new lifecycle and
+ * namespace internally and remains PREPARING. Seeded/snapshot initialization, reset and admission
+ * are unavailable at this boundary.
  */
 public class GameSessionInitialPlaytestLifecycleRepository {
   private static final String TABLE = "game_session_initial_playtest_preparations";
   private static final String REQUEST_SCHEMA = "game-session-initial-fresh-playtest-request/v1";
   private static final UUID NIL_UUID = new UUID(0L, 0L);
+  private static final ObjectMapper POLICY_JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
   private final DSLContext dsl;
   private final GameSessionCanonicalRealmCatalogRepository catalogs;
 
@@ -66,6 +83,10 @@ public class GameSessionInitialPlaytestLifecycleRepository {
         throw new IdempotencyConflictException();
       }
       Preparation original = preparation(prior);
+      if (!original.source().equals(readRetainedSource(original.request()))) {
+        throw new SourceUnavailableException(
+            "Retained private target policy differs from the original preparation");
+      }
       return new Allocation(original, true);
     }
     SourceReference source = qualifySource(request);
@@ -81,8 +102,12 @@ public class GameSessionInitialPlaytestLifecycleRepository {
                 + "fork_expiry_nano, fork_expiry_text, source_catalog_realm_id, source_catalog_request_id, source_catalog_revision, "
                 + "source_catalog_receipt_digest, source_intake_operation_id, source_intake_receipt_digest, source_operation_id, "
                 + "source_evidence_digest, canonical_version_id, published_release_bundle_ref, published_release_bundle_digest, "
-                + "source_policy_set_digest, source_policy_carrier_digest) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, 'FRESH', 'PREPARING', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
+                + "source_policy_set_digest, source_policy_carrier_digest, target_policy_id, target_policy_source_commit_id, "
+                + "target_policy_source_revision_id, target_policy_logical_revision_id, target_policy_digest, target_policy_canonical_json, "
+                + "target_policy_schema_version, target_policy_world_slug, target_policy_realm_slug, target_policy_visible, "
+                + "target_policy_world_display_name, target_policy_public_production, target_policy_state_scope, "
+                + "target_policy_realm_display_name, target_policy_entry_policy) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, 'FRESH', 'PREPARING', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
             request.requestId(),
             requestBytes,
             requestDigest,
@@ -105,12 +130,36 @@ public class GameSessionInitialPlaytestLifecycleRepository {
             request.publishedReleaseBundleRef(),
             request.publishedReleaseBundleDigest(),
             source.policySetDigest(),
-            source.policyCarrierDigest());
+            source.policyCarrierDigest(),
+            source.targetPolicy().policyId(),
+            source.targetPolicy().source().commitId(),
+            source.targetPolicy().source().revisionId(),
+            source.targetPolicy().source().logicalRevisionId(),
+            source.targetPolicy().policyDigest(),
+            source
+                .targetPolicy()
+                .source()
+                .policy()
+                .canonicalJson()
+                .getBytes(StandardCharsets.UTF_8),
+            source.targetPolicy().source().policy().schemaVersion(),
+            source.targetPolicy().source().policy().worldSlug(),
+            source.targetPolicy().source().policy().realmSlug(),
+            source.targetPolicy().source().policy().visible(),
+            source.targetPolicy().source().policy().worldDisplayName(),
+            source.targetPolicy().source().policy().publicProduction(),
+            source.targetPolicy().source().policy().stateScope().name(),
+            source.targetPolicy().source().policy().realmDisplayName(),
+            source.targetPolicy().source().policy().entryPolicy().name());
     if (allocated == null)
       throw new IllegalStateException("Initial playtest allocation returned no owner result");
     Preparation result = preparation(allocated);
     if (!result.request().equals(request))
       throw new IllegalStateException("Initial playtest request readback differs from original");
+    if (!result.source().equals(source)) {
+      throw new SourceUnavailableException(
+          "Initial playtest target-policy source readback differs from the published source");
+    }
     return new Allocation(result, false);
   }
 
@@ -144,6 +193,10 @@ public class GameSessionInitialPlaytestLifecycleRepository {
             playtestLifecycleId);
     if (row == null) return Optional.empty();
     Preparation preparation = preparation(row);
+    if (!preparation.source().equals(readRetainedSource(preparation.request()))) {
+      throw new SourceUnavailableException(
+          "Exact initial playtest target-policy source differs from its retained preparation");
+    }
     // The retained source is immutable and guarded by RESTRICT references. This read validates
     // the complete copied request/receipt without using a read as new allocation authority.
     Instant observedAt = databaseNow();
@@ -155,10 +208,32 @@ public class GameSessionInitialPlaytestLifecycleRepository {
   }
 
   private SourceReference qualifySource(Request request) {
+    SourceReference source = readSource(request, true);
+    Record target =
+        dsl.fetchOne(
+            "SELECT realm_id FROM game_session_canonical_realm_catalog WHERE target_namespace = ? "
+                + "AND canonical_tenant_id = ? AND world_slug = ? AND realm_slug = ?",
+            request.targetNamespace(),
+            request.tenantId(),
+            request.worldSlug(),
+            request.realmSlug());
+    if (target != null) {
+      throw new SourceUnavailableException(
+          "Initial private target already belongs to a canonical realm catalog");
+    }
+    return source;
+  }
+
+  private SourceReference readRetainedSource(Request request) {
+    return readSource(request, false);
+  }
+
+  private SourceReference readSource(Request request, boolean lockSource) {
     Record row =
         dsl.fetchOne(
             "SELECT complete_policy_set_evidence, fixture_policy_request_bytes FROM game_session_canonical_realm_catalog "
-                + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? FOR SHARE",
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?"
+                + (lockSource ? " FOR SHARE" : ""),
             request.targetNamespace(),
             request.tenantId(),
             request.sourceCatalogRealmId());
@@ -168,13 +243,24 @@ public class GameSessionInitialPlaytestLifecycleRepository {
       throw new SourceUnavailableException(
           "Exact retained Human canonical source catalog is unavailable");
     }
-    CanonicalRealmCatalogSnapshot catalog =
-        catalogs.lockExactInitialPublicProductionForShare(
-            request.targetNamespace(),
-            request.tenantId(),
-            request.sourceCatalogRealmId(),
-            request.sourceCatalogRequestId(),
-            request.sourceCatalogRevision());
+    CanonicalRealmCatalogSnapshot catalog;
+    if (lockSource) {
+      catalog =
+          catalogs.lockExactInitialPublicProductionForShare(
+              request.targetNamespace(),
+              request.tenantId(),
+              request.sourceCatalogRealmId(),
+              request.sourceCatalogRequestId(),
+              request.sourceCatalogRevision());
+    } else {
+      catalog =
+          catalogs.readRetainedInitialPublicProduction(
+              request.targetNamespace(),
+              request.tenantId(),
+              request.sourceCatalogRealmId(),
+              request.sourceCatalogRequestId(),
+              request.sourceCatalogRevision());
+    }
     RealmPolicyPublishedEvidence.PublishedSet policy =
         RealmPolicyPublishedEvidenceCodec.decode(
             row.get("complete_policy_set_evidence", byte[].class));
@@ -193,17 +279,26 @@ public class GameSessionInitialPlaytestLifecycleRepository {
       throw new SourceUnavailableException(
           "Initial private target/build differs from exact retained public source");
     }
-    Record target =
-        dsl.fetchOne(
-            "SELECT realm_id FROM game_session_canonical_realm_catalog WHERE target_namespace = ? "
-                + "AND canonical_tenant_id = ? AND world_slug = ? AND realm_slug = ?",
-            request.targetNamespace(),
-            request.tenantId(),
-            request.worldSlug(),
-            request.realmSlug());
-    if (target != null)
+    List<RealmPolicyPublishedEvidence.Policy> targetPolicies =
+        policy.policies().stream()
+            .filter(
+                candidate ->
+                    candidate.source().policy().worldSlug().equals(request.worldSlug())
+                        && candidate.source().policy().realmSlug().equals(request.realmSlug()))
+            .toList();
+    if (targetPolicies.size() != 1) {
       throw new SourceUnavailableException(
-          "Initial private target already belongs to a canonical realm catalog");
+          "Exact private target is not present in the complete published policy set");
+    }
+    RealmPolicyPublishedEvidence.Policy targetPolicy = targetPolicies.getFirst();
+    RealmEntryPolicy selectedPolicy = targetPolicy.source().policy();
+    if (!selectedPolicy.visible()
+        || selectedPolicy.publicProduction()
+        || selectedPolicy.stateScope() != RealmEntryPolicy.StateScope.ISOLATED
+        || !selectedPolicy.worldDisplayName().equals(source.worldDisplayName())) {
+      throw new SourceUnavailableException(
+          "Exact published target policy must be visible, non-public, and ISOLATED");
+    }
     SourceReference actual =
         new SourceReference(
             catalog.realmId(),
@@ -218,7 +313,8 @@ public class GameSessionInitialPlaytestLifecycleRepository {
             policy.publishedReleaseBundleRef(),
             policy.publishedReleaseBundleDigest(),
             policy.policySetDigest(),
-            digest(row.get("complete_policy_set_evidence", byte[].class)));
+            digest(row.get("complete_policy_set_evidence", byte[].class)),
+            targetPolicy);
     return actual;
   }
 
@@ -262,7 +358,8 @@ public class GameSessionInitialPlaytestLifecycleRepository {
             request.publishedReleaseBundleRef(),
             request.publishedReleaseBundleDigest(),
             row.get("source_policy_set_digest", String.class),
-            row.get("source_policy_carrier_digest", String.class));
+            row.get("source_policy_carrier_digest", String.class),
+            targetPolicy(row, request));
     return new Preparation(
         request,
         row.get("playtest_lifecycle_id", UUID.class),
@@ -272,6 +369,61 @@ public class GameSessionInitialPlaytestLifecycleRepository {
         source,
         row.get("request_digest", String.class),
         row.get("created_at", OffsetDateTime.class).toInstant());
+  }
+
+  private static RealmPolicyPublishedEvidence.Policy targetPolicy(Record row, Request request) {
+    byte[] storedBytes = row.get("target_policy_canonical_json", byte[].class);
+    if (storedBytes == null
+        || storedBytes.length == 0
+        || storedBytes.length > RealmEntryPolicy.MAX_JSON_BYTES) {
+      throw new SourceUnavailableException("Stored private target policy bytes are invalid");
+    }
+    RealmEntryPolicy policy = RealmEntryPolicy.parseCanonical(strictUtf8(storedBytes), POLICY_JSON);
+    if (!policy.worldSlug().equals(request.worldSlug())
+        || !policy.realmSlug().equals(request.realmSlug())
+        || !policy.visible()
+        || policy.publicProduction()
+        || policy.stateScope() != RealmEntryPolicy.StateScope.ISOLATED
+        || row.get("target_policy_schema_version", Integer.class) != policy.schemaVersion()
+        || !request.worldSlug().equals(row.get("target_policy_world_slug", String.class))
+        || !request.realmSlug().equals(row.get("target_policy_realm_slug", String.class))
+        || !Boolean.TRUE.equals(row.get("target_policy_visible", Boolean.class))
+        || !policy
+            .worldDisplayName()
+            .equals(row.get("target_policy_world_display_name", String.class))
+        || !Boolean.FALSE.equals(row.get("target_policy_public_production", Boolean.class))
+        || !policy.stateScope().name().equals(row.get("target_policy_state_scope", String.class))
+        || !policy
+            .realmDisplayName()
+            .equals(row.get("target_policy_realm_display_name", String.class))
+        || !policy
+            .entryPolicy()
+            .name()
+            .equals(row.get("target_policy_entry_policy", String.class))) {
+      throw new SourceUnavailableException(
+          "Stored private target policy semantics differ from exact request or policy bytes");
+    }
+    return new RealmPolicyPublishedEvidence.Policy(
+        row.get("target_policy_id", UUID.class),
+        new RealmPolicySource.Policy(
+            row.get("target_policy_source_commit_id", UUID.class),
+            row.get("target_policy_source_revision_id", UUID.class),
+            row.get("target_policy_logical_revision_id", String.class),
+            policy),
+        row.get("target_policy_digest", String.class));
+  }
+
+  private static String strictUtf8(byte[] bytes) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(bytes))
+          .toString();
+    } catch (CharacterCodingException malformed) {
+      throw new SourceUnavailableException("Stored private target policy is not strict UTF-8");
+    }
   }
 
   private Instant databaseNow() {
@@ -410,7 +562,8 @@ public class GameSessionInitialPlaytestLifecycleRepository {
       String publishedReleaseBundleRef,
       String publishedReleaseBundleDigest,
       String policySetDigest,
-      String policyCarrierDigest) {}
+      String policyCarrierDigest,
+      RealmPolicyPublishedEvidence.Policy targetPolicy) {}
 
   public record Preparation(
       Request request,

@@ -68,6 +68,7 @@ dependencies {
     testFixturesImplementation(project(":common-platform-core"))
     testFixturesImplementation(project(":common-security"))
     testFixturesImplementation(project(":common-data-runtime"))
+    testFixturesApi(testFixtures(project(":common-test-support")))
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesImplementation(libs.spring.boot.starter.jdbc)
     testFixturesImplementation(libs.spring.boot.starter.data.redis)
