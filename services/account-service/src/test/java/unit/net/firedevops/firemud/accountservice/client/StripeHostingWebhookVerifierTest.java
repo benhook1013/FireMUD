@@ -82,6 +82,22 @@ class StripeHostingWebhookVerifierTest {
   }
 
   @Test
+  void rejectsForgedNonJsonBeforeEventDeserialization() {
+    StripeHostingWebhookVerifier verifier = new StripeHostingWebhookVerifier(SECRET, CLOCK);
+    assertThrows(
+        SignatureVerificationException.class,
+        () -> verifier.verify("not-json", "t=" + NOW.getEpochSecond() + ",v1=forged"));
+  }
+
+  @Test
+  void normalizesMalformedTimestampHeadersToSignatureRejection() {
+    StripeHostingWebhookVerifier verifier = new StripeHostingWebhookVerifier(SECRET, CLOCK);
+    for (String malformed : new String[] {"t=abc", "t", "t=", "t=9223372036854775808"}) {
+      assertThrows(SignatureVerificationException.class, () -> verifier.verify(PAYLOAD, malformed));
+    }
+  }
+
+  @Test
   void rejectsMalformedSignatureHeader() {
     StripeHostingWebhookVerifier verifier = new StripeHostingWebhookVerifier(SECRET, CLOCK);
 
