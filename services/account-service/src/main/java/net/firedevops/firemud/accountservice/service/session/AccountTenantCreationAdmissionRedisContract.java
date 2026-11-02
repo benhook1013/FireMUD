@@ -30,7 +30,7 @@ public final class AccountTenantCreationAdmissionRedisContract {
             new ArgumentSpec("exactActiveRecord"),
             new ArgumentSpec("exactOriginalReceipt"),
             new ArgumentSpec("ownerNowEpochMillis")),
-        ScriptCategory.SESSION_CAS,
+        ScriptCategory.ACCOUNT_TENANT_CREATION_ADMISSION,
         List.of(
             new OutcomeSpec("RECEIPT_CREATED", OutcomeCategory.SUCCESS, MutationEffect.MUTATING),
             new OutcomeSpec(
