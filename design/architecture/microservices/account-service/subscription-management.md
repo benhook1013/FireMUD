@@ -9,7 +9,7 @@ The goals of the subscription system include:
 - Respect tenant isolation while still enabling platform-wide reporting.
 - Coordinate with Stripe while keeping billing state consistent in FireMUD’s own database.
 
-Payment-instrument ownership, explicit per-subscription binding, and billing-owner transfer follow the canonical [ADR 0044](../../decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md) contract.
+Payment-instrument ownership, explicit per-subscription binding, initial billing-owner rationale, and billing-owner transfer follow the canonical [ADR 0044](../../decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md) contract.
 
 ## Implementation Status
 
@@ -18,6 +18,18 @@ The plan-change timing, over-quota behavior, pending-plan metadata, and full quo
 The target `CreateSubscription` request accepts a high-entropy stable caller-supplied `requestId` as the sole logical create-operation key, along with the normalized tenant, plan, and instrument-selection inputs. Account resolves the authoritative billing owner and computes a versioned `requestDigest` from those normalized inputs and the resolved owner; neither the digest nor billing-owner resolution is supplied as a request field. Account captures the resolved owner's authority version/generation and validates that exact fence in the same local intent/outbox transaction before persisting the pair or creating provider work; an owner change or generation/version mismatch fails closed. A retry with the same `requestId` and normalized create fields recomputes the same digest and replays the same `subscriptionId`, durable operation, and outcome; changed fields that produce a different digest return `IDEMPOTENCY_CONFLICT`. The provider `subscription_provisioning_request_id` and cleanup identity remain separate provider-operation keys and must not replace the caller identity.
 
 Hosted-terms acceptance and the tenant's Creator Party are separate from subscription and billing ownership. Current V1 subscription behavior remains the hosting-billing boundary in [ADR 0143](../../decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md). [ADR 0181](../../decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md) is accepted and defines the target changed-terms boundary: decline or missing reacceptance blocks new covered creator-content mutations but does not itself cancel a subscription, delete content, or decide a refund; those mutations still require the Account-owned currentness outcome. Only the detailed renewal, paid-through continuity, exit, refund, and service-credit choreography across a material terms change remains candidate pre-launch policy pending complete terms and New Zealand legal review. No current route or implementation proves these changed-term behaviors.
+
+## Initial Billing-Owner Establishment
+
+Creation eligibility follows the account-scoped self-service choice in [ADR 0042](../../decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md), not a tenant membership or role; this section separately governs initial billing-owner consent.
+
+Initial billing ownership is established only as part of a fresh tenant-creation operation. The authenticated account that initiates that same operation must explicitly accept the billing-owner binding during tenant creation; creator identity alone is not consent.
+
+Account verifies that the initiating subject is authenticated and currently authorized for the fresh tenant-creation operation, then verifies the exact committed tenant receipt for that same operation and subject. Receipt readback is necessary evidence, not authority or consent by itself. Account revalidates current authority at its binding commit boundary; unavailable, stale, ambiguous, or mismatched authority or receipt evidence fails closed.
+
+On success, Account records one unique tenant-bound billing-owner identity together with its owner version/generation and immutable idempotency and consent evidence. An exact retry of the same operation replays the committed binding outcome; this initial-creation path cannot replace an existing binding or infer an owner from creator or membership identity. Existing-tenant billing-owner changes remain the separate audited handoff governed by ADR 0044.
+
+Consent remains within the existing HTTPS `control-ui` path, with recent ordinary reauthentication and the route's required assurance. The binding creates no subscription, charge, payment-instrument ownership, or hosting/game entitlement. Subscription creation separately resolves and revalidates the Account-owned binding and its current owner fence before committing provider work.
 
 ## Plan and Entitlement Model
 

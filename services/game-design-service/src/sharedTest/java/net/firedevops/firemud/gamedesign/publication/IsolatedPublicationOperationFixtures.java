@@ -172,25 +172,32 @@ public final class IsolatedPublicationOperationFixtures {
             new AccountPublicationAuthorizationBinding.PreallocationInput(
                 originalDraftAccount.actorAccountId(), selected),
             java.util.Arrays.stream(DraftAuthorizationFenceBinding.SourceKind.values())
-                .map(
-                    kind ->
-                        new DraftAuthorizationFenceBinding.SourceEvidence(
-                            kind,
-                            switch (kind) {
-                              case ACCOUNT, GLOBAL_ROLES ->
-                                  originalDraftAccount.actorAccountId().toString();
-                              case TENANT -> target.canonicalTenantId().toString();
-                              case MEMBERSHIP ->
-                                  originalDraftAccount.actorAccountId()
-                                      + "/"
-                                      + target.canonicalTenantId();
-                              default -> "ISOLATED-" + kind;
-                            },
-                            "1",
-                            "1",
-                            null,
-                            null,
-                            ("ISOLATED-stipulated-" + kind).getBytes(StandardCharsets.UTF_8)))
+                .flatMap(
+                    kind -> {
+                      if (kind == DraftAuthorizationFenceBinding.SourceKind.RECENT_REAUTH_POLICY) {
+                        return java.util.stream.Stream.of(
+                            recentReauthenticationPolicyEvidence("PLATFORM", 300L, 30L),
+                            recentReauthenticationPolicyEvidence("DEPLOYMENT", 240L, 30L));
+                      }
+                      return java.util.stream.Stream.of(
+                          new DraftAuthorizationFenceBinding.SourceEvidence(
+                              kind,
+                              switch (kind) {
+                                case ACCOUNT, GLOBAL_ROLES ->
+                                    originalDraftAccount.actorAccountId().toString();
+                                case TENANT -> target.canonicalTenantId().toString();
+                                case MEMBERSHIP ->
+                                    originalDraftAccount.actorAccountId()
+                                        + "/"
+                                        + target.canonicalTenantId();
+                                default -> "ISOLATED-" + kind;
+                              },
+                              "1",
+                              "1",
+                              null,
+                              null,
+                              ("ISOLATED-stipulated-" + kind).getBytes(StandardCharsets.UTF_8)));
+                    })
                 .toList());
     var world =
         new WorldPublishedStartLocationEvidence(
@@ -224,5 +231,29 @@ public final class IsolatedPublicationOperationFixtures {
     }
     return new GameDesignPublicationOperation(
         account, world, IsolatedWorldPublicationInventoryFixtures.stipulated(account, world));
+  }
+
+  private static DraftAuthorizationFenceBinding.SourceEvidence recentReauthenticationPolicyEvidence(
+      String policyScope, long recentAgeSeconds, long maxClockSkewSeconds) {
+    String scope = "SELF_SERVICE_GAME_CREATION/" + policyScope;
+    String value =
+        "account-recent-reauthentication-policy-source/v1\n"
+            + "owner=ACCOUNT\n"
+            + "purpose=SELF_SERVICE_GAME_CREATION\n"
+            + "scope="
+            + scope
+            + "\nversion=1\nrecentAgeSeconds="
+            + recentAgeSeconds
+            + "\nmaxClockSkewSeconds="
+            + maxClockSkewSeconds
+            + "\n";
+    return new DraftAuthorizationFenceBinding.SourceEvidence(
+        DraftAuthorizationFenceBinding.SourceKind.RECENT_REAUTH_POLICY,
+        scope,
+        null,
+        "1",
+        null,
+        null,
+        value.getBytes(StandardCharsets.UTF_8));
   }
 }

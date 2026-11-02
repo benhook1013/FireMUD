@@ -38,6 +38,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.account.v1.IssueHumanOperatorAuthorizationReferenceRequest;
 import net.firedevops.firemud.account.v1.ReadRedeemedOperationProjectionRequest;
@@ -1246,7 +1247,16 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     } catch (RuntimeException | Error failure) {
       accountClient.close();
       receiverChannel.shutdownNow();
-      server.shutdownNow();
+      try {
+        assertThat(receiverChannel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        failure.addSuppressed(interrupted);
+      } catch (AssertionError cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      } finally {
+        server.shutdownNow();
+      }
       throw failure;
     }
   }
@@ -1327,10 +1337,16 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     }
 
     @Override
-    public void close() {
-      logging.close();
-      gameSession.close();
-      gameDesign.close();
+    public void close() throws InterruptedException {
+      try {
+        logging.close();
+      } finally {
+        try {
+          gameSession.close();
+        } finally {
+          gameDesign.close();
+        }
+      }
     }
   }
 
@@ -1359,9 +1375,13 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     }
 
     @Override
-    public void close() {
+    public void close() throws InterruptedException {
       channel.shutdownNow();
-      server.shutdownNow();
+      try {
+        assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        server.shutdownNow();
+      }
     }
   }
 
@@ -1404,7 +1424,11 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     public void close() throws Exception {
       accountClient.close();
       receiverChannel.shutdownNow();
-      server.shutdownNow();
+      try {
+        assertThat(receiverChannel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        server.shutdownNow();
+      }
     }
   }
 
