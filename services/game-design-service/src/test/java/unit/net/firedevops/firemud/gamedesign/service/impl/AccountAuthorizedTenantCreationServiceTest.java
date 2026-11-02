@@ -20,7 +20,6 @@ import net.firedevops.firemud.gamedesign.client.AccountTenantCreationCurrentAuth
 import net.firedevops.firemud.gamedesign.repository.AccountAuthorizedTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.AccountAuthorizedTenantCreationRepository.AuthorizedDispatch;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeBinding;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OriginalOutcomeSnapshot;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationOriginalOutcomeRepository.OutcomeStatus;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
@@ -51,7 +50,6 @@ class AccountAuthorizedTenantCreationServiceTest {
   private static final Binding BINDING =
       new Binding(
           NAMESPACE, REQUEST_ID, ACCOUNT_OPERATION_ID, ACCOUNT_ID, REQUEST_DIGEST, ACCOUNT_DIGEST);
-  private static final OriginalOutcomeBinding REPOSITORY_BINDING = toRepositoryBinding(BINDING);
 
   private final AccountTenantCreationCurrentAuthorizationClient authorizationClient =
       mock(AccountTenantCreationCurrentAuthorizationClient.class);
@@ -90,14 +88,13 @@ class AccountAuthorizedTenantCreationServiceTest {
   @Test
   void exactTerminalCreatedReplayReturnsReceiptWithoutNewAccountAuthorizationOrWrites() {
     FreshTenantCreationEvidence receipt = receipt();
-    when(outcomeRepository.readCommitted(REPOSITORY_BINDING))
-        .thenReturn(Optional.of(createdSnapshot()));
+    when(outcomeRepository.readCommitted(BINDING)).thenReturn(Optional.of(createdSnapshot()));
     when(creationRepository.read(REQUEST_ID, NAMESPACE)).thenReturn(Optional.of(receipt));
 
     FreshTenantCreationEvidence replay = service().create(candidate());
 
     assertThat(replay).isEqualTo(receipt);
-    verify(outcomeRepository).readCommitted(REPOSITORY_BINDING);
+    verify(outcomeRepository).readCommitted(BINDING);
     verify(creationRepository).read(REQUEST_ID, NAMESPACE);
     verifyNoInteractions(authorizationClient, dispatchRepository);
   }
@@ -111,20 +108,18 @@ class AccountAuthorizedTenantCreationServiceTest {
     when(authorization.readRequestId()).thenReturn(AUTHORIZATION_READ_ID);
     when(authorization.validBeforeEpochMillis()).thenReturn(validBefore);
     when(authorizationClient.resolveCurrent(BINDING)).thenReturn(authorization);
-    when(outcomeRepository.readCommitted(REPOSITORY_BINDING))
+    when(outcomeRepository.readCommitted(BINDING))
         .thenReturn(Optional.empty(), Optional.of(createdSnapshot()));
     when(creationRepository.read(REQUEST_ID, NAMESPACE))
         .thenReturn(Optional.empty(), Optional.of(receipt));
     when(dispatchRepository.isAuthorizationCurrent(validBefore)).thenReturn(true);
-    when(outcomeRepository.claimLocked(REPOSITORY_BINDING)).thenReturn(pendingSnapshot());
+    when(outcomeRepository.claimLocked(BINDING)).thenReturn(pendingSnapshot());
     when(creationRepository.createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION))
         .thenReturn(receipt);
-    when(outcomeRepository.markCreatedLocked(REPOSITORY_BINDING, receipt))
-        .thenReturn(createdSnapshot());
-    when(dispatchRepository.readCommitted(REPOSITORY_BINDING))
+    when(outcomeRepository.markCreatedLocked(BINDING, receipt)).thenReturn(createdSnapshot());
+    when(dispatchRepository.readCommitted(BINDING))
         .thenReturn(
-            Optional.of(
-                new AuthorizedDispatch(REPOSITORY_BINDING, AUTHORIZATION_READ_ID, validBefore)));
+            Optional.of(new AuthorizedDispatch(BINDING, AUTHORIZATION_READ_ID, validBefore)));
     when(transactionManager.getTransaction(any(TransactionDefinition.class)))
         .thenReturn(mock(TransactionStatus.class));
 
@@ -136,14 +131,14 @@ class AccountAuthorizedTenantCreationServiceTest {
     order.verify(authorizationClient).resolveCurrent(BINDING);
     order.verify(dispatchRepository).applyLocalWriteTimeouts();
     order.verify(dispatchRepository).isAuthorizationCurrent(validBefore);
-    order.verify(outcomeRepository).claimLocked(REPOSITORY_BINDING);
+    order.verify(outcomeRepository).claimLocked(BINDING);
     order
         .verify(creationRepository)
         .createCandidate(NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
-    order.verify(outcomeRepository).markCreatedLocked(REPOSITORY_BINDING, receipt);
+    order.verify(outcomeRepository).markCreatedLocked(BINDING, receipt);
     order
         .verify(dispatchRepository)
-        .recordAuthorizedDispatch(REPOSITORY_BINDING, AUTHORIZATION_READ_ID, validBefore);
+        .recordAuthorizedDispatch(BINDING, AUTHORIZATION_READ_ID, validBefore);
     verify(transactionManager).commit(any(TransactionStatus.class));
   }
 
@@ -155,7 +150,7 @@ class AccountAuthorizedTenantCreationServiceTest {
     when(authorization.readRequestId()).thenReturn(AUTHORIZATION_READ_ID);
     when(authorization.validBeforeEpochMillis()).thenReturn(validBefore);
     when(authorizationClient.resolveCurrent(BINDING)).thenReturn(authorization);
-    when(outcomeRepository.readCommitted(REPOSITORY_BINDING)).thenReturn(Optional.empty());
+    when(outcomeRepository.readCommitted(BINDING)).thenReturn(Optional.empty());
     when(creationRepository.read(REQUEST_ID, NAMESPACE)).thenReturn(Optional.empty());
     when(dispatchRepository.isAuthorizationCurrent(validBefore)).thenReturn(false);
     when(transactionManager.getTransaction(any(TransactionDefinition.class)))
@@ -173,8 +168,8 @@ class AccountAuthorizedTenantCreationServiceTest {
   @Test
   void definitiveNotCreatedOriginalCannotReachAccountCallbackOrReopen() {
     OriginalOutcomeSnapshot closed =
-        new OriginalOutcomeSnapshot(REPOSITORY_BINDING, OutcomeStatus.NOT_CREATED, null, null);
-    when(outcomeRepository.readCommitted(REPOSITORY_BINDING)).thenReturn(Optional.of(closed));
+        new OriginalOutcomeSnapshot(BINDING, OutcomeStatus.NOT_CREATED, null, null);
+    when(outcomeRepository.readCommitted(BINDING)).thenReturn(Optional.of(closed));
 
     assertThatThrownBy(() -> service().create(candidate()))
         .isInstanceOf(IllegalStateException.class)
@@ -202,14 +197,14 @@ class AccountAuthorizedTenantCreationServiceTest {
                     definition.getIsolationLevel() == TransactionDefinition.ISOLATION_READ_COMMITTED
                         && !definition.isReadOnly()));
     verify(dispatchRepository).applyLocalWriteTimeouts();
-    verify(outcomeRepository).closeNotCreatedLocked(REPOSITORY_BINDING);
+    verify(outcomeRepository).closeNotCreatedLocked(BINDING);
     verifyNoInteractions(authorizationClient, creationRepository);
   }
 
   @Test
   void alreadyCreatedClosureRefusalPropagatesWithoutCreation() {
     when(transactionManager.getTransaction(any())).thenReturn(mock(TransactionStatus.class));
-    when(outcomeRepository.closeNotCreatedLocked(REPOSITORY_BINDING))
+    when(outcomeRepository.closeNotCreatedLocked(BINDING))
         .thenThrow(new IllegalStateException("Created original cannot close"));
     assertThatThrownBy(() -> service().closeOriginal(BINDING))
         .isInstanceOf(IllegalStateException.class);
@@ -245,22 +240,12 @@ class AccountAuthorizedTenantCreationServiceTest {
   }
 
   private static OriginalOutcomeSnapshot pendingSnapshot() {
-    return new OriginalOutcomeSnapshot(REPOSITORY_BINDING, OutcomeStatus.PENDING, null, null);
+    return new OriginalOutcomeSnapshot(BINDING, OutcomeStatus.PENDING, null, null);
   }
 
   private static OriginalOutcomeSnapshot createdSnapshot() {
     FreshTenantCreationEvidence receipt = receipt();
     return new OriginalOutcomeSnapshot(
-        REPOSITORY_BINDING, OutcomeStatus.CREATED, receipt.operationId(), receipt.evidenceDigest());
-  }
-
-  private static OriginalOutcomeBinding toRepositoryBinding(Binding binding) {
-    return new OriginalOutcomeBinding(
-        binding.targetNamespace(),
-        binding.creationRequestId(),
-        binding.accountAuthorizationOperationId(),
-        binding.initiatingAccountId(),
-        binding.creationRequestDigest(),
-        binding.accountAuthorizationDigest());
+        BINDING, OutcomeStatus.CREATED, receipt.operationId(), receipt.evidenceDigest());
   }
 }
