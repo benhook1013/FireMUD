@@ -45,6 +45,9 @@ public record RealmGrantMutation(
             Objects.requireNonNull(auditReason, "Audit reason is required"), Normalizer.Form.NFC);
     // Reuse the standard scalar validation and byte bound rather than another digest grammar.
     MutationDigestV1.string(auditReason);
+    if (auditReason.indexOf(0) >= 0) {
+      throw new IllegalArgumentException("Audit reason must not contain NUL");
+    }
     if (auditReason.codePoints().allMatch(RealmGrantMutation::isSharedWhitespace)) {
       throw new IllegalArgumentException("Audit reason must not be blank");
     }

@@ -44,7 +44,7 @@ CREATE TABLE game_session_initial_playtest_preparations (
     target_policy_world_display_name VARCHAR(200) NOT NULL CHECK (char_length(target_policy_world_display_name) BETWEEN 1 AND 100 AND octet_length(target_policy_world_display_name) <= 400 AND target_policy_world_display_name !~ '^[[:space:]]*$'),
     target_policy_public_production BOOLEAN NOT NULL CHECK (NOT target_policy_public_production),
     target_policy_state_scope VARCHAR(16) NOT NULL CHECK (target_policy_state_scope = 'ISOLATED'),
-    target_policy_realm_display_name VARCHAR(200) NOT NULL CHECK (char_length(target_policy_realm_display_name) BETWEEN 1 AND 100 AND octet_length(target_policy_realm_display_name) <= 400 AND target_policy_realm_display_name !~ '^[[:space:]]*$'),
+    target_policy_realm_display_name VARCHAR(128) NOT NULL CHECK (char_length(target_policy_realm_display_name) BETWEEN 1 AND 128 AND octet_length(target_policy_realm_display_name) <= 512 AND target_policy_realm_display_name !~ '^[[:space:]]*$'),
     target_policy_entry_policy VARCHAR(32) NOT NULL CHECK (target_policy_entry_policy IN ('PRESEEDED_ONLY', 'PLAYER_CREATED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     CHECK (playtest_lifecycle_id <> playable_state_namespace_id),

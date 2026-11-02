@@ -380,6 +380,9 @@ public final class RealmGrantAuthorityEventV1Codec {
         codePoint = current;
         index++;
       }
+      if (codePoint == 0) {
+        throw invalid("auditReason must not contain NUL");
+      }
       blank &= isMutationWhitespace(codePoint);
       try {
         byteLength = Math.addExact(byteLength, utf8CodePointLength(codePoint));

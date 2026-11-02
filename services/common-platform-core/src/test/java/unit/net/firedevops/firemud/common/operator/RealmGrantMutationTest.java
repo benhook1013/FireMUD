@@ -97,6 +97,14 @@ class RealmGrantMutationTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> mutation(Operation.CREATE, null, EXPIRY, "a".repeat(4097)))
         .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () -> mutation(Operation.CREATE, null, EXPIRY, "before" + (char) 0 + "after"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("NUL");
+    assertThat(
+            mutation(Operation.CREATE, null, EXPIRY, String.valueOf((char) 1).repeat(4096))
+                .auditReason())
+        .hasSize(4096);
   }
 
   private static RealmGrantMutation mutation(

@@ -65,7 +65,7 @@ The closed action-family schema is `firemud.account.realm-grant`, version `1`. I
 | `mutation` | Object with exactly `operation`, then the conditionally present `grantExpiresAt` member. |
 | `mutation.operation` | String exactly `CREATE`, `EXTEND`, `REVOKE`, or `REGRANT`. |
 | `mutation.grantExpiresAt` | Absent for `REVOKE`; required for the other operations as a UTC instant in the canonical `Instant.toString()` form. The expiry must not exceed the current fork expiry; the immutable action digest does not establish that current value. |
-| `auditReason` | Required NFC-normalized string, nonblank, at most 4,096 normalized UTF-8 bytes. The shared blank set is U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000; U+200B does not make a reason blank. |
+| `auditReason` | Required NFC-normalized string, nonblank, without U+0000 (NUL), at most 4,096 normalized UTF-8 bytes. The shared blank set is U+0009–U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, and U+3000; U+200B does not make a reason blank. |
 
 `expectedVersion` and `mutation.grantExpiresAt` are absent from the request object in their absent cases, including no `null` substitute, but remain in their declared positions in the digest grammar. The operation-specific expiry and revision constraints apply equally to all four operations. The action target includes the exact five-field grant identity; stream identifiers are derived separately by the shared Redis codec linked above. Stable `requestId`, actor identity, transport credentials, authorization references, reservation data, and Account authority evidence are outside these seven digest fields.
 

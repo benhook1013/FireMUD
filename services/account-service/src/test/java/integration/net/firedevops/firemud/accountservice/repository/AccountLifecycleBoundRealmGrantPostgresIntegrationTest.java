@@ -62,6 +62,43 @@ class AccountLifecycleBoundRealmGrantPostgresIntegrationTest {
   }
 
   @Test
+  void rejectsNulBeforeWritesAndRetainsRepresentableReasonAtFullByteLimit() {
+    Context context = context();
+    Instant fork = context.now().plusSeconds(3600);
+    Instant expiry = context.now().plusSeconds(300);
+    assertThatThrownBy(
+            () ->
+                context.apply(
+                    UUID.randomUUID(),
+                    new RealmGrantMutation(
+                        "local",
+                        context.scope(),
+                        Operation.CREATE,
+                        null,
+                        expiry,
+                        "before" + (char) 0 + "after"),
+                    fork))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("NUL");
+    context.assertEmpty();
+    String maximumReason = String.valueOf((char) 1).repeat(4096);
+    var applied =
+        context.apply(
+            UUID.randomUUID(),
+            new RealmGrantMutation(
+                "local", context.scope(), Operation.CREATE, null, expiry, maximumReason),
+            fork);
+    assertThat(applied.receipt().auditReason()).isEqualTo(maximumReason);
+    assertThat(
+            RealmGrantAuthorityEventV1Codec.verify(applied.receipt().event().payload())
+                .preimage()
+                .auditReason())
+        .isEqualTo(maximumReason);
+    assertThat(context.count(HISTORY)).isEqualTo(1);
+    assertThat(context.count("account_audit_outbox")).isEqualTo(1);
+  }
+
+  @Test
   void createExtendRevokeRegrantAndExactReplayRetainOriginalSemanticEvidence() {
     Context context = context();
     Instant fork = context.now().plusSeconds(3600);

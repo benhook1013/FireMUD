@@ -344,7 +344,7 @@ The closed flat event preimage contains exactly these fields: `schemaVersion`, `
 | `grantExpiresAt` | Required canonical UTC `Instant.toString()` value, including for a revoked grant. The immutable event schema asserts no future-time condition. |
 | `mutationKind` | Exactly `CREATE`, `EXTEND`, `REVOKE`, or `REGRANT`; `REVOKE` pairs with `REVOKED`, and each other kind pairs with `ACTIVE`. |
 | `mutationDigest` | Exactly 64 lowercase hexadecimal characters, without a prefix; this is the Account action's `mutationDigest/v1` value. |
-| `auditReason` | Already NFC-normalized, nonblank, and at most 4,096 UTF-8 bytes. |
+| `auditReason` | Already NFC-normalized, nonblank, without U+0000 (NUL), and at most 4,096 UTF-8 bytes. |
 | `eventDigest` | Wire-only value `sha256:<64 lowercase hexadecimal characters>`, calculated over canonical RFC 8785 preimage bytes with `eventDigest` omitted. |
 
 The canonical wire payload is at most 32 KiB. Verification rejects malformed or noncanonical JSON, duplicate, unknown, missing, or contradictory fields, invalid UTF-8, trailing data, identity/scope mismatches, and a digest mismatch. The shared scope codec owns the field maxima and stream encoding; this event schema does not repeat that byte grammar. Sealing or verifying these immutable bytes supplies neither source authority nor actor qualification, current-lifecycle evidence, delivery, consumer activation, nor gameplay admission. Current event-production and consumer qualification remains incomplete.

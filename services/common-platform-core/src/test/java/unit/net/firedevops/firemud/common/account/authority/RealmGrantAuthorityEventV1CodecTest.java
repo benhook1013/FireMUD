@@ -364,7 +364,7 @@ class RealmGrantAuthorityEventV1CodecTest {
 
   @Test
   void acceptsNfcReasonAtItsUtf8LimitAndRejectsOverLimitOrNonNfcReason() {
-    String maximumReason = String.valueOf((char) 0).repeat(4096);
+    String maximumReason = String.valueOf((char) 1).repeat(4096);
     GrantPreimage atLimit =
         preimage(
             REQUEST_ID,
@@ -418,10 +418,26 @@ class RealmGrantAuthorityEventV1CodecTest {
                     ACTOR_ID,
                     "CREATE",
                     MUTATION_DIGEST,
-                    String.valueOf((char) 0).repeat(4097),
+                    String.valueOf((char) 1).repeat(4097),
                     7))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("4096 UTF-8 bytes");
+    assertThatThrownBy(
+            () ->
+                preimage(
+                    REQUEST_ID,
+                    GRANT,
+                    2,
+                    GENERATION,
+                    "ACTIVE",
+                    EXPIRED_AT,
+                    ACTOR_ID,
+                    "CREATE",
+                    MUTATION_DIGEST,
+                    "before" + (char) 0 + "after",
+                    7))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("NUL");
     assertThatThrownBy(
             () ->
                 preimage(

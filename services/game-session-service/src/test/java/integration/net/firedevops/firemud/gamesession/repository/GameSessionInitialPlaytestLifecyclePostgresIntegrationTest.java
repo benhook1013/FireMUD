@@ -74,6 +74,46 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void retainsPrivateRealmDisplayNameAtCanonicalCodePointAndUtf8Limits() {
+    String displayName = "\ud83d\ude00".repeat(128);
+    Context context =
+        context(
+            true,
+            List.of(
+                privatePolicy(
+                    "private-playtest",
+                    "source-world",
+                    true,
+                    false,
+                    "ISOLATED",
+                    "Source World",
+                    displayName)));
+    Request request =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var preparation = context.prepare(request).preparation();
+    assertThat(preparation.source().targetPolicy().source().policy().realmDisplayName())
+        .isEqualTo(displayName);
+    assertThat(
+            context
+                .read(request, preparation.playtestLifecycleId())
+                .preparation()
+                .source()
+                .targetPolicy()
+                .source()
+                .policy()
+                .realmDisplayName())
+        .isEqualTo(displayName);
+    var row =
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT char_length(target_policy_realm_display_name) AS characters, octet_length(target_policy_realm_display_name) AS bytes FROM game_session_initial_playtest_preparations WHERE request_id = ?",
+                request.requestId());
+    assertThat(row.get("characters", Integer.class)).isEqualTo(128);
+    assertThat(row.get("bytes", Integer.class)).isEqualTo(512);
+  }
+
+  @Test
   void allocatesFreshNonAdmissibleIdentityFromExactRetainedCanonicalSourceAndReplaysOriginal() {
     Context context = context(true);
     UUID legacyNamespace = UUID.randomUUID();
@@ -774,11 +814,31 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
       boolean publicProduction,
       String stateScope,
       String worldDisplayName) {
+    return privatePolicy(
+        realmSlug,
+        worldSlug,
+        visible,
+        publicProduction,
+        stateScope,
+        worldDisplayName,
+        "Private Playtest");
+  }
+
+  private static RealmEntryPolicy privatePolicy(
+      String realmSlug,
+      String worldSlug,
+      boolean visible,
+      boolean publicProduction,
+      String stateScope,
+      String worldDisplayName,
+      String realmDisplayName) {
     try {
       String json =
           new String(
               net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
-                  "{\"entryPolicy\":\"PRESEEDED_ONLY\",\"realmDisplayName\":\"Private Playtest\",\"realmSlug\":\""
+                  "{\"entryPolicy\":\"PRESEEDED_ONLY\",\"realmDisplayName\":\""
+                      + realmDisplayName
+                      + "\",\"realmSlug\":\""
                       + realmSlug
                       + "\",\"publicProduction\":"
                       + publicProduction
