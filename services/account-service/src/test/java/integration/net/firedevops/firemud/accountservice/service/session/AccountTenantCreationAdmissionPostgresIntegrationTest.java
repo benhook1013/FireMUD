@@ -368,7 +368,9 @@ class AccountTenantCreationAdmissionPostgresIntegrationTest {
                             1,
                             true)));
     UUID issuance = UUID.randomUUID();
-    String tokenHash = "d".repeat(64);
+    String tokenHash =
+        AccountControlUiCoordination.digest(
+            "SHA-256", (issuance.toString() + ":" + creation).getBytes(StandardCharsets.UTF_8));
     byte[] active = "test-only-active-registry".getBytes(StandardCharsets.UTF_8);
     long issued = Instant.now().getEpochSecond() - (expired ? 301 : 0);
     long expiry = (issued + 300) * 1000;
