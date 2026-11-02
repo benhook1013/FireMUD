@@ -294,29 +294,76 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
   }
 
   @Test
-  void exactInitialReplaySurvivesLaterCurrentOwnerTupleAdvance() {
+  void unreviewedCurrentOwnerUpdateIsRejectedAndExactInitialReplayIsUnchanged() {
     Context context = context();
     Seed seed = seed(context, UUID.randomUUID());
     InitialRequest request =
         request(seed.creatorEvidence(), UUID.randomUUID(), UUID.randomUUID(), 2);
     InitialBindingResult original =
         context.transaction().execute(status -> context.repository().establishInitial(request));
-    UUID transferredOwner = insertAccount(context.setupDsl());
-    UUID transferredGeneration = UUID.randomUUID();
-    // Test-only current-tuple advance: no transfer repository or production transfer mutator
-    // exists.
-    int updated =
+    var operationBefore =
         context
             .setupDsl()
-            .execute(
-                "UPDATE account_tenant_billing_owners SET owner_account_uuid = ?, "
-                    + "owner_version = 2, owner_generation = ?, updated_at = clock_timestamp() "
-                    + "WHERE tenant_uuid = ? AND initial_request_id = ?",
-                transferredOwner,
-                transferredGeneration,
-                seed.tenantUuid(),
-                original.requestId());
-    assertThat(updated).isEqualTo(1);
+            .fetch(
+                "SELECT to_jsonb(operation)::text AS retained, operation.xmin::text AS xmin "
+                    + "FROM account_initial_tenant_billing_owner_operations operation "
+                    + "WHERE request_id = ?",
+                original.requestId())
+            .intoMaps();
+    var currentOwnerBefore =
+        context
+            .setupDsl()
+            .fetch(
+                "SELECT to_jsonb(binding)::text AS retained, binding.xmin::text AS xmin "
+                    + "FROM account_tenant_billing_owners binding WHERE tenant_uuid = ?",
+                seed.tenantUuid())
+            .intoMaps();
+    UUID candidateOwner = UUID.randomUUID();
+    UUID candidateGeneration = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    "UPDATE account_tenant_billing_owners "
+                                        + "SET owner_account_uuid = ?, owner_version = 2, "
+                                        + "owner_generation = ?, updated_at = clock_timestamp() "
+                                        + "WHERE tenant_uuid = ? AND initial_request_id = ?",
+                                    candidateOwner,
+                                    candidateGeneration,
+                                    seed.tenantUuid(),
+                                    original.requestId())))
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              assertThat(sqlFailure.getMessage())
+                  .contains(
+                      "Current tenant billing-owner tuple cannot be updated without an audited transfer owner");
+            });
+    assertThat(
+            context
+                .setupDsl()
+                .fetch(
+                    "SELECT to_jsonb(operation)::text AS retained, operation.xmin::text AS xmin "
+                        + "FROM account_initial_tenant_billing_owner_operations operation "
+                        + "WHERE request_id = ?",
+                    original.requestId())
+                .intoMaps())
+        .containsExactlyElementsOf(operationBefore);
+    assertThat(
+            context
+                .setupDsl()
+                .fetch(
+                    "SELECT to_jsonb(binding)::text AS retained, binding.xmin::text AS xmin "
+                        + "FROM account_tenant_billing_owners binding WHERE tenant_uuid = ?",
+                    seed.tenantUuid())
+                .intoMaps())
+        .containsExactlyElementsOf(currentOwnerBefore);
 
     InitialBindingResult replay =
         context.transaction().execute(status -> context.repository().establishInitial(request));
@@ -330,10 +377,29 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
                         .repository()
                         .findCurrentOwnerForUpdate(seed.tenantUuid())
                         .orElseThrow());
-    assertThat(current.ownerAccountUuid()).isEqualTo(transferredOwner);
-    assertThat(current.ownerVersion()).isEqualTo(2L);
-    assertThat(current.ownerGeneration()).isEqualTo(transferredGeneration);
+    assertThat(current.ownerAccountUuid()).isEqualTo(original.ownerAccountUuid());
+    assertThat(current.ownerVersion()).isEqualTo(original.ownerVersion());
+    assertThat(current.ownerGeneration()).isEqualTo(original.ownerGeneration());
     assertThat(current.initialRequestId()).isEqualTo(original.requestId());
+    assertThat(
+            context
+                .setupDsl()
+                .fetch(
+                    "SELECT to_jsonb(operation)::text AS retained, operation.xmin::text AS xmin "
+                        + "FROM account_initial_tenant_billing_owner_operations operation "
+                        + "WHERE request_id = ?",
+                    original.requestId())
+                .intoMaps())
+        .containsExactlyElementsOf(operationBefore);
+    assertThat(
+            context
+                .setupDsl()
+                .fetch(
+                    "SELECT to_jsonb(binding)::text AS retained, binding.xmin::text AS xmin "
+                        + "FROM account_tenant_billing_owners binding WHERE tenant_uuid = ?",
+                    seed.tenantUuid())
+                .intoMaps())
+        .containsExactlyElementsOf(currentOwnerBefore);
   }
 
   @Test
@@ -608,6 +674,18 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
     assertThat(actual.ownerAccountUuid()).isEqualTo(expected.ownerAccountUuid());
     assertThat(actual.ownerVersion()).isEqualTo(expected.ownerVersion());
     assertThat(actual.ownerGeneration()).isEqualTo(expected.ownerGeneration());
+    assertThat(actual.targetNamespace()).isEqualTo(expected.targetNamespace());
+    assertThat(actual.creationRequestId()).isEqualTo(expected.creationRequestId());
+    assertThat(actual.creationOperationId()).isEqualTo(expected.creationOperationId());
+    assertThat(actual.accountAuthorizationOperationId())
+        .isEqualTo(expected.accountAuthorizationOperationId());
+    assertThat(actual.accountAuthorizationDigest())
+        .isEqualTo(expected.accountAuthorizationDigest());
+    assertThat(actual.creationEvidenceDigest()).isEqualTo(expected.creationEvidenceDigest());
+    assertThat(actual.creatorEvidenceDigest()).isEqualTo(expected.creatorEvidenceDigest());
+    assertThat(actual.creatorEvidencePayload()).containsExactly(expected.creatorEvidencePayload());
+    assertThat(actual.creatorEvidencePayloadDigest())
+        .isEqualTo(expected.creatorEvidencePayloadDigest());
     assertThat(actual.consentOperationId()).isEqualTo(expected.consentOperationId());
     assertThat(actual.consentStatementVersion()).isEqualTo(expected.consentStatementVersion());
     assertThat(actual.consentPayload()).containsExactly(expected.consentPayload());
@@ -637,7 +715,7 @@ class AccountInitialTenantBillingOwnerRepositoryPostgresIntegrationTest {
         return sqlException;
       }
     }
-    throw new AssertionError("Expected PostgreSQL append-only rejection", failure);
+    throw new AssertionError("Expected PostgreSQL constraint refusal", failure);
   }
 
   private static String digest(String value) {

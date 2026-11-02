@@ -143,6 +143,16 @@ BEGIN
 END;
 $$;
 
+-- No audited existing-tenant transfer owner exists in this migration. A later transfer migration
+-- must explicitly replace this unconditional update refusal with its audited transition guard.
+CREATE FUNCTION account_tenant_billing_owner_no_unaudited_update()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'Current tenant billing-owner tuple cannot be updated without an audited transfer owner'
+        USING ERRCODE = '23514';
+END;
+$$;
+
 CREATE TRIGGER account_initial_billing_owner_source_guard
     BEFORE INSERT ON account_initial_tenant_billing_owner_operations
     FOR EACH ROW EXECUTE FUNCTION account_initial_billing_owner_operation_source_guard();
@@ -155,4 +165,7 @@ CREATE TRIGGER account_initial_billing_owner_no_truncate
 CREATE TRIGGER account_tenant_billing_owner_initial_insert_guard
     BEFORE INSERT ON account_tenant_billing_owners
     FOR EACH ROW EXECUTE FUNCTION account_tenant_billing_owner_initial_insert_guard();
+CREATE TRIGGER account_tenant_billing_owner_no_unaudited_update
+    BEFORE UPDATE ON account_tenant_billing_owners
+    FOR EACH ROW EXECUTE FUNCTION account_tenant_billing_owner_no_unaudited_update();
 -- [jooq ignore stop]
