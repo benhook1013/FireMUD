@@ -103,10 +103,18 @@ class GameSessionCurrentPrivatePlaytestLifecycleReadClientTest {
       transport.respond(
           request ->
               ReadCurrentPrivatePlaytestLifecycleResponse.newBuilder()
-                  .setCanonicalEvidence(ByteString.copyFrom(new byte[4097]))
+                  .setCanonicalEvidence(
+                      ByteString.copyFrom(
+                          new byte
+                              [CurrentPrivatePlaytestLifecycleReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES
+                                  + 1]))
                   .build());
       assertThatThrownBy(() -> transport.client().read(scope()))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOfSatisfying(
+              io.grpc.StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode())
+                      .isEqualTo(io.grpc.Status.Code.RESOURCE_EXHAUSTED));
     }
   }
 
