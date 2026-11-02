@@ -92,7 +92,14 @@ public final class AccountControlUiActorService {
 
   /** Account identity observation only; mutation callers must use withCurrentAccount. */
   public AccountAuthenticatedActor authenticateAccount(String compactJwt) {
-    return withCurrentAccount(compactJwt, Function.identity());
+    return withCurrentScope(
+        compactJwt,
+        AccountControlUiAuthority.ScopeKind.ACCOUNT,
+        null,
+        null,
+        current ->
+            new AccountAuthenticatedActor(
+                current.stored.accountId, current.stored.operationId, current.stored.tokenHash));
   }
 
   /** Consumes current Account evidence and producer fences in the mutation's owner transaction. */

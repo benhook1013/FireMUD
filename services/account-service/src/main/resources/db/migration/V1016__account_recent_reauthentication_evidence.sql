@@ -215,4 +215,4 @@ CREATE TRIGGER account_recent_reauthentication_consumptions_immutable
 CREATE TRIGGER account_recent_reauthentication_consumptions_no_truncate
     BEFORE TRUNCATE ON account_recent_reauthentication_consumptions
     FOR EACH STATEMENT EXECUTE FUNCTION account_recent_reauthentication_no_mutation();
--- [jooq ignore end]
+-- [jooq ignore stop]

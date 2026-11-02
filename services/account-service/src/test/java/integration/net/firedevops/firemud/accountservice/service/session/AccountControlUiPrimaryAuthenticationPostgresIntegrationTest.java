@@ -2,7 +2,6 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 
 import de.mkammerer.argon2.Argon2Factory;
 import java.time.LocalDateTime;
@@ -14,22 +13,24 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
+import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
-import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
-import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -50,11 +51,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Actual primary authentication, persisted canonical identity and source mapping, OTP repositories,
- * and PostgreSQL transactions/locks. Unused required owner collaborators are unstubbed mocks with
- * no positive authority behavior; unrelated optional collaborators remain absent. Secrets and
- * Accounts are test-only fixtures; this is not creator-source, signer, protected caller, original
- * Draft or runtime issuance proof.
+ * Actual primary authentication, persisted canonical identity/source mapping, password-reset owner,
+ * OTP repositories, and PostgreSQL transactions/locks. Reset contention uses a genuine test token
+ * and the production closed PASSWORD_RESET producer in one transaction. Secrets and Accounts are
+ * test-only fixtures; this is not creator-source, signer, protected caller, or runtime issuance
+ * proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
@@ -210,28 +211,27 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
   @Test
   void resetThatOwnsTheAccountLockFirstMakesIssuanceVerifyTheCommittedNewPassword()
       throws Exception {
-    Context c = context();
-    Account account = c.account("PASSWORD");
     var resetLocked = new CountDownLatch(1);
     var releaseReset = new CountDownLatch(1);
-    var issuerEntered = new CountDownLatch(1);
     var resetPid = new AtomicInteger();
+    Context c =
+        context(
+            dsl -> {
+              resetPid.set(backendPid(dsl));
+              resetLocked.countDown();
+              awaitLatch(releaseReset);
+            });
+    Account account = c.account("PASSWORD");
+    String resetToken = c.passwordResetToken(account);
+    var issuerEntered = new CountDownLatch(1);
     var issuerPid = new AtomicInteger();
     var executor = Executors.newFixedThreadPool(2);
     try {
       var reset =
           executor.submit(
               () ->
-                  c.tx(
-                      () -> {
-                        resetPid.set(c.pid());
-                        Account locked =
-                            c.accounts.findByIdForUpdate(account.getId()).orElseThrow();
-                        c.accounts.updatePasswordHashForLockedAccount(locked, hash(RESET_PASSWORD));
-                        resetLocked.countDown();
-                        awaitLatch(releaseReset);
-                        return null;
-                      }));
+                  c.primary.completePasswordReset(
+                      new CompletePasswordResetRequest(resetToken, RESET_PASSWORD)));
       awaitLatch(resetLocked);
       var issuance =
           executor.submit(
@@ -260,6 +260,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
                           .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
                           .accountId()))
           .isEqualTo(account.getAccountUuid());
+      assertResetAuthorityCommitted(c, account);
     } finally {
       releaseReset.countDown();
       executor.shutdownNow();
@@ -271,11 +272,10 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
   void issuanceKeepsTheAccountLockUntilItsCallerTransactionCommitsBeforeReset() throws Exception {
     Context c = context();
     Account account = c.account("PASSWORD");
+    String resetToken = c.passwordResetToken(account);
     var issuanceAuthenticated = new CountDownLatch(1);
     var releaseIssuance = new CountDownLatch(1);
-    var resetEntered = new CountDownLatch(1);
     var issuerPid = new AtomicInteger();
-    var resetPid = new AtomicInteger();
     var executor = Executors.newFixedThreadPool(2);
     try {
       var issuance =
@@ -296,17 +296,9 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
       var reset =
           executor.submit(
               () ->
-                  c.tx(
-                      () -> {
-                        resetPid.set(c.pid());
-                        resetEntered.countDown();
-                        Account locked =
-                            c.accounts.findByIdForUpdate(account.getId()).orElseThrow();
-                        return c.accounts.updatePasswordHashForLockedAccount(
-                            locked, hash(RESET_PASSWORD));
-                      }));
-      awaitLatch(resetEntered);
-      awaitBlocked(c, resetPid.get(), issuerPid.get());
+                  c.primary.completePasswordReset(
+                      new CompletePasswordResetRequest(resetToken, RESET_PASSWORD)));
+      awaitAnyBlockedBy(c, issuerPid.get());
       assertThat(reset.isDone()).isFalse();
 
       releaseIssuance.countDown();
@@ -326,6 +318,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
                           .authenticateControlUiPrimaryIdentity(account.getEmail(), RESET_PASSWORD)
                           .accountId()))
           .isEqualTo(account.getAccountUuid());
+      assertResetAuthorityCommitted(c, account);
     } finally {
       releaseIssuance.countDown();
       executor.shutdownNow();
@@ -358,10 +351,50 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
       Thread.onSpinWait();
     }
     throw new IllegalStateException(
-        "Second OTP attempt did not block on first primary-auth transaction");
+        "Second Account transaction did not block on the first Account transaction");
+  }
+
+  private static void awaitAnyBlockedBy(Context c, int blockerPid) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      var observed =
+          Objects.requireNonNull(
+              c.dsl.fetchOne(
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity waiting "
+                      + "WHERE waiting.pid <> pg_backend_pid() "
+                      + "AND waiting.wait_event_type = 'Lock' "
+                      + "AND ? = ANY(pg_blocking_pids(waiting.pid))) AS blocked",
+                  blockerPid),
+              "PostgreSQL lock-wait observation is required");
+      if (Boolean.TRUE.equals(observed.get("blocked", Boolean.class))) {
+        return;
+      }
+      Thread.onSpinWait();
+    }
+    throw new IllegalStateException("Password reset did not block on the issuance Account lock");
+  }
+
+  private static int backendPid(DSLContext dsl) {
+    return Objects.requireNonNull(
+            dsl.fetchOne("SELECT pg_backend_pid() AS pid"),
+            "Exact owner transaction backend required")
+        .get("pid", Integer.class);
+  }
+
+  private static void assertResetAuthorityCommitted(Context c, Account account) {
+    var authority =
+        c.tx(() -> c.generations.read(AuthorityScope.account(account.getAccountUuid())));
+    assertThat(authority.generation()).isEqualTo(2L);
+    assertThat(authority.sourceVersion()).isEqualTo(2L);
+    assertThat(authority.issuanceFence().value()).isEqualTo(2L);
+    assertThat(authority.issuanceFence().sourceVersion()).isEqualTo(2L);
   }
 
   private static Context context() {
+    return context(ignored -> {});
+  }
+
+  private static Context context(Consumer<DSLContext> afterPasswordUpdate) {
     String schema = "control_ui_primary_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
@@ -382,21 +415,34 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
     var generations = new AccountAuthorityGenerationRepository(dsl);
     var outbox = new AccountAuthorityOutboxRepository(dsl);
     var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
-    var accounts = new AccountRepository(dsl, sourceEvidence);
+    var accounts =
+        new AccountRepository(dsl, sourceEvidence) {
+          @Override
+          public Account updatePasswordHashForLockedAccount(Account expected, String passwordHash) {
+            Account updated = super.updatePasswordHashForLockedAccount(expected, passwordHash);
+            afterPasswordUpdate.accept(dsl);
+            return updated;
+          }
+        };
     var challenges = new AccountEmailLoginChallengeRepository(dsl);
+    var resetOperations = new AccountPasswordResetOperationRepository(dsl);
+    var logoutAllOperations = new AccountLogoutAllOperationRepository(dsl);
+    var securityStateOperations = new AccountSecurityStateOperationRepository(dsl);
+    var resetSourceChanges = new AccountPasswordResetDraftSourceChangeRepository(dsl);
+    var resetTokens = new PasswordResetTokenRepository(dsl);
     var primary =
         new AccountServiceImpl(
             accounts,
             generations,
             sourceEvidence,
             outbox,
-            mock(AccountPasswordResetOperationRepository.class),
-            mock(AccountLogoutAllOperationRepository.class),
-            mock(AccountSecurityStateOperationRepository.class),
-            mock(AccountPasswordResetDraftSourceChangeRepository.class),
-            mock(AccountAuditOutboxRepository.class),
-            mock(AccountConnectScopeRepository.class),
-            mock(AccountJoinOperationRepository.class),
+            resetOperations,
+            logoutAllOperations,
+            securityStateOperations,
+            resetSourceChanges,
+            null, // Audit outbox is not used by credential/reset owner tests.
+            null, // Connect scopes are not used by credential/reset owner tests.
+            null, // JOIN operations are not used by credential/reset owner tests.
             challenges,
             null, // Realm grants are not used by primary authentication.
             null, // Tenant memberships are not used by primary authentication.
@@ -406,7 +452,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             null, // Payment transactions are not used by primary authentication.
             null, // Subscriptions are not used by primary authentication.
             null, // External identities are not used by primary authentication.
-            null, // Password reset tokens are not used by primary authentication.
+            resetTokens,
             null, // Email verification tokens are not used by primary authentication.
             null, // Notifications are not used by primary authentication.
             null, // Email delivery is not used by primary authentication.
@@ -418,7 +464,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             null, // JWT utility is not used by primary authentication.
             null, // Session service is not used by primary authentication.
             manager);
-    return new Context(dsl, accounts, challenges, primary, transaction);
+    return new Context(dsl, accounts, challenges, primary, transaction, generations, resetTokens);
   }
 
   private record Context(
@@ -426,7 +472,9 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
       AccountRepository accounts,
       AccountEmailLoginChallengeRepository challenges,
       AccountServiceImpl primary,
-      TransactionTemplate transaction) {
+      TransactionTemplate transaction,
+      AccountAuthorityGenerationRepository generations,
+      PasswordResetTokenRepository resetTokens) {
     <T> T tx(Supplier<T> action) {
       return transaction.execute(ignored -> action.get());
     }
@@ -485,6 +533,20 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             challenge.setUpdatedAt(now);
             return challenges.save(challenge);
           });
+    }
+
+    String passwordResetToken(Account account) {
+      String rawToken = "test-only-reset-token-" + UUID.randomUUID();
+      tx(
+          () -> {
+            var token = new PasswordResetToken();
+            token.setAccount(account);
+            token.setToken(rawToken);
+            token.setExpiresAt(LocalDateTime.now().plusHours(1));
+            resetTokens.save(token);
+            return null;
+          });
+      return rawToken;
     }
 
     int pid() {
