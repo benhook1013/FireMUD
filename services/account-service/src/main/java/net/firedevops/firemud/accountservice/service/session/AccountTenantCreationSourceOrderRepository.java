@@ -292,8 +292,15 @@ final class AccountTenantCreationSourceOrderRepository {
   }
 
   /**
-   * Bounded data-only discovery. A missing terminal result, including an empty page, conveys no
-   * permission and does not make a source order settled.
+   * Bounded data-only discovery with a pass-local cursor. Every reconciliation pass must start with
+   * {@code after == null}; a returned cursor may only page through that pass and must be discarded
+   * when the pass ends, including after an empty page. Creation timestamps do not establish commit
+   * order, so a cursor must never be persisted or reused as a watermark across passes: a concurrent
+   * transaction can commit an older timestamp after a page has advanced. A later fresh pass
+   * discovers such orders.
+   *
+   * <p>A missing terminal result, including an empty page, conveys no permission and does not make
+   * a source order settled.
    */
   List<PendingSourceOrder> readPending(PendingCursor after, int limit) {
     requireTransaction();

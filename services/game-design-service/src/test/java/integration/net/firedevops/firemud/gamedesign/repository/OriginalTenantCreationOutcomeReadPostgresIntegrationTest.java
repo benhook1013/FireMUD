@@ -1,6 +1,7 @@
 package integration.net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.Context;
 import io.grpc.Status;
@@ -139,6 +140,55 @@ class OriginalTenantCreationOutcomeReadPostgresIntegrationTest {
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_tenant_creation_operations"))))
         .isZero();
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game")))).isZero();
+  }
+
+  @Test
+  void changedAuthorizationDigestRefusesRealRetainedTerminalsWithoutChangingSqlState() {
+    for (boolean created : new boolean[] {true, false}) {
+      Fixture fixture = fixture();
+      OriginalOutcomeBinding original = binding();
+      fixture.inTransaction(
+          () -> {
+            if (created) {
+              fixture.outcomes.claimLocked(original);
+              FreshTenantCreationEvidence receipt =
+                  fixture.creation.createCandidate(
+                      NAMESPACE, REQUEST_ID, SOURCE_KEY, NAME, DESCRIPTION);
+              fixture.outcomes.markCreatedLocked(original, receipt);
+            } else {
+              fixture.outcomes.closeNotCreatedLocked(original);
+            }
+            return true;
+          });
+      String before = rowState(fixture.dsl, original);
+      OriginalOutcomeBinding changed =
+          new OriginalOutcomeBinding(
+              original.targetNamespace(), original.creationRequestId(),
+              original.accountAuthorizationOperationId(), original.initiatingAccountId(),
+              original.creationRequestDigest(), "sha256:" + "c".repeat(64));
+
+      // Exercise the real repository exception subtype, then its actual receiver mapping.
+      assertThatThrownBy(() -> fixture.outcomes.readCommitted(changed))
+          .isInstanceOf(GameTenantCreationRepository.CreationRequestConflictException.class);
+      ReadObserver rejected = resolve(fixture.service, request(changed), ACCOUNT_URI);
+
+      assertThat(rejected.failure).isEqualTo(Status.Code.FAILED_PRECONDITION);
+      assertThat(rejected.response).isNull();
+      assertThat(rejected.completed).isFalse();
+      assertThat(rowState(fixture.dsl, original)).isEqualTo(before);
+      assertThat(fixture.outcomes.readCommitted(original).orElseThrow().binding())
+          .isEqualTo(original);
+      ReadObserver accepted = resolve(fixture.service, request(original), ACCOUNT_URI);
+      assertThat(accepted.failure).isNull();
+      assertThat(accepted.completed).isTrue();
+      assertThat(rowState(fixture.dsl, original)).isEqualTo(before);
+      assertThat(
+              fixture.dsl.fetchCount(DSL.table(DSL.name("game_tenant_creation_original_outcomes"))))
+          .isEqualTo(1);
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_tenant_creation_operations"))))
+          .isEqualTo(created ? 1 : 0);
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game")))).isEqualTo(created ? 1 : 0);
+    }
   }
 
   private static Fixture fixture() {

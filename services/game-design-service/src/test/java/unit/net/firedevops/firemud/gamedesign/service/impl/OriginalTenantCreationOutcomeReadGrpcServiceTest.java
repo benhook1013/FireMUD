@@ -140,6 +140,22 @@ class OriginalTenantCreationOutcomeReadGrpcServiceTest {
   }
 
   @Test
+  void mapsActualCreationRequestConflictToFailedPreconditionWithoutPartialEvidence() {
+    when(outcomeRepository.readCommitted(binding()))
+        .thenThrow(
+            new GameTenantCreationRepository.CreationRequestConflictException(
+                "Fresh tenant original identity was reused with changed Account or request binding"));
+
+    ReadObserver observer = call(request(), ACCOUNT_URI);
+
+    assertThat(observer.failure).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(observer.response).isNull();
+    assertThat(observer.completed).isFalse();
+    verify(outcomeRepository).readCommitted(binding());
+    verifyNoInteractions(creationRepository);
+  }
+
+  @Test
   void refusesCreatedOutcomeWhenTheActualV30ReceiptIsAbsentOrSubstituted() {
     when(outcomeRepository.readCommitted(binding()))
         .thenReturn(Optional.of(snapshot(OutcomeStatus.CREATED)))

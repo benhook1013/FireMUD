@@ -429,12 +429,99 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
                 original.description(),
                 original.creatorPartyId(),
                 UUID.randomUUID(),
+                original.consentStatementVersion()),
+            changeIntent(
+                original,
+                original.initiatingAccountId(),
+                original.gameDesignCreationRequestId(),
+                original.targetNamespace(),
+                original.sourceGameTenantKey(),
+                original.name(),
+                original.description(),
+                original.creatorPartyId(),
+                original.consentOperationId(),
                 original.consentStatementVersion() + 1));
 
     for (var changed : changedRequests) {
       assertThatThrownBy(() -> c.tx(() -> repository.claim(changed)))
           .isInstanceOf(AccountTenantCreationIntentRepository.IntentConflictException.class);
     }
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_tenant_creation_original_intents "
+                    + "WHERE request_id = ?",
+                intentRequestId))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void falseTenantCreationConsentIsRejectedWithoutChangingOriginalOrReauthenticationState() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    UUID reauthenticationRequestId = UUID.randomUUID();
+    UUID creationOperationId = UUID.randomUUID();
+    var evidence =
+        c.service.reauthenticate(
+            c.request(account, reauthenticationRequestId, creationOperationId, PASSWORD));
+    var repository = new AccountTenantCreationIntentRepository(c.dsl, c.evidenceRepository);
+    UUID intentRequestId = UUID.randomUUID();
+    var original =
+        intentRequest(
+            account,
+            intentRequestId,
+            creationOperationId,
+            UUID.randomUUID(),
+            evidence.evidenceId(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1);
+    c.tx(() -> repository.claim(original));
+    Record originalIntent =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT to_jsonb(intent)::text AS retained, intent.xmin::text AS xmin "
+                    + "FROM account_tenant_creation_original_intents intent WHERE request_id = ?",
+                intentRequestId));
+    Record originalEvidence = c.evidenceRow(evidence.evidenceId());
+    long originalConsumptionCount =
+        c.count(
+            "SELECT count(*) FROM account_recent_reauthentication_consumptions "
+                + "WHERE evidence_id = ?",
+            evidence.evidenceId());
+    assertThat(originalConsumptionCount).isZero();
+    var falseConsent =
+        new AccountTenantCreationIntentRepository.Request(
+            original.requestId(),
+            original.creationOperationId(),
+            original.gameDesignCreationRequestId(),
+            original.initiatingAccountId(),
+            original.targetNamespace(),
+            original.sourceGameTenantKey(),
+            original.name(),
+            original.description(),
+            original.recentReauthenticationEvidenceId(),
+            original.creatorPartyId(),
+            original.consentOperationId(),
+            original.consentStatementVersion(),
+            false);
+
+    assertThatThrownBy(() -> c.tx(() -> repository.claim(falseConsent)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Tenant-creation consent must be affirmative");
+
+    assertThat(
+            c.dsl.fetchOne(
+                "SELECT to_jsonb(intent)::text AS retained, intent.xmin::text AS xmin "
+                    + "FROM account_tenant_creation_original_intents intent WHERE request_id = ?",
+                intentRequestId))
+        .isEqualTo(originalIntent);
+    assertThat(c.evidenceRow(evidence.evidenceId())).isEqualTo(originalEvidence);
+    assertThat(
+            c.count(
+                "SELECT count(*) FROM account_recent_reauthentication_consumptions "
+                    + "WHERE evidence_id = ?",
+                evidence.evidenceId()))
+        .isEqualTo(originalConsumptionCount);
     assertThat(
             c.count(
                 "SELECT count(*) FROM account_tenant_creation_original_intents "

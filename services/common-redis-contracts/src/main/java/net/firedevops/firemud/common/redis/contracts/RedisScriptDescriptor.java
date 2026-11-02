@@ -125,6 +125,7 @@ public record RedisScriptDescriptor(
         && (!FULL_KEY_ANCHOR_SCRIPT_ID.equals(scriptId)
             || !FULL_KEY_ANCHOR_OWNER.equals(owner)
             || role != RedisRole.COORDINATION
+            || category != ScriptCategory.ACCOUNT_TENANT_CREATION_ADMISSION
             || !FULL_KEY_ANCHOR_TOKEN_PREFIX.equals(keys.get(0).ownedPrefix())
             || !FULL_KEY_ANCHOR_RECEIPT_PREFIX.equals(keys.get(1).ownedPrefix()))) {
       throw new IllegalArgumentException(
@@ -171,6 +172,7 @@ public record RedisScriptDescriptor(
   public enum ScriptCategory {
     TICK_LOCK,
     TIMER_QUEUE,
+    ACCOUNT_TENANT_CREATION_ADMISSION,
     SESSION_CAS,
     SESSION_ACCOUNT_INDEX,
     SESSION_ISSUER_INDEX,
