@@ -111,6 +111,22 @@ public class AccountTenantCreationBootstrapService {
    */
   @Transactional
   public AccountTenantCreationBootstrapResult bootstrap(FreshTenantCreatorEvidence evidence) {
+    return bootstrapWithSource(evidence, null);
+  }
+
+  /** Concrete final owner only; the ordinary bootstrap path retains its default denial. */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+  public AccountTenantCreationBootstrapResult bootstrapForCompletion(
+      FreshTenantCreatorEvidence evidence,
+      net.firedevops.firemud.accountservice.service.session.AccountTenantCreationCompletionOwner
+              .CurrentSource
+          source) {
+    return bootstrapWithSource(evidence, Objects.requireNonNull(source));
+  }
+
+  private AccountTenantCreationBootstrapResult bootstrapWithSource(
+      FreshTenantCreatorEvidence evidence,
+      AccountTenantCreationBootstrapAuthorizationSource suppliedSource) {
     requireWritableOwnerTransaction();
     Objects.requireNonNull(evidence, "Authenticated creator evidence is required");
     UUID creatorUuid = evidence.initiatingAccountId();
@@ -133,7 +149,7 @@ public class AccountTenantCreationBootstrapService {
     }
 
     AccountTenantCreationBootstrapAuthorizationSource currentSource =
-        authorizationSourceProvider.getIfAvailable();
+        suppliedSource == null ? authorizationSourceProvider.getIfAvailable() : suppliedSource;
     if (currentSource == null) {
       throw new IllegalStateException(
           "No current Account creator-authorization/source participant is registered");

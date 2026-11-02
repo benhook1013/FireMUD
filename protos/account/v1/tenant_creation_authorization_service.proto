@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Private Account-owned current-authority read for one exact original tenant-creation binding.
+service TenantCreationCurrentAuthorizationReadService {
+  rpc ResolveCurrentTenantCreationAuthorization(
+      ResolveCurrentTenantCreationAuthorizationRequest)
+      returns (ResolveCurrentTenantCreationAuthorizationResponse);
+}
+
+message ResolveCurrentTenantCreationAuthorizationRequest {
+  int32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string creation_request_id = 4;
+  string account_authorization_operation_id = 5;
+  string initiating_account_id = 6;
+  string creation_request_digest = 7;
+  string account_authorization_digest = 8;
+}
+
+message ResolveCurrentTenantCreationAuthorizationResponse {
+  int32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string creation_request_id = 4;
+  string account_authorization_operation_id = 5;
+  string initiating_account_id = 6;
+  string creation_request_digest = 7;
+  string account_authorization_digest = 8;
+  int64 valid_before_epoch_millis = 9;
+}

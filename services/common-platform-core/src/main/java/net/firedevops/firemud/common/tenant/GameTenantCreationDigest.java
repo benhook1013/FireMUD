@@ -20,6 +20,27 @@ public final class GameTenantCreationDigest {
 
   private GameTenantCreationDigest() {}
 
+  /** Shared owner bounds for the exact candidate dispatched to Game Design. */
+  public static void validateCandidateInputs(String sourceKey, String name, String description) {
+    if (sourceKey == null
+        || sourceKey.isBlank()
+        || sourceKey.length() > 72
+        || sourceKey.codePointCount(0, sourceKey.length()) > 36) {
+      throw new IllegalArgumentException("sourceGameTenantKey exceeds the owner bounds");
+    }
+    if (name == null || name.length() > 200 || name.codePointCount(0, name.length()) > 100) {
+      throw new IllegalArgumentException("name exceeds the owner bounds");
+    }
+    if (description != null
+        && (description.length() > 510
+            || description.codePointCount(0, description.length()) > 255
+            || utf8ByteLength(description) > 1020)) {
+      throw new IllegalArgumentException("description exceeds the owner bounds");
+    }
+    utf8ByteLength(sourceKey);
+    utf8ByteLength(name);
+  }
+
   public static String requestDigest(
       String targetNamespace,
       UUID creationRequestId,
