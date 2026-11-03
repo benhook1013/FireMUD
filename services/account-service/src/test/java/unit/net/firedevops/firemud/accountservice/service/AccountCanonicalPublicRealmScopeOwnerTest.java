@@ -14,6 +14,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jws;
+import io.jsonwebtoken.JwtException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -258,6 +261,53 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
 
     verifyNoInteractions(f.targets, f.entitlements, f.tenants, f.heads, f.memberships, f.scopes);
     assertThat(f.transactions.started).isZero();
+  }
+
+  @Test
+  void invalidJwtFromScopeOwnerParsingIsMappedWithoutCause() {
+    Fixture f = new Fixture(300000L);
+    f.jwt.ownerParseFailure = new JwtException("invalid bootstrap JWT");
+
+    assertThatThrownBy(() -> f.owner.listRealmScopes(f.token, "tenant", "world"))
+        .isInstanceOf(AuthenticationException.class)
+        .satisfies(
+            failure -> {
+              assertThat(((AuthenticationException) failure).getCode())
+                  .isEqualTo("CONNECT_CONTEXT_INVALID");
+              assertThat(failure.getCause()).isNull();
+            });
+  }
+
+  @Test
+  void operationalBootstrapCallerFailureIsRetainedAsUnavailableCause() {
+    Fixture f = new Fixture(300000L);
+    RuntimeException failure = new IllegalStateException("caller authority unavailable");
+    doThrow(failure).when(f.sessions).isAccountSessionActive(PRIVATE_ACCOUNT, f.token);
+
+    assertThatThrownBy(() -> f.owner.listRealmScopes(f.token, "tenant", "world"))
+        .isInstanceOf(AuthenticationException.class)
+        .satisfies(
+            wrapped -> {
+              assertThat(((AuthenticationException) wrapped).getCode())
+                  .isEqualTo("AUTH_UNAVAILABLE");
+              assertThat(wrapped.getCause()).isSameAs(failure);
+            });
+  }
+
+  @Test
+  void absoluteExpirySigningFailureIsRetainedAsUnavailableCause() {
+    Fixture f = new Fixture(300000L);
+    IllegalArgumentException failure = new IllegalArgumentException("signing expiry unavailable");
+    f.jwt.absoluteExpiryFailure = failure;
+
+    assertThatThrownBy(() -> f.owner.listRealmScopes(f.token, "tenant", "world"))
+        .isInstanceOf(AuthenticationException.class)
+        .satisfies(
+            wrapped -> {
+              assertThat(((AuthenticationException) wrapped).getCode())
+                  .isEqualTo("AUTH_UNAVAILABLE");
+              assertThat(wrapped.getCause()).isSameAs(failure);
+            });
   }
 
   @Test
@@ -997,6 +1047,9 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
 
   private static final class RecordingJwtUtil extends JwtUtil {
     private Instant absoluteExpiration;
+    private IllegalArgumentException absoluteExpiryFailure;
+    private JwtException ownerParseFailure;
+    private int parseCalls;
 
     private RecordingJwtUtil(String secret, long expirationMillis) {
       super(secret, expirationMillis);
@@ -1005,7 +1058,14 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     @Override
     public String generateToken(String subject, Instant expiresAt, Map<String, Object> claims) {
       absoluteExpiration = expiresAt;
+      if (absoluteExpiryFailure != null) throw absoluteExpiryFailure;
       return super.generateToken(subject, expiresAt, claims);
+    }
+
+    @Override
+    public Jws<Claims> parseToken(String token) {
+      if (++parseCalls == 2 && ownerParseFailure != null) throw ownerParseFailure;
+      return super.parseToken(token);
     }
   }
 }

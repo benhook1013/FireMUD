@@ -1,6 +1,7 @@
 package unit.net.firedevops.firemud.accountservice.service.session;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
@@ -93,7 +94,7 @@ class AccountPlayerBootstrapCallerVerifierTest {
 
     AuthenticationException failure = requireInvalidCaller();
 
-    assertSame(unavailable, failure.getCause());
+    assertNull(failure.getCause());
     verifyNoInteractions(accountRepository, sessionService);
   }
 
@@ -102,7 +103,18 @@ class AccountPlayerBootstrapCallerVerifierTest {
     IllegalArgumentException malformed = new IllegalArgumentException("malformed token");
     when(jwtUtil.parseToken(TOKEN)).thenThrow(malformed);
 
-    assertSame(malformed, requireInvalidCaller().getCause());
+    assertNull(requireInvalidCaller().getCause());
+    verifyNoInteractions(accountRepository, sessionService);
+  }
+
+  @Test
+  void malformedAudienceClaimNeverReadsAccountOrSessionAndHasNoCause() {
+    stubSignedClaims();
+    when(claims.get("aud")).thenReturn(17);
+
+    AuthenticationException failure = requireInvalidCaller();
+
+    assertNull(failure.getCause());
     verifyNoInteractions(accountRepository, sessionService);
   }
 
