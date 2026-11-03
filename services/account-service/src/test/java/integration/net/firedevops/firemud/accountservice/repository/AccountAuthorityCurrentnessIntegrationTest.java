@@ -268,7 +268,7 @@ class AccountAuthorityCurrentnessIntegrationTest {
                   .containsEntry("current_generation", event.tenantAuthorityGeneration())
                   .containsEntry("tenant_billing_sequence", receipt.tenantBillingSequence())
                   .containsEntry("last_outbox_sequence", checkpoint.outboxSequence())
-                  .containsEntry("last_event_id", event.eventId())
+                  .containsEntry("last_event_id", event.eventId().toString())
                   .containsEntry("last_event_digest", event.eventDigest());
             });
   }
