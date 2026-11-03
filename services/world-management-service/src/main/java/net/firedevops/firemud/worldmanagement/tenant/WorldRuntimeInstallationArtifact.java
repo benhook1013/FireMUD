@@ -293,7 +293,9 @@ public final class WorldRuntimeInstallationArtifact {
   }
 
   private static void fields(JsonNode node, Set<String> expected) {
-    require(node != null && node.isObject(), "Closed object required");
+    if (node == null || !node.isObject()) {
+      throw new IllegalArgumentException("Closed object required");
+    }
     Set<String> actual = new HashSet<>();
     node.propertyNames().forEach(actual::add);
     require(actual.equals(expected), "Unknown or missing installation field");
@@ -301,7 +303,9 @@ public final class WorldRuntimeInstallationArtifact {
 
   private static String text(JsonNode node, String field, int maximum, boolean empty) {
     JsonNode value = node.get(field);
-    require(value != null && value.isTextual(), "Text field required: " + field);
+    if (value == null || !value.isTextual()) {
+      throw new IllegalArgumentException("Text field required: " + field);
+    }
     String result = value.asText();
     require(empty || !result.isEmpty(), "Empty installation field: " + field);
     require(
@@ -344,9 +348,9 @@ public final class WorldRuntimeInstallationArtifact {
   }
 
   private static void boundedTree(JsonNode node, int depth, int[] remaining) {
-    require(
-        node != null && depth <= 64 && --remaining[0] >= 0,
-        "Installation structural bound exceeded");
+    if (node == null || depth > 64 || --remaining[0] < 0) {
+      throw new IllegalArgumentException("Installation structural bound exceeded");
+    }
     if (node.isObject() || node.isArray()) {
       for (JsonNode child : node) boundedTree(child, depth + 1, remaining);
     }

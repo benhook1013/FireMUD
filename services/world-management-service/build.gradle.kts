@@ -14,6 +14,8 @@ firemudJooq {
 
 dependencies {
     implementation(project(":common-security"))
+    // Resolve the annotations declared provided/optional by the pinned jOOQ API during analysis.
+    compileOnly(libs.jetbrains.annotations)
   testImplementation(testFixtures(project(":common-platform-core")))
   testImplementation(libs.bouncycastle.pkix)
   testCompileOnly(libs.spotbugs.annotations)
