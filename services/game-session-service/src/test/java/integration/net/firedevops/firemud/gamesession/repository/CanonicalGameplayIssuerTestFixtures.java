@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerPreimage;
@@ -41,7 +42,7 @@ import org.jooq.impl.DSL;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /** Shared actual-owner fixtures for issuer bootstrap and ordinary NEW integration proof. */
-final class CanonicalGameplayIssuerTestFixtures {
+public final class CanonicalGameplayIssuerTestFixtures {
   private CanonicalGameplayIssuerTestFixtures() {}
 
   static String schemaName(String prefix) {
@@ -95,11 +96,11 @@ final class CanonicalGameplayIssuerTestFixtures {
     return configured;
   }
 
-  static void migrateSchema(
-      DriverManagerDataSource dataSource,
-      String schema,
-      String migrationLocation,
-      String targetVersion) {
+  /**
+   * Migrates one isolated owner schema with shared Saga history and an optional original target.
+   */
+  public static void migrateSchema(
+      DataSource dataSource, String schema, String migrationLocation, String targetVersion) {
     var configuration =
         Flyway.configure()
             .dataSource(dataSource)
