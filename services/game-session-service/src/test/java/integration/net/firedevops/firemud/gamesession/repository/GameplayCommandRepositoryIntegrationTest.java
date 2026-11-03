@@ -21,7 +21,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
@@ -70,15 +69,10 @@ class GameplayCommandRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .placeholders(java.util.Map.of("serviceSchema", "public"))
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
+    CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            dataSource,
+            "public",
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
         .load()
         .migrate();
 

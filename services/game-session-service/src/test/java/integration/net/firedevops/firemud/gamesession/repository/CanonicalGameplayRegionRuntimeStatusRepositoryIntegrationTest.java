@@ -15,7 +15,6 @@ import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEviden
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -67,15 +66,10 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     dataSource.setUsername(POSTGRES.getUsername());
     dataSource.setPassword(POSTGRES.getPassword());
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .placeholders(java.util.Map.of("serviceSchema", "public"))
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
+    CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            dataSource,
+            "public",
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
         .load()
         .migrate();
 
