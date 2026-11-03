@@ -88,10 +88,6 @@ public class GameSessionPrivateFreshTargetRepository {
                 () ->
                     new PreparationUnavailableException(
                         "Exact retained FRESH preparation and lifecycle are unavailable"));
-    if (snapshot.state() != ReadState.INCOMPLETE) {
-      throw new PreparationUnavailableException(
-          "Exact retained FRESH preparation has expired and cannot allocate a catalog identity");
-    }
     Preparation preparation = snapshot.preparation();
     CanonicalRealmCatalogSnapshot sourceCatalog = readExactSourceCatalog(preparation);
     IntakeReceipt intake = sourceCatalog.sourceIntakeReceipt();
@@ -103,6 +99,10 @@ public class GameSessionPrivateFreshTargetRepository {
       return new Allocation(
           requireExactRetry(priorRequest, request, preparation, sourceCatalog, requestPreimage),
           true);
+    }
+    if (snapshot.state() != ReadState.INCOMPLETE) {
+      throw new PreparationUnavailableException(
+          "Exact retained FRESH preparation has expired and cannot allocate a catalog identity");
     }
     Record priorPreparation = findByPreparation(request.preparationRequestId());
     if (priorPreparation != null) {

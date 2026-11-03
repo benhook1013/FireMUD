@@ -337,6 +337,65 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void committedPrivateCatalogOutcomeReplaysAfterExpiryWithoutAllocatingOrRenewingAdmission() {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(5));
+    var preparation = context.prepare(preparationRequest).preparation();
+    var targetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            UUID.randomUUID(),
+            preparation.request().requestId(),
+            preparation.playtestLifecycleId());
+    var original = context.allocatePrivateTarget(targetRequest);
+    assertThat(original.replayed()).isFalse();
+    String retainedRow =
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT to_jsonb(c)::text||':'||xmin::text FROM game_session_canonical_realm_catalog c WHERE creation_request_id=?",
+                targetRequest.requestId())
+            .get(0, String.class);
+    awaitExpiry(context, preparationRequest.forkExpiresAt());
+    assertThat(context.read(preparationRequest, preparation.playtestLifecycleId()).state())
+        .isEqualTo(ReadState.EXPIRED);
+
+    var retry = context.allocatePrivateTarget(targetRequest);
+    assertThat(retry.replayed()).isTrue();
+    assertThat(retry.snapshot()).isEqualTo(original.snapshot());
+    assertThat(retry.snapshot().admissionAllowed()).isFalse();
+    assertThat(
+            context
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_jsonb(c)::text||':'||xmin::text FROM game_session_canonical_realm_catalog c WHERE creation_request_id=?",
+                    targetRequest.requestId())
+                .get(0, String.class))
+        .isEqualTo(retainedRow);
+    assertThatThrownBy(
+            () ->
+                context.allocatePrivateTarget(
+                    new GameSessionPrivateFreshTargetRepository.Request(
+                        UUID.randomUUID(),
+                        preparation.request().requestId(),
+                        preparation.playtestLifecycleId())))
+        .isInstanceOf(
+            GameSessionPrivateFreshTargetRepository.PreparationUnavailableException.class);
+    assertThatThrownBy(
+            () ->
+                context.allocatePrivateTarget(
+                    new GameSessionPrivateFreshTargetRepository.Request(
+                        targetRequest.requestId(),
+                        preparation.request().requestId(),
+                        UUID.randomUUID())))
+        .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
   void expiredPreparationCannotAllocatePrivateCatalogIdentity() {
     Context context = context(true);
     Request preparationRequest =
