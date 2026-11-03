@@ -430,7 +430,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
         assertThat(original.catalog().catalogEpoch()).isEqualTo(2);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
-                fact -> fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
+                fact ->
+                    fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_probe_view"))
             .anyMatch(
                 fact ->
                     fact.kind() == FactKind.VIEW
