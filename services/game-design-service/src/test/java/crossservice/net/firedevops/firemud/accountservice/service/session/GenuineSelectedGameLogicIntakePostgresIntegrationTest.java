@@ -838,7 +838,12 @@ class GenuineSelectedGameLogicIntakePostgresIntegrationTest {
         .defaultSchema(schema)
         .table("flyway_schema_history_world_management")
         .placeholders(Map.of("serviceSchema", schema))
-        .locations(migrationLocation("world-management"))
+        .locations(
+            migrationLocation("world-management"),
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
     var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);

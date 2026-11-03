@@ -3161,7 +3161,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           return currentEntityTarget;
         };
 
-    try (var entityDatabase = database(GS, "entity-management-service", false)) {
+    try (var entityDatabase = database(GS, "entity-management-service", true)) {
       var characterRepository =
           transactionalCharacterRepository(
               new CharacterRepository(entityDatabase.dsl()), entityDatabase.manager());

@@ -1092,7 +1092,7 @@ class WorldCompleteLaunchBindingIntegrationTest {
             .schemas(schema)
             .defaultSchema(schema)
             .placeholders(Map.of("serviceSchema", schema))
-            .locations("classpath:db/migration");
+            .locations("classpath:db/migration", "classpath:db/migration/saga");
     if (target != null) {
       configuration.target(target);
     }
