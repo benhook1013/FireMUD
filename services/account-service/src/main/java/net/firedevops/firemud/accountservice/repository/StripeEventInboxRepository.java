@@ -55,7 +55,7 @@ public final class StripeEventInboxRepository {
       throw new IllegalStateException("Stripe event inbox insert returned an ambiguous row count");
     }
 
-    Optional<StripeEventInboxRecord> retained = findForUpdate(event.providerEventId());
+    Optional<StripeEventInboxRecord> retained = findByProviderEventId(event.providerEventId());
     if (retained.isEmpty()) {
       throw new IllegalStateException(
           "Stripe event inbox row is absent after conflict-safe insert");
@@ -80,14 +80,14 @@ public final class StripeEventInboxRepository {
     return original;
   }
 
-  private Optional<StripeEventInboxRecord> findForUpdate(String providerEventId) {
+  private Optional<StripeEventInboxRecord> findByProviderEventId(String providerEventId) {
     Record row =
         dsl.fetchOne(
             "SELECT provider_event_id, raw_payload, payload_sha256, event_type, "
                 + "provider_created_at_epoch_seconds, provider_api_version, livemode, received_at, "
                 + "processing_status FROM "
                 + TABLE
-                + " WHERE provider_event_id = ? FOR UPDATE",
+                + " WHERE provider_event_id = ?",
             providerEventId);
     return row == null ? Optional.empty() : Optional.of(decode(row));
   }
