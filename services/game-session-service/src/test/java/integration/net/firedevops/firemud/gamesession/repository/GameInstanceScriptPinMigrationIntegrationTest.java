@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -29,15 +28,8 @@ class GameInstanceScriptPinMigrationIntegrationTest {
   @Test
   void baselineEnforcesCoherentScriptPinTuplesAndUnpinnedMetadata() {
     DriverManagerDataSource dataSource = dataSource();
-    Flyway.configure()
-        .dataSource(dataSource)
-        .placeholders(java.util.Map.of("serviceSchema", "public"))
-        .locations(
-            MIGRATION_LOCATION,
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
+    CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            dataSource, "public", MIGRATION_LOCATION)
         .load()
         .migrate();
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);

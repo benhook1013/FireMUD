@@ -86,27 +86,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static final String NAMESPACE = "canonical-initial-admission-it";
-  private static final List<String> PRIVATE_CATALOG_COLUMNS =
-      List.of(
-          "private_target_request_preimage",
-          "private_preparation_request_id",
-          "private_playtest_lifecycle_id",
-          "private_preparation_request_digest",
-          "private_state_generation",
-          "private_source_catalog_realm_id",
-          "private_source_catalog_request_id",
-          "private_source_catalog_revision",
-          "private_source_catalog_receipt_digest",
-          "private_target_policy_id",
-          "private_target_policy_digest",
-          "private_target_policy_source_commit_id",
-          "private_target_policy_source_revision_id",
-          "private_target_policy_logical_revision_id",
-          "private_canonical_version_id",
-          "private_published_release_bundle_ref",
-          "private_published_release_bundle_digest",
-          "private_source_policy_set_digest",
-          "private_source_policy_carrier_digest");
   private static final UUID TENANT = uuid(101);
   private static final UUID SOURCE_OPERATION = uuid(102);
   private static final UUID INTAKE_REQUEST = uuid(103);
@@ -1869,7 +1848,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   /** Entire original source, namespace, catalog, runtime, launch and original-pin heap evidence. */
   private static String predecessorSourceProjection(Fixture fixture) {
     String privateCatalogColumns =
-        PRIVATE_CATALOG_COLUMNS.stream()
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
             .map(column -> "'" + column + "'")
             .collect(java.util.stream.Collectors.joining(", "));
     return fixture
@@ -1895,11 +1874,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   private static void assertPrivateCatalogColumnsNull(Fixture fixture, UUID creationRequestId) {
     String columns =
-        PRIVATE_CATALOG_COLUMNS.stream()
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
             .map(column -> "'" + column + "'")
             .collect(java.util.stream.Collectors.joining(", "));
     String nullChecks =
-        PRIVATE_CATALOG_COLUMNS.stream()
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
             .map(column -> "to_jsonb(catalog) -> '" + column + "' = 'null'::jsonb")
             .collect(java.util.stream.Collectors.joining(" AND "));
     var row =
@@ -2442,18 +2421,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static Flyway migration(Fixture fixture, String target) {
     String schema = fixture.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
     var configuration =
-        Flyway.configure()
-            .dataSource(Objects.requireNonNull(fixture.transactionManager.getDataSource()))
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .placeholders(java.util.Map.of("serviceSchema", schema))
-            .locations(
-                MIGRATION_LOCATION,
-                "filesystem:"
-                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                        .toAbsolutePath()
-                        .normalize());
+        CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            Objects.requireNonNull(fixture.transactionManager.getDataSource()),
+            schema,
+            MIGRATION_LOCATION);
     if (target != null) {
       configuration.target(MigrationVersion.fromVersion(target));
     }
