@@ -83,11 +83,11 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.Disposition;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.ProofKind;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginJournalSnapshot;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.AcknowledgementPolicy;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.Profile;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
@@ -860,19 +860,11 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource,
+        schema,
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        null);
     journal =
         new InitialGameplayLoginCoordinationJournalRepository(
             DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES));

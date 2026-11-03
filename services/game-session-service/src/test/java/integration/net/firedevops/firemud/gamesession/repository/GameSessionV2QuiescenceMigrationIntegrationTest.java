@@ -151,19 +151,8 @@ class GameSessionV2QuiescenceMigrationIntegrationTest {
   }
 
   private void migrateExistingSchemaToLatest() {
-    Flyway.configure()
-        .dataSource(dataSource(schema))
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            MIGRATION_LOCATION,
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .schemas(schema)
-        .defaultSchema(schema)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource(schema), schema, MIGRATION_LOCATION, null);
   }
 
   private DSLContext adminDsl() {

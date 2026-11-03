@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
@@ -681,20 +682,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
                 "canonical_tenant_id",
                 preV24Source.source().canonicalTenantId());
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            MIGRATION_LOCATION,
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     GameSessionCanonicalLaunchPreparationRepository preparationRepository =
         new GameSessionCanonicalLaunchPreparationRepository(transactionalDsl, catalogRepository);
     GameSessionStartSessionOperatorAttemptRepository attemptRepository =

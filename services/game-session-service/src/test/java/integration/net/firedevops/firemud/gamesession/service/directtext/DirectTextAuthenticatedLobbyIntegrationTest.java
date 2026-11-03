@@ -59,6 +59,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProo
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.DirectTextAuthenticatedLobbyRepository;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
@@ -70,7 +71,6 @@ import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthentic
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -151,7 +151,7 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     source.setUsername(postgres.getUsername());
     source.setPassword(postgres.getPassword());
     source.setSchema(schema);
-    migration("1051.1").migrate();
+    migrate("1051.1");
     dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     manager = new DataSourceTransactionManager(source);
     tx = new TransactionTemplate(manager);
@@ -166,7 +166,7 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
           journal.recordVerifiedResult(original, verified);
         });
     parentBeforeMigration = parentJson();
-    migration(null).migrate();
+    migrate(null);
     repository = new DirectTextAuthenticatedLobbyRepository(dsl);
     account = mock(AccountClient.class);
     target = target();
@@ -209,22 +209,12 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     owner = owner(repository, manager);
   }
 
-  private Flyway migration(String targetVersion) {
-    var config =
-        Flyway.configure()
-            .dataSource(source)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .placeholders(java.util.Map.of("serviceSchema", schema))
-            .locations(
-                "filesystem:"
-                    + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-                "filesystem:"
-                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                        .toAbsolutePath()
-                        .normalize());
-    if (targetVersion != null) config.target(targetVersion);
-    return config.load();
+  private void migrate(String targetVersion) {
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        source,
+        schema,
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        targetVersion);
   }
 
   @AfterEach
