@@ -165,8 +165,7 @@ class GameSessionFreshTenantHistoryPostgresIntegrationTest {
     CanonicalGameplayIssuerTestFixtures.migrateSchema(
         source,
         schema,
-        "filesystem:"
-            + Path.of("src/main/resources/db/migration").toAbsolutePath(),
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath(),
         target);
   }
 

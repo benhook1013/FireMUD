@@ -790,8 +790,7 @@ class CanonicalGameplayAccountAdmissionBarrierRepositoryIntegrationTest {
         prefix.substring(0, Math.min(prefix.length(), 31))
             + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
-    CanonicalGameplayIssuerTestFixtures.migrateSchema(
-        dataSource, schema, MIGRATION_LOCATION, null);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     return new TestSchema(schema, dsl);
   }

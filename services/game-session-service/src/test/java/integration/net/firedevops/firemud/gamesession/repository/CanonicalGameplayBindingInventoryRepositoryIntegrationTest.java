@@ -40,7 +40,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransi
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -1347,8 +1346,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   private static TestSchema newTestSchema(String prefix, String applicationName) {
     String schema = prefix + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema, applicationName);
-    CanonicalGameplayIssuerTestFixtures.migrateSchema(
-        dataSource, schema, MIGRATION_LOCATION, null);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     return new TestSchema(schema, dataSource, dslForSchema(dataSource, schema));
   }
 

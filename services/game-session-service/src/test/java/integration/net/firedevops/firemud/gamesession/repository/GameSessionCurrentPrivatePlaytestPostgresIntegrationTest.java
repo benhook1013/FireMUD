@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCurrentPrivatePlaytestRepository;
@@ -413,8 +414,7 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
     CanonicalGameplayIssuerTestFixtures.migrateSchema(
         dataSource,
         schema,
-        "filesystem:"
-            + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
         null);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);

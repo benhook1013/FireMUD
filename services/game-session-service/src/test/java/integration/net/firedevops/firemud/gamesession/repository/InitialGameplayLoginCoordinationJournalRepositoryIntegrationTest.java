@@ -42,6 +42,7 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordin
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.Disposition;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.ProofKind;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalConflictException;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalUnavailableException;
@@ -111,8 +112,7 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
     CanonicalGameplayIssuerTestFixtures.migrateSchema(
         dataSource,
         schema,
-        "filesystem:"
-            + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
         null);
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));

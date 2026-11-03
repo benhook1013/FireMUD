@@ -31,6 +31,7 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvis
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewCandidateRedisScriptContribution;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -75,6 +76,11 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
   private RedisCommands<byte[], byte[]> admin;
   private TestSource source;
   private CanonicalGameplayOriginalNewCandidateRedisOwner owner;
+
+  @org.junit.jupiter.api.BeforeAll
+  static void awaitMappedPostgresReady() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+  }
 
   @org.junit.jupiter.api.BeforeEach
   void setUp() {
@@ -818,8 +824,7 @@ class CanonicalGameplayOriginalNewCandidateRedisOwnerIntegrationTest {
     dataSource.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
     dataSource.setUsername(POSTGRES.getUsername());
     dataSource.setPassword(POSTGRES.getPassword());
-    CanonicalGameplayIssuerTestFixtures.migrateSchema(
-        dataSource, schema, MIGRATION_LOCATION, null);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     var runtime = CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
     seedSyntheticVerifiedLegacyDisposition(dsl);

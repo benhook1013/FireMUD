@@ -545,8 +545,7 @@ class CanonicalGameplayAccountMemberRepairRedisOwnerIntegrationTest {
   private static TestSchema newTestSchema(String applicationName) {
     String schema = "gs_account_member_lock_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema, applicationName);
-    CanonicalGameplayIssuerTestFixtures.migrateSchema(
-        dataSource, schema, MIGRATION_LOCATION, null);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     return new TestSchema(schema, dataSource, dsl);
   }

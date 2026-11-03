@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingRuntimeTestFixtures;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionIntentRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -220,8 +221,7 @@ class CanonicalGameplayInitialAdmissionIntentRequestIdMigrationIntegrationTest {
       CanonicalInitialAdmissionIntentSnapshot snapshot) {}
 
   private static void migrate(String schema, DriverManagerDataSource dataSource) {
-    CanonicalGameplayIssuerTestFixtures.migrateSchema(
-        dataSource, schema, MIGRATION_LOCATION, null);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
   }
 
   private static DriverManagerDataSource dataSource(String schema) {

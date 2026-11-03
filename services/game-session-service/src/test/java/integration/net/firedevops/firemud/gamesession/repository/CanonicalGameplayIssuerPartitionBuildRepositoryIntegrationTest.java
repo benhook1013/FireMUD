@@ -2205,8 +2205,7 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     establishActualLegacyDisposition(dsl);
     insertLegacyReservationBeforeIssuerStringConversion(dsl);
-    CanonicalGameplayIssuerTestFixtures.migrateSchema(
-        dataSource, schema, MIGRATION_LOCATION, null);
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     return new TestSchema(schema, dataSource, dsl);
   }
 
