@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,6 +15,7 @@ import io.grpc.Server;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
@@ -23,6 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamesession.CurrentPrivatePlaytestLifecycleReadEvidence.ReadState;
@@ -33,6 +36,8 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.CatalogConflictException;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCurrentPrivatePlaytestRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCurrentPrivatePlaytestRepository.Current;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository;
@@ -44,6 +49,8 @@ import net.firedevops.firemud.gamesession.v1.CurrentPrivatePlaytestLifecycleRead
 import net.firedevops.firemud.gamesession.v1.ReadCurrentPrivatePlaytestLifecycleResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionOperations;
@@ -211,6 +218,60 @@ class CurrentPrivatePlaytestLifecycleReadGrpcServiceIntegrationTest {
     assertThat(Status.fromThrowable(failure.getValue()).getCode())
         .isEqualTo(Status.Code.FAILED_PRECONDITION);
     verifyNoInteractions(repository);
+  }
+
+  @ParameterizedTest
+  @MethodSource("retainedCatalogFailures")
+  void retainedCatalogEvidenceFailuresReturnFailedPrecondition(RuntimeException catalogFailure)
+      throws Exception {
+    GameSessionCurrentPrivatePlaytestRepository repository = mock();
+    Scope scope = new Scope(NAMESPACE, UUID.randomUUID(), "world-one", "realm-one");
+    when(repository.readCurrent(NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug()))
+        .thenThrow(catalogFailure);
+    var service =
+        new CurrentPrivatePlaytestLifecycleReadGrpcService(
+            repository, passThroughTransaction(), NAMESPACE);
+    var guard = new CurrentPrivatePlaytestLifecycleReadWorkloadGuard(NAMESPACE);
+    String serverName = InProcessServerBuilder.generateName();
+    Server server =
+        InProcessServerBuilder.forName(serverName)
+            .directExecutor()
+            .addService(
+                ServerInterceptors.interceptForward(
+                    service, peerIdentityInterceptor(NAMESPACE), guard))
+            .build()
+            .start();
+    ManagedChannel channel = InProcessChannelBuilder.forName(serverName).directExecutor().build();
+    try {
+      var stub =
+          CurrentPrivatePlaytestLifecycleReadServiceGrpc.newBlockingStub(channel)
+              .withDeadlineAfter(5, TimeUnit.SECONDS);
+      Request selector = new Request(UUID.randomUUID(), scope);
+      assertThatThrownBy(
+              () ->
+                  stub.readCurrentPrivatePlaytestLifecycle(
+                      CurrentPrivatePlaytestLifecycleReadGrpcCodec.toRequest(selector)))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure -> {
+                assertThat(failure.getStatus().getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                assertThat(failure.getStatus().getDescription())
+                    .isEqualTo(
+                        "Current private-playtest source does not match its retained evidence");
+              });
+      verify(repository)
+          .readCurrent(NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug());
+    } finally {
+      channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+      server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  private static Stream<RuntimeException> retainedCatalogFailures() {
+    return Stream.of(
+        new CatalogConflictException("private retained catalog identity conflict"),
+        new InvalidCatalogEvidenceException("private retained catalog evidence mismatch"));
   }
 
   private static TransactionOperations passThroughTransaction() {

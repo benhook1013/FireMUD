@@ -12,6 +12,8 @@ import net.firedevops.firemud.common.gamesession.CurrentPrivatePlaytestLifecycle
 import net.firedevops.firemud.common.gamesession.CurrentPrivatePlaytestLifecycleReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CurrentPrivatePlaytestLifecycleReadGrpcCodec.Request;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.CatalogConflictException;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCurrentPrivatePlaytestRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCurrentPrivatePlaytestRepository.Current;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository;
@@ -126,6 +128,8 @@ public final class CurrentPrivatePlaytestLifecycleReadGrpcService
       return;
     } catch (GameSessionCurrentPrivatePlaytestRepository.SourceUnavailableException
         | GameSessionInitialPlaytestLifecycleRepository.SourceUnavailableException
+        | CatalogConflictException
+        | InvalidCatalogEvidenceException
         | IllegalArgumentException invalidSource) {
       fail(observer, Status.FAILED_PRECONDITION);
       return;
