@@ -23,6 +23,7 @@ import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,9 +31,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.account.v1.AccountPlayerAdmissionEntitlementReadServiceGrpc;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementRequest;
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementResponse;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
@@ -48,18 +53,25 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
+import net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextState;
+import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** Controlled Account peer proof for credential release and canonical response binding. */
 @Timeout(90)
@@ -76,6 +88,12 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
   private static final UUID READ_REQUEST = UUID.fromString("66666666-6666-4666-8666-666666666666");
   private static final Instant NOW = Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW + 1_000L);
   private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
+  private static final InitialGameplayLoginAttemptCoordinates ORIGINAL =
+      new InitialGameplayLoginAttemptCoordinates(LOGIN_REQUEST, LOGIN_CONTEXT, 1);
+  private static final ObservedDirectTextTransport TRANSPORT =
+      new ObservedDirectTextTransport(
+          "00042", UUID.fromString("99999999-9999-4999-8999-999999999999"));
+  private static final Instant DIRECT_SCOPE_EXPIRY = NOW.plusSeconds(25);
   @TempDir static Path directory;
   private static LoopbackMtlsTestPki.Pki pki;
 
@@ -168,7 +186,288 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     }
   }
 
+  @Test
+  void directTextOwnedScopeUsesExactAccountExpiryAndCurrentLoginWithoutFirstPartyContext()
+      throws Exception {
+    var target = context().resolvedTarget();
+    var borrowed = new ArrayList<byte[]>();
+    var login = loginCustody(borrowed);
+    var scope = directTextScope(target, login, DIRECT_SCOPE_EXPIRY);
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    Server server =
+        server(
+            "account",
+            calls,
+            observedJwt,
+            observedPeer,
+            target,
+            DIRECT_SCOPE_EXPIRY,
+            login.evidence(),
+            (value, sources) -> {},
+            () -> {});
+    try (var client = client(server)) {
+      client.init();
+      var result = client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, () -> true);
+      assertThat(result.fields())
+          .containsEntry("verifiedConnectScopeId", "direct-text-owned-scope");
+      assertThat(((Map<?, ?>) result.fields().get("target")).get("connectScopeExpiresAt"))
+          .isEqualTo(DIRECT_SCOPE_EXPIRY.toString());
+      assertThat(calls).hasValue(1);
+      assertThat(observedJwt).hasValue(JWT);
+      assertThat(observedPeer).hasValue(GS_PEER);
+      assertThat(new String(result.canonicalBytes(), StandardCharsets.UTF_8)).doesNotContain(JWT);
+      assertThat(borrowed)
+          .isNotEmpty()
+          .allSatisfy(bytes -> assertThat(bytes).containsOnly((byte) 0));
+    } finally {
+      stop(server);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "original-request",
+        "original-context",
+        "attempt-fence",
+        "transport-session",
+        "transport-proxy",
+        "stale-custody",
+        "throwing-custody",
+        "null-custody",
+        "custody-lost-before-rpc",
+        "closed-login",
+        "expired-login",
+        "expired-scope",
+        "wrong-namespace",
+        "private-scope",
+        "created-policy",
+        "durable-abort",
+        "read-correlation"
+      })
+  void directTextInvalidOrStaleInputsDiscloseNoCredential(String change) throws Exception {
+    var target = context().resolvedTarget();
+    switch (change) {
+      case "wrong-namespace" -> doReturn("other").when(target).targetNamespace();
+      case "private-scope" -> doReturn("ISOLATED").when(target).playableStateScope();
+      case "created-policy" -> doReturn("PLAYER_CREATED").when(target).characterCreationPolicy();
+      case "durable-abort" -> doReturn(true).when(target).positiveDurableAbort();
+      default -> {}
+    }
+    var login = loginCustody();
+    var expiry = "expired-login".equals(change) ? NOW.plusSeconds(90) : DIRECT_SCOPE_EXPIRY;
+    var scope = directTextScope(target, login, expiry);
+    var original =
+        switch (change) {
+          case "original-request" ->
+              new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), LOGIN_CONTEXT, 1);
+          case "original-context" ->
+              new InitialGameplayLoginAttemptCoordinates(LOGIN_REQUEST, UUID.randomUUID(), 1);
+          case "attempt-fence" ->
+              new InitialGameplayLoginAttemptCoordinates(LOGIN_REQUEST, LOGIN_CONTEXT, 2);
+          default -> ORIGINAL;
+        };
+    var transport =
+        switch (change) {
+          case "transport-session" ->
+              new ObservedDirectTextTransport("42", TRANSPORT.proxyConnectionId());
+          case "transport-proxy" -> new ObservedDirectTextTransport("00042", UUID.randomUUID());
+          default -> TRANSPORT;
+        };
+    var checks = new AtomicInteger();
+    BooleanSupplier current =
+        switch (change) {
+          case "stale-custody" -> () -> false;
+          case "throwing-custody" ->
+              () -> {
+                throw new IllegalStateException("Controlled custody lost");
+              };
+          case "null-custody" -> null;
+          case "custody-lost-before-rpc" -> () -> checks.incrementAndGet() < 3;
+          default -> () -> true;
+        };
+    if ("closed-login".equals(change)) {
+      when(login.compactJwtBytes()).thenThrow(new IllegalStateException("Controlled closed LOGIN"));
+    }
+    Clock clientClock =
+        switch (change) {
+          case "expired-login" -> Clock.fixed(NOW.plusSeconds(60), ZoneOffset.UTC);
+          case "expired-scope" -> Clock.fixed(DIRECT_SCOPE_EXPIRY, ZoneOffset.UTC);
+          default -> CLOCK;
+        };
+    UUID selectedReadId = "read-correlation".equals(change) ? new UUID(0, 0) : READ_REQUEST;
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    Server server =
+        server("account", calls, observedJwt, observedPeer, context(), login.evidence());
+    try (var client = client(server, clientClock)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.read(scope, original, transport, selectedReadId, login, current))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(calls).hasValue(0);
+      assertThat(observedJwt).hasValue(null);
+      assertThat(observedPeer).hasValue(null);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"wrong-service", "wrong-namespace"})
+  void directTextWrongAccountPeerReceivesNoCredential(String identity) throws Exception {
+    var context = context();
+    var login = loginCustody();
+    var scope = directTextScope(context.resolvedTarget(), login, DIRECT_SCOPE_EXPIRY);
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    Server server = server(identity, calls, observedJwt, observedPeer, context, login.evidence());
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, () -> true))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+      assertThat(calls).hasValue(0);
+      assertThat(observedJwt).hasValue(null);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "version",
+        "owner-proof",
+        "pointer-digest",
+        "scope-expiry",
+        "login-jti",
+        "login-hash",
+        "login-context"
+      })
+  void directTextRejectsAuthenticatedResponseBindingDrift(String change) throws Exception {
+    var target = context().resolvedTarget();
+    var login = loginCustody();
+    var scope = directTextScope(target, login, DIRECT_SCOPE_EXPIRY);
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    BiConsumer<Map<String, Object>, Map<String, Object>> drift =
+        (value, sources) -> {
+          switch (change) {
+            case "version" -> value.put("canonicalVersionId", UUID.randomUUID().toString());
+            case "owner-proof" ->
+                sources.put("gameSessionOwnerProofDigest", "sha256:" + "9".repeat(64));
+            case "pointer-digest" -> sources.put("admissionPointerSnapshotDigest", "9".repeat(64));
+            case "scope-expiry" ->
+                value.put("connectScopeExpiresAt", DIRECT_SCOPE_EXPIRY.plusSeconds(1).toString());
+            case "login-jti" -> sources.put("callerTokenJti", UUID.randomUUID().toString());
+            case "login-hash" -> sources.put("callerTokenSha256", "9".repeat(64));
+            case "login-context" -> sources.put("callerContextId", UUID.randomUUID().toString());
+            default -> throw new IllegalArgumentException(change);
+          }
+        };
+    Server server =
+        server(
+            "account",
+            calls,
+            observedJwt,
+            observedPeer,
+            target,
+            DIRECT_SCOPE_EXPIRY,
+            login.evidence(),
+            drift,
+            () -> {});
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, () -> true))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThat(calls).hasValue(1);
+      assertThat(observedJwt).hasValue(JWT);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"custody", "scope-expiry", "login-expiry", "closed-login"})
+  void directTextRechecksLiveInputsAfterRpc(String change) throws Exception {
+    var target = context().resolvedTarget();
+    var login = loginCustody();
+    var expiry = "login-expiry".equals(change) ? NOW.plusSeconds(90) : DIRECT_SCOPE_EXPIRY;
+    var scope = directTextScope(target, login, expiry);
+    var current = new AtomicBoolean(true);
+    var clockTime = new AtomicReference<>(NOW);
+    Clock movingClock = mock(Clock.class);
+    when(movingClock.instant()).thenAnswer(invocation -> clockTime.get());
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    Runnable afterRead =
+        () -> {
+          switch (change) {
+            case "custody" -> current.set(false);
+            case "scope-expiry" -> clockTime.set(DIRECT_SCOPE_EXPIRY);
+            case "login-expiry" -> clockTime.set(NOW.plusSeconds(60));
+            case "closed-login" ->
+                when(login.compactJwtBytes()).thenThrow(new IllegalStateException("Closed LOGIN"));
+            default -> throw new IllegalArgumentException(change);
+          }
+        };
+    Server server =
+        server(
+            "account",
+            calls,
+            observedJwt,
+            observedPeer,
+            target,
+            expiry,
+            login.evidence(),
+            (value, sources) -> {},
+            afterRead);
+    try (var client = client(server, movingClock)) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, current::get))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(calls).hasValue(1);
+    } finally {
+      stop(server);
+    }
+  }
+
+  private static DirectTextAuthenticatedLobbyScope directTextScope(
+      CanonicalPlayableTarget target, CanonicalGameplayLoginResult login, Instant expiry) {
+    return new DirectTextAuthenticatedLobbyScope(
+        UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        InitialGameplayLoginContextState.installed(ORIGINAL, login),
+        TRANSPORT,
+        target,
+        DirectTextIssuedConnectScope.fromAccountResponse(
+            FirstPartyReceivingFixture.ACCOUNT.toString(),
+            DirectTextAuthenticatedLobbyScope.targetFor(target),
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("direct-text-owned-scope")
+                .setEvaluatedAt(NOW.minusSeconds(10).toString())
+                .setConnectScopeExpiresAt(expiry.toString())
+                .build(),
+            CLOCK));
+  }
+
   private static AccountPlayerAdmissionEntitlementClient client(Server server) throws Exception {
+    return client(server, CLOCK);
+  }
+
+  private static AccountPlayerAdmissionEntitlementClient client(Server server, Clock clock)
+      throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + server.getPort());
     return new AccountPlayerAdmissionEntitlementClient(
@@ -176,7 +475,7 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
         pki.clientProperties(directory, pki.identity("client")),
         new GrpcChannelFactory(),
         NAMESPACE,
-        CLOCK);
+        clock);
   }
 
   private static Server server(
@@ -186,6 +485,29 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
       AtomicReference<String> observedPeer,
       FirstPartyConnectContext context,
       CanonicalGameplayLoginResult.NonSecretEvidence login)
+      throws Exception {
+    return server(
+        identity,
+        calls,
+        observedJwt,
+        observedPeer,
+        context.resolvedTarget(),
+        Instant.ofEpochMilli(context.claims().expiresAtMillis()),
+        login,
+        (value, sources) -> {},
+        () -> {});
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      AtomicReference<String> observedJwt,
+      AtomicReference<String> observedPeer,
+      CanonicalPlayableTarget target,
+      Instant scopeExpiry,
+      CanonicalGameplayLoginResult.NonSecretEvidence login,
+      BiConsumer<Map<String, Object>, Map<String, Object>> drift,
+      Runnable afterRead)
       throws Exception {
     var service =
         new AccountPlayerAdmissionEntitlementReadServiceGrpc
@@ -200,7 +522,8 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
             try {
               var presented = RuntimePlayerAdmissionEntitlementGrpcCodec.parseRequest(request);
               observedJwt.set(presented.initialLoginJwt());
-              var evidence = evidence(presented.request(), context, login);
+              var evidence = evidence(presented.request(), target, scopeExpiry, login, drift);
+              afterRead.run();
               observer.onNext(
                   RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(
                       presented.request(), evidence));
@@ -241,6 +564,10 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
   }
 
   private static CanonicalGameplayLoginResult loginCustody() throws Exception {
+    return loginCustody(new ArrayList<>());
+  }
+
+  private static CanonicalGameplayLoginResult loginCustody(List<byte[]> borrowed) throws Exception {
     var login = mock(CanonicalGameplayLoginResult.class);
     String jwtSha256 =
         HexFormat.of()
@@ -260,21 +587,44 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
             NOW.plusSeconds(60).getEpochSecond(),
             "1",
             "1",
-            ByteString.EMPTY,
-            ByteString.EMPTY,
-            ByteString.EMPTY);
+            canonical(GameSessionAccountDelegationProfile.authorityTuple(1, 1)),
+            canonical(
+                List.of(
+                    Map.of(
+                        "outboxStreamKey",
+                        "account:auth-authority:v1:account/" + FirstPartyReceivingFixture.ACCOUNT,
+                        "outboxSequence",
+                        "0"),
+                    Map.of(
+                        "outboxStreamKey",
+                        "account:auth-authority:v1:issuer/firemud-account-service",
+                        "outboxSequence",
+                        "0"))),
+            canonical(List.of()));
     when(login.evidence()).thenReturn(evidence);
-    when(login.compactJwtBytes()).thenAnswer(invocation -> JWT.getBytes(StandardCharsets.US_ASCII));
+    when(login.compactJwtBytes())
+        .thenAnswer(
+            invocation -> {
+              byte[] bytes = JWT.getBytes(StandardCharsets.US_ASCII);
+              borrowed.add(bytes);
+              return bytes;
+            });
     return login;
+  }
+
+  private static ByteString canonical(Object value) throws Exception {
+    return ByteString.copyFrom(
+        Rfc8785CanonicalJson.canonicalizeUtf8(
+            tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(value)));
   }
 
   private static RuntimePlayerAdmissionEntitlementEvidence evidence(
       RuntimePlayerAdmissionEntitlementGrpcCodec.Request request,
-      FirstPartyConnectContext context,
-      CanonicalGameplayLoginResult.NonSecretEvidence login)
+      CanonicalPlayableTarget retained,
+      Instant scopeExpiry,
+      CanonicalGameplayLoginResult.NonSecretEvidence login,
+      BiConsumer<Map<String, Object>, Map<String, Object>> drift)
       throws Exception {
-    CanonicalPlayableTarget retained = context.resolvedTarget();
-    Instant scopeExpiry = Instant.ofEpochMilli(context.claims().expiresAtMillis());
     Instant scopeStarted = NOW.minusSeconds(10);
     Map<String, Object> target = new LinkedHashMap<>();
     target.put("targetClass", "PUBLIC_PRODUCTION");
@@ -335,6 +685,7 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     sources.put("worldLifecycleDigest", "sha256:" + "f".repeat(64));
     sources.put("worldCaptureId", "77777777-7777-4777-8777-777777777777");
     sources.put("worldRowVersion", "0");
+    drift.accept(target, sources);
 
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
         request.target().readRequestId(),

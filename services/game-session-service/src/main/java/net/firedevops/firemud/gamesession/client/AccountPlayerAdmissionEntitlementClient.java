@@ -18,6 +18,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AccountPlayerAdmissionEntitlementReadServiceGrpc;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementGrpcCodec;
@@ -30,13 +32,16 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
+import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 
 /**
- * Manually composed Account PLAYER_ADMISSION read. The caller supplies a verified first-party
- * connect context and live LOGIN custody; this client contributes no admission decision or hold.
+ * Manually composed Account PLAYER_ADMISSION read. The caller supplies an owned canonical scope and
+ * live LOGIN custody; this client contributes no admission decision or hold.
  */
 public final class AccountPlayerAdmissionEntitlementClient
     extends AbstractReloadingBlockingGrpcClient<
@@ -82,6 +87,56 @@ public final class AccountPlayerAdmissionEntitlementClient
       UUID readRequestId,
       CanonicalGameplayLoginResult loginCustody,
       BooleanSupplier loginCustodyCurrent) {
+    return read(
+        readRequestId,
+        loginCustody,
+        loginCustodyCurrent,
+        () -> request(verifiedContext, readRequestId),
+        () -> request(verifiedContext, readRequestId),
+        evidence ->
+            requireTargetBinding(
+                evidence,
+                verifiedContext.resolvedTarget(),
+                Instant.ofEpochMilli(verifiedContext.claims().expiresAtMillis()).toString()));
+  }
+
+  /**
+   * Borrows an Account-issued direct-text lobby scope inside its owner's current custody callback.
+   * Retaining or decoding the scope never establishes that custody; this read installs no context.
+   */
+  public RuntimePlayerAdmissionEntitlementEvidence read(
+      DirectTextAuthenticatedLobbyScope scope,
+      InitialGameplayLoginAttemptCoordinates original,
+      ObservedDirectTextTransport transport,
+      UUID readRequestId,
+      CanonicalGameplayLoginResult loginCustody,
+      BooleanSupplier loginCustodyCurrent) {
+    return read(
+        readRequestId,
+        loginCustody,
+        loginCustodyCurrent,
+        () -> {
+          if (scope == null) throw invalid();
+          scope.requireCurrent(original, loginCustody, transport, clock);
+        },
+        () ->
+            request(
+                scope.publicTarget(),
+                scope.evidence().accountId(),
+                scope.issued().connectScopeId(),
+                readRequestId),
+        evidence ->
+            requireTargetBinding(
+                evidence, scope.publicTarget(), scope.issued().connectScopeExpiresAt()));
+  }
+
+  private RuntimePlayerAdmissionEntitlementEvidence read(
+      UUID readRequestId,
+      CanonicalGameplayLoginResult loginCustody,
+      BooleanSupplier loginCustodyCurrent,
+      Runnable requireScopeCurrent,
+      Supplier<RuntimePlayerAdmissionEntitlementGrpcCodec.Request> requestSource,
+      Consumer<RuntimePlayerAdmissionEntitlementEvidence> requireResponseTarget) {
     requireNoAmbientSql("Player-admission entitlement RPC requires no ambient SQL");
     Deadline overall =
         Deadline.after(
@@ -92,21 +147,17 @@ public final class AccountPlayerAdmissionEntitlementClient
     if (!v4(readRequestId)) {
       throw invalid();
     }
-    if (!current(loginCustodyCurrent) || Context.current().isCancelled()) {
-      throw failure(Status.Code.CANCELLED);
-    }
+    requireCurrent(loginCustodyCurrent, requireScopeCurrent);
     if (overall.isExpired()) {
       throw failure(Status.Code.DEADLINE_EXCEEDED);
     }
 
-    var request = request(verifiedContext, readRequestId);
+    var request = requestSource.get();
     var login = requireLiveLogin(loginCustody, request.target().accountId());
     byte[] compactJwt = null;
     try {
       compactJwt = loginCustody.compactJwtBytes();
-      if (!current(loginCustodyCurrent) || Context.current().isCancelled()) {
-        throw failure(Status.Code.CANCELLED);
-      }
+      requireCurrent(loginCustodyCurrent, requireScopeCurrent);
       if (overall.isExpired()) {
         throw failure(Status.Code.DEADLINE_EXCEEDED);
       }
@@ -124,22 +175,18 @@ public final class AccountPlayerAdmissionEntitlementClient
                   RuntimePlayerAdmissionEntitlementGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
       // Recheck immediately before invoking gRPC; the call credentials independently gate body
       // release on the exact authenticated Account peer.
-      if (!current(loginCustodyCurrent) || Context.current().isCancelled()) {
-        throw failure(Status.Code.CANCELLED);
-      }
+      requireCurrent(loginCustodyCurrent, requireScopeCurrent);
       if (overall.isExpired()) {
         throw failure(Status.Code.DEADLINE_EXCEEDED);
       }
       var response = stub.readPlayerAdmissionEntitlement(wireRequest);
-      if (!current(loginCustodyCurrent) || Context.current().isCancelled()) {
-        throw failure(Status.Code.CANCELLED);
-      }
+      requireCurrent(loginCustodyCurrent, requireScopeCurrent);
+      requireLiveLogin(loginCustody, request.target().accountId());
       var evidence = RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, response);
-      requireTargetBinding(evidence, verifiedContext);
+      requireResponseTarget.accept(evidence);
       requireLoginBinding(evidence, login);
-      if (!current(loginCustodyCurrent) || Context.current().isCancelled()) {
-        throw failure(Status.Code.CANCELLED);
-      }
+      requireCurrent(loginCustodyCurrent, requireScopeCurrent);
+      requireLiveLogin(loginCustody, request.target().accountId());
       evidence.requireCurrentAt(clock.instant());
       return evidence;
     } catch (StatusRuntimeException transport) {
@@ -158,14 +205,6 @@ public final class AccountPlayerAdmissionEntitlementClient
         throw invalid();
       }
       var claims = context.claims();
-      var target = context.resolvedTarget();
-      if (target == null
-          || !namespace.equals(target.targetNamespace())
-          || !"SHARED".equals(target.playableStateScope())
-          || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())
-          || target.positiveDurableAbort()) {
-        throw invalid();
-      }
       UUID accountId = UUID.fromString(context.accountId());
       if (!v4(accountId)
           || claims.expiresAtMillis() <= clock.millis()
@@ -173,26 +212,36 @@ public final class AccountPlayerAdmissionEntitlementClient
           || context.connectScopeId().isBlank()) {
         throw invalid();
       }
-      var selector =
-          new RetainedTargetSelector(
-              readRequestId,
-              accountId,
-              target.targetNamespace(),
-              target.canonicalTenantId(),
-              target.tenantSlug(),
-              target.worldSlug(),
-              target.realmId(),
-              target.realmSlug(),
-              target.playableStateNamespaceId(),
-              target.playableStateScope(),
-              target.canonicalGameInstanceId(),
-              target.catalogRevision(),
-              target.pointerVersion());
-      return new RuntimePlayerAdmissionEntitlementGrpcCodec.Request(
-          selector, context.connectScopeId());
+      return request(context.resolvedTarget(), accountId, context.connectScopeId(), readRequestId);
     } catch (RuntimeException invalidContext) {
       throw invalid();
     }
+  }
+
+  private RuntimePlayerAdmissionEntitlementGrpcCodec.Request request(
+      CanonicalPlayableTarget target, UUID accountId, String connectScopeId, UUID readRequestId) {
+    if (target == null
+        || !namespace.equals(target.targetNamespace())
+        || !"SHARED".equals(target.playableStateScope())
+        || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())
+        || target.positiveDurableAbort()
+        || !v4(accountId)) throw invalid();
+    var selector =
+        new RetainedTargetSelector(
+            readRequestId,
+            accountId,
+            target.targetNamespace(),
+            target.canonicalTenantId(),
+            target.tenantSlug(),
+            target.worldSlug(),
+            target.realmId(),
+            target.realmSlug(),
+            target.playableStateNamespaceId(),
+            target.playableStateScope(),
+            target.canonicalGameInstanceId(),
+            target.catalogRevision(),
+            target.pointerVersion());
+    return new RuntimePlayerAdmissionEntitlementGrpcCodec.Request(selector, connectScopeId);
   }
 
   private CanonicalGameplayLoginResult.NonSecretEvidence requireLiveLogin(
@@ -230,8 +279,9 @@ public final class AccountPlayerAdmissionEntitlementClient
   }
 
   private static void requireTargetBinding(
-      RuntimePlayerAdmissionEntitlementEvidence evidence, FirstPartyConnectContext context) {
-    CanonicalPlayableTarget target = context.resolvedTarget();
+      RuntimePlayerAdmissionEntitlementEvidence evidence,
+      CanonicalPlayableTarget target,
+      String connectScopeExpiresAt) {
     Object rawTarget = evidence.fields().get("target");
     Object rawSources = evidence.fields().get("sourceReferences");
     if (!(rawTarget instanceof Map<?, ?> actual)
@@ -254,9 +304,7 @@ public final class AccountPlayerAdmissionEntitlementClient
         || !Long.toString(target.catalogRevision()).equals(actual.get("catalogRevision"))
         || !Long.toString(target.pointerVersion()).equals(actual.get("pointerVersion"))
         || !Long.toString(target.activeWorldEpoch()).equals(actual.get("activeWorldEpoch"))
-        || !Instant.ofEpochMilli(context.claims().expiresAtMillis())
-            .toString()
-            .equals(actual.get("connectScopeExpiresAt"))
+        || !connectScopeExpiresAt.equals(actual.get("connectScopeExpiresAt"))
         || !target
             .admissionPointerSnapshotDigest()
             .equals(sources.get("admissionPointerSnapshotDigest"))
@@ -299,6 +347,13 @@ public final class AccountPlayerAdmissionEntitlementClient
     } catch (RuntimeException unavailable) {
       return false;
     }
+  }
+
+  private static void requireCurrent(BooleanSupplier custodyCurrent, Runnable requireScopeCurrent) {
+    if (!current(custodyCurrent) || Context.current().isCancelled()) {
+      throw failure(Status.Code.CANCELLED);
+    }
+    requireScopeCurrent.run();
   }
 
   private static boolean v4(UUID value) {
