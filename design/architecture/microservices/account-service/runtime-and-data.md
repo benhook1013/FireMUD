@@ -328,7 +328,28 @@ Account evaluates effective access as `min(grantExpiresAt, forkExpiresAt)` and e
 
 Grant `scopeId`, `outboxStreamKey`, and event `sourceScope` are produced and parsed through the [canonical grant authority-stream scope codec](../../system-architecture-redis.md#canonical-grant-authority-stream-scope-codec). This document owns only the persistence and projection consequences; it does not define another stream grammar or fallback identity.
 
-Current `AccountRealmAccessGrant` persistence and internal grant reads are limited to the legacy four-field identity, with only limited text `PLAY` denial; no lifecycle-bound read, expiry, fork-expiry evaluation, tenant-admin mutation surface, expected-revision CAS, request-replay record, durable tombstone, revocation propagation, consumer reconciliation, active-binding ejection, or complete grant event proof exists. During the direct pre-v1 cutover, records lacking `playtestLifecycleId` are invalidated or denied and must be regranted under the exact lifecycle; this local status does not add an alias or compatibility path. The gap statement is intentionally local; endpoint ownership and mutation outcomes remain in [Account API Contracts](./api-contracts.md#account-owned-playtest-grant-contract) and [ADR 0138](../../decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md).
+#### `REALM_GRANT_CHANGED` event schema
+
+The closed flat event preimage contains exactly these fields: `schemaVersion`, `eventType`, `eventId`, `requestId`, `outboxStreamKey`, `outboxSequence`, `sourceScope`, `accountId`, `tenantId`, `worldSlug`, `realmSlug`, `playtestLifecycleId`, `grantRevision`, `grantAuthorityGeneration`, `grantState`, `grantExpiresAt`, `actorAccountId`, `mutationKind`, `mutationDigest`, and `auditReason`. Every field is a JSON string. The canonical RFC 8785 wire event contains those preimage fields plus only `eventDigest`; its canonical object encoding orders properties per RFC 8785.
+
+| Field | Required value or constraint |
+| --- | --- |
+| `schemaVersion`, `eventType` | Exactly `account-auth-authority-event/v1` and `REALM_GRANT_CHANGED`. |
+| `eventId` | Exactly `realm-grant-event:v1:<requestId>`. |
+| `requestId`, `accountId`, `tenantId`, `playtestLifecycleId`, `grantAuthorityGeneration`, `actorAccountId` | Canonical lowercase, hyphenated, non-nil UUID strings. |
+| `outboxStreamKey`, `sourceScope` | Exact projections derived from the same five-field grant identity by the linked Redis scope codec; they must agree with each other and the identity fields. |
+| `outboxSequence`, `grantRevision` | Positive canonical decimal strings within signed `long` range. They are independent monotonic values; neither substitutes for the other. |
+| `worldSlug`, `realmSlug` | Canonical lowercase ASCII slugs, each 1–120 bytes, as constrained by the linked scope codec. |
+| `grantState` | Exactly `ACTIVE` or `REVOKED`. |
+| `grantExpiresAt` | Required canonical UTC `Instant.toString()` value, including for a revoked grant. The immutable event schema asserts no future-time condition. |
+| `mutationKind` | Exactly `CREATE`, `EXTEND`, `REVOKE`, or `REGRANT`; `REVOKE` pairs with `REVOKED`, and each other kind pairs with `ACTIVE`. |
+| `mutationDigest` | Exactly 64 lowercase hexadecimal characters, without a prefix; this is the Account action's `mutationDigest/v1` value. |
+| `auditReason` | Already NFC-normalized, nonblank, without U+0000 (NUL), and at most 4,096 UTF-8 bytes. |
+| `eventDigest` | Wire-only value `sha256:<64 lowercase hexadecimal characters>`, calculated over canonical RFC 8785 preimage bytes with `eventDigest` omitted. |
+
+The canonical wire payload is at most 32 KiB. Verification rejects malformed or noncanonical JSON, duplicate, unknown, missing, or contradictory fields, invalid UTF-8, trailing data, identity/scope mismatches, and a digest mismatch. The shared scope codec owns the field maxima and stream encoding; this event schema does not repeat that byte grammar. Sealing or verifying these immutable bytes supplies neither source authority nor actor qualification, current-lifecycle evidence, delivery, consumer activation, nor gameplay admission. Current event-production and consumer qualification remains incomplete.
+
+Existing `AccountRealmAccessGrant` persistence and registered internal grant reads remain limited to the legacy four-field identity. The standalone lifecycle-bound read owner now composes the internal Game Session current-preparation source with the exact Account grant and real database expiry check; it does not replace registered consumers or establish authenticated management, protected currentness through a later commit, delivery or active-binding ejection; its bounded source and proof status belongs in the [player-access tracker](../../../project-management/implementation-tracking/player-access-and-session.md). Records lacking `playtestLifecycleId` cannot supply canonical lifecycle-bound authority or a compatibility fallback. Target endpoint ownership and mutation outcomes remain in [Account API Contracts](./api-contracts.md#account-owned-playtest-grant-contract) and [ADR 0138](../../decisions/adr-0138-expiring-playtest-grants-with-bounded-active-revocation.md).
 
 ### Runtime Implementation Status and Drift
 

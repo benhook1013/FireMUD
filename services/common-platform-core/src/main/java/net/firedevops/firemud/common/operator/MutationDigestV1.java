@@ -64,6 +64,54 @@ final class MutationDigestV1 {
     return preimage;
   }
 
+  static byte[] preimage(RealmGrantMutation action) {
+    Objects.requireNonNull(action, "Realm grant mutation is required");
+    ByteArrayOutputStream output = new ByteArrayOutputStream();
+    writeSegment(output, utf8(DOMAIN));
+    writeField(output, "actionFamilySchemaId", string(RealmGrantMutation.ACTION_FAMILY_SCHEMA_ID));
+    writeField(
+        output,
+        "actionFamilySchemaVersion",
+        string(RealmGrantMutation.ACTION_FAMILY_SCHEMA_VERSION));
+    writeField(
+        output,
+        "scope",
+        object(
+            List.of(
+                member("tenantId", string(action.grant().tenantId().toString())),
+                member("targetNamespace", string(action.targetNamespace())))));
+    writeField(
+        output,
+        "target",
+        object(
+            List.of(
+                member("accountId", string(action.grant().accountId().toString())),
+                member("worldSlug", string(action.grant().worldSlug())),
+                member("realmSlug", string(action.grant().realmSlug())),
+                member(
+                    "playtestLifecycleId",
+                    string(action.grant().playtestLifecycleId().toString())))));
+    writeField(
+        output,
+        "expectedVersion",
+        action.expectedGrantRevision() == null
+            ? absent()
+            : number(Long.toString(action.expectedGrantRevision())));
+    writeField(
+        output,
+        "mutation",
+        object(
+            List.of(
+                member("operation", string(action.operation().name())),
+                member(
+                    "grantExpiresAt",
+                    action.grantExpiresAt() == null
+                        ? absent()
+                        : string(action.grantExpiresAt().toString())))));
+    writeField(output, "auditReason", string(action.auditReason()));
+    return output.toByteArray();
+  }
+
   /** Frames the approved CHARACTER_CREATE/1 fields without widening StartSession's limits. */
   static byte[] characterCreatePreimage(List<Member> fields) {
     Objects.requireNonNull(fields, "character-create fields are required");

@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
@@ -116,6 +117,28 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
       String bundleRef,
       String generationConfigRevision,
       long publicationVersionStateEpoch) {
+    return publishedSet(
+        request,
+        source,
+        canonicalVersionId,
+        versionRowId,
+        publishRequestId,
+        bundleRef,
+        generationConfigRevision,
+        publicationVersionStateEpoch,
+        List.of());
+  }
+
+  public static RealmPolicyPublishedEvidence.PublishedSet publishedSet(
+      CreateCanonicalRealmCatalogRequest request,
+      AuthoredWorldSourceEvidence source,
+      UUID canonicalVersionId,
+      long versionRowId,
+      String publishRequestId,
+      String bundleRef,
+      String generationConfigRevision,
+      long publicationVersionStateEpoch,
+      List<RealmEntryPolicy> additionalPolicies) {
     try {
       TargetProof target =
           new TargetProof(
@@ -274,13 +297,26 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
                   request.stateScope(),
                   "entryPolicy",
                   request.characterCreationPolicy()));
-      var policySource =
+      var publicPolicySource =
           new RealmPolicySource.Policy(
               draft.commitId(),
               id("policy-revision:" + request.requestId()),
               "TEST_ONLY-policy",
               RealmEntryPolicy.parse(policyJson, JSON));
-      var capture = new RealmPolicySnapshot(draft, "1", List.of(policySource));
+      var policySources = new ArrayList<RealmPolicySource.Policy>();
+      policySources.add(publicPolicySource);
+      for (RealmEntryPolicy additionalPolicy : additionalPolicies) {
+        RealmEntryPolicy canonicalPolicy =
+            RealmEntryPolicy.parseCanonical(additionalPolicy.canonicalJson(), JSON);
+        policySources.add(
+            new RealmPolicySource.Policy(
+                draft.commitId(),
+                id("policy-revision:" + request.requestId() + ":" + canonicalPolicy.realmSlug()),
+                "TEST_ONLY-policy-" + canonicalPolicy.realmSlug(),
+                canonicalPolicy));
+      }
+      policySources = new ArrayList<>(RealmPolicySource.draftOrdered(policySources));
+      var capture = new RealmPolicySnapshot(draft, "1", policySources);
       var participants =
           AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
               .map(
@@ -322,25 +358,34 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
               GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED,
               release,
               publicationVersionStateEpoch);
-      UUID policyId = id("policy-identity:" + request.requestId());
-      var policy =
-          new RealmPolicyPublishedEvidence.Policy(
-              policyId,
-              policySource,
-              RealmPolicyPublishedEvidence.policyDigest(
-                  policyId,
-                  target,
-                  1,
-                  bundleRef,
-                  release.contentDigest(),
-                  workflow,
-                  release.manifestHash(),
-                  policySource));
+      var policies =
+          policySources.stream()
+              .map(
+                  policySource -> {
+                    String policyIdentitySuffix =
+                        policySource.policy().realmSlug().equals(request.realmSlug())
+                            ? ""
+                            : ":" + policySource.policy().realmSlug();
+                    UUID policyId =
+                        id("policy-identity:" + request.requestId() + policyIdentitySuffix);
+                    return new RealmPolicyPublishedEvidence.Policy(
+                        policyId,
+                        policySource,
+                        RealmPolicyPublishedEvidence.policyDigest(
+                            policyId,
+                            target,
+                            1,
+                            bundleRef,
+                            release.contentDigest(),
+                            workflow,
+                            release.manifestHash(),
+                            policySource));
+                  })
+              .toList();
       var frame = new ByteArrayOutputStream();
       DraftAuthorizationFenceBinding.frame(frame, "game-design-realm-policy-source-capture/v1");
       DraftAuthorizationFenceBinding.frame(frame, operation.canonicalBytes());
       DraftAuthorizationFenceBinding.frame(frame, capture.canonicalBytes());
-      var policies = List.of(policy);
       String digest =
           RealmPolicyPublishedEvidence.computePolicySetDigest(
               target,
@@ -369,7 +414,7 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
           operation.canonicalBytes(),
           frame.toByteArray(),
           terminal.canonicalBytes(),
-          1,
+          policies.size(),
           digest,
           policies);
     } catch (Exception invalid) {
