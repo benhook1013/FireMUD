@@ -655,7 +655,64 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
-  void inFlightAndExpiredReceiptOrChangedSdkFactsNeverRefreshAnOldPositiveSnapshot() {
+  void freshReadsBeyondObservationAgePreserveCommittedReceiptAndAuthorityUntilRealPeriodEnd() {
+    for (String status : List.of("active", "trialing")) {
+      Context c = context("1030");
+      Fixture f = fixture(c);
+      f.transport().json = response(f, status);
+      activate(f);
+      var receipt =
+          one(
+              c,
+              "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r");
+      var authority =
+          one(
+              c,
+              "SELECT row_to_json(a)::text AS value, xmin::text AS xmin FROM account_tenant_authority_source_records a");
+      Instant periodEnd = Instant.ofEpochSecond(f.creation().createdAt().getEpochSecond() + 3600);
+      assertThat(
+              one(c, "SELECT valid_until FROM subscription_lifecycle_receipts")
+                  .get(0, java.time.OffsetDateTime.class)
+                  .toInstant())
+          .isEqualTo(periodEnd);
+      int reads = f.transport().reads;
+      for (int laterRead = 1; laterRead <= 2; laterRead++) {
+        f.clock().advance(Duration.ofSeconds(30));
+        var current = f.service().readCurrent(f.creation().tenantId());
+        assertThat(current.gameplayAvailable()).isTrue();
+        assertThat(current.validUntil()).isEqualTo(f.clock().instant().plusSeconds(15));
+        assertThat(current.tenantBillingSequence()).isOne();
+        assertThat(current.tenantAuthorityEvent().tenantAuthorityGeneration()).isEqualTo(2);
+        assertThat(f.transport().reads).isEqualTo(reads + laterRead);
+        assertThat(
+                one(
+                    c,
+                    "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r"))
+            .isEqualTo(receipt);
+        assertThat(
+                one(
+                    c,
+                    "SELECT row_to_json(a)::text AS value, xmin::text AS xmin FROM account_tenant_authority_source_records a"))
+            .isEqualTo(authority);
+        assertThat(count(c, "account_tenant_entitlement_outbox_events")).isOne();
+        assertThat(count(c, "account_authority_outbox_events")).isOne();
+      }
+      f.clock().advance(Duration.between(f.clock().instant(), periodEnd));
+      int beforeExpiredRead = f.transport().reads;
+      assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
+          .isInstanceOf(
+              AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException.class)
+          .hasMessageContaining("ENTITLEMENT_UNAVAILABLE")
+          .cause()
+          .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+          .hasMessageContaining("current receipt is expired");
+      assertThat(f.transport().reads).isEqualTo(beforeExpiredRead);
+      assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
+    }
+  }
+
+  @Test
+  void inFlightAndStaleObservationOrChangedSdkFactsNeverRefreshAnOldPositiveSnapshot() {
     Context c = context("1030");
     Fixture f = fixture(c);
     activate(f);
@@ -665,8 +722,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     f.transport().json = response(f, "active");
     f.clock().advance(Duration.ofSeconds(15));
+    assertThat(f.service().readCurrent(f.creation().tenantId()).allowPublicJoin()).isTrue();
+    f.transport().duringRead = () -> f.clock().advance(Duration.ofSeconds(15));
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.service().readCurrent(f.creation().tenantId()).allowPublicJoin()).isTrue();
+    assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
+    assertThat(count(c, "account_tenant_entitlement_outbox_events")).isOne();
+    assertThat(count(c, "account_authority_outbox_events")).isOne();
     long currentVersion =
         c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().rowVersion();
     var prepared =
@@ -736,14 +799,24 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     refresh(f);
     assertThat(f.service().readCurrent(f.creation().tenantId()).subscriptionStatus())
         .isEqualTo(Status.PAST_DUE);
-    f.clock().advance(Duration.ofSeconds(60));
+    f.clock().advance(Duration.ofSeconds(30));
+    assertThat(f.service().readCurrent(f.creation().tenantId()).subscriptionStatus())
+        .isEqualTo(Status.PAST_DUE);
+    f.clock().advance(Duration.ofSeconds(30));
+    assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
+        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     refresh(f);
     var grace = f.service().readCurrent(f.creation().tenantId());
     assertThat(grace.subscriptionStatus()).isEqualTo(Status.GRACE);
     assertThat(grace.gameplayAvailable()).isTrue();
     assertThat(grace.allowPublicJoin()).isFalse();
     assertThat(grace.allowNewInstanceStarts()).isFalse();
-    f.clock().advance(Duration.ofSeconds(120));
+    f.clock().advance(Duration.ofSeconds(30));
+    assertThat(f.service().readCurrent(f.creation().tenantId()).subscriptionStatus())
+        .isEqualTo(Status.GRACE);
+    f.clock().advance(Duration.ofSeconds(90));
+    assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
+        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     refresh(f);
     var suspended = f.service().readCurrent(f.creation().tenantId());
     assertThat(suspended.subscriptionStatus()).isEqualTo(Status.SUSPENDED);
