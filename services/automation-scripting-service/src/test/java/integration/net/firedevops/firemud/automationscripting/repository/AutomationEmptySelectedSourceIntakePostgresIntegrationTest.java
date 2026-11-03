@@ -98,7 +98,7 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
             dsl.fetchSingle(
                     "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
                 .get(0, String.class))
-        .isEqualTo("1003");
+        .isEqualTo("1005");
   }
 
   /** Synthetic retained SQL state only; no genuine script or runtime admission authority. */

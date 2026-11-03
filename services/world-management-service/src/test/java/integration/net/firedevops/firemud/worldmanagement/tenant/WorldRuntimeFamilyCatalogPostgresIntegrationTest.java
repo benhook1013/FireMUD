@@ -7,12 +7,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.world.WorldRuntimeFamilyCatalog;
+import net.firedevops.firemud.common.world.WorldRuntimeFamilyCatalog.Evidence;
 import net.firedevops.firemud.common.world.WorldRuntimeFamilyCatalog.FactKind;
 import net.firedevops.firemud.common.world.WorldRuntimeFamilyCatalog.FreshDisposition;
 import net.firedevops.firemud.common.world.WorldRuntimeFamilyCatalog.Request;
@@ -37,7 +39,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * RPC identity context; these cases do not prove live PKI, FRESH authorization or materialization.
  * No positive case is disabled when Docker is unavailable: Gameplay must obtain physical results.
  */
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = false)
 @SuppressWarnings("resource")
 class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
   @Container
@@ -73,7 +75,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var evidence = f.owner().read(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(1);
+      assertThat(catalog.catalogEpoch()).isEqualTo(2);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -130,7 +132,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
               f.dsl
                   .fetchSingle(
                       "SELECT catalog_bytes = world_runtime_family_catalog_bytes(catalog_epoch)"
-                          + " FROM world_runtime_family_catalog_epoch")
+                          + " FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch DESC LIMIT 1")
                   .get(0, Boolean.class))
           .isTrue();
     }
@@ -205,7 +207,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetch(
-                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' ORDER BY installed_rank")
+                      "SELECT to_jsonb(h)::text FROM flyway_schema_history_world_management_service h WHERE version IS DISTINCT FROM '1046' AND version IS DISTINCT FROM '1047' ORDER BY installed_rank")
                   .getValues(0, String.class))
           .isEqualTo(historyBefore);
       f.owner().read(request());
@@ -280,6 +282,56 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
+  void installedViewAndMaterializedViewOptionsInvalidateTheSealWithoutResampling()
+      throws Exception {
+    for (String change :
+        List.of(
+            "ALTER VIEW catalog_option_probe SET (security_invoker=true)",
+            "ALTER VIEW catalog_option_probe SET (security_barrier=true)",
+            "ALTER MATERIALIZED VIEW catalog_materialized_probe SET (fillfactor=70)")) {
+      try (Fixture f = fixture("1045")) {
+        // Install controlled views before the genuine catalog migrations, so both epochs
+        // capture installed schema objects rather than a view added after sealing.
+        f.dsl.execute(
+            "CREATE VIEW catalog_option_probe WITH (security_invoker=false,security_barrier=false)"
+                + " AS SELECT id FROM world_event");
+        f.dsl.execute(
+            "CREATE MATERIALIZED VIEW catalog_materialized_probe AS SELECT id FROM world_event");
+        migration(f.source, f.schema, null).migrate();
+        Request read = request();
+        var original = f.owner().read(read);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(2);
+        assertThat(original.catalog().schemaFacts())
+            .anyMatch(
+                fact ->
+                    fact.kind() == FactKind.VIEW && fact.identity().equals("catalog_option_probe"))
+            .anyMatch(
+                fact ->
+                    fact.kind() == FactKind.VIEW
+                        && fact.identity().equals("catalog_materialized_probe"));
+        var snapshots = f.retainedRows("world_runtime_family_catalog_snapshot");
+        var epochs = f.retainedRows("world_runtime_family_catalog_epoch");
+        f.dsl.execute(change);
+        assertThatThrownBy(() -> f.owner().readExact(read))
+            .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(read))
+            .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThat(f.retainedRows("world_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+        assertThat(f.retainedRows("world_runtime_family_catalog_epoch")).isEqualTo(epochs);
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT evidence_bytes FROM world_runtime_family_catalog_snapshot WHERE read_request_id=?",
+                        read.readRequestId())
+                    .get(0, byte[].class))
+            .isEqualTo(WorldRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      }
+    }
+  }
+
+  @Test
   void removalAndClassificationChangeAreExplicitlyInvalidating() throws Exception {
     try (Fixture f = fixture(null)) {
       Request read = request();
@@ -300,7 +352,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(request()))
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
-      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(1);
+      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(2);
     }
   }
 
@@ -325,6 +377,147 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
+  void directSnapshotInsertRequiresBothSuccessfulExactCatalogMigrationRows() throws Exception {
+    try (Fixture f = fixture(null)) {
+      var catalog = f.owner().read(request()).catalog();
+      for (String version : List.of("1046", "1047")) {
+        for (String column : List.of("success", "script")) {
+          Request read = request();
+          var evidence = new Evidence(read, UUID.randomUUID(), catalog);
+          byte[] requestBytes = WorldRuntimeFamilyCatalogCodec.requestBytes(read);
+          byte[] evidenceBytes = WorldRuntimeFamilyCatalogCodec.evidenceBytes(evidence);
+          var original =
+              f.dsl.fetchSingle(
+                  "SELECT success,script FROM flyway_schema_history_world_management_service WHERE version=?",
+                  version);
+          f.dsl.execute(
+              "UPDATE flyway_schema_history_world_management_service SET "
+                  + column
+                  + "=? WHERE version=?",
+              column.equals("success") ? false : "other.sql",
+              version);
+          // These own rows use honest installation markers, so the installed-row guard must
+          // refuse even though the live census still matches the seal and all digests are valid.
+          assertThat(
+                  f.dsl
+                      .fetchSingle(
+                          "SELECT world_runtime_family_catalog_bytes(?)=?",
+                          catalog.catalogEpoch(),
+                          catalog.exactBytes())
+                      .get(0, Boolean.class))
+              .isTrue();
+          long before = f.count("world_runtime_family_catalog_snapshot");
+          assertThatThrownBy(() -> f.insertSnapshot(evidence, requestBytes, evidenceBytes))
+              .hasMessageContaining("new owner epoch required");
+          assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(before);
+          assertThatThrownBy(() -> f.owner().read(read))
+              .hasMessageContaining("No durable World catalog epoch");
+          f.dsl.execute(
+              "UPDATE flyway_schema_history_world_management_service SET success=?,script=? WHERE version=?",
+              original.get("success", Boolean.class),
+              original.get("script", String.class),
+              version);
+          var committed = f.owner().read(read);
+          assertThat(f.owner().readExact(read)).isEqualTo(committed);
+          assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(before + 1);
+        }
+      }
+    }
+  }
+
+  @Test
+  void directSqlPoisonFramesRefuseWithoutConsumingRequestIdentity() throws Exception {
+    try (Fixture f = fixture(null)) {
+      var catalog = f.owner().read(request()).catalog();
+      for (int mismatch = 0; mismatch < 9; mismatch++) {
+        Request read = request();
+        var snapshot = UUID.randomUUID();
+        var evidence = new Evidence(read, snapshot, catalog);
+        byte[] requestBytes = WorldRuntimeFamilyCatalogCodec.requestBytes(read);
+        byte[] evidenceBytes = WorldRuntimeFamilyCatalogCodec.evidenceBytes(evidence);
+        switch (mismatch) {
+          case 0 -> requestBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
+          case 1 -> requestBytes = WorldRuntimeFamilyCatalogCodec.requestBytes(request());
+          case 2 ->
+              requestBytes =
+                  WorldRuntimeFamilyCatalogCodec.requestBytes(
+                      new Request(read.readRequestId(), "other"));
+          case 3 -> evidenceBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
+          case 4 ->
+              evidenceBytes =
+                  WorldRuntimeFamilyCatalogCodec.evidenceBytes(
+                      new Evidence(request(), snapshot, catalog));
+          case 5 ->
+              evidenceBytes =
+                  WorldRuntimeFamilyCatalogCodec.evidenceBytes(
+                      new Evidence(read, UUID.randomUUID(), catalog));
+          case 6 ->
+              evidenceBytes =
+                  WorldRuntimeFamilyCatalogCodec.evidenceBytes(
+                      new Evidence(new Request(read.readRequestId(), "other"), snapshot, catalog));
+          case 7 -> {
+            int digestOffset = 4 + 4 + requestBytes.length + 16 + 4;
+            evidenceBytes[digestOffset + "sha256:".length()] ^= 1;
+          }
+          case 8 -> evidenceBytes[evidenceBytes.length - 1] ^= 1;
+          default -> throw new AssertionError("Unknown poison vector");
+        }
+        byte[] poisonedRequest = requestBytes;
+        byte[] poisonedEvidence = evidenceBytes;
+        long before = f.count("world_runtime_family_catalog_snapshot");
+        // Compute valid SHA-256 digests for the poisoned bytes to exercise the exact-frame
+        // trigger itself rather than merely the independent per-column digest CHECKs.
+        assertThatThrownBy(() -> f.insertSnapshot(evidence, poisonedRequest, poisonedEvidence))
+            .hasMessageContaining("complete exact request and evidence");
+        assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(before);
+        var committed = f.owner().read(read);
+        assertThat(f.owner().readExact(read)).isEqualTo(committed);
+        assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(before + 1);
+      }
+    }
+  }
+
+  @Test
+  void forwardFrameGuardUpgradeRetainsOldEpochSnapshotAndHistoryWithoutResampling()
+      throws Exception {
+    try (Fixture f = fixture("1046")) {
+      Request read = request();
+      var original = f.owner().read(read);
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(1);
+      var epochs = f.retainedRows("world_runtime_family_catalog_epoch");
+      var snapshots = f.retainedRows("world_runtime_family_catalog_snapshot");
+      var history = f.retainedRows("flyway_schema_history_world_management_service");
+      migration(f.source, f.schema, null).migrate();
+      assertThat(f.retainedRows("world_runtime_family_catalog_epoch"))
+          .containsAll(epochs)
+          .hasSize(2);
+      assertThat(f.retainedRows("world_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      assertThat(f.retainedRows("flyway_schema_history_world_management_service"))
+          .containsAll(history)
+          .hasSize(history.size() + 1);
+      assertThatThrownBy(() -> f.owner().readExact(read))
+          .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().read(read))
+          .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.retainedRows("world_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      var current = f.owner().read(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(current.catalog().digest()).isNotEqualTo(original.catalog().digest());
+      assertThat(current.catalog().schemaFacts())
+          .anyMatch(
+              fact ->
+                  fact.kind() == FactKind.MIGRATION
+                      && fact.identity().equals("catalog-installation:1046"))
+          .anyMatch(
+              fact ->
+                  fact.kind() == FactKind.MIGRATION
+                      && fact.identity().equals("catalog-installation:1047"));
+      assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(2);
+      migration(f.source, f.schema, null).validate();
+    }
+  }
+
+  @Test
   void explicitOwnerEpochAdvanceInvalidatesOldRequestsWithoutRewritingTheirEvidence()
       throws Exception {
     try (Fixture f = fixture(null)) {
@@ -336,8 +529,8 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
               + " ('region_instance.name','region_instance','name','RUNTIME_PAYLOAD','S3','REQUIRED_TOPOLOGY')");
       f.dsl.execute(
           "INSERT INTO world_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-              + " SELECT 2,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM"
-              + " (SELECT world_runtime_family_catalog_bytes(2) AS bytes) revised");
+              + " SELECT 3,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM"
+              + " (SELECT world_runtime_family_catalog_bytes(3) AS bytes) revised");
       assertThatThrownBy(() -> f.owner().readExact(read))
           .isInstanceOf(WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(read))
@@ -350,9 +543,9 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
                   .get(0, byte[].class))
           .isEqualTo(WorldRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().read(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(3);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThat(f.count("world_runtime_family_catalog_epoch")).isEqualTo(3);
     }
   }
 
@@ -382,7 +575,7 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
               () ->
                   f.dsl.execute(
                       "INSERT INTO world_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 2,catalog_bytes,catalog_digest FROM world_runtime_family_catalog_epoch WHERE catalog_epoch=1"))
+                          + " SELECT 3,catalog_bytes,catalog_digest FROM world_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
           .hasMessageContaining("exact classified installed schema");
     }
   }
@@ -452,6 +645,30 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
       implements AutoCloseable {
     WorldRuntimeFamilyCatalogRepository owner() {
       return new WorldRuntimeFamilyCatalogRepository(dsl, manager, schema, "test");
+    }
+
+    void insertSnapshot(Evidence evidence, byte[] requestBytes, byte[] evidenceBytes) {
+      dsl.execute(
+          "INSERT INTO world_runtime_family_catalog_snapshot"
+              + "(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
+              + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)",
+          evidence.request().readRequestId(),
+          evidence.request().targetNamespace(),
+          requestBytes,
+          WorldRuntimeFamilyCatalog.sha256(requestBytes),
+          evidence.snapshotId(),
+          evidence.catalog().catalogEpoch(),
+          evidence.catalog().digest(),
+          evidenceBytes,
+          WorldRuntimeFamilyCatalog.sha256(evidenceBytes));
+    }
+
+    List<String> retainedRows(String table) {
+      return dsl.fetch(
+              "SELECT to_jsonb(t)::text||':'||xmin::text AS value FROM "
+                  + table
+                  + " t ORDER BY value")
+          .getValues(0, String.class);
     }
 
     long count(String table) {

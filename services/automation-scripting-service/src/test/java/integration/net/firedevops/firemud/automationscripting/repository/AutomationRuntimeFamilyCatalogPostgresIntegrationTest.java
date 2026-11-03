@@ -46,7 +46,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * live private authority producer or mTLS/PKI proof. Positive cases are not disabled without
  * Docker.
  */
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = false)
 @SuppressWarnings("resource")
 class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
   private static final String MIGRATIONS =
@@ -84,7 +84,7 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
       throws Exception {
     try (Fixture f = fixture(null)) {
       var catalog = f.owner().read(request()).catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(1);
+      assertThat(catalog.catalogEpoch()).isEqualTo(2);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -155,7 +155,7 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
               f.dsl
                   .fetchSingle(
                       "SELECT catalog_bytes=automation_runtime_family_catalog_bytes(catalog_epoch)"
-                          + " FROM automation_runtime_family_catalog_epoch")
+                          + " FROM automation_runtime_family_catalog_epoch ORDER BY catalog_epoch DESC LIMIT 1")
                   .get(0, Boolean.class))
           .isTrue();
       assertThat(f.count("script_work_items")).isZero();
@@ -346,7 +346,7 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
           "INSERT INTO "
               + f.history
               + " (installed_rank,version,description,type,script,checksum,installed_by,execution_time,success)"
-              + " VALUES (10000,'1005','controlled later migration','SQL','V1005__probe.sql',1,current_user,0,true)");
+              + " VALUES (10000,'1006','controlled later migration','SQL','V1006__probe.sql',1,current_user,0,true)");
       assertThatThrownBy(() -> f.owner().read(request()))
           .isInstanceOf(AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
@@ -361,8 +361,8 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
       // Controlled owner revision installation only; no runtime mutation/registration API exists.
       f.dsl.execute(
           "INSERT INTO automation_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-              + " SELECT 2,bytes,'sha256:'||encode(sha256(bytes),'hex')"
-              + " FROM (SELECT automation_runtime_family_catalog_bytes(2) AS bytes) revised");
+              + " SELECT 3,bytes,'sha256:'||encode(sha256(bytes),'hex')"
+              + " FROM (SELECT automation_runtime_family_catalog_bytes(3) AS bytes) revised");
       assertThatThrownBy(() -> f.owner().readExact(read))
           .isInstanceOf(AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(read))
@@ -375,9 +375,9 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
                   .get(0, byte[].class))
           .isEqualTo(AutomationRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().read(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(3);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count("automation_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThat(f.count("automation_runtime_family_catalog_epoch")).isEqualTo(3);
     }
   }
 
@@ -422,7 +422,7 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
               () ->
                   f.dsl.execute(
                       "INSERT INTO automation_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 2,catalog_bytes,catalog_digest FROM automation_runtime_family_catalog_epoch WHERE catalog_epoch=1"))
+                          + " SELECT 3,catalog_bytes,catalog_digest FROM automation_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
           .hasMessageContaining("exact classified installed schema");
       assertThatThrownBy(
               () ->
@@ -475,6 +475,146 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void viewSecurityOptionsInvalidateReadRetryAndFreshCaptureWithoutChangingRetainedEvidence()
+      throws Exception {
+    for (String option : List.of("security_invoker", "security_barrier")) {
+      try (Fixture f = fixture("1003")) {
+        // Install the real view before either catalog migration so its initial options are sealed.
+        f.dsl.execute("CREATE VIEW catalog_security_probe AS SELECT 1 AS id");
+        migration(f.source, f.schema, f.history, null).migrate();
+        Request read = request();
+        var original = f.owner().read(read);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(2);
+        assertThat(original.catalog().schemaFacts())
+            .anySatisfy(
+                fact -> {
+                  assertThat(fact.kind()).isEqualTo(FactKind.VIEW);
+                  assertThat(fact.identity()).isEqualTo("catalog_security_probe");
+                  assertThat(fact.definitionDigest())
+                      .isEqualTo(
+                          f.dsl
+                              .fetchSingle(
+                                  "SELECT 'sha256:'||encode(sha256(convert_to("
+                                      + "jsonb_build_array(pg_get_viewdef(c.oid,true),c.reloptions)::text,'UTF8')),'hex')"
+                                      + " FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
+                                      + " WHERE n.nspname=? AND c.relname='catalog_security_probe'",
+                                  f.schema)
+                              .get(0, String.class));
+                });
+        assertThat(f.owner().read(read)).isEqualTo(original);
+        assertThat(f.owner().readExact(read)).isEqualTo(original);
+        String definition =
+            f.dsl
+                .fetchSingle("SELECT pg_get_viewdef('catalog_security_probe'::regclass,true)")
+                .get(0, String.class);
+        String epochs = f.catalogRows("automation_runtime_family_catalog_epoch");
+        String snapshots = f.catalogRows("automation_runtime_family_catalog_snapshot");
+        f.dsl.execute("ALTER VIEW catalog_security_probe SET (" + option + "=true)");
+        assertThat(
+                f.dsl
+                    .fetchSingle("SELECT pg_get_viewdef('catalog_security_probe'::regclass,true)")
+                    .get(0, String.class))
+            .isEqualTo(definition);
+        assertThatThrownBy(() -> f.owner().readExact(read))
+            .isInstanceOf(AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(read))
+            .isInstanceOf(AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThat(f.catalogRows("automation_runtime_family_catalog_epoch")).isEqualTo(epochs);
+        assertThat(f.catalogRows("automation_runtime_family_catalog_snapshot"))
+            .isEqualTo(snapshots);
+      }
+    }
+  }
+
+  @Test
+  void catalogViewOptionsUpgradeRetainsV1004DataHistoryEpochAndSnapshot() throws Exception {
+    try (Fixture f = fixture("1004")) {
+      f.populatePredecessor();
+      Map<String, String> rows = f.rows();
+      rows.remove("automation_runtime_family_catalog_epoch");
+      rows.remove("automation_runtime_family_catalog_snapshot");
+      Request read = request();
+      var original = f.owner().read(read);
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(1);
+      List<String> history = f.historyRows(false);
+      String epoch = f.catalogRows("automation_runtime_family_catalog_epoch");
+      String snapshots = f.catalogRows("automation_runtime_family_catalog_snapshot");
+      migration(f.source, f.schema, f.history, null).migrate();
+      for (var retained : rows.entrySet())
+        assertThat(f.jsonRows(retained.getKey())).isEqualTo(retained.getValue());
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(h)::text FROM "
+                          + f.history
+                          + " h WHERE version IS DISTINCT FROM '1005' ORDER BY installed_rank")
+                  .getValues(0, String.class))
+          .isEqualTo(history);
+      assertThat(f.catalogRows("automation_runtime_family_catalog_epoch WHERE catalog_epoch=1"))
+          .isEqualTo(epoch);
+      assertThat(f.catalogRows("automation_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      assertThat(f.count("automation_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThatThrownBy(() -> f.owner().readExact(read))
+          .isInstanceOf(AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().read(read))
+          .isInstanceOf(AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.catalogRows("automation_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      var current = f.owner().read(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(current.catalog().digest()).isNotEqualTo(original.catalog().digest());
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      assertThat(
+              current.catalog().schemaFacts().stream()
+                  .filter(fact -> fact.kind() == FactKind.MIGRATION)
+                  .map(AutomationRuntimeFamilyCatalog.SchemaFact::identity)
+                  .toList())
+          .contains("catalog-installation:1004", "catalog-installation:1005")
+          .noneMatch(identity -> identity.contains(":1004:") || identity.contains(":1005:"));
+      for (String version : List.of("1004", "1005")) {
+        String script =
+            version.equals("1004")
+                ? "V1004__automation_owner_runtime_family_catalog.sql"
+                : "V1005__automation_catalog_view_options.sql";
+        assertThat(current.catalog().schemaFacts())
+            .anySatisfy(
+                fact -> {
+                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+                  assertThat(fact.identity()).isEqualTo("catalog-installation:" + version);
+                  assertThat(fact.definitionDigest())
+                      .isEqualTo(
+                          AutomationRuntimeFamilyCatalog.sha256(
+                              script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                });
+      }
+      migration(f.source, f.schema, f.history, null).validate();
+    }
+  }
+
+  @Test
+  void bothExactSuccessfulCatalogInstallationsAreRequired() throws Exception {
+    for (String version : List.of("1004", "1005")) {
+      for (String change : List.of("success=false", "script='wrong_catalog_installation.sql'")) {
+        try (Fixture f = fixture(null)) {
+          Request read = request();
+          f.owner().read(read);
+          String snapshots = f.catalogRows("automation_runtime_family_catalog_snapshot");
+          f.dsl.execute("UPDATE " + f.history + " SET " + change + " WHERE version=?", version);
+          assertThatThrownBy(() -> f.owner().readExact(read))
+              .hasMessageContaining("No durable Automation catalog epoch");
+          assertThatThrownBy(() -> f.owner().read(read))
+              .hasMessageContaining("No durable Automation catalog epoch");
+          assertThatThrownBy(() -> f.owner().read(request()))
+              .hasMessageContaining("No durable Automation catalog epoch");
+          assertThat(f.catalogRows("automation_runtime_family_catalog_snapshot"))
+              .isEqualTo(snapshots);
+        }
+      }
+    }
+  }
+
   private static Request request() {
     return new Request(UUID.randomUUID(), "test");
   }
@@ -524,6 +664,15 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
       return new AutomationRuntimeFamilyCatalogRepository(dsl, manager, schema, "test");
     }
 
+    String catalogRows(String source) {
+      return dsl.fetchSingle(
+              "SELECT coalesce(jsonb_agg(row_json ORDER BY row_json::text),'[]'::jsonb)::text"
+                  + " FROM (SELECT to_jsonb(t) AS row_json FROM (SELECT * FROM "
+                  + source
+                  + ") t) retained_rows")
+          .get(0, String.class);
+    }
+
     long count(String table) {
       return dsl.fetchSingle("SELECT count(*) FROM " + table).get(0, Long.class);
     }
@@ -555,7 +704,9 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
               "SELECT to_jsonb(h)::text FROM "
                   + history
                   + " h"
-                  + (excludeNew ? " WHERE version IS DISTINCT FROM '1004'" : "")
+                  + (excludeNew
+                      ? " WHERE version IS DISTINCT FROM '1004' AND version IS DISTINCT FROM '1005'"
+                      : "")
                   + " ORDER BY installed_rank")
           .getValues(0, String.class);
     }

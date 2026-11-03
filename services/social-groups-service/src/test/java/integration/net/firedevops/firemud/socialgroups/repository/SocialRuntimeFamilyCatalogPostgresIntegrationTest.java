@@ -41,7 +41,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * Actual installed Social/Saga PostgreSQL proof; caller identity is controlled, not physical mTLS.
  */
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = false)
 @SuppressWarnings("resource")
 class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
   private static final List<String> RETAINED_TABLES =
@@ -108,7 +108,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       throws Exception {
     try (Fixture f = fixture(null)) {
       var catalog = f.owner().read(request()).catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(1);
+      assertThat(catalog.catalogEpoch()).isEqualTo(2);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -173,7 +173,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
               f.dsl
                   .fetchSingle(
                       "SELECT catalog_bytes = social_runtime_family_catalog_bytes(catalog_epoch)"
-                          + " FROM social_runtime_family_catalog_epoch")
+                          + " FROM social_runtime_family_catalog_epoch ORDER BY catalog_epoch DESC LIMIT 1")
                   .get(0, Boolean.class))
           .isTrue();
     }
@@ -260,16 +260,16 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       List<String> historyBefore = f.historyRows();
       migrate(f, null);
       assertThat(f.retainedRows()).isEqualTo(rowsBefore);
-      assertThat(f.historyRowsExcluding("1004")).isEqualTo(historyBefore);
+      assertThat(f.historyRowsExcluding("1004", "1005")).isEqualTo(historyBefore);
       var catalog = f.owner().read(request()).catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(1);
+      assertThat(catalog.catalogEpoch()).isEqualTo(2);
       assertThat(catalog.families())
           .anySatisfy(
               family ->
                   assertThat(family.freshDisposition())
                       .isEqualTo(FreshDisposition.ENTITY_VALUE_OWNERSHIP_DRIFT_BLOCKING));
       assertThat(f.retainedRows()).isEqualTo(rowsBefore);
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(1);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
   }
@@ -283,7 +283,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.count("unknown_runtime_family")).isZero();
       assertThatThrownBy(() -> f.owner().readExact(retained)).hasMessageContaining("Unclassified");
       assertThatThrownBy(() -> f.owner().read(request())).hasMessageContaining("Unclassified");
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(1);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
   }
@@ -325,7 +325,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
         assertThatThrownBy(() -> f.owner().readExact(retained))
             .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> f.owner().read(request())).isInstanceOf(RuntimeException.class);
-        assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(1);
+        assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
         assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
       }
     }
@@ -352,7 +352,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(request()))
           .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(1);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
     try (Fixture f = fixture(null)) {
@@ -419,9 +419,9 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
               () ->
                   f.dsl.execute(
                       "INSERT INTO social_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 2,catalog_bytes,catalog_digest FROM social_runtime_family_catalog_epoch WHERE catalog_epoch=1"))
+                          + " SELECT 3,catalog_bytes,catalog_digest FROM social_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
           .hasMessageContaining("exact classified installed schema");
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(1);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
     }
   }
 
@@ -457,6 +457,145 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThatThrownBy(() -> transaction.execute(status -> f.owner().read(request())))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("independent");
+    }
+  }
+
+  @Test
+  void viewSecurityOptionsInvalidateReadRetryAndFreshCaptureWithoutChangingRetainedEvidence()
+      throws Exception {
+    for (String option : List.of("security_invoker", "security_barrier")) {
+      try (Fixture f = fixture("1003")) {
+        // Install the real view before either catalog migration so its initial options are sealed.
+        f.dsl.execute("CREATE VIEW catalog_security_probe AS SELECT 1 AS id");
+        migrate(f, null);
+        Request read = request();
+        var original = f.owner().read(read);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(2);
+        assertThat(original.catalog().schemaFacts())
+            .anySatisfy(
+                fact -> {
+                  assertThat(fact.kind()).isEqualTo(FactKind.VIEW);
+                  assertThat(fact.identity()).isEqualTo("catalog_security_probe");
+                  assertThat(fact.definitionDigest())
+                      .isEqualTo(
+                          f.dsl
+                              .fetchSingle(
+                                  "SELECT 'sha256:'||encode(sha256(convert_to("
+                                      + "jsonb_build_array(pg_get_viewdef(c.oid,true),c.reloptions)::text,'UTF8')),'hex')"
+                                      + " FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
+                                      + " WHERE n.nspname=? AND c.relname='catalog_security_probe'",
+                                  f.schema)
+                              .get(0, String.class));
+                });
+        assertThat(f.owner().read(read)).isEqualTo(original);
+        assertThat(f.owner().readExact(read)).isEqualTo(original);
+        String definition =
+            f.dsl
+                .fetchSingle("SELECT pg_get_viewdef('catalog_security_probe'::regclass,true)")
+                .get(0, String.class);
+        String epochs = f.catalogRows("social_runtime_family_catalog_epoch");
+        String snapshots = f.catalogRows("social_runtime_family_catalog_snapshot");
+        f.dsl.execute("ALTER VIEW catalog_security_probe SET (" + option + "=true)");
+        assertThat(
+                f.dsl
+                    .fetchSingle("SELECT pg_get_viewdef('catalog_security_probe'::regclass,true)")
+                    .get(0, String.class))
+            .isEqualTo(definition);
+        assertThatThrownBy(() -> f.owner().readExact(read))
+            .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(read))
+            .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThat(f.catalogRows("social_runtime_family_catalog_epoch")).isEqualTo(epochs);
+        assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      }
+    }
+  }
+
+  @Test
+  void catalogViewOptionsUpgradeRetainsV1004DataHistoryEpochAndSnapshot() throws Exception {
+    try (Fixture f = fixture("1004")) {
+      f.dsl.execute(
+          "INSERT INTO guilds(tenant_id,name,owner_account_id) VALUES (7,'retained',?::uuid)",
+          "10000000-0000-4000-8000-000000000001");
+      f.dsl.execute("INSERT INTO saga_instance(saga_name,state) VALUES ('retained','PENDING')");
+      Map<String, String> rows = f.retainedRows();
+      Request read = request();
+      var original = f.owner().read(read);
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(1);
+      List<String> history = f.historyRows();
+      String epoch = f.catalogRows("social_runtime_family_catalog_epoch");
+      String snapshots = f.catalogRows("social_runtime_family_catalog_snapshot");
+      migrate(f, null);
+      for (var retained : rows.entrySet())
+        assertThat(f.jsonRows(retained.getKey())).isEqualTo(retained.getValue());
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(h)::text FROM "
+                          + f.history
+                          + " h WHERE version IS DISTINCT FROM '1005' ORDER BY installed_rank")
+                  .getValues(0, String.class))
+          .isEqualTo(history);
+      assertThat(f.catalogRows("social_runtime_family_catalog_epoch WHERE catalog_epoch=1"))
+          .isEqualTo(epoch);
+      assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThatThrownBy(() -> f.owner().readExact(read))
+          .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().read(read))
+          .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      var current = f.owner().read(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(current.catalog().digest()).isNotEqualTo(original.catalog().digest());
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      assertThat(
+              current.catalog().schemaFacts().stream()
+                  .filter(fact -> fact.kind() == FactKind.MIGRATION)
+                  .map(SocialRuntimeFamilyCatalog.SchemaFact::identity)
+                  .toList())
+          .contains("catalog-installation:1004", "catalog-installation:1005")
+          .noneMatch(identity -> identity.contains(":1004:") || identity.contains(":1005:"));
+      for (String version : List.of("1004", "1005")) {
+        String script =
+            version.equals("1004")
+                ? "V1004__social_owner_runtime_family_catalog.sql"
+                : "V1005__social_catalog_view_options.sql";
+        assertThat(current.catalog().schemaFacts())
+            .anySatisfy(
+                fact -> {
+                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+                  assertThat(fact.identity()).isEqualTo("catalog-installation:" + version);
+                  assertThat(fact.definitionDigest())
+                      .isEqualTo(
+                          SocialRuntimeFamilyCatalog.sha256(
+                              script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                });
+      }
+      flyway(f.source, f.schema, f.history, null).validate();
+    }
+  }
+
+  @Test
+  void bothExactSuccessfulCatalogInstallationsAreRequired() throws Exception {
+    for (String version : List.of("1004", "1005")) {
+      for (String change : List.of("success=false", "script='wrong_catalog_installation.sql'")) {
+        try (Fixture f = fixture(null)) {
+          Request read = request();
+          f.owner().read(read);
+          String snapshots = f.catalogRows("social_runtime_family_catalog_snapshot");
+          f.dsl.execute("UPDATE " + f.history + " SET " + change + " WHERE version=?", version);
+          assertThatThrownBy(() -> f.owner().readExact(read))
+              .hasMessageContaining("No durable Social catalog epoch");
+          assertThatThrownBy(() -> f.owner().read(read))
+              .hasMessageContaining("No durable Social catalog epoch");
+          assertThatThrownBy(() -> f.owner().read(request()))
+              .hasMessageContaining("No durable Social catalog epoch");
+          assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+        }
+      }
     }
   }
 
@@ -533,6 +672,15 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       return new SocialRuntimeFamilyCatalogRepository(dsl, manager, schema, "test");
     }
 
+    String catalogRows(String source) {
+      return dsl.fetchSingle(
+              "SELECT coalesce(jsonb_agg(row_json ORDER BY row_json::text),'[]'::jsonb)::text"
+                  + " FROM (SELECT to_jsonb(t) AS row_json FROM (SELECT * FROM "
+                  + source
+                  + ") t) retained_rows")
+          .get(0, String.class);
+    }
+
     long count(String table) {
       return dsl.fetchSingle("SELECT count(*) FROM " + table).get(0, Long.class);
     }
@@ -560,12 +708,13 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
           .getValues(0, String.class);
     }
 
-    List<String> historyRowsExcluding(String version) {
+    List<String> historyRowsExcluding(String first, String second) {
       return dsl.fetch(
               "SELECT to_jsonb(h)::text FROM "
                   + history
-                  + " h WHERE version IS DISTINCT FROM ? ORDER BY installed_rank",
-              version)
+                  + " h WHERE version IS DISTINCT FROM ? AND version IS DISTINCT FROM ? ORDER BY installed_rank",
+              first,
+              second)
           .getValues(0, String.class);
     }
 

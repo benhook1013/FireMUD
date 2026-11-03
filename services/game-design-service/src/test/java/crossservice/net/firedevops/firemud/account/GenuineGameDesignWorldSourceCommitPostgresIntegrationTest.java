@@ -700,12 +700,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
             .placeholders(Map.of("serviceSchema", schema))
             .locations(migrations(service));
     if ("world-management".equals(service)) {
-      flyway.locations(
-          migrations(service),
-          "filesystem:"
-              + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                  .toAbsolutePath()
-                  .normalize());
+      flyway.locations(migrations(service), migrations("common-saga") + "/saga");
     }
     flyway.load().migrate();
     return new Store(
@@ -718,7 +713,10 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         current != null;
         current = current.getParent()) {
       Path target =
-          current.resolve("services/" + service + "-service/src/main/resources/db/migration");
+          current.resolve(
+              "services/"
+                  + ("common-saga".equals(service) ? service : service + "-service")
+                  + "/src/main/resources/db/migration");
       if (Files.isDirectory(target)) return "filesystem:" + target;
     }
     throw new IllegalStateException("Owner migration directory unavailable");
