@@ -59,6 +59,7 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
     int beforeReads = f.transport().reads();
     UUID requestId = UUID.randomUUID();
     var first = c.owner().evaluatePaid(new Request(f.tenantId(), requestId, WORLD));
+    f.clock().advance(java.time.Duration.ofSeconds(30));
     var second = c.owner().evaluatePaid(new Request(f.tenantId(), requestId, WORLD));
     assertThat(f.transport().reads()).isEqualTo(beforeReads + 2);
     assertThat(first.fields())
@@ -72,6 +73,8 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
         .isEqualTo(second.fields().get("snapshotIdentity"));
     assertThat(first.fields().get("evaluationIdentity"))
         .isNotEqualTo(second.fields().get("evaluationIdentity"));
+    assertThat(java.time.Instant.parse((String) second.fields().get("evaluatedAt")))
+        .isAfter(java.time.Instant.parse((String) first.fields().get("evaluatedAt")));
     assertThat(first.fields())
         .doesNotContainKeys("callerAccountId", "issuer", "accountId", "verifiedConnectScopeId");
     assertThat(first.fields().get("quotas"))

@@ -932,6 +932,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     Record receipt =
         Objects.requireNonNull(
             receiptForCurrent(currentLinks), "Committed current receipt is absent");
+    // CANCELED is a terminal negative projection, never a time-bounded positive entitlement.
+    // Its retained observation deadline does not prevent a fresh SDK confirmation below; the
+    // original receipt/source bytes remain mandatory and the result still has its own deadline.
+    boolean terminalCanceled = Status.CANCELED.storageValue().equals(current.status());
     if (current.supersededAt() != null
         || current.rowVersion() != receipt.get("subscription_row_version", Long.class)
         || !current.status().equals(receipt.get("status", String.class))
@@ -939,7 +943,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             .providerSubscriptionId()
             .equals(receipt.get("provider_subscription_id", String.class))
         || now().isBefore(instant(receipt, "committed_at"))
-        || !now().isBefore(instant(receipt, "valid_until"))) {
+        || (!terminalCanceled && !now().isBefore(instant(receipt, "valid_until")))) {
       throw new FenceRejectedException(
           "ENTITLEMENT_UNAVAILABLE: current receipt is expired or inconsistent");
     }
@@ -1076,7 +1080,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         observed.cancelAt().orElse(null),
         nullableInstant(receipt, "cutoff_at"),
         evaluatedAt,
-        earlier(instant(receipt, "valid_until"), decision.validUntil()));
+        decision.status() == Status.CANCELED
+            ? decision.validUntil()
+            : earlier(instant(receipt, "valid_until"), decision.validUntil()));
   }
 
   public static final class ReadFence {
