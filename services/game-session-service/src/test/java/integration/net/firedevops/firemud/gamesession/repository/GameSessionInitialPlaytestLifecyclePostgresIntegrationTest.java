@@ -34,6 +34,7 @@ import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionCurrentPrivatePlaytestRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.Allocation;
@@ -297,6 +298,244 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
     assertThat(context.dsl().fetchCount(DSL.table("gameplay_published_realm_catalog_entry")))
         .isZero();
+  }
+
+  @Test
+  void laterPreparationAndSelectionRemainAvailableAfterPriorPrivateCatalogAllocation() {
+    Context context = context(true);
+    Request firstRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var firstPreparation = context.prepare(firstRequest).preparation();
+    var selectionRepository = new GameSessionCurrentPrivatePlaytestRepository(context.dsl());
+    var scope =
+        new GameSessionCurrentPrivatePlaytestRepository.Scope(
+            NAMESPACE, firstRequest.tenantId(), firstRequest.worldSlug(), firstRequest.realmSlug());
+    var firstSelectionRequest =
+        new GameSessionCurrentPrivatePlaytestRepository.Request(
+            UUID.randomUUID(),
+            scope,
+            firstPreparation.request().requestId(),
+            firstPreparation.playtestLifecycleId(),
+            null,
+            null);
+    var firstSelection =
+        Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(status -> selectionRepository.select(firstSelectionRequest)));
+    assertThat(firstSelection.replayed()).isFalse();
+    assertThat(firstSelection.receipt().headRevision()).isEqualTo(1L);
+    var firstPrivateTargetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            UUID.randomUUID(),
+            firstPreparation.request().requestId(),
+            firstPreparation.playtestLifecycleId());
+    var firstPrivateTarget = context.allocatePrivateTarget(firstPrivateTargetRequest);
+    assertThat(firstPrivateTarget.replayed()).isFalse();
+
+    String privateCatalogBefore = privateCatalogRow(context, firstPrivateTargetRequest.requestId());
+    String firstPreparationBefore =
+        retainedRowWithXmin(context, TABLE, "request_id", firstPreparation.request().requestId());
+    String firstSelectionBefore =
+        retainedRowWithXmin(
+            context,
+            "game_session_private_playtest_selections",
+            "request_id",
+            firstSelectionRequest.requestId());
+    byte[] firstPreparationRequestBytes =
+        Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT request_preimage FROM " + TABLE + " WHERE request_id = ?",
+                        firstPreparation.request().requestId()))
+            .get("request_preimage", byte[].class);
+    byte[] firstSelectionRequestBytes =
+        Objects.requireNonNull(
+                context
+                    .dsl()
+                    .fetchOne(
+                        "SELECT request_preimage FROM game_session_private_playtest_selections WHERE request_id = ?",
+                        firstSelectionRequest.requestId()))
+            .get("request_preimage", byte[].class);
+    var publicCatalogBefore = context.publicCatalogRow();
+    String sourceIntakeBefore =
+        retainedRowWithXmin(
+            context,
+            "game_session_authored_world_source_intake",
+            "operation_id",
+            context.catalog().sourceIntakeReceipt().operationId());
+    String sourceBindingBefore =
+        retainedRowWithXmin(
+            context,
+            "game_session_authored_world_tenant_source_binding",
+            "canonical_tenant_id",
+            context.catalog().tenantId());
+    var namespaceRowsBefore = context.namespaceRows();
+
+    Request laterRequest =
+        context.request(
+            UUID.randomUUID(), firstRequest.realmSlug(), context.now().plusSeconds(7200));
+    var laterAllocation = context.prepare(laterRequest);
+    assertThat(laterAllocation.replayed()).isFalse();
+    var laterPreparation = laterAllocation.preparation();
+    assertThat(laterPreparation.request().realmSlug()).isEqualTo(firstRequest.realmSlug());
+    assertThat(laterPreparation.request().requestId())
+        .isNotEqualTo(firstPreparation.request().requestId());
+    assertThat(laterPreparation.playtestLifecycleId())
+        .isNotEqualTo(firstPreparation.playtestLifecycleId());
+    assertThat(laterPreparation.playableStateNamespaceId())
+        .isNotEqualTo(firstPreparation.playableStateNamespaceId());
+    assertThat(laterPreparation.playtestStateGeneration()).isEqualTo(1);
+
+    var replacementSelectionRequest =
+        new GameSessionCurrentPrivatePlaytestRepository.Request(
+            UUID.randomUUID(),
+            scope,
+            laterPreparation.request().requestId(),
+            laterPreparation.playtestLifecycleId(),
+            1L,
+            firstPreparation.playtestLifecycleId());
+    var replacementSelection =
+        Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(status -> selectionRepository.select(replacementSelectionRequest)));
+    assertThat(replacementSelection.replayed()).isFalse();
+    assertThat(replacementSelection.receipt().headRevision()).isEqualTo(2L);
+    String replacementSelectionBeforeReplay =
+        retainedRowWithXmin(
+            context,
+            "game_session_private_playtest_selections",
+            "request_id",
+            replacementSelectionRequest.requestId());
+    String replacementHeadBeforeReplay =
+        retainedRowWithXmin(
+            context,
+            "game_session_current_private_playtests",
+            "selection_request_id",
+            replacementSelectionRequest.requestId());
+    var current =
+        Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(
+                    status ->
+                        selectionRepository
+                            .readCurrent(
+                                NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
+                            .orElseThrow()));
+    assertThat(current.selection()).isEqualTo(replacementSelection.receipt());
+    assertThat(current.selectedPrepSnapshot().preparation()).isEqualTo(laterPreparation);
+    assertThat(current.selectedPrepSnapshot().state()).isEqualTo(ReadState.INCOMPLETE);
+    assertThat(current.admissionAllowed()).isFalse();
+    assertThat(current.selectedPrepSnapshot().admissionAllowed()).isFalse();
+
+    assertThat(context.prepare(firstRequest)).isEqualTo(new Allocation(firstPreparation, true));
+    assertThat(context.read(firstRequest, firstPreparation.playtestLifecycleId()).preparation())
+        .isEqualTo(firstPreparation);
+    var firstSelectionReplay =
+        Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(status -> selectionRepository.select(firstSelectionRequest)));
+    assertThat(firstSelectionReplay)
+        .isEqualTo(
+            new GameSessionCurrentPrivatePlaytestRepository.SelectionResult(
+                firstSelection.receipt(), true));
+    assertThat(context.allocatePrivateTarget(firstPrivateTargetRequest))
+        .isEqualTo(
+            new GameSessionPrivateFreshTargetRepository.Allocation(
+                firstPrivateTarget.snapshot(), true));
+    assertThat(context.prepare(laterRequest)).isEqualTo(new Allocation(laterPreparation, true));
+
+    assertThat(context.count()).isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_private_playtest_selections")))
+        .isEqualTo(2);
+    assertThat(
+            retainedRowWithXmin(
+                context,
+                "game_session_private_playtest_selections",
+                "request_id",
+                firstSelectionRequest.requestId()))
+        .isEqualTo(firstSelectionBefore);
+    assertThat(
+            retainedRowWithXmin(
+                context,
+                "game_session_private_playtest_selections",
+                "request_id",
+                replacementSelectionRequest.requestId()))
+        .isEqualTo(replacementSelectionBeforeReplay);
+    assertThat(
+            retainedRowWithXmin(
+                context,
+                "game_session_current_private_playtests",
+                "selection_request_id",
+                replacementSelectionRequest.requestId()))
+        .isEqualTo(replacementHeadBeforeReplay);
+    assertThat(
+            retainedRowWithXmin(
+                context, TABLE, "request_id", firstPreparation.request().requestId()))
+        .isEqualTo(firstPreparationBefore);
+    assertThat(
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT request_preimage FROM " + TABLE + " WHERE request_id = ?",
+                            firstPreparation.request().requestId()))
+                .get("request_preimage", byte[].class))
+        .containsExactly(firstPreparationRequestBytes);
+    assertThat(
+            Objects.requireNonNull(
+                    context
+                        .dsl()
+                        .fetchOne(
+                            "SELECT request_preimage FROM game_session_private_playtest_selections WHERE request_id = ?",
+                            firstSelectionRequest.requestId()))
+                .get("request_preimage", byte[].class))
+        .containsExactly(firstSelectionRequestBytes);
+    assertThat(privateCatalogRow(context, firstPrivateTargetRequest.requestId()))
+        .isEqualTo(privateCatalogBefore);
+    assertThat(context.publicCatalogRow()).isEqualTo(publicCatalogBefore);
+    assertThat(
+            retainedRowWithXmin(
+                context,
+                "game_session_authored_world_source_intake",
+                "operation_id",
+                context.catalog().sourceIntakeReceipt().operationId()))
+        .isEqualTo(sourceIntakeBefore);
+    assertThat(
+            retainedRowWithXmin(
+                context,
+                "game_session_authored_world_tenant_source_binding",
+                "canonical_tenant_id",
+                context.catalog().tenantId()))
+        .isEqualTo(sourceBindingBefore);
+    assertThat(context.namespaceRows()).usingRecursiveComparison().isEqualTo(namespaceRowsBefore);
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(2);
+    assertThat(
+            context
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_realm_catalog WHERE private_preparation_request_id IS NOT NULL")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+    var currentAfterReplay =
+        Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(
+                    status ->
+                        selectionRepository
+                            .readCurrent(
+                                NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
+                            .orElseThrow()));
+    assertThat(currentAfterReplay.selection()).isEqualTo(replacementSelection.receipt());
+    assertThat(currentAfterReplay.admissionAllowed()).isFalse();
   }
 
   @Test
@@ -1275,6 +1514,20 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         .fetchSingle(
             "SELECT to_jsonb(c)::text || ':' || xmin::text FROM game_session_canonical_realm_catalog c WHERE creation_request_id = ?",
             requestId)
+        .get(0, String.class);
+  }
+
+  private static String retainedRowWithXmin(
+      Context context, String tableName, String identityColumn, UUID identity) {
+    return context
+        .dsl()
+        .fetchSingle(
+            "SELECT to_jsonb(retained)::text || ':' || xmin::text FROM "
+                + tableName
+                + " retained WHERE "
+                + identityColumn
+                + " = ?",
+            identity)
         .get(0, String.class);
   }
 
