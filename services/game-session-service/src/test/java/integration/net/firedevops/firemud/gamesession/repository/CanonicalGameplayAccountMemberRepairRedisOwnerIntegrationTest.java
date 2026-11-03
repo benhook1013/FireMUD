@@ -551,7 +551,13 @@ class CanonicalGameplayAccountMemberRepairRedisOwnerIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);

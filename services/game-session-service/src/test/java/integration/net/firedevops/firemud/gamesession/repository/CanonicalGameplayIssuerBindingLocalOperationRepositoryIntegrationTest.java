@@ -563,7 +563,13 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
         .schemas(schema.schema())
         .defaultSchema(schema.schema())
         .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
+        .placeholders(java.util.Map.of("serviceSchema", schema.schema()))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .target(MigrationVersion.fromVersion("1038.3"))
         .load()
         .migrate();

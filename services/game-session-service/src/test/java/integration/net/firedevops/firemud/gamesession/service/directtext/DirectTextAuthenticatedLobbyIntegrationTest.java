@@ -215,9 +215,14 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
             .dataSource(source)
             .schemas(schema)
             .defaultSchema(schema)
+            .placeholders(java.util.Map.of("serviceSchema", schema))
             .locations(
                 "filesystem:"
-                    + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
+                    + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+                "filesystem:"
+                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                        .toAbsolutePath()
+                        .normalize());
     if (targetVersion != null) config.target(targetVersion);
     return config.load();
   }

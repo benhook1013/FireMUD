@@ -7,6 +7,7 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -105,7 +106,13 @@ final class CanonicalGameplayIssuerTestFixtures {
             .schemas(schema)
             .defaultSchema(schema)
             .table("flyway_schema_history")
-            .locations(migrationLocation);
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(
+                migrationLocation,
+                "filesystem:"
+                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                        .toAbsolutePath()
+                        .normalize());
     if (targetVersion != null) configuration.target(MigrationVersion.fromVersion(targetVersion));
     configuration.load().migrate();
   }

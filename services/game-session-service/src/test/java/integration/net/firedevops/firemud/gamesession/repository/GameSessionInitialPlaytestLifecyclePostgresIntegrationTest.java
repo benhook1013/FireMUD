@@ -3,9 +3,13 @@ package integration.net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -14,10 +18,12 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamesession.dto.CanonicalPrivateFreshTargetSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
@@ -31,6 +37,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestL
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.Request;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.Snapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.SourceUnavailableException;
+import net.firedevops.firemud.gamesession.repository.GameSessionPrivateFreshTargetRepository;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -42,6 +49,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -111,6 +119,15 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
                 request.requestId());
     assertThat(row.get("characters", Integer.class)).isEqualTo(128);
     assertThat(row.get("bytes", Integer.class)).isEqualTo(512);
+    var privateTarget =
+        context.allocatePrivateTarget(
+            new GameSessionPrivateFreshTargetRepository.Request(
+                UUID.randomUUID(), request.requestId(), preparation.playtestLifecycleId()));
+    assertThat(privateTarget.snapshot().realmDisplayName()).isEqualTo(displayName);
+    assertThat(privateTarget.snapshot().visible()).isFalse();
+    assertThat(privateTarget.snapshot().publicProduction()).isFalse();
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
   }
 
   @Test
@@ -205,8 +222,285 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     assertThat(snapshot.admissionAllowed()).isFalse();
     assertThat(context.count()).isEqualTo(1);
     assertThat(context.retainedRows()).usingRecursiveComparison().isEqualTo(retainedBefore);
+  }
+
+  @Test
+  void
+      allocatesPrivateCatalogIdentityFromExactPreparationAndReadsBackWithoutPublicOrRuntimeEffects() {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var preparation = context.prepare(preparationRequest).preparation();
+    var publicCatalogBefore = context.publicCatalogRow();
+    var namespaceRowsBefore = context.namespaceRows();
+    var targetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            UUID.randomUUID(),
+            preparation.request().requestId(),
+            preparation.playtestLifecycleId());
+
+    var allocated = context.allocatePrivateTarget(targetRequest);
+    CanonicalPrivateFreshTargetSnapshot target = allocated.snapshot();
+    assertThat(allocated.replayed()).isFalse();
+    assertThat(target.targetNamespace()).isEqualTo(NAMESPACE);
+    assertThat(target.tenantId()).isEqualTo(preparation.request().tenantId());
+    assertThat(target.worldSlug()).isEqualTo(preparation.request().worldSlug());
+    assertThat(target.realmSlug()).isEqualTo(preparation.request().realmSlug());
+    assertThat(target.sourceCatalogRealmId()).isEqualTo(context.catalog().realmId());
+    assertThat(target.realmId())
+        .isNotEqualTo(target.sourceCatalogRealmId())
+        .isNotEqualTo(preparation.source().targetPolicy().policyId());
+    assertThat(target.playableStateNamespaceId()).isEqualTo(preparation.playableStateNamespaceId());
+    assertThat(target.playtestLifecycleId()).isEqualTo(preparation.playtestLifecycleId());
+    assertThat(target.playtestStateGeneration()).isEqualTo(1);
+    assertThat(target.catalogRevision()).isEqualTo(1);
+    assertThat(target.visible()).isFalse();
+    assertThat(target.publicProduction()).isFalse();
+    assertThat(target.stateScope()).isEqualTo("ISOLATED");
+    assertThat(target.preparationState()).isEqualTo("PREPARING");
+    assertThat(target.admissionAllowed()).isFalse();
+    assertThat(target.realmDisplayName())
+        .isEqualTo(preparation.source().targetPolicy().source().policy().realmDisplayName());
+    assertThat(target.characterCreationPolicy())
+        .isEqualTo(preparation.source().targetPolicy().source().policy().entryPolicy().name());
+    assertThat(target.targetPolicyId()).isEqualTo(preparation.source().targetPolicy().policyId());
+    assertThat(target.targetPolicyDigest())
+        .isEqualTo(preparation.source().targetPolicy().policyDigest());
+    assertThat(target.canonicalVersionId()).isEqualTo(preparation.source().canonicalVersionId());
+    assertThat(target.publishedReleaseBundleRef())
+        .isEqualTo(preparation.source().publishedReleaseBundleRef());
+    assertThat(target.publishedReleaseBundleDigest())
+        .isEqualTo(preparation.source().publishedReleaseBundleDigest());
+
+    var independentlyRead =
+        context
+            .privateTargets()
+            .readByPreparation(preparation.request().requestId(), preparation.playtestLifecycleId())
+            .orElseThrow();
+    assertThat(independentlyRead).isEqualTo(target);
+    assertThat(context.allocatePrivateTarget(targetRequest))
+        .isEqualTo(new GameSessionPrivateFreshTargetRepository.Allocation(target, true));
+    assertThat(context.publicCatalogRow()).isEqualTo(publicCatalogBefore);
+    assertThat(context.namespaceRows()).isEqualTo(namespaceRowsBefore);
+    assertThat(context.catalogs().readVisiblePublicProductionSnapshots(NAMESPACE))
+        .containsExactly(context.catalog());
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(2);
     assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
     assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_published_realm_catalog_entry")))
+        .isZero();
+  }
+
+  @Test
+  void privateCatalogRequestRejectsChangedPreparationLifecycleAndSecondRequestForOnePreparation() {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var preparation = context.prepare(preparationRequest).preparation();
+    var requestId = UUID.randomUUID();
+    var original =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            requestId, preparation.request().requestId(), preparation.playtestLifecycleId());
+    var allocation = context.allocatePrivateTarget(original);
+
+    assertThatThrownBy(
+            () ->
+                context.allocatePrivateTarget(
+                    new GameSessionPrivateFreshTargetRepository.Request(
+                        requestId, UUID.randomUUID(), preparation.playtestLifecycleId())))
+        .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
+    assertThatThrownBy(
+            () ->
+                context.allocatePrivateTarget(
+                    new GameSessionPrivateFreshTargetRepository.Request(
+                        requestId, preparation.request().requestId(), UUID.randomUUID())))
+        .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
+    assertThatThrownBy(
+            () ->
+                context.allocatePrivateTarget(
+                    new GameSessionPrivateFreshTargetRepository.Request(
+                        UUID.randomUUID(),
+                        preparation.request().requestId(),
+                        preparation.playtestLifecycleId())))
+        .isInstanceOf(GameSessionPrivateFreshTargetRepository.IdempotencyConflictException.class);
+    assertThatThrownBy(
+            () ->
+                context.allocatePrivateTarget(
+                    new GameSessionPrivateFreshTargetRepository.Request(
+                        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())))
+        .isInstanceOf(
+            GameSessionPrivateFreshTargetRepository.PreparationUnavailableException.class);
+    assertThat(context.allocatePrivateTarget(original).snapshot()).isEqualTo(allocation.snapshot());
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(2);
+  }
+
+  @Test
+  void expiredPreparationCannotAllocatePrivateCatalogIdentity() {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(1));
+    var preparation = context.prepare(preparationRequest).preparation();
+    awaitExpiry(context, preparationRequest.forkExpiresAt());
+
+    assertThatThrownBy(
+            () ->
+                context.allocatePrivateTarget(
+                    new GameSessionPrivateFreshTargetRepository.Request(
+                        UUID.randomUUID(),
+                        preparation.request().requestId(),
+                        preparation.playtestLifecycleId())))
+        .isInstanceOf(GameSessionPrivateFreshTargetRepository.PreparationUnavailableException.class)
+        .hasMessageContaining("expired");
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void privateCatalogSqlGuardRejectsReplacementNamespaceAndRollsBackInsert() {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var preparation = context.prepare(preparationRequest).preparation();
+    UUID requestId = UUID.randomUUID();
+    UUID wrongNamespace = UUID.randomUUID();
+    byte[] requestPreimage =
+        frame(
+            "game-session-private-fresh-catalog-request/v1",
+            requestId.toString(),
+            preparation.request().requestId().toString(),
+            preparation.playtestLifecycleId().toString(),
+            preparation.requestDigest());
+    String requestDigest = sha256(requestPreimage);
+    String sql =
+        """
+        INSERT INTO game_session_canonical_realm_catalog (
+            target_namespace, canonical_tenant_id, tenant_slug, world_slug, realm_id, realm_slug,
+            realm_display_name, visible, public_production, state_scope, playable_state_namespace_id,
+            character_creation_policy, catalog_revision, creation_request_id, request_digest,
+            receipt_digest, source_intake_operation_id, source_intake_schema_version,
+            source_intake_request_id, source_intake_request_digest, source_intake_receipt_digest,
+            source_schema_version, source_registration_request_id, source_operation_id,
+            source_request_digest, source_world_display_name, source_game_row_id,
+            source_game_tenant_key, source_provenance_kind, source_evidence_digest,
+            complete_policy_set_evidence, private_target_request_preimage,
+            private_preparation_request_id, private_playtest_lifecycle_id,
+            private_preparation_request_digest, private_state_generation,
+            private_source_catalog_realm_id, private_source_catalog_request_id,
+            private_source_catalog_revision, private_source_catalog_receipt_digest,
+            private_target_policy_id, private_target_policy_digest,
+            private_target_policy_source_commit_id, private_target_policy_source_revision_id,
+            private_target_policy_logical_revision_id, private_canonical_version_id,
+            private_published_release_bundle_ref, private_published_release_bundle_digest,
+            private_source_policy_set_digest, private_source_policy_carrier_digest)
+        SELECT p.target_namespace, p.canonical_tenant_id, source.tenant_slug, p.world_slug,
+            gen_random_uuid(), p.realm_slug, p.target_policy_realm_display_name, false, false,
+            'ISOLATED', ?, p.target_policy_entry_policy, 1, ?, ?,
+            'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+            source.source_intake_operation_id, source.source_intake_schema_version,
+            source.source_intake_request_id, source.source_intake_request_digest,
+            source.source_intake_receipt_digest, source.source_schema_version,
+            source.source_registration_request_id, source.source_operation_id,
+            source.source_request_digest, source.source_world_display_name, source.source_game_row_id,
+            source.source_game_tenant_key, source.source_provenance_kind, source.source_evidence_digest,
+            source.complete_policy_set_evidence, ?, p.request_id, p.playtest_lifecycle_id,
+            p.request_digest, p.playtest_state_generation, p.source_catalog_realm_id,
+            p.source_catalog_request_id, p.source_catalog_revision, p.source_catalog_receipt_digest,
+            p.target_policy_id, p.target_policy_digest, p.target_policy_source_commit_id,
+            p.target_policy_source_revision_id, p.target_policy_logical_revision_id,
+            p.canonical_version_id, p.published_release_bundle_ref,
+            p.published_release_bundle_digest, p.source_policy_set_digest,
+            p.source_policy_carrier_digest
+        FROM game_session_initial_playtest_preparations p
+        JOIN game_session_canonical_realm_catalog source
+          ON source.target_namespace = p.target_namespace
+         AND source.canonical_tenant_id = p.canonical_tenant_id
+         AND source.realm_id = p.source_catalog_realm_id
+        WHERE p.request_id = ? AND p.playtest_lifecycle_id = ?
+        """;
+
+    assertThatThrownBy(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    sql,
+                                    wrongNamespace,
+                                    requestId,
+                                    requestDigest,
+                                    requestPreimage,
+                                    preparation.request().requestId(),
+                                    preparation.playtestLifecycleId())))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining(
+            "Private FRESH catalog row differs from its exact retained preparation");
+    // A NULL build reference must not turn the SQL guard and receipt conjunction into UNKNOWN.
+    // This uses the real guarded INSERT, a matching namespace and the same rolled-back intent.
+    String nullBuildSql =
+        sql.replace(
+            "p.canonical_version_id, p.published_release_bundle_ref,",
+            "p.canonical_version_id, NULL,");
+    assertThat(nullBuildSql).isNotEqualTo(sql);
+    assertThatThrownBy(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    nullBuildSql,
+                                    preparation.playableStateNamespaceId(),
+                                    requestId,
+                                    requestDigest,
+                                    requestPreimage,
+                                    preparation.request().requestId(),
+                                    preparation.playtestLifecycleId())))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining("chk_gs_private_fresh_catalog_binding");
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+  }
+
+  @Test
+  void privateCatalogCommitGuardRechecksPreparationExpiry() {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(5));
+    var preparation = context.prepare(preparationRequest).preparation();
+    var targetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            UUID.randomUUID(),
+            preparation.request().requestId(),
+            preparation.playtestLifecycleId());
+
+    assertThatThrownBy(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          context.privateTargets().allocate(targetRequest);
+                          awaitExpiry(context, preparationRequest.forkExpiresAt());
+                        }))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining(
+            "Private FRESH catalog preparation expired before final catalog commit");
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(1);
+    assertThat(
+            context
+                .privateTargets()
+                .readByPreparation(
+                    preparation.request().requestId(), preparation.playtestLifecycleId()))
+        .isEmpty();
   }
 
   @Test
@@ -688,6 +982,21 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     throw new AssertionError("Real database clock did not reach expiry");
   }
 
+  private static byte[] frame(String... values) {
+    var out = new ByteArrayOutputStream();
+    for (String value : values) DraftAuthorizationFenceBinding.frame(out, value);
+    return out.toByteArray();
+  }
+
+  private static String sha256(byte[] bytes) {
+    try {
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    } catch (NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException(impossible);
+    }
+  }
+
   private Context context(boolean withSource) {
     return context(
         withSource,
@@ -706,15 +1015,30 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+            "classpath:db/migration/saga")
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    TransactionTemplate transaction =
-        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    var transactionManager = new DataSourceTransactionManager(dataSource);
+    TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+    TransactionTemplate serializableTransaction = new TransactionTemplate(transactionManager);
+    serializableTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     var repository = new GameSessionInitialPlaytestLifecycleRepository(dsl);
-    if (!withSource) return new Context(dsl, transaction, repository, null, null);
+    var catalogs = new GameSessionCanonicalRealmCatalogRepository(dsl);
+    var privateTargets = new GameSessionPrivateFreshTargetRepository(dsl);
+    if (!withSource)
+      return new Context(
+          dsl,
+          transaction,
+          serializableTransaction,
+          repository,
+          privateTargets,
+          catalogs,
+          null,
+          null);
     // These upstream receipts are explicitly stipulated. Every retained GS row is created through
     // its actual source, fresh association and closed Human canonical catalog owner.
     UUID tenant = UUID.randomUUID();
@@ -789,12 +1113,19 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
             "generation-1",
             3L,
             privatePolicies);
-    var catalogs = new GameSessionCanonicalRealmCatalogRepository(dsl);
     var preparedCatalog = catalogs.prepareInitialPublicProduction(catalogRequest, published);
     var catalog =
         Objects.requireNonNull(
             transaction.execute(status -> catalogs.createInitialPublicProduction(preparedCatalog)));
-    return new Context(dsl, transaction, repository, catalog, published);
+    return new Context(
+        dsl,
+        transaction,
+        serializableTransaction,
+        repository,
+        privateTargets,
+        catalogs,
+        catalog,
+        published);
   }
 
   private static RealmEntryPolicy privatePolicy(
@@ -862,7 +1193,10 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   private record Context(
       DSLContext dsl,
       TransactionTemplate transaction,
+      TransactionTemplate serializableTransaction,
       GameSessionInitialPlaytestLifecycleRepository repository,
+      GameSessionPrivateFreshTargetRepository privateTargets,
+      GameSessionCanonicalRealmCatalogRepository catalogs,
       CanonicalRealmCatalogSnapshot catalog,
       RealmPolicyPublishedEvidence.PublishedSet published) {
     Instant now() {
@@ -909,6 +1243,12 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
       return Objects.requireNonNull(transaction.execute(status -> repository.prepare(request)));
     }
 
+    GameSessionPrivateFreshTargetRepository.Allocation allocatePrivateTarget(
+        GameSessionPrivateFreshTargetRepository.Request request) {
+      return Objects.requireNonNull(
+          serializableTransaction.execute(status -> privateTargets.allocate(request)));
+    }
+
     GameSessionInitialPlaytestLifecycleRepository.Snapshot read(Request request, UUID lifecycle) {
       return Objects.requireNonNull(
           transaction.execute(
@@ -931,6 +1271,24 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
       return dsl.fetch(
               "SELECT 'catalog' AS source, realm_id::TEXT AS id, xmin::TEXT AS version FROM game_session_canonical_realm_catalog "
                   + "UNION ALL SELECT 'namespace', playable_state_namespace_id::TEXT, xmin::TEXT FROM gameplay_tenant_shared_playable_state_namespace ORDER BY 1, 2")
+          .intoMaps();
+    }
+
+    Map<String, Object> publicCatalogRow() {
+      return Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT to_jsonb(catalog)::TEXT AS retained_row, xmin::TEXT AS row_version "
+                      + "FROM game_session_canonical_realm_catalog catalog WHERE realm_id = ?",
+                  catalog.realmId()))
+          .intoMap();
+    }
+
+    List<Map<String, Object>> namespaceRows() {
+      return dsl.fetch(
+              "SELECT tenant_id, canonical_tenant_id, target_namespace, "
+                  + "playable_state_namespace_id::TEXT AS namespace_id, xmin::TEXT AS row_version "
+                  + "FROM gameplay_tenant_shared_playable_state_namespace "
+                  + "ORDER BY playable_state_namespace_id")
           .intoMaps();
     }
   }

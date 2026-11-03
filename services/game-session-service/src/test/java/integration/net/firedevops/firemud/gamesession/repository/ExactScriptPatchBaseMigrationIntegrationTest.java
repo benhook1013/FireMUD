@@ -81,7 +81,17 @@ class ExactScriptPatchBaseMigrationIntegrationTest {
               + "'coord-1', 'followup-1', 'region-a', 1, 'region-b', 1, 'REMOTE_APPLIED', "
               + "CURRENT_TIMESTAMP, 'legacy-patch', 7, 9)");
 
-      Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+      Flyway.configure()
+          .dataSource(dataSource)
+          .placeholders(java.util.Map.of("serviceSchema", "public"))
+          .locations(
+              MIGRATION_LOCATION,
+              "filesystem:"
+                  + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                      .toAbsolutePath()
+                      .normalize())
+          .load()
+          .migrate();
 
       var legacyGameplayCommand =
           dsl.fetchOne(

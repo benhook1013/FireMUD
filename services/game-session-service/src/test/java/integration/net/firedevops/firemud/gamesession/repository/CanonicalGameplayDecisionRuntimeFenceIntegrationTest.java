@@ -43,7 +43,13 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
           .schemas(schema)
           .defaultSchema(schema)
           .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
+          .placeholders(java.util.Map.of("serviceSchema", schema))
+          .locations(
+              MIGRATION_LOCATION,
+              "filesystem:"
+                  + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                      .toAbsolutePath()
+                      .normalize())
           .load()
           .migrate();
 
@@ -560,7 +566,13 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .target("1044.1")
         .load()
         .migrate();
@@ -654,7 +666,13 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
             .schemas(schema)
             .defaultSchema(schema)
             .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(
+                MIGRATION_LOCATION,
+                "filesystem:"
+                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                        .toAbsolutePath()
+                        .normalize());
     if (targetVersion != null) configuration.target(targetVersion);
     configuration.load().migrate();
   }

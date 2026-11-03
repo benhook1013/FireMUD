@@ -2180,7 +2180,13 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .schemas(testSchema.schema())
         .defaultSchema(testSchema.schema())
         .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
+        .placeholders(java.util.Map.of("serviceSchema", testSchema.schema()))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .target(MigrationVersion.fromVersion("1037"))
         .load()
         .migrate();
@@ -2192,7 +2198,13 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .schemas(testSchema.schema())
         .defaultSchema(testSchema.schema())
         .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
+        .placeholders(java.util.Map.of("serviceSchema", testSchema.schema()))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .target(MigrationVersion.fromVersion("1038"))
         .load()
         .migrate();
@@ -2221,7 +2233,13 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .target(MigrationVersion.fromVersion("1022"))
         .load()
         .migrate();
@@ -2233,7 +2251,13 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
+        .placeholders(java.util.Map.of("serviceSchema", schema))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
     return new TestSchema(schema, dataSource, dsl);

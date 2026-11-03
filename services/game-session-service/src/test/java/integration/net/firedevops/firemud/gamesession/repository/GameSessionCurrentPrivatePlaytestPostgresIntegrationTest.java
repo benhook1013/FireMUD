@@ -416,7 +416,9 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+            "classpath:db/migration/saga")
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
     DSLContext dsl =

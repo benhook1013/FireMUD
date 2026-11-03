@@ -484,7 +484,13 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
             .dataSource(dataSource)
             .schemas(schema)
             .defaultSchema(schema)
-            .locations("filesystem:" + migrations)
+            .locations(
+                "filesystem:" + migrations,
+                "filesystem:"
+                    + migrations
+                        .resolve(
+                            "../../../../../../common-saga/src/main/resources/db/migration/saga")
+                        .normalize())
             .placeholders(Map.of("serviceSchema", schema));
     if (version != null) migration.target(MigrationVersion.fromVersion(version));
     migration

@@ -146,8 +146,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     ControlledConnectionFailureDataSource dataSource = dataSource();
     Flyway.configure()
         .dataSource(dataSource)
+        .placeholders(java.util.Map.of("serviceSchema", "public"))
         .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
@@ -1528,9 +1533,13 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .table("flyway_schema_history")
+        .placeholders(java.util.Map.of("serviceSchema", schema))
         .locations(
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
             "filesystem:"
-                + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize());
   }
 
   private static void dropSchema(String schema) {

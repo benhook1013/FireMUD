@@ -1,0 +1,842 @@
+package net.firedevops.firemud.gamesession.repository;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.FactKind;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.FreshDisposition;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.GapId;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.Request;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.Role;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.StateClass;
+import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalogCodec;
+import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+/**
+ * Real combined Game Session/Saga filesystem/PostgreSQL source tests, never an H2 pg_catalog model.
+ * Populated predecessor identities/bytes are controlled retention fixtures, not genuine private
+ * issuance, Account/World authority, Redis custody, process-death recovery or whole-FRESH proof.
+ * Positive tests deliberately do not skip when Docker is absent. Execution is delegated to Main.
+ */
+@Testcontainers
+@SuppressWarnings("resource")
+class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
+  private static final String MIGRATIONS =
+      "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+  private static final String SAGA_MIGRATIONS =
+      "filesystem:"
+          + Path.of("../common-saga/src/main/resources/db/migration/saga")
+              .toAbsolutePath()
+              .normalize();
+  private static final String HISTORY = "flyway_schema_history_game_session_service";
+  private static final String SNAPSHOTS = "game_session_runtime_family_catalog_snapshot";
+  private static final String EPOCHS = "game_session_runtime_family_catalog_epoch";
+  private static final String CLASSIFICATIONS = "game_session_runtime_family_classification";
+  private static final String GAPS = "game_session_runtime_catalog_non_sql_gap";
+
+  @Container
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @BeforeAll
+  static void awaitReady() {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+  }
+
+  @Test
+  void currentCombinedChainSealsEveryEmptyTableActualRenamesComponentsAndExplicitBlockingGaps() {
+    try (Fixture f = fixture(null)) {
+      Map<String, String> before = f.rows(f.tables());
+      var evidence = f.owner().capture(request());
+      var catalog = evidence.catalog();
+      assertThat(catalog.catalogEpoch()).isEqualTo(1);
+      assertThat(
+              catalog.schemaFacts().stream()
+                  .filter(fact -> fact.kind() == FactKind.TABLE)
+                  .map(GameSessionRuntimeFamilyCatalog.SchemaFact::identity)
+                  .toList())
+          .containsExactlyInAnyOrderElementsOf(f.tables());
+      assertThat(catalog.families().stream().filter(family -> family.component().isEmpty()).count())
+          .isEqualTo(f.tables().size());
+      for (String name : List.of("gameplay_command", "remote_followup")) {
+        assertThat(catalog.families())
+            .anySatisfy(
+                family -> {
+                  assertThat(family.familyId()).isEqualTo(name);
+                  assertThat(family.stateClass()).isEqualTo(StateClass.UNKNOWN);
+                  assertThat(family.freshDisposition())
+                      .isEqualTo(FreshDisposition.STATE_CLASS_UNKNOWN_BLOCKING);
+                });
+      }
+      assertThat(catalog.families())
+          .anySatisfy(
+              family -> {
+                assertThat(family.familyId()).isEqualTo("game_manifest");
+                assertThat(family.stateClass()).isEqualTo(StateClass.UNRESOLVED);
+                assertThat(family.freshDisposition())
+                    .isEqualTo(FreshDisposition.UNSUPPORTED_SOURCE_BLOCKING);
+                assertThat(family.ownerConsequence())
+                    .contains("legacy", "tenant", "Not build or FRESH authority");
+              });
+      for (String name :
+          List.of(
+              "tick_batch",
+              "tick_effect",
+              "remote_followup_result",
+              "script_pin_operation",
+              "game_session_region_runtime_status",
+              "game_session_region_timeline_preparation")) {
+        assertThat(catalog.families())
+            .anySatisfy(
+                family -> {
+                  assertThat(family.familyId()).isEqualTo(name);
+                  assertThat(family.freshDisposition())
+                      .isEqualTo(FreshDisposition.RUNTIME_EVIDENCE_BLOCKING);
+                });
+      }
+      assertThat(catalog.families())
+          .anySatisfy(
+              family -> {
+                assertThat(family.familyId()).isEqualTo("player_command_history");
+                assertThat(family.role()).isEqualTo(Role.AUDIT);
+              });
+      for (String name :
+          List.of(
+              "saga_instance",
+              "saga_step",
+              HISTORY,
+              "gs_canonical_account_coverage_snapshot_issuer_obligation",
+              "gs_canonical_account_coverage_snapshot_region_obligation",
+              "game_session_canonical_account_admission_fence_intent_cohort_ro",
+              "game_session_canonical_account_admission_fence_intent_barrier_t",
+              "game_instances.script_patch_version",
+              "gameplay_command.declared_effects_json",
+              "game_session_canonical_binding_transition.admission_request_id",
+              "game_session_canonical_realm_catalog.private_preparation_request_id")) {
+        assertThat(catalog.families()).anyMatch(family -> family.familyId().equals(name));
+      }
+      assertThat(catalog.families())
+          .noneMatch(
+              family ->
+                  family.familyId().equals("redis_session")
+                      || family.familyId().equals("tick_queue")
+                      || family.familyId().equals("issuer_redis_index"));
+      assertThat(catalog.families())
+          .allSatisfy(family -> assertThat(family.ownerConsequence()).isNotBlank());
+      assertThat(catalog.nonSqlGaps())
+          .extracting(GameSessionRuntimeFamilyCatalog.NonSqlGap::id)
+          .containsExactly(GapId.values());
+      assertThat(catalog.schemaFacts())
+          .anyMatch(fact -> fact.kind() == FactKind.ROUTINE)
+          .anyMatch(fact -> fact.kind() == FactKind.MIGRATION)
+          .anyMatch(fact -> fact.kind() == FactKind.TRIGGER)
+          .anyMatch(fact -> fact.kind() == FactKind.SEQUENCE);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(catalog_epoch) FROM "
+                          + EPOCHS)
+                  .get(0, Boolean.class))
+          .isTrue();
+      before.remove(SNAPSHOTS);
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      for (String table :
+          List.of(
+              "game_instances",
+              "gameplay_admission_pointer",
+              "game_session_canonical_realm_catalog",
+              "game_session_initial_playtest_preparations",
+              "game_session_private_playtest_selections",
+              "game_session_current_private_playtests",
+              "gameplay_command",
+              "tick_batch",
+              "tick_effect")) {
+        assertThat(f.count(table)).as(table).isZero();
+      }
+    }
+  }
+
+  @Test
+  void actualConfiguredHistoryIsBoundWithoutHardcodedHistoryAlias() {
+    for (String history :
+        List.of("flyway_schema_history_public", "flyway_schema_history_custom_gs")) {
+      try (Fixture f = fixture(null, history)) {
+        var evidence = f.owner().capture(request());
+        assertThat(evidence.catalog().families())
+            .anySatisfy(
+                family -> {
+                  assertThat(family.familyId()).isEqualTo(history);
+                  assertThat(family.freshDisposition()).isEqualTo(FreshDisposition.CONTROL_ONLY);
+                });
+        assertThat(f.owner().readExact(evidence.request())).isEqualTo(evidence);
+        assertThat(
+                f.dsl
+                    .fetchSingle("SELECT to_regclass(?) IS NULL", f.schema + "." + HISTORY)
+                    .get(0, Boolean.class))
+            .isTrue();
+      }
+    }
+  }
+
+  @Test
+  void exactReplayReconstructionAndIndependentReadbackRetainSnapshotAndRejectChangedNamespace() {
+    try (Fixture f = fixture(null)) {
+      Request read = request();
+      var original = f.owner().capture(read);
+      assertThat(f.owner().capture(read)).isEqualTo(original);
+      assertThat(f.owner().readExact(read)).isEqualTo(original);
+      assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
+      var another = f.owner().capture(request());
+      assertThat(another.snapshotId()).isNotEqualTo(original.snapshotId());
+      assertThat(another.catalog().exactBytes()).isEqualTo(original.catalog().exactBytes());
+      assertThat(f.evidence(read))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT evidence_digest FROM " + SNAPSHOTS + " WHERE read_request_id=?",
+                      read.readRequestId())
+                  .get(0, String.class))
+          .isEqualTo(original.digest());
+      var foreignConfig =
+          new GameSessionRuntimeFamilyCatalogRepository(f.dsl, f.manager, f.schema, "other");
+      assertThatThrownBy(() -> foreignConfig.capture(new Request(read.readRequestId(), "other")))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().readExact(request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.count(SNAPSHOTS)).isEqualTo(2);
+    }
+  }
+
+  @Test
+  void concurrentExactRetriesConvergeOnOneCommittedSnapshot() throws Exception {
+    try (Fixture f = fixture(null);
+        var workers = Executors.newFixedThreadPool(2)) {
+      Request read = request();
+      var start = new CountDownLatch(1);
+      var first =
+          workers.submit(
+              () -> {
+                start.await();
+                return f.owner().capture(read);
+              });
+      var second =
+          workers.submit(
+              () -> {
+                start.await();
+                return f.owner().capture(read);
+              });
+      start.countDown();
+      var evidence = first.get(30, TimeUnit.SECONDS);
+      assertThat(second.get(30, TimeUnit.SECONDS)).isEqualTo(evidence);
+      assertThat(f.owner().readExact(read)).isEqualTo(evidence);
+      assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void populatedV1056UpgradePreservesAllOriginalRowsHistorySequencesAndGuards() {
+    try (Fixture f = fixture("1056")) {
+      f.populatePredecessor();
+      Map<String, String> before = f.rows(f.tables());
+      before.remove(f.history);
+      for (String table :
+          List.of(
+              "game_instances",
+              "game_manifest",
+              "gameplay_command",
+              "player_command_history",
+              "resume_transcript_entry",
+              "script_pin_operation",
+              "tick_batch",
+              "tick_effect",
+              "remote_followup",
+              "remote_followup_result",
+              "game_session_start_session_operator_attempt",
+              "game_session_initial_gameplay_login_journal",
+              "saga_instance",
+              "saga_step")) {
+        assertThat(before.get(table)).as(table).isNotEqualTo("[]");
+      }
+      List<String> history = f.historyRows(false);
+      List<String> sequences = f.sequencePositions();
+      Map<String, String> guards = f.guards();
+      Map<String, String> routines = f.routines();
+      Map<String, String> constraints = f.constraints();
+      Map<String, String> indexes = f.indexes();
+      migration(f.source, f.schema, f.history, null).migrate();
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.historyRows(true)).isEqualTo(history);
+      assertThat(f.sequencePositions()).isEqualTo(sequences);
+      assertThat(f.guards()).containsAllEntriesOf(guards);
+      assertThat(f.routines()).containsAllEntriesOf(routines);
+      assertThat(f.constraints()).containsAllEntriesOf(constraints);
+      assertThat(f.indexes()).containsAllEntriesOf(indexes);
+      var original = f.owner().capture(request());
+      assertThat(f.owner().readExact(original.request())).isEqualTo(original);
+      migration(f.source, f.schema, f.history, null).migrate();
+      migration(f.source, f.schema, f.history, null).validate();
+      assertThat(f.owner().capture(original.request())).isEqualTo(original);
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.sequencePositions()).isEqualTo(sequences);
+      // Original authority/replay/hold guards remain effective, not merely present by name.
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "UPDATE game_session_start_session_operator_attempt SET owner_fence=owner_fence+1"))
+          .hasMessageContaining("immutable");
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "UPDATE game_session_start_session_operator_attempt SET lease_expires_at=lease_expires_at+interval '1 hour'"))
+          .hasMessageContaining("immutable");
+      assertThatThrownBy(
+              () -> f.dsl.execute("DELETE FROM game_session_start_session_operator_attempt"))
+          .hasMessageContaining("immutable");
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "UPDATE game_session_initial_gameplay_login_journal SET expected_attempt_fence=2"))
+          .hasMessageContaining("cannot be replaced or reopened");
+      assertThatThrownBy(
+              () -> f.dsl.execute("DELETE FROM game_session_initial_gameplay_login_journal"))
+          .hasMessageContaining("retention is held");
+      assertThatThrownBy(
+              () -> f.dsl.execute("TRUNCATE game_session_initial_gameplay_login_journal CASCADE"))
+          .hasMessageContaining("retention is held");
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+    }
+  }
+
+  @Test
+  void unknownEmptyPredecessorRefusesMigrationAtomicallyWithoutHistoryRewrite() {
+    try (Fixture f = fixture("1056")) {
+      f.dsl.execute("CREATE TABLE unknown_runtime_family(id BIGINT PRIMARY KEY)");
+      List<String> history = f.historyRows(false);
+      assertThatThrownBy(() -> migration(f.source, f.schema, f.history, null).migrate())
+          .hasMessageContaining("Unclassified or changed Game Session schema family");
+      assertThat(
+              f.dsl
+                  .fetchSingle("SELECT to_regclass(?) IS NULL", f.schema + "." + EPOCHS)
+                  .get(0, Boolean.class))
+          .isTrue();
+      assertThat(f.historyRows(false)).isEqualTo(history);
+      assertThat(f.count("unknown_runtime_family")).isZero();
+    }
+  }
+
+  @Test
+  void evenAnEmptyUnknownTableInvalidatesReadbackAndRefusesNewCapture() {
+    try (Fixture f = fixture(null)) {
+      var original = f.owner().capture(request());
+      f.dsl.execute("CREATE TABLE unknown_runtime_family(id BIGINT PRIMARY KEY)");
+      assertThat(f.count("unknown_runtime_family")).isZero();
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .hasMessageContaining("Unclassified or changed");
+      assertThatThrownBy(() -> f.owner().capture(request()))
+          .hasMessageContaining("Unclassified or changed");
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void addDropRenameChangeTableColumnConstraintIndexSequenceOrRoutineCannotReuseOldSeal() {
+    for (String change :
+        List.of(
+            "ALTER TABLE game_manifest ADD COLUMN future_state TEXT",
+            "ALTER TABLE game_manifest DROP COLUMN description",
+            "ALTER TABLE game_manifest RENAME COLUMN description TO changed_description",
+            "ALTER TABLE game_manifest ADD CONSTRAINT catalog_probe CHECK(id>0)",
+            "ALTER TABLE game_manifest RENAME TO renamed_manifest",
+            "DROP TABLE game_manifest",
+            "CREATE INDEX catalog_probe ON game_manifest(version_id)",
+            "ALTER SEQUENCE game_manifest_id_seq INCREMENT BY 2",
+            "CREATE FUNCTION future_runtime_writer() RETURNS INTEGER LANGUAGE SQL AS 'SELECT 1'",
+            "ALTER FUNCTION guard_initial_gameplay_login_journal() RENAME TO renamed_login_guard",
+            "CREATE OR REPLACE FUNCTION guard_initial_gameplay_login_journal() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$")) {
+      try (Fixture f = fixture(null)) {
+        var original = f.owner().capture(request());
+        f.dsl.execute(change);
+        assertThatThrownBy(() -> f.owner().readExact(original.request()))
+            .as(change)
+            .isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> f.owner().capture(request()))
+            .as(change)
+            .isInstanceOf(RuntimeException.class);
+        assertThat(f.evidence(original.request()))
+            .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+        assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
+      }
+    }
+  }
+
+  @Test
+  void changedClassificationInvalidatesWithoutChangingRetainedEvidence() {
+    try (Fixture f = fixture(null)) {
+      var original = f.owner().capture(request());
+      f.addComponent();
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().capture(request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+    }
+  }
+
+  @Test
+  void priorAndLaterHistoryAndOwnSuccessfulScriptRemainSeparateInstallationChecks() {
+    try (Fixture f = fixture(null)) {
+      var original = f.owner().capture(request());
+      f.dsl.execute("UPDATE " + f.history + " SET checksum=checksum+1 WHERE version='1'");
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+    }
+    for (String change :
+        List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
+      try (Fixture f = fixture(null)) {
+        f.dsl.execute("UPDATE " + f.history + " SET " + change + " WHERE version='1057'");
+        assertThatThrownBy(() -> f.owner().capture(request()))
+            .hasMessageContaining("No durable Game Session catalog epoch");
+        assertThat(f.count(SNAPSHOTS)).isZero();
+      }
+    }
+    try (Fixture f = fixture(null)) {
+      var original = f.owner().capture(request());
+      f.dsl.execute(
+          "INSERT INTO "
+              + f.history
+              + "(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success)"
+              + " VALUES(10000,'1058','controlled later migration','SQL','V1058__probe.sql',1,current_user,0,true)");
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+    }
+    try (Fixture f = fixture(null)) {
+      f.dsl.execute(
+          "INSERT INTO "
+              + f.history
+              + "(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success)"
+              + " SELECT 10000,version,description,type,script,checksum,installed_by,execution_time,success FROM "
+              + f.history
+              + " WHERE version='1057'");
+      assertThatThrownBy(() -> f.owner().capture(request()))
+          .hasMessageContaining("No durable Game Session catalog epoch");
+    }
+  }
+
+  @Test
+  void explicitNewOwnerEpochRetainsButInvalidatesOldRequestsAndRejectsReusedOrSkippedEpochs() {
+    try (Fixture f = fixture(null)) {
+      var original = f.owner().capture(request());
+      f.addComponent();
+      for (long invalid : new long[] {1, 3}) {
+        assertThatThrownBy(() -> f.installEpoch(invalid))
+            .hasMessageContaining("exact classified installed schema");
+      }
+      // Controlled explicit owner revision, not an exposed registry/runtime mutation API.
+      f.installEpoch(2);
+      assertThatThrownBy(() -> f.owner().capture(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      var revised = f.owner().capture(request());
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
+      assertThat(f.count(EPOCHS)).isEqualTo(2);
+    }
+  }
+
+  @Test
+  void metadataEpochAndSnapshotGuardsRefuseMutationStaleBytesAndChangedExactSqlFrames() {
+    try (Fixture f = fixture(null)) {
+      var original = f.owner().capture(request());
+      for (String table : List.of(CLASSIFICATIONS, GAPS, EPOCHS, SNAPSHOTS)) {
+        assertThatThrownBy(() -> f.dsl.execute("DELETE FROM " + table))
+            .hasMessageContaining("immutable");
+        assertThatThrownBy(() -> f.dsl.execute("TRUNCATE " + table + " CASCADE"))
+            .hasMessageContaining("immutable");
+        String column =
+            table.equals(CLASSIFICATIONS)
+                ? "family_id"
+                : table.equals(GAPS) ? "gap_id" : "catalog_epoch";
+        assertThatThrownBy(() -> f.dsl.execute("UPDATE " + table + " SET " + column + "=" + column))
+            .hasMessageContaining("immutable");
+      }
+      for (String consequence : List.of(" ", "\t")) {
+        assertThatThrownBy(
+                () ->
+                    f.dsl.execute(
+                        "INSERT INTO "
+                            + CLASSIFICATIONS
+                            + " VALUES('game_manifest.description','game_manifest','description','SOURCE','UNRESOLVED',"
+                            + "'UNSUPPORTED_SOURCE_BLOCKING','UNRESOLVED_RETAINED',?)",
+                        consequence))
+            .hasMessageContaining("ck_gs_runtime_family_consequence");
+      }
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "INSERT INTO "
+                          + EPOCHS
+                          + "(catalog_epoch,catalog_bytes,catalog_digest)"
+                          + " SELECT 2,catalog_bytes,catalog_digest FROM "
+                          + EPOCHS
+                          + " WHERE catalog_epoch=1"))
+          .hasMessageContaining("exact classified installed schema");
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "INSERT INTO "
+                          + SNAPSHOTS
+                          + "(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
+                          + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest"
+                          + " FROM "
+                          + SNAPSHOTS
+                          + " WHERE read_request_id=?",
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      original.request().readRequestId()))
+          .hasMessageContaining("complete exact request and evidence");
+      assertThatThrownBy(
+              () ->
+                  f.dsl.execute(
+                      "INSERT INTO "
+                          + SNAPSHOTS
+                          + "(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest)"
+                          + " SELECT ?,target_namespace,request_bytes,request_digest,?,catalog_epoch,'sha256:'||repeat('0',64),evidence_bytes,evidence_digest"
+                          + " FROM "
+                          + SNAPSHOTS
+                          + " WHERE read_request_id=?",
+                      UUID.randomUUID(),
+                      UUID.randomUUID(),
+                      original.request().readRequestId()))
+          .hasMessageContaining("new owner epoch required");
+      assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void postCommitDriftFailsReadbackButLeavesTheOriginalSnapshotRetained() {
+    try (Fixture f = fixture(null)) {
+      // Controlled inter-transaction race, using real commits; no production callback is added.
+      var changeAfterFirstCommit =
+          new PlatformTransactionManager() {
+            private boolean captured;
+
+            @Override
+            public TransactionStatus getTransaction(TransactionDefinition definition) {
+              return f.manager.getTransaction(definition);
+            }
+
+            @Override
+            public void commit(TransactionStatus status) {
+              f.manager.commit(status);
+              if (!captured) {
+                captured = true;
+                f.addComponent();
+              }
+            }
+
+            @Override
+            public void rollback(TransactionStatus status) {
+              f.manager.rollback(status);
+            }
+          };
+      var owner =
+          new GameSessionRuntimeFamilyCatalogRepository(
+              f.dsl, changeAfterFirstCommit, f.schema, "test");
+      Request read = request();
+      assertThatThrownBy(() -> owner.capture(read))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
+      assertThat(
+              GameSessionRuntimeFamilyCatalogCodec.evidenceFromStored(f.evidence(read)).request())
+          .isEqualTo(read);
+      assertThatThrownBy(() -> f.owner().readExact(read))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+    }
+  }
+
+  @Test
+  void captureUsesIndependentCommittedTransactionsAndRejectsRealAmbientSql() {
+    try (Fixture f = fixture(null)) {
+      var evidence = f.owner().capture(request());
+      // A new data source/manager/repository has no capture transaction or Java snapshot to reuse.
+      var independent = source(f.schema);
+      var independentDsl =
+          DSL.using(new TransactionAwareDataSourceProxy(independent), SQLDialect.POSTGRES);
+      var restarted =
+          new GameSessionRuntimeFamilyCatalogRepository(
+              independentDsl, new DataSourceTransactionManager(independent), f.schema, "test");
+      assertThat(restarted.readExact(evidence.request())).isEqualTo(evidence);
+      var transaction = new TransactionTemplate(f.manager);
+      assertThatThrownBy(() -> transaction.execute(status -> f.owner().capture(request())))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("independent");
+      assertThatThrownBy(
+              () -> transaction.execute(status -> f.owner().readExact(evidence.request())))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("independent");
+      assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
+    }
+  }
+
+  private static Request request() {
+    return new Request(UUID.randomUUID(), "test");
+  }
+
+  private static Fixture fixture(String target) {
+    return fixture(target, HISTORY);
+  }
+
+  private static Flyway migration(
+      DriverManagerDataSource source, String schema, String history, String target) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table(history)
+            .locations(MIGRATIONS, SAGA_MIGRATIONS)
+            .placeholders(Map.of("serviceSchema", schema));
+    if (target != null) configuration.target(target);
+    return configuration.load();
+  }
+
+  private static DriverManagerDataSource source(String schema) {
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    return source;
+  }
+
+  private static Fixture fixture(String target, String history) {
+    String schema = "gs_catalog_" + UUID.randomUUID().toString().replace("-", "");
+    var source = source(schema);
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    try {
+      migration(source, schema, history, target).migrate();
+      return new Fixture(schema, history, source, dsl, new DataSourceTransactionManager(source));
+    } catch (RuntimeException failed) {
+      dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+      throw failed;
+    }
+  }
+
+  private record Fixture(
+      String schema,
+      String history,
+      DriverManagerDataSource source,
+      DSLContext dsl,
+      DataSourceTransactionManager manager)
+      implements AutoCloseable {
+    GameSessionRuntimeFamilyCatalogRepository owner() {
+      return new GameSessionRuntimeFamilyCatalogRepository(dsl, manager, schema, "test");
+    }
+
+    long count(String table) {
+      return dsl.fetchSingle("SELECT count(*) FROM " + table).get(0, Long.class);
+    }
+
+    byte[] evidence(Request request) {
+      return dsl.fetchSingle(
+              "SELECT evidence_bytes FROM " + SNAPSHOTS + " WHERE read_request_id=?",
+              request.readRequestId())
+          .get(0, byte[].class);
+    }
+
+    List<String> tables() {
+      return dsl.fetch(
+              "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
+                  + " WHERE n.nspname=? AND c.relkind IN ('r','p','f') ORDER BY c.relname",
+              schema)
+          .getValues(0, String.class);
+    }
+
+    Map<String, String> rows(Collection<String> tables) {
+      Map<String, String> result = new LinkedHashMap<>();
+      for (String table : tables) {
+        result.put(
+            table,
+            dsl.fetchSingle(
+                    "SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text FROM "
+                        + table
+                        + " t")
+                .get(0, String.class));
+      }
+      return result;
+    }
+
+    List<String> historyRows(boolean excludeNew) {
+      return dsl.fetch(
+              "SELECT to_jsonb(h)::text FROM "
+                  + history
+                  + " h"
+                  + (excludeNew ? " WHERE version IS DISTINCT FROM '1057'" : "")
+                  + " ORDER BY installed_rank")
+          .getValues(0, String.class);
+    }
+
+    List<String> sequencePositions() {
+      return dsl.fetch(
+              "SELECT sequencename||':'||coalesce(last_value::text,'unused') FROM pg_sequences"
+                  + " WHERE schemaname=? ORDER BY sequencename",
+              schema)
+          .getValues(0, String.class);
+    }
+
+    Map<String, String> guards() {
+      return dsl.fetch(
+              "SELECT c.relname||'.'||t.tgname,pg_get_triggerdef(t.oid,true)||':'||t.tgenabled::TEXT"
+                  + " FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace"
+                  + " WHERE n.nspname=? AND NOT t.tgisinternal ORDER BY c.relname,t.tgname",
+              schema)
+          .intoMap(row -> row.get(0, String.class), row -> row.get(1, String.class));
+    }
+
+    Map<String, String> constraints() {
+      return dsl.fetch(
+              "SELECT c.relname||'.'||k.conname,pg_get_constraintdef(k.oid,true)||':'||k.convalidated"
+                  + " FROM pg_constraint k JOIN pg_class c ON c.oid=k.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace"
+                  + " WHERE n.nspname=? ORDER BY c.relname,k.conname",
+              schema)
+          .intoMap(row -> row.get(0, String.class), row -> row.get(1, String.class));
+    }
+
+    Map<String, String> routines() {
+      return dsl.fetch(
+              "SELECT p.proname||'('||pg_get_function_identity_arguments(p.oid)||')',pg_get_functiondef(p.oid)"
+                  + " FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace"
+                  + " WHERE n.nspname=? AND p.prokind IN ('f','p') ORDER BY 1",
+              schema)
+          .intoMap(row -> row.get(0, String.class), row -> row.get(1, String.class));
+    }
+
+    Map<String, String> indexes() {
+      return dsl.fetch(
+              "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=? ORDER BY indexname",
+              schema)
+          .intoMap(row -> row.get(0, String.class), row -> row.get(1, String.class));
+    }
+
+    void addComponent() {
+      dsl.execute(
+          "INSERT INTO "
+              + CLASSIFICATIONS
+              + " VALUES('game_manifest.description','game_manifest','description','SOURCE','UNRESOLVED',"
+              + "'UNSUPPORTED_SOURCE_BLOCKING','UNRESOLVED_RETAINED','Controlled component revision; legacy source still blocks FRESH.')");
+    }
+
+    void installEpoch(long epoch) {
+      dsl.execute(
+          "INSERT INTO "
+              + EPOCHS
+              + "(catalog_epoch,catalog_bytes,catalog_digest)"
+              + " SELECT ?,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM (SELECT gs_runtime_family_catalog_bytes(?) AS bytes) revision",
+          epoch,
+          epoch);
+    }
+
+    void populatePredecessor() {
+      // SQL fixture values preserve existing bytes; none is passed off as a live authority
+      // producer.
+      dsl.execute(
+          "INSERT INTO game_instances(tenant_id,runtime_version,owner_account_id,status) VALUES(7001,'legacy',9,'STOPPED')");
+      dsl.execute(
+          "INSERT INTO game_manifest(version_id,description) VALUES('unqualified-legacy','retain unresolved lineage')");
+      dsl.execute(
+          "INSERT INTO feature_flag(tenant_id,name,enabled) VALUES(7001,'retained-override',false)");
+      dsl.execute(
+          "INSERT INTO gameplay_command(command_id,tenant_id,game_instance_id,session_id,account_id,character_id,command_name,"
+              + "sanitized_command_text,requires_solo_tick,execution_outcome,gameplay_result,accepted_at,command_text,declared_effects_json)"
+              + " VALUES('retained-command',7001,1,3,9,7,'LOOK','LOOK',false,'ACCEPTED','PENDING',CURRENT_TIMESTAMP,'LOOK','[]')");
+      dsl.execute(
+          "INSERT INTO player_command_history(tenant_id,game_instance_id,character_id,command_text,accepted_at)"
+              + " VALUES(7001,1,7,'LOOK',CURRENT_TIMESTAMP)");
+      dsl.execute(
+          "INSERT INTO resume_transcript_entry(tenant_id,game_instance_id,character_id,protocol_text,line_count,byte_size,appended_at)"
+              + " VALUES(7001,1,7,'retained',1,8,CURRENT_TIMESTAMP)");
+      dsl.execute(
+          "INSERT INTO script_pin_operation(tenant_id,game_instance_id,control_plane_request_id,operation_kind,"
+              + "target_script_patch_version,expected_pin_kind,actor_principal,reason,mutation_digest,outcome,resulting_script_patch_version,resulting_script_pin_epoch)"
+              + " VALUES(7001,1,'retained-pin','SET','patch','EXPECT_UNPINNED','controlled','retained',?,'COMMITTED','patch',1)",
+          "a".repeat(64));
+      dsl.execute(
+          "INSERT INTO tick_batch(tick_batch_id,tenant_id,game_instance_id,region_epoch,executor_fence,batch_source,status,"
+              + "requires_solo_tick,command_count,staged_at,selected_work_manifest_json)"
+              + " VALUES('retained-batch',7001,1,1,'retained-fence','PLAYER','STAGED',false,1,CURRENT_TIMESTAMP,'{}')");
+      dsl.execute(
+          "INSERT INTO tick_effect(effect_id,tick_batch_id,command_id,effect_type,target_aggregate,status,staged_at,effect_key)"
+              + " VALUES('retained-effect','retained-batch','retained-command','MOVE','actor','STAGED',CURRENT_TIMESTAMP,'retained-effect-key')");
+      dsl.execute(
+          "INSERT INTO remote_followup(followup_id,tenant_id,origin_game_instance_id,origin_region_id,origin_region_epoch,"
+              + "target_game_instance_id,target_region_id,target_region_epoch,due_tick_id,effect_key,status,created_at,updated_at,claim_target_aggregate)"
+              + " VALUES('retained-followup',7001,1,'origin',1,2,'target',1,4,'retained-remote-effect','PENDING',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,'actor')");
+      dsl.execute(
+          "INSERT INTO remote_followup_result(result_id,tenant_id,coordinator_id,followup_id,origin_region_id,origin_region_epoch,"
+              + "target_region_id,target_region_epoch,outcome,observed_at,origin_game_instance_id,target_game_instance_id)"
+              + " VALUES('retained-result',7001,'retained-coordinator','retained-followup','origin',1,'target',1,'APPLIED',CURRENT_TIMESTAMP,1,2)");
+      dsl.execute(
+          "INSERT INTO game_session_start_session_operator_attempt(target_namespace,control_plane_request_id,canonical_tenant_id,"
+              + "owner_attempt_id,owner_mutation_id,claim_owner_id,owner_fence,post_authorization_execution_tuple,mutation_digest,"
+              + "authorization_reference_fingerprint,lease_expires_at)"
+              + " VALUES('test','retained-start',?,?,?,?,nextval('game_session_start_session_operator_owner_fence_seq'),?,?,?,clock_timestamp()+interval '1 hour')",
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          "controlled-retention-only".getBytes(StandardCharsets.UTF_8),
+          "b".repeat(64),
+          "arfp/v1/controlled/" + "c".repeat(64));
+      dsl.execute(
+          "INSERT INTO game_session_initial_gameplay_login_journal(request_id,caller_context_id,expected_attempt_fence) VALUES(?,?,1)",
+          UUID.randomUUID(),
+          UUID.randomUUID());
+      dsl.execute(
+          "INSERT INTO game_session_canonical_account_coverage_control(account_id,state,last_operation_fence)"
+              + " VALUES(?,'NO_ACTIVE_ACCOUNT_WIDE_FLOW',0)",
+          UUID.randomUUID());
+      dsl.execute("INSERT INTO saga_instance(saga_name,state) VALUES('retained','PENDING')");
+      dsl.execute(
+          "INSERT INTO saga_step(instance_id,name,status) VALUES(1,'retained-step','PENDING')");
+    }
+
+    @Override
+    public void close() {
+      dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
+  }
+}

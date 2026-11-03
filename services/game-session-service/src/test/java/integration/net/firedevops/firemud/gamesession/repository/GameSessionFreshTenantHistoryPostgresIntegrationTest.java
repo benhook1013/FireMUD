@@ -168,7 +168,13 @@ class GameSessionFreshTenantHistoryPostgresIntegrationTest {
             .dataSource(source)
             .schemas(schema)
             .defaultSchema(schema)
-            .locations("filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath());
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations(
+                "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath(),
+                "filesystem:"
+                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                        .toAbsolutePath()
+                        .normalize());
     if (target != null) configuration.target(target);
     configuration.load().migrate();
   }

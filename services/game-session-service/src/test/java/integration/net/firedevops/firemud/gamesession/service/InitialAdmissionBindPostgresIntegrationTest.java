@@ -45,7 +45,17 @@ class InitialAdmissionBindPostgresIntegrationTest {
   @Test
   void initialAdmissionLedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
     DriverManagerDataSource dataSource = dataSource();
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .placeholders(java.util.Map.of("serviceSchema", "public"))
+        .locations(
+            MIGRATION_LOCATION,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
+        .load()
+        .migrate();
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     TransactionTemplate transactionTemplate =
