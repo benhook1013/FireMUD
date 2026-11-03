@@ -136,6 +136,35 @@ class DirectTextAuthenticatedLobbyTest {
   }
 
   @Test
+  void alreadyActiveNonAdmittingMembershipIsRetainedAsAnExactNonAdmissionReceipt() {
+    var f = new Fixture();
+    var response =
+        positive().toBuilder()
+            .setOutcomeCode("ALREADY_ACTIVE")
+            .setGameplayAdmissionAllowed(false)
+            .setMembershipVersion(8L)
+            .setMembershipAuthorityGeneration(4L)
+            .setReplayed(true)
+            .build();
+
+    assertThat(DirectTextAuthenticatedLobbyJoin.decodeReply(f.scope, response.toByteArray()))
+        .isEqualTo(response);
+    assertThat(response.getGameplayAdmissionAllowed()).isFalse();
+    assertThat(response.getMembershipVersion()).isEqualTo(8L);
+    assertThat(response.getMembershipAuthorityGeneration()).isEqualTo(4L);
+  }
+
+  @Test
+  void joinedReceiptCannotClaimSuccessWithoutGameplayAdmission() {
+    var f = new Fixture();
+    var response = positive().toBuilder().setGameplayAdmissionAllowed(false).build();
+
+    assertThatThrownBy(
+            () -> DirectTextAuthenticatedLobbyJoin.decodeReply(f.scope, response.toByteArray()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void frozenRequestKeepsTransportCorrelationSeparateFromProxyOriginalContextAndJoinIds() {
     var f = new Fixture();
     var context = f.frozen.request().getPlayerContext();
@@ -642,6 +671,7 @@ class DirectTextAuthenticatedLobbyTest {
         .setMembershipId("90")
         .setMembershipVersion(3)
         .setMembershipAuthorityGeneration(1)
+        .setGameplayAdmissionAllowed(true)
         .build();
   }
 

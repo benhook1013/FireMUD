@@ -290,7 +290,9 @@ public final class AccountClient
     }
     if (response.getSuccess()
         && (!request.getPlayerContext().getAccountId().equals(response.getAccountId())
-            || !request.getPlayerContext().getTenantId().equals(response.getTenantId()))) {
+            || !request.getPlayerContext().getTenantId().equals(response.getTenantId())
+            || "JOINED".equals(response.getOutcomeCode())
+                && !response.getGameplayAdmissionAllowed())) {
       return joinUnavailable();
     }
     return response;

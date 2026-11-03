@@ -7,8 +7,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -16,22 +21,73 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
+import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
-import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.AccountSecurityStateMutationRequest;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
+import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
+import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository.Capture;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalConnectScopeReader;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalPublicRealmScopeOwner;
+import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountPublicBootstrapEntitlementOwner;
+import net.firedevops.firemud.accountservice.service.AccountPublicBootstrapWorldsOwner;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.accountservice.service.session.AccountPlayerBootstrapCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec.AccountState;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
 import net.firedevops.firemud.common.security.HttpAuthRoleRequirement;
 import net.firedevops.firemud.common.security.HttpJwtAuthInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -88,9 +144,11 @@ class AccountApplicationIntegrationTest {
   }
 
   @LocalServerPort private int port;
+  @Autowired private javax.sql.DataSource dataSource;
   @Autowired private JwtUtil jwtUtil;
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
+  @Autowired private AccountServiceImpl canonicalFacade;
   @Autowired private SessionService realAccountSessions;
   @Autowired private HttpAuthProperties httpAuthProperties;
   @Autowired private ObjectProvider<HttpJwtAuthInterceptor> httpJwtAuthInterceptorProvider;
@@ -397,6 +455,1785 @@ class AccountApplicationIntegrationTest {
   private record EmailVerificationFixture(long accountId, String token) {}
 
   @Test
+  void publicJoinBrowserAndDirectScopesUseActualUuidIntentMembershipEventAndAuditOwners()
+      throws Exception {
+    var f = publicJoinFixture(false);
+    var worlds = f.service.listBootstrapWorlds(f.bootstrap);
+    assertThat(worlds).extracting(value -> value.worldSlug()).containsExactly(f.target.worldSlug());
+    var browser = f.browserScope();
+    var direct = f.directScope();
+    for (String token : List.of(browser, direct)) {
+      var claims = f.jwt.parseToken(token).getPayload();
+      assertThat(claims.getSubject()).isEqualTo(f.account.getAccountUuid().toString());
+      assertThat(claims.get("tenantId")).isEqualTo(f.tenantId.toString());
+      assertThat(claims.get("gameInstanceId"))
+          .isEqualTo(f.target.canonicalGameInstanceId().toString());
+      var retained =
+          f.in(
+              () ->
+                  f.scopes
+                      .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(token))
+                      .orElseThrow());
+      assertThat(retained.privateAccountId()).isEqualTo(f.account.getId());
+      assertThat(retained.scopeDigestVersion()).isEqualTo(2);
+      assertThat(retained.tenantUuid()).isEqualTo(f.tenantId);
+      assertThat(f.in(() -> f.scopes.find(token))).isEmpty();
+    }
+    for (String token : List.of(browser, direct)) {
+      assertThatThrownBy(
+              () ->
+                  f.service.issueConnectToken(
+                      f.bootstrap,
+                      new net.firedevops.firemud.accountservice.dto.ConnectTokenRequest(
+                          token, "held-issuer")))
+          .isInstanceOf(AuthenticationException.class)
+          .extracting(value -> ((AuthenticationException) value).getCode())
+          .isEqualTo("AUTH_UNAVAILABLE");
+    }
+    String request = UUID.randomUUID().toString();
+    var first = f.join(browser, request);
+    assertThat(first.success()).isTrue();
+    assertThat(first.accountId()).isEqualTo(f.account.getAccountUuid().toString());
+    assertThat(first.tenantId()).isEqualTo(f.tenantId);
+    assertThat(first.membershipVersion()).isEqualTo(2L);
+    assertThat(first.membershipAuthorityGeneration()).isEqualTo(1L);
+    org.mockito.Mockito.verify(f.targets, org.mockito.Mockito.times(2))
+        .readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any());
+    var committed = f.state(request);
+    var replay = f.join(browser, request);
+    assertThat(replay.success()).isTrue();
+    assertThat(replay.replayed()).isTrue();
+    assertThat(replay.membershipId()).isEqualTo(first.membershipId());
+    assertThat(f.state(request)).isEqualTo(committed);
+    f.assertTransitionCount(1L);
+    var active = f.directJoin(direct, UUID.randomUUID().toString());
+    assertThat(active.success()).isTrue();
+    assertThat(active.outcomeCode()).isEqualTo("ALREADY_ACTIVE");
+    assertThat(active.membershipVersion()).isEqualTo(first.membershipVersion());
+    assertThat(active.membershipAuthorityGeneration())
+        .isEqualTo(first.membershipAuthorityGeneration());
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void publicJoinPaidOwnerUsesRealProvisioningCurrentRowFenceAndSealedStripeObservation() {
+    var f = publicJoinFixture(true);
+    String token = f.browserScope();
+    int reads = f.paid.transport().reads();
+    String request = UUID.randomUUID().toString();
+    var first = f.join(token, request);
+    assertThat(first.success()).isTrue();
+    assertThat(f.paid.transport().reads()).isGreaterThan(reads);
+    f.assertTransitionCount(1L);
+    assertThat(f.operation(request).operationRepresentationVersion()).isEqualTo(2);
+    assertThat(f.operation(request).entitlementVersion()).isPositive();
+    assertThat(f.operation(request).terminalProof().entitlementVersion())
+        .isEqualTo(f.operation(request).entitlementVersion());
+  }
+
+  @Test
+  void publicJoinStrictPublishedWorldSourceOutageCannotCommitFromResolverOnlyEvidence() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    org.mockito.Mockito.when(
+            f.targets.readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any()))
+        .thenThrow(
+            new IllegalStateException("controlled strict published/World ACTIVE source outage"));
+    assertThatThrownBy(() -> f.join(token, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(f.operation(request).status()).isEqualTo("PENDING");
+    assertThat(f.operation(request).lastAttemptFailureCode())
+        .isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(f.membershipCount()).isZero();
+    f.assertTransitionCount(0L);
+  }
+
+  @Test
+  void publicJoinFailureBeforeCommitRollsBackMembershipPairEventAuditAndTerminalReceipt() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    var failed = new AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var result = invocation.callRealMethod();
+              if (failed.compareAndSet(false, true))
+                throw new IllegalStateException("controlled terminal rollback");
+              return result;
+            })
+        .when(f.operations)
+        .commitCanonicalJoin(
+            org.mockito.ArgumentMatchers.eq(request),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
+    assertThatThrownBy(() -> f.join(token, request)).isInstanceOf(AuthenticationException.class);
+    assertThat(f.operation(request).status()).isEqualTo("PENDING");
+    assertThat(f.operation(request).terminalProof()).isNull();
+    assertThat(f.operation(request).requestDigest()).isNull();
+    f.assertTransitionCount(0L);
+    assertThat(f.membershipCount()).isZero();
+    String intent = f.operation(request).intentDigest();
+    assertThat(f.join(token, request).success()).isTrue();
+    assertThat(f.operation(request).intentDigest()).isEqualTo(intent);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void publicJoinLostCommitAcknowledgementReplaysTheCompleteCommittedOriginal() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    var lost = new AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var result = invocation.callRealMethod();
+              if (lost.compareAndSet(false, true)) {
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                    .registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                          @Override
+                          public void afterCommit() {
+                            throw new IllegalStateException(
+                                "controlled lost commit acknowledgement");
+                          }
+                        });
+              }
+              return result;
+            })
+        .when(f.operations)
+        .commitCanonicalJoin(
+            org.mockito.ArgumentMatchers.eq(request),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
+    assertThatThrownBy(() -> f.join(token, request)).isInstanceOf(AuthenticationException.class);
+    assertThat(f.operation(request).status()).isEqualTo("COMMITTED");
+    var committed = f.state(request);
+    var replay = f.join(token, request);
+    assertThat(replay.success()).isTrue();
+    assertThat(replay.replayed()).isTrue();
+    assertThat(f.state(request)).isEqualTo(committed);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void publicJoinActualSqlAbortAtFinalEntitlementReadRetainsIntentAndRecoversOnce() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    var abort = new AtomicBoolean(true);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (abort.compareAndSet(true, false)) {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isTrue();
+                dsl.fetch("SELECT 1 / 0");
+              }
+              return invocation.callRealMethod();
+            })
+        .when(f.demos)
+        .revalidate(org.mockito.ArgumentMatchers.any());
+    var failure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            AuthenticationException.class, () -> f.join(token, request));
+    assertThat(failure.getCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(sqlState(failure)).isEqualTo("22012");
+    assertThat(f.operation(request).status()).isEqualTo("PENDING");
+    assertThat(f.operation(request).lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.operation(request).requestDigest()).isNull();
+    f.assertTransitionCount(0L);
+    String intent = f.operation(request).intentDigest();
+    assertThat(f.join(token, request).success()).isTrue();
+    assertThat(f.operation(request).intentDigest()).isEqualTo(intent);
+    f.assertTransitionCount(1L);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void publicJoinUnavailableCanonicalSourceRetainsOriginalIntentAndRecovers(boolean sourceRead) {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    var outage = new AtomicBoolean(true);
+    if (sourceRead) {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                if (outage.get())
+                  throw new org.springframework.dao.DataAccessResourceFailureException(
+                      "source unavailable");
+                return invocation.callRealMethod();
+              })
+          .when(f.sources)
+          .readCurrentSourceSelection(f.tenantId);
+    } else {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                if (outage.get())
+                  throw new org.springframework.dao.DataAccessResourceFailureException(
+                      "demo unavailable");
+                return invocation.callRealMethod();
+              })
+          .when(f.demos)
+          .readCurrent(f.tenantId);
+    }
+    assertThatThrownBy(() -> f.join(token, request)).isInstanceOf(AuthenticationException.class);
+    var pending = f.operation(request);
+    assertThat(pending.status()).isEqualTo("PENDING");
+    assertThat(pending.requestDigest()).isNull();
+    assertThat(pending.lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.membershipCount()).isZero();
+    f.assertTransitionCount(0L);
+    outage.set(false);
+    assertThat(f.join(token, request).success()).isTrue();
+    assertThat(f.operation(request).intentDigest()).isEqualTo(pending.intentDigest());
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void publicJoinLostResponseThenExpiredScopePreservesCompleteCommittedOriginal() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    assertThat(f.join(token, request).success()).isTrue();
+    var committed = f.state(request);
+    f.clock.offset = Duration.ofMinutes(3);
+    assertThatThrownBy(() -> f.join(token, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("CONNECT_SCOPE_INVALID");
+    assertThat(f.state(request)).isEqualTo(committed);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void publicJoinExpiredPendingScopePreservesIntentAndCannotCommitMembership() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.DataAccessResourceFailureException(
+                "controlled source outage"))
+        .when(f.demos)
+        .readCurrent(f.tenantId);
+    assertThatThrownBy(() -> f.join(token, request)).isInstanceOf(AuthenticationException.class);
+    var pending = f.state(request);
+    f.clock.offset = Duration.ofMinutes(3);
+    org.mockito.Mockito.doCallRealMethod().when(f.demos).readCurrent(f.tenantId);
+    assertThatThrownBy(() -> f.join(token, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("CONNECT_SCOPE_INVALID");
+    assertThat(f.state(request)).isEqualTo(pending);
+    assertThat(f.operation(request).status()).isEqualTo("PENDING");
+    assertThat(f.membershipCount()).isZero();
+    f.assertTransitionCount(0L);
+  }
+
+  @Test
+  void publicJoinChangedCallerOrScopeCannotReplaceOriginalTerminalBytes() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    assertThat(f.join(token, request).success()).isTrue();
+    var committed = f.state(request);
+    String different = f.browserScope();
+    assertThatThrownBy(() -> f.join(different, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(f.state(request)).isEqualTo(committed);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void publicJoinFreshClosedPolicyPersistsDenialWithoutMembershipOrTransition() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    f.policy(false, true);
+    String request = UUID.randomUUID().toString();
+    var denied = f.join(token, request);
+    assertThat(denied.success()).isFalse();
+    assertThat(denied.outcomeCode()).isEqualTo("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    assertThat(f.operation(request).status()).isEqualTo("FAILED");
+    assertThat(f.operation(request).allowPublicJoin()).isFalse();
+    assertThat(f.membershipCount()).isZero();
+    f.assertTransitionCount(0L);
+    var original = f.state(request);
+    assertThat(f.join(token, request).replayed()).isTrue();
+    assertThat(f.state(request)).isEqualTo(original);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void publicJoinTerminalEntitlementOutagePreservesOriginalBytesAndRecovers(boolean paid) {
+    var f = publicJoinFixture(paid);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    var original = f.join(token, request);
+    assertThat(original.success()).isTrue();
+    var committed = f.state(request);
+    if (paid) {
+      // A complete but contradictory provider object cannot be used as cached current authority.
+      f.paid.providerStatus("unpaid");
+    } else {
+      org.mockito.Mockito.doThrow(
+              new org.springframework.dao.DataAccessResourceFailureException(
+                  "controlled current demo outage"))
+          .when(f.demos)
+          .readCurrent(f.tenantId);
+    }
+    assertThatThrownBy(() -> f.join(token, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.state(request)).isEqualTo(committed);
+    f.assertTransitionCount(1L);
+    if (paid) f.paid.providerStatus("active");
+    else org.mockito.Mockito.doCallRealMethod().when(f.demos).readCurrent(f.tenantId);
+    var recovered = f.join(token, request);
+    assertThat(recovered.success()).isTrue();
+    assertThat(recovered.replayed()).isTrue();
+    assertThat(recovered.membershipId()).isEqualTo(original.membershipId());
+    assertThat(recovered.membershipVersion()).isEqualTo(original.membershipVersion());
+    assertThat(recovered.membershipAuthorityGeneration())
+        .isEqualTo(original.membershipAuthorityGeneration());
+    assertThat(f.state(request)).isEqualTo(committed);
+  }
+
+  @Test
+  void publicJoinChangedAvailablePolicyCannotRebindTheOriginalTerminalReceipt() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    assertThat(f.join(token, request).success()).isTrue();
+    var committed = f.state(request);
+    // The new current version is still open; immutable request/policy evidence must still conflict.
+    f.policy(true, true);
+    assertThatThrownBy(() -> f.join(token, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(f.state(request)).isEqualTo(committed);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void publicJoinRestoresControlledInactiveSnapshotOnceAndPreservesAuthorityGeneration() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    assertThat(f.join(token, UUID.randomUUID().toString()).success()).isTrue();
+    f.seedControlledInactiveSnapshot();
+    String request = UUID.randomUUID().toString();
+    var restored = f.join(token, request);
+    assertThat(restored.success()).isTrue();
+    assertThat(restored.outcomeCode()).isEqualTo("JOINED");
+    assertThat(restored.membershipVersion()).isEqualTo(4L);
+    assertThat(restored.membershipAuthorityGeneration()).isEqualTo(2L);
+    assertThat(f.membershipCount()).isEqualTo(1L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_authority_outbox_events WHERE outbox_stream_key = ?",
+                f.stream()))
+        .isEqualTo(3L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_audit_outbox WHERE tenant_uuid = ? AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+                f.tenantId))
+        .isEqualTo(2L);
+    var committed = f.state(request);
+    assertThat(f.join(token, request).replayed()).isTrue();
+    assertThat(f.state(request)).isEqualTo(committed);
+  }
+
+  @Test
+  void publicJoinActiveControlOnlyMemberReturnsCurrentSnapshotWithoutGrantingGameplay() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    assertThat(f.join(token, UUID.randomUUID().toString()).success()).isTrue();
+    f.seedControlledSnapshot("ACTIVE", false, List.of("moderator"));
+    f.policy(false, true);
+    String request = UUID.randomUUID().toString();
+    var result = f.join(token, request);
+    assertThat(result.success()).isTrue();
+    assertThat(result.outcomeCode()).isEqualTo("ALREADY_ACTIVE");
+    assertThat(result.membershipVersion()).isEqualTo(3L);
+    assertThat(result.membershipAuthorityGeneration()).isEqualTo(2L);
+    assertThat(result.gameplayAdmissionAllowed()).isFalse();
+    assertThat(f.currentRoles()).containsExactly("moderator");
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_authority_outbox_events WHERE outbox_stream_key = ?",
+                f.stream()))
+        .isEqualTo(2L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_audit_outbox WHERE tenant_uuid = ? AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+                f.tenantId))
+        .isEqualTo(1L);
+    var committed = f.state(request);
+    var replay = f.join(token, request);
+    assertThat(replay.success()).isTrue();
+    assertThat(replay.gameplayAdmissionAllowed()).isFalse();
+    assertThat(replay.replayed()).isTrue();
+    assertThat(f.state(request)).isEqualTo(committed);
+    assertThat(f.currentRoles()).containsExactly("moderator");
+  }
+
+  @Test
+  void publicJoinAnotherAuthenticatedAccountCannotConsumeTheOriginalScopeOrCreateIntent() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String suffix = UUID.randomUUID().toString();
+    var other =
+        accountService.createAccount(
+            new CreateAccountRequest(
+                "other-facade-" + suffix,
+                "other-facade-" + suffix + "@example.test",
+                "password123"));
+    Account owner = f.accounts.findByAccountUuid(UUID.fromString(other.id())).orElseThrow();
+    String bootstrap =
+        f.jwt.generateToken(
+            other.id(),
+            Map.of(
+                "aud",
+                "player-bootstrap",
+                "accountId",
+                other.id(),
+                "jti",
+                UUID.randomUUID().toString()));
+    org.mockito.Mockito.when(f.sessions.isAccountSessionActive(owner.getId(), bootstrap))
+        .thenReturn(true);
+    String request = UUID.randomUUID().toString();
+    assertThatThrownBy(
+            () ->
+                f.service.joinPublicProduction(
+                    bootstrap, new JoinPublicProductionRequest(token, request)))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("CONNECT_SCOPE_INVALID");
+    assertThat(f.in(() -> f.operations.findCanonicalEvidenceByRequestId(request))).isEmpty();
+    assertThat(f.membershipCount()).isZero();
+    f.assertTransitionCount(0L);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void bootstrapCharactersUsesActualAccountAuthorityAndPreservesControlledEntityNamesAndLevels(
+      boolean paid) {
+    var f = publicJoinFixture(paid);
+    String token = f.browserScope();
+    String join = UUID.randomUUID().toString();
+    assertThat(f.join(token, join).success()).isTrue();
+    UUID ada = UUID.randomUUID(), zed = UUID.randomUUID();
+    org.mockito.Mockito.when(
+            f.roster.read(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
+                org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isSynchronizationActive())
+                  .isFalse();
+              return List.of(
+                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                      .Actor(zed, "Zed", 37),
+                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                      .Actor(ada, "Ada", 12));
+            });
+    var before = f.state(join);
+    int providerReads = paid ? f.paid.transport().reads() : 0;
+    var actors = f.characters(token);
+    assertThat(actors).extracting(value -> value.characterName()).containsExactly("Ada", "Zed");
+    assertThat(actors)
+        .extracting(value -> value.characterId())
+        .containsExactly(ada.toString(), zed.toString());
+    assertThat(actors).extracting(value -> value.level()).containsExactly(12, 37);
+    assertThat(actors)
+        .allSatisfy(
+            actor -> {
+              assertThat(actor.stateScope()).isEqualTo("SHARED");
+              assertThat(actor.characterCreationPolicy()).isEqualTo("PRESEEDED_ONLY");
+            });
+    var selected =
+        org.mockito.ArgumentCaptor.forClass(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+    org.mockito.Mockito.verify(f.roster)
+        .read(
+            org.mockito.ArgumentMatchers.any(UUID.class),
+            org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
+            selected.capture());
+    assertThat(selected.getValue().selector().canonicalAccountUuid())
+        .isEqualTo(f.account.getAccountUuid());
+    assertThat(selected.getValue().selector().canonicalTenantUuid()).isEqualTo(f.tenantId);
+    assertThat(selected.getValue().selector().realmUuid()).isEqualTo(f.target.realmId());
+    assertThat(selected.getValue().selector().playableStateNamespaceUuid())
+        .isEqualTo(f.target.playableStateNamespaceId());
+    assertThat(selected.getValue().selector().canonicalGameInstanceUuid())
+        .isEqualTo(f.target.canonicalGameInstanceId());
+    assertThat(selected.getValue().selector().canonicalVersionUuid())
+        .isEqualTo(f.target.canonicalVersionId());
+    assertThat(selected.getValue().selector().expectedCatalogRevision())
+        .isEqualTo(f.target.catalogRevision());
+    assertThat(selected.getValue().selector().expectedPointerVersion())
+        .isEqualTo(f.target.pointerVersion());
+    assertThat(selected.getValue().selector().expectedActiveWorldEpoch())
+        .isEqualTo(f.target.activeWorldEpoch());
+    if (paid) assertThat(f.paid.transport().reads()).isGreaterThanOrEqualTo(providerReads + 2);
+    assertThat(f.state(join)).isEqualTo(before);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void bootstrapCharactersValidEmptyResultStillRequiresSuccessfulEntityDiscovery() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    assertThat(f.join(token, UUID.randomUUID().toString()).success()).isTrue();
+    assertThat(f.characters(token)).isEmpty();
+    org.mockito.Mockito.verify(f.roster)
+        .read(
+            org.mockito.ArgumentMatchers.any(UUID.class),
+            org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
+            org.mockito.ArgumentMatchers.any());
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void
+      bootstrapCharactersSameAccountAndDuplicateWorldRealmNamesRemainBoundToExactTenantAndTarget() {
+    var first = publicJoinFixture(false);
+    var second = new CanonicalPublicJoinFixture(false, first.account);
+    String firstScope = first.browserScope(), secondScope = second.browserScope();
+    assertThat(first.target.worldSlug()).isEqualTo(second.target.worldSlug());
+    assertThat(first.target.realmSlug()).isEqualTo(second.target.realmSlug());
+    assertThat(first.tenantId).isNotEqualTo(second.tenantId);
+    assertThat(first.join(firstScope, UUID.randomUUID().toString()).success()).isTrue();
+    assertThat(second.join(secondScope, UUID.randomUUID().toString()).success()).isTrue();
+    UUID firstActor = UUID.randomUUID(), secondActor = UUID.randomUUID();
+    org.mockito.Mockito.when(
+            first.roster.read(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(first.account.getAccountUuid()),
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            List.of(
+                new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                    .Actor(firstActor, "First tenant actor", 9)));
+    org.mockito.Mockito.when(
+            second.roster.read(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(second.account.getAccountUuid()),
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(
+            List.of(
+                new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                    .Actor(secondActor, "Second tenant actor", 21)));
+    assertThat(first.characters(firstScope))
+        .extracting(value -> value.characterId())
+        .containsExactly(firstActor.toString());
+    assertThat(second.characters(secondScope))
+        .extracting(value -> value.characterId())
+        .containsExactly(secondActor.toString());
+    var selected =
+        org.mockito.ArgumentCaptor.forClass(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence.class);
+    org.mockito.Mockito.verify(first.roster)
+        .read(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.eq(first.account.getAccountUuid()),
+            selected.capture());
+    assertThat(selected.getValue().selector().canonicalTenantUuid()).isEqualTo(first.tenantId);
+    org.mockito.Mockito.verify(second.roster)
+        .read(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.eq(second.account.getAccountUuid()),
+            selected.capture());
+    assertThat(selected.getValue().selector().canonicalTenantUuid()).isEqualTo(second.tenantId);
+    assertThat(selected.getValue().selector().realmUuid()).isEqualTo(second.target.realmId());
+    assertThat(selected.getValue().selector().playableStateNamespaceUuid())
+        .isEqualTo(second.target.playableStateNamespaceId());
+    assertThat(selected.getValue().selector().canonicalGameInstanceUuid())
+        .isEqualTo(second.target.canonicalGameInstanceId());
+  }
+
+  @Test
+  void bootstrapCharactersAnotherAuthenticatedAccountCannotConsumeTheSelectedScope() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    assertThat(f.join(token, UUID.randomUUID().toString()).success()).isTrue();
+    String suffix = UUID.randomUUID().toString();
+    var other =
+        accountService.createAccount(
+            new CreateAccountRequest(
+                "other-roster-" + suffix,
+                "other-roster-" + suffix + "@example.test",
+                "password123"));
+    Account owner = f.accounts.findByAccountUuid(UUID.fromString(other.id())).orElseThrow();
+    String bootstrap =
+        f.jwt.generateToken(
+            other.id(),
+            Map.of(
+                "aud",
+                "player-bootstrap",
+                "accountId",
+                other.id(),
+                "jti",
+                UUID.randomUUID().toString()));
+    org.mockito.Mockito.when(f.sessions.isAccountSessionActive(owner.getId(), bootstrap))
+        .thenReturn(true);
+    assertThatThrownBy(
+            () ->
+                f.service.listBootstrapCharacters(
+                    bootstrap, f.target.worldSlug(), f.target.realmSlug(), token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("CONNECT_SCOPE_INVALID");
+    org.mockito.Mockito.verifyNoInteractions(f.roster);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void bootstrapCharactersMissingAndControlledInactiveMembersRequireJoinWithoutEntityDisclosure() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("JOIN_REQUIRED");
+    org.mockito.Mockito.verifyNoInteractions(f.roster);
+    assertThat(f.join(token, UUID.randomUUID().toString()).success()).isTrue();
+    f.seedControlledInactiveSnapshot();
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("JOIN_REQUIRED");
+    org.mockito.Mockito.verifyNoInteractions(f.roster);
+  }
+
+  @Test
+  void bootstrapCharactersClosedPolicyAndControlOnlyMembershipCannotBecomeAnEmptySuccess() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    f.policy(false, true);
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    org.mockito.Mockito.verifyNoInteractions(f.roster);
+    f.policy(true, true);
+    assertThat(f.join(token, UUID.randomUUID().toString()).success()).isTrue();
+    f.seedControlledSnapshot("ACTIVE", false, List.of("moderator"));
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    assertThat(f.currentRoles()).containsExactly("moderator");
+    org.mockito.Mockito.verifyNoInteractions(f.roster);
+  }
+
+  @Test
+  void bootstrapCharactersRechecksActualMembershipSnapshotAfterEntityDiscovery() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String join = UUID.randomUUID().toString();
+    assertThat(f.join(token, join).success()).isTrue();
+    org.mockito.Mockito.when(
+            f.roster.read(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
+                org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              f.seedControlledInactiveSnapshot();
+              return List.of(
+                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                      .Actor(UUID.randomUUID(), "Withheld", 19));
+            });
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(f.operation(join).status()).isEqualTo("COMMITTED");
+    assertThat(f.operation(join).membershipVersion()).isEqualTo(2L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT lifecycle_state FROM account_tenant_membership WHERE account_id = ? AND tenant_uuid = ?",
+                f.account.getId(),
+                f.tenantId))
+        .isEqualTo("INACTIVE");
+    assertThat(
+            dsl.fetchValue(
+                "SELECT membership_version FROM account_tenant_membership WHERE account_id = ? AND tenant_uuid = ?",
+                f.account.getId(),
+                f.tenantId))
+        .isEqualTo(3L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_authority_outbox_events WHERE outbox_stream_key = ?",
+                f.stream()))
+        .isEqualTo(2L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_audit_outbox WHERE tenant_uuid = ? AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+                f.tenantId))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void bootstrapCharactersFinalEntitlementOutageDiscardsEntityResultAndPreservesAccountState() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String join = UUID.randomUUID().toString();
+    assertThat(f.join(token, join).success()).isTrue();
+    var before = f.state(join);
+    org.mockito.Mockito.when(
+            f.roster.read(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
+                org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              org.mockito.Mockito.doThrow(
+                      new org.springframework.dao.DataAccessResourceFailureException(
+                          "controlled late demo currentness outage"))
+                  .when(f.demos)
+                  .revalidate(org.mockito.ArgumentMatchers.any());
+              return List.of(
+                  new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                      .Actor(UUID.randomUUID(), "Withheld", 31));
+            });
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(f.state(join)).isEqualTo(before);
+    f.assertTransitionCount(1L);
+  }
+
+  @Test
+  void bootstrapCharactersEntityFailureAndExpiredScopeNeverReturnAnEmptySuccess() {
+    var f = publicJoinFixture(false);
+    String token = f.browserScope();
+    String join = UUID.randomUUID().toString();
+    assertThat(f.join(token, join).success()).isTrue();
+    var before = f.state(join);
+    org.mockito.Mockito.when(
+            f.roster.read(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(f.account.getAccountUuid()),
+                org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new IllegalStateException("controlled Entity discovery failure"));
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("AUTH_UNAVAILABLE");
+    f.clock.offset = Duration.ofMinutes(3);
+    assertThatThrownBy(() -> f.characters(token))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("CONNECT_SCOPE_INVALID");
+    assertThat(f.state(join)).isEqualTo(before);
+    f.assertTransitionCount(1L);
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sql) return sql.getSQLState();
+    }
+    return null;
+  }
+
+  private CanonicalPublicJoinFixture publicJoinFixture(boolean paid) {
+    return new CanonicalPublicJoinFixture(paid);
+  }
+
+  /**
+   * Actual Account SQL/JWT/intent/subscription/member/event/audit composition. GS
+   * resolver/published-source/World ACTIVE responses and caller registry inputs are controlled (the
+   * strict source decoder and remote freshness are not qualified); this does not qualify PKI,
+   * issuer custody or runtime registration.
+   */
+  private final class CanonicalPublicJoinFixture {
+    private final String namespace;
+    private final AccountRepository accounts = new AccountRepository(dsl);
+    private final AccountAuthorityGenerationRepository generations =
+        new AccountAuthorityGenerationRepository(dsl);
+    private final AccountAuthorityOutboxRepository outbox =
+        new AccountAuthorityOutboxRepository(dsl);
+    private final AccountAuthoritySourceEvidenceRepository evidence =
+        new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+    private final AccountMembershipPairAuthorityRepository pairs =
+        new AccountMembershipPairAuthorityRepository(dsl);
+    private final AccountTenantMembershipRoleSnapshotRepository roles =
+        new AccountTenantMembershipRoleSnapshotRepository(dsl);
+    private final AccountAuditOutboxRepository audits = new AccountAuditOutboxRepository(dsl);
+    private final FreshTenantIdentityAssociationRepository tenants;
+    private final AccountTenantMembershipRepository members;
+    private final AccountTenantAuthorityEventRepository sources;
+    private final AccountDemoTenantEntitlementRepository demos;
+    private final AccountConnectScopeRepository scopes;
+    private final AccountJoinOperationRepository operations;
+    private final AccountCanonicalFirstJoinTerminalCoordinator terminal;
+    private final integration.net.firedevops.firemud.accountservice.repository
+            .CanonicalHostingSubscriptionTestFixture.Fixture
+        paid;
+    private final AccountHostingSubscriptionLifecycleRepository hosting;
+    private final StripeHostingSubscriptionObserver observer;
+    private final FreshTenantCreationEvidence source;
+    private final UUID tenantId;
+    private final Account account;
+    private final FixtureClock clock;
+    private final TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+    private final CanonicalGameplayAdmissionDecisionReadClient targets =
+        org.mockito.Mockito.mock(CanonicalGameplayAdmissionDecisionReadClient.class);
+    private final SessionService sessions = org.mockito.Mockito.mock(SessionService.class);
+    private final net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+        roster =
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
+                    .class);
+    private final JwtUtil jwt =
+        new JwtUtil("controlled-public-facade-fixture-key-01234567890123456789", 300000L);
+    private final String bootstrap;
+    private final AccountServiceImpl service;
+    private final Target target;
+
+    private CanonicalPublicJoinFixture(boolean usePaid) {
+      this(usePaid, null);
+    }
+
+    private CanonicalPublicJoinFixture(boolean usePaid, Account existingAccount) {
+      namespace = usePaid ? "prod" : "test";
+      transaction.setPropagationBehavior(
+          org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+      transaction.setIsolationLevel(
+          org.springframework.transaction.TransactionDefinition.ISOLATION_SERIALIZABLE);
+      tenants = new FreshTenantIdentityAssociationRepository(dsl, namespace);
+      members = new AccountTenantMembershipRepository(dsl, accounts, tenants, pairs);
+      var billing = new AccountTenantEntitlementOutboxRepository(dsl);
+      sources =
+          org.mockito.Mockito.spy(
+              new AccountTenantAuthorityEventRepository(
+                  dsl, outbox, billing, tenants, generations));
+      demos =
+          org.mockito.Mockito.spy(
+              new AccountDemoTenantEntitlementRepository(
+                  dsl, tenants, generations, billing, sources));
+      scopes =
+          new AccountConnectScopeRepository(
+              dsl,
+              new AccountTenantIdentityResolver(
+                  org.mockito.Mockito.mock(ApprovedLegacyTenantAssociationRepository.class),
+                  namespace),
+              tenants);
+      operations = org.mockito.Mockito.spy(new AccountJoinOperationRepository(dsl, scopes));
+      var producer =
+          new AccountMembershipAuthorityEventProducer(
+              operations,
+              accounts,
+              pairs,
+              members,
+              roles,
+              generations,
+              outbox,
+              evidence,
+              sources,
+              demos);
+      terminal =
+          new AccountCanonicalFirstJoinTerminalCoordinator(
+              accounts, operations, members, roles, outbox, pairs, audits, producer);
+      if (usePaid) {
+        paid =
+            integration.net.firedevops.firemud.accountservice.repository
+                .CanonicalHostingSubscriptionTestFixture.create(dataSource);
+        var claim =
+            paid.service()
+                .claimProvisioning(paid.creation().requestId(), 1, UUID.randomUUID())
+                .claim();
+        assertThat(
+                paid.service()
+                    .reconcile(
+                        UUID.randomUUID(),
+                        paid.creation().requestId(),
+                        claim.subscriptionRowVersion(),
+                        paid.providerId(),
+                        claim.attemptId())
+                    .outcome())
+            .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
+        hosting = paid.lifecycleRepository();
+        observer = paid.observer();
+        tenantId = paid.tenantId();
+        source = in(() -> tenants.read(tenantId).orElseThrow());
+        clock = new FixtureClock(paid.clock());
+      } else {
+        paid = null;
+        hosting = org.mockito.Mockito.mock(AccountHostingSubscriptionLifecycleRepository.class);
+        observer = org.mockito.Mockito.mock(StripeHostingSubscriptionObserver.class);
+        tenantId = UUID.randomUUID();
+        UUID request = UUID.randomUUID();
+        UUID operation = UUID.randomUUID();
+        String key = "f-" + tenantId.toString().replace("-", "");
+        String digest =
+            GameTenantCreationDigest.requestDigest(namespace, request, key, "Facade fixture", null);
+        source =
+            new FreshTenantCreationEvidence(
+                1,
+                namespace,
+                request,
+                operation,
+                digest,
+                tenantId,
+                100000000L + Integer.toUnsignedLong(key.hashCode()),
+                key,
+                "NEW_GAME_ROW",
+                GameTenantCreationDigest.evidenceDigest(
+                    namespace,
+                    request,
+                    operation,
+                    digest,
+                    tenantId,
+                    100000000L + Integer.toUnsignedLong(key.hashCode()),
+                    key,
+                    "NEW_GAME_ROW"));
+        clock = new FixtureClock(Clock.systemUTC());
+        in(
+            () -> {
+              tenants.importVerified(source);
+              generations.initializeTenantIfAbsent(tenantId);
+              return null;
+            });
+        policy(true, true);
+      }
+      String suffix = UUID.randomUUID().toString();
+      if (existingAccount == null) {
+        var created =
+            accountService.createAccount(
+                new CreateAccountRequest(
+                    "facade-" + suffix, "facade-" + suffix + "@example.test", "password123"));
+        account = accounts.findByAccountUuid(UUID.fromString(created.id())).orElseThrow();
+      } else {
+        account = accounts.findByAccountUuid(existingAccount.getAccountUuid()).orElseThrow();
+      }
+      in(
+          () -> {
+            evidence.initializeIssuerIfAbsent("firemud-account-service");
+            generations.initialize(
+                AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                    account.getAccountUuid(), tenantId));
+            return null;
+          });
+      if (paid != null) {
+        // The SQL lifecycle owner evaluates at microsecond precision; its SDK input must use the
+        // same controlled instant rather than appear nanoseconds later than the evaluation.
+        Instant browserTime =
+            Instant.now().plusSeconds(1).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        if (paid.clock().instant().isBefore(browserTime)) {
+          paid.clock().advance(Duration.between(paid.clock().instant(), browserTime));
+        }
+      }
+      target = target();
+      org.mockito.Mockito.when(
+              targets.listVisiblePublicProductionAdmissionTargets(
+                  org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                var request =
+                    new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+                        invocation.getArgument(0, UUID.class), namespace);
+                return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                    request,
+                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                        request, List.of(target)));
+              });
+      org.mockito.Mockito.when(
+              targets.resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                var selector =
+                    invocation.getArgument(
+                        0,
+                        CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector
+                            .class);
+                return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                    selector,
+                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+                        selector, target));
+              });
+      // The transport boundary is controlled. Actual Account owners must still request this strict
+      // published-source/World ACTIVE result; the resolver response alone cannot authorize JOIN.
+      org.mockito.Mockito.when(
+              targets.readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                var strict =
+                    invocation.getArgument(
+                        0,
+                        net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                            .Request.class);
+                var published =
+                    org.mockito.Mockito.mock(
+                        CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
+                            .class);
+                org.mockito.Mockito.when(published.selector()).thenReturn(strict);
+                org.mockito.Mockito.when(published.currentTarget()).thenReturn(target);
+                var sourceEvidence =
+                    org.mockito.Mockito.mock(
+                        net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence
+                            .class);
+                org.mockito.Mockito.when(sourceEvidence.request()).thenReturn(strict);
+                org.mockito.Mockito.when(sourceEvidence.admissionPointerSnapshotDigest())
+                    .thenReturn(target.admissionPointerSnapshotDigest());
+                // Controlled remote policy capture; the Account integration test does not qualify
+                // its decoder.
+                var policies =
+                    org.mockito.Mockito.mock(
+                        net.firedevops.firemud.common.publication
+                            .PublishedRealmEntryPolicySetEvidence.class);
+                org.mockito.Mockito.when(policies.canonicalBytes())
+                    .thenReturn(
+                        ("controlled-policy-set-" + tenantId).getBytes(StandardCharsets.UTF_8));
+                org.mockito.Mockito.when(sourceEvidence.publishedPolicySetEvidence())
+                    .thenReturn(policies);
+                var world =
+                    org.mockito.Mockito.mock(
+                        net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence
+                            .class);
+                org.mockito.Mockito.when(world.lifecycleStatus()).thenReturn("ACTIVE");
+                org.mockito.Mockito.when(world.lifecycleEpoch())
+                    .thenReturn(target.activeWorldEpoch());
+                org.mockito.Mockito.when(world.rowVersion()).thenReturn(1L);
+                org.mockito.Mockito.when(published.sourceEvidence()).thenReturn(sourceEvidence);
+                org.mockito.Mockito.when(published.worldLifecycleEvidence()).thenReturn(world);
+                return published;
+              });
+      var properties = new AccountTokenProperties();
+      properties.setConnectScopeExpirationMs(120000L);
+      bootstrap =
+          jwt.generateToken(
+              account.getAccountUuid().toString(),
+              Map.of(
+                  "aud",
+                  "player-bootstrap",
+                  "accountId",
+                  account.getAccountUuid().toString(),
+                  "jti",
+                  UUID.randomUUID().toString()));
+      org.mockito.Mockito.when(sessions.isAccountSessionActive(account.getId(), bootstrap))
+          .thenReturn(true);
+      var caller = new AccountPlayerBootstrapCallerVerifier(jwt, accounts, sessions);
+      var entitlement =
+          new AccountPublicBootstrapEntitlementOwner(
+              sources,
+              new AccountHostingSubscriptionLifecycleService(hosting, observer, transactionManager),
+              demos,
+              transactionManager,
+              clock);
+      service =
+          new AccountServiceImpl(
+              accounts,
+              generations,
+              evidence,
+              outbox,
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountPasswordResetOperationRepository.class),
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountLogoutAllOperationRepository.class),
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountSecurityStateOperationRepository.class),
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.accountservice.service
+                      .AccountPasswordResetDraftSourceChangeRepository.class),
+              audits,
+              operations,
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountEmailLoginChallengeRepository.class),
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository
+                      .class),
+              members,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              new net.firedevops.firemud.accountservice.config.MailProperties(),
+              properties,
+              new net.firedevops.firemud.common.security.JwtAuthProperties(),
+              jwt,
+              sessions,
+              transactionManager);
+      service.setPublicBootstrapWorldsOwner(
+          new AccountPublicBootstrapWorldsOwner(caller, targets, entitlement, clock));
+      service.setCanonicalPublicRealmScopeOwner(
+          new AccountCanonicalPublicRealmScopeOwner(
+              caller,
+              targets,
+              entitlement,
+              accounts,
+              members,
+              tenants,
+              sources,
+              scopes,
+              jwt,
+              properties,
+              clock,
+              transactionManager,
+              namespace));
+      service.setAccountBootstrapRosterReadClient(roster);
+      org.mockito.Mockito.when(
+              roster.read(
+                  org.mockito.ArgumentMatchers.any(),
+                  org.mockito.ArgumentMatchers.eq(account.getAccountUuid()),
+                  org.mockito.ArgumentMatchers.any()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isSynchronizationActive())
+                    .isFalse();
+                return List.of();
+              });
+      service.setCanonicalScopeConsumers(
+          new AccountCanonicalConnectScopeReader(jwt, scopes, transactionManager, clock),
+          targets,
+          sources,
+          demos,
+          hosting,
+          observer,
+          terminal,
+          namespace,
+          clock);
+    }
+
+    private void policy(boolean join, boolean gameplay) {
+      in(
+          () -> {
+            DemoTenantEntitlementSnapshot previous;
+            try {
+              previous = demos.readCurrent(tenantId);
+            } catch (
+                net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException
+                    missing) {
+              if (missing.code()
+                  != net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException
+                      .Code.ENTITLEMENT_UNAVAILABLE) throw missing;
+              previous = null;
+            }
+            return demos.provision(
+                new DemoTenantEntitlementRequest(
+                    UUID.randomUUID(),
+                    tenantId,
+                    source.creationRequestId(),
+                    source.requestDigest(),
+                    previous == null ? null : previous.entitlementVersion(),
+                    previous == null ? null : previous.tenantAuthorityGeneration(),
+                    previous == null ? null : previous.tenantAuthoritySourceVersion(),
+                    gameplay,
+                    join,
+                    gameplay,
+                    gameplay,
+                    new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L)),
+                source);
+          });
+    }
+
+    private Target target() {
+      UUID realm = UUID.randomUUID(),
+          state = UUID.randomUUID(),
+          instance = UUID.randomUUID(),
+          version = UUID.randomUUID();
+      String digest = "a".repeat(64), initial = UUID.randomUUID().toString();
+      var request =
+          new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.Request(
+              namespace,
+              tenantId,
+              "world",
+              realm,
+              state,
+              "SHARED",
+              instance,
+              version,
+              1L,
+              initial,
+              digest,
+              net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold
+                  .InitialAdmissionOrigin.NO_PRIOR_POINTER,
+              23L,
+              null);
+      var hold =
+          new net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold.HoldIdentity(
+              request, UUID.randomUUID(), UUID.randomUUID());
+      return new Target(
+          namespace,
+          "tenant",
+          tenantId,
+          "world",
+          "World",
+          realm,
+          "production",
+          "Production",
+          11L,
+          44L,
+          state,
+          "SHARED",
+          instance,
+          version,
+          1L,
+          23L,
+          17L,
+          digest,
+          1L,
+          initial,
+          digest,
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind.NO_PRIOR_POINTER,
+          null,
+          hold.holdId(),
+          hold.holdFence(),
+          hold.holdBindingDigest(),
+          1L,
+          "sha256:" + digest,
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome.COMMITTED,
+          false,
+          clock.instant(),
+          "PRESEEDED_ONLY");
+    }
+
+    private String browserScope() {
+      return service.listBootstrapRealms(bootstrap, target.worldSlug()).getFirst().connectScopeId();
+    }
+
+    private List<net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto> characters(
+        String token) {
+      return service.listBootstrapCharacters(
+          bootstrap, target.worldSlug(), target.realmSlug(), token);
+    }
+
+    private DirectTextCallerContext directCaller(String request) {
+      return new DirectTextCallerContext(
+          account.getAccountUuid(),
+          tenantId,
+          target.realmId(),
+          target.playableStateNamespaceId(),
+          target.playableStateScope(),
+          target.canonicalGameInstanceId(),
+          UUID.nameUUIDFromBytes(
+                  ("session-" + account.getAccountUuid()).getBytes(StandardCharsets.UTF_8))
+              .toString(),
+          request);
+    }
+
+    private String directScope() throws Exception {
+      String request = UUID.randomUUID().toString();
+      return peer()
+          .call(
+              () ->
+                  service
+                      .issueDirectTextConnectScope(
+                          directCaller(request),
+                          new DirectTextJoinTarget(
+                              tenantId,
+                              target.realmId(),
+                              target.worldSlug(),
+                              target.realmSlug(),
+                              target.playableStateNamespaceId(),
+                              target.playableStateScope(),
+                              target.canonicalGameInstanceId(),
+                              target.catalogRevision(),
+                              target.pointerVersion()))
+                      .connectScopeId());
+    }
+
+    private JoinPublicProductionResult directJoin(String token, String request) throws Exception {
+      return peer()
+          .call(
+              () ->
+                  service.joinPublicProductionFromGameSession(
+                      directCaller(request), new JoinPublicProductionRequest(token, request)));
+    }
+
+    private io.grpc.Context peer() {
+      return io.grpc.Context.ROOT.withValue(
+          net.firedevops.firemud.common.grpc.GrpcPeerIdentity.CONTEXT_KEY,
+          new net.firedevops.firemud.common.grpc.GrpcPeerIdentity(
+              "spiffe://firemud/ns/" + namespace + "/sa/game-session-service",
+              namespace,
+              "game-session-service"));
+    }
+
+    private JoinPublicProductionResult join(String token, String request) {
+      return service.joinPublicProduction(
+          bootstrap, new JoinPublicProductionRequest(token, request));
+    }
+
+    private AccountJoinOperationRepository.CanonicalJoinOperationEvidence operation(
+        String request) {
+      return in(() -> operations.findCanonicalEvidenceForUpdateByRequestId(request).orElseThrow());
+    }
+
+    /**
+     * Controlled prior lifecycle event; this does not claim a production leave/suspension owner.
+     */
+    private void seedControlledInactiveSnapshot() {
+      seedControlledSnapshot("INACTIVE", false, List.of("player"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void seedControlledSnapshot(String lifecycle, boolean gameplay, List<String> roleSet) {
+      TransactionTemplate history = new TransactionTemplate(transactionManager);
+      history.setPropagationBehavior(
+          org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+      history.setIsolationLevel(
+          org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+      history.execute(
+          status -> {
+            operations.lockAccount(account.getId());
+            var member =
+                members
+                    .findFreshMembershipForUpdate(account.getAccountUuid(), tenantId)
+                    .orElseThrow();
+            var generation =
+                generations.read(
+                    AccountAuthorityGenerationRepository.AuthorityScope.membership(
+                        account.getAccountUuid(), tenantId));
+            var beforeSource =
+                evidence.readCurrentIssuerAccountSources(
+                    "firemud-account-service", account.getAccountUuid());
+
+            // Closed receipt/source-change mechanics supply the one shared Account fence advance.
+            // This remains controlled historical input, not a registered security or leave
+            // producer.
+            var currentSource = advanceControlledClosedAccountSource(beforeSource);
+            if (currentSource.account().generation() != beforeSource.account().generation() + 1L
+                || currentSource.account().sourceVersion()
+                    != beforeSource.account().sourceVersion() + 1L
+                || currentSource.account().checkpoint().sequence()
+                    != beforeSource.account().checkpoint().sequence() + 1L
+                || currentSource.issuanceFence().value() != generation.issuanceFence().value() + 1L
+                || currentSource.issuanceFence().sourceVersion()
+                    != generation.issuanceFence().sourceVersion() + 1L) {
+              throw new IllegalStateException(
+                  "Controlled Account source/fence did not advance once");
+            }
+            int advanced =
+                dsl.execute(
+                    "UPDATE account_authority_generations SET generation = generation + 1, "
+                        + "source_version = source_version + 1, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE scope_kind = 'MEMBERSHIP' AND issuer_id IS NULL "
+                        + "AND account_uuid = ? AND tenant_uuid = ? AND generation = ? AND source_version = ?",
+                    account.getAccountUuid(),
+                    tenantId,
+                    generation.generation(),
+                    generation.sourceVersion());
+            if (advanced != 1) {
+              throw new IllegalStateException(
+                  "Controlled membership authority CAS did not advance once");
+            }
+            var authority =
+                generations.readCompositeSnapshot(
+                    "firemud-account-service",
+                    account.getAccountUuid(),
+                    List.of(tenantId),
+                    List.of(tenantId));
+            var next = authority.memberships().getFirst();
+            if (next.generation() != generation.generation() + 1L
+                || next.sourceVersion() != generation.sourceVersion() + 1L
+                || !next.issuanceFence().equals(currentSource.issuanceFence())
+                || !authority.issuanceFence().equals(currentSource.issuanceFence())) {
+              throw new IllegalStateException(
+                  "Controlled membership differs from the actual Account fence");
+            }
+            var tenantSource = sources.readCurrentSourceSelection(tenantId).checkpoint();
+            var prior = pairs.readForUpdate(account.getAccountUuid(), tenantId).orElseThrow();
+            var previous = outbox.findEvent(stream(), prior.eventSequence()).orElseThrow();
+            Map<String, Object> event =
+                JsonMapper.builder()
+                    .build()
+                    .readValue(new String(previous.payload(), StandardCharsets.UTF_8), Map.class);
+            event.remove("eventDigest");
+            String leave = "controlled-inactive-" + UUID.randomUUID();
+            event.put("eventId", UUID.randomUUID().toString());
+            event.put("requestId", leave);
+            event.put("outboxSequence", "2");
+            event.put("membershipLifecycleState", lifecycle);
+            event.put("roles", roleSet);
+            event.put("membershipVersion", Map.of(tenantId.toString(), "3"));
+            event.put("membershipAuthorityGeneration", Long.toString(next.generation()));
+            Map<String, Object> tuple = new java.util.LinkedHashMap<>();
+            tuple.put("issuerAuthGeneration", Long.toString(authority.issuer().generation()));
+            tuple.put(
+                "accountAuthorityGeneration", Long.toString(authority.account().generation()));
+            tuple.put(
+                "tenantAuthorityGeneration",
+                Map.of(
+                    tenantId.toString(),
+                    Long.toString(authority.tenants().getFirst().generation())));
+            tuple.put(
+                "membershipAuthorityGeneration",
+                Map.of(tenantId.toString(), Long.toString(next.generation())));
+            tuple.put("privateRealmGrantVersions", List.of());
+            currentSource
+                .account()
+                .accountSecurityCutoff()
+                .ifPresent(
+                    cutoff ->
+                        tuple.put(
+                            "accountSecurityCutoff",
+                            Map.of(
+                                "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
+                                "outboxStreamKey", cutoff.outboxStreamKey(),
+                                "outboxSequence", cutoff.outboxSequence())));
+            tuple.put(
+                "tenantBillingCutoff",
+                Map.of(
+                    tenantId.toString(),
+                    Map.of(
+                        "tenantAuthorityGeneration",
+                            Long.toString(tenantSource.tenantAuthorityGeneration()),
+                        "tenantBillingSequence",
+                            Long.toString(tenantSource.tenantBillingSequence()),
+                        "outboxStreamKey", tenantSource.outboxStreamKey(),
+                        "outboxSequence", Long.toString(tenantSource.outboxSequence()))));
+            event.put("authorityTuple", tuple);
+            event.put("issuanceFence", Long.toString(authority.issuanceFence().value()));
+            event.put("gameplayAdmissionAllowed", gameplay);
+            event.put("callerBoundAuthorityInvalidated", true);
+            var sealed = MembershipAuthorityEventV1Codec.seal(event);
+            var appended =
+                outbox.append(
+                    stream(),
+                    leave,
+                    sequence -> {
+                      if (sequence != 2L)
+                        throw new IllegalStateException("Controlled prior event sequence changed");
+                      return new AccountAuthorityOutboxRepository.EventEvidence(
+                          sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
+                    });
+            dsl.execute(
+                "UPDATE account_tenant_membership SET lifecycle_state = ?, gameplay_admission_allowed = ?, membership_version = 3, membership_authority_generation = 2 WHERE id = ?",
+                lifecycle,
+                gameplay,
+                member.getId());
+            var inactive =
+                members
+                    .findCanonicalMembershipForUpdate(account.getAccountUuid(), tenantId)
+                    .orElseThrow();
+            var provenance =
+                new AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
+                    null,
+                    AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
+                    source.operationId(),
+                    source.evidenceDigest());
+            roles.replaceCanonical(
+                inactive, account.getAccountUuid(), tenantId, provenance, 3L, roleSet);
+            dsl.execute(
+                "UPDATE account_membership_pair_authority SET membership_version = 3, membership_authority_generation = 2, last_event_sequence = 2, last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE WHERE account_uuid = ? AND tenant_uuid = ?",
+                appended.eventId(),
+                appended.eventDigest(),
+                account.getAccountUuid(),
+                tenantId);
+            return null;
+          });
+    }
+
+    /**
+     * Completes one controlled closed security-state receipt in the caller's history transaction.
+     */
+    private AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot
+        advanceControlledClosedAccountSource(
+            AccountAuthoritySourceEvidenceRepository.IssuerAccountSourceSnapshot beforeSource) {
+      Account current = accounts.findByAccountUuidForUpdate(account.getAccountUuid()).orElseThrow();
+      var sourceState =
+          generations.read(
+              AccountAuthorityGenerationRepository.AuthorityScope.account(
+                  account.getAccountUuid()));
+      var roleSource =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT global_roles, global_role_source_version FROM account_global_role_sources "
+                      + "WHERE account_uuid = ? FOR SHARE",
+                  account.getAccountUuid()));
+      long roleVersion = roleSource.get("global_role_source_version", Long.class);
+      var beforeState =
+          new AccountState(
+              current.isEmailVerified(),
+              AccountLoginAuthModes.read(current.getLoginAuthModes()).stream()
+                  .map(Enum::name)
+                  .sorted()
+                  .toList(),
+              java.util.Arrays.stream(roleSource.get("global_roles", String[].class))
+                  .sorted()
+                  .toList(),
+              current.getLifecycleState().name());
+      var afterState =
+          new AccountState(
+              !beforeState.emailVerified(),
+              beforeState.loginAuthModes(),
+              beforeState.globalRoles(),
+              beforeState.lifecycleState());
+      UUID requestId = UUID.randomUUID();
+      // These bytes are retained fixture correlation, not authenticated caller authorization.
+      byte[] correlation =
+          ("{\"actorAccountUuid\":\""
+                  + account.getAccountUuid()
+                  + "\",\"ownerEvidenceDigest\":\"sha256:"
+                  + "a".repeat(64)
+                  + "\",\"ownerOperationId\":\""
+                  + requestId
+                  + "\",\"schemaVersion\":\"account-security-state-caller-correlation/v1\"}")
+              .getBytes(StandardCharsets.UTF_8);
+      var request =
+          new AccountSecurityStateMutationRequest(
+              requestId,
+              account.getAccountUuid(),
+              correlation,
+              sourceState.generation(),
+              sourceState.sourceVersion(),
+              AccountSecurityStateOperationRepository.detectedKinds(beforeState, afterState),
+              afterState);
+      var checkpoint = beforeSource.account().checkpoint();
+      byte[] checkpointPayload =
+          checkpoint.sequence() == 0L
+              ? new byte[0]
+              : outbox
+                  .findEvent(checkpoint.outboxStreamKey(), checkpoint.sequence())
+                  .orElseThrow()
+                  .payload();
+      var draft =
+          new Capture(
+              current.getId(),
+              current.getAccountUuidProvenance(),
+              beforeState,
+              sourceState,
+              checkpoint.sequence(),
+              checkpointPayload,
+              roleVersion,
+              null);
+      byte[] captureBytes = AccountSecurityStateOperationRepository.captureBytes(request, draft);
+      var source =
+          new SourceEvidence(
+              SourceKind.ACCOUNT,
+              account.getAccountUuid().toString(),
+              Long.toString(sourceState.generation()),
+              Long.toString(sourceState.sourceVersion()),
+              checkpoint.outboxStreamKey(),
+              Long.toString(checkpoint.sequence()),
+              captureBytes);
+      var change = new SourceChange(UUID.randomUUID(), List.of(source), captureBytes);
+      var capture =
+          new Capture(
+              draft.accountId(),
+              draft.provenance(),
+              beforeState,
+              sourceState,
+              checkpoint.sequence(),
+              checkpointPayload,
+              roleVersion,
+              change);
+      var fences = new DraftAuthorizationFenceRepository(dsl);
+      var security = new AccountSecurityStateOperationRepository(dsl);
+      if (!fences.requestSourceChange(change)
+          || !security.claim(request, capture).claimed()
+          || !fences.sourceMutationPermitted(change)) {
+        throw new IllegalStateException(
+            "Controlled closed source change is not exclusively settled");
+      }
+      var advanced =
+          evidence.prepareClosedAccountAdvance(account.getAccountUuid(), beforeSource.account());
+      int changed =
+          dsl.execute(
+              "UPDATE accounts SET email_verified = ? WHERE account_uuid = ? AND email_verified = ?",
+              afterState.emailVerified(),
+              account.getAccountUuid(),
+              beforeState.emailVerified());
+      if (changed != 1) {
+        throw new IllegalStateException("Controlled closed Account state CAS did not change once");
+      }
+      var event =
+          outbox.append(
+              checkpoint.outboxStreamKey(),
+              requestId.toString(),
+              sequence -> {
+                var sealed =
+                    AccountSecurityStateAuthorityEventV1Codec.seal(
+                        AccountSecurityStateMutationRequest.eventPreimage(
+                            requestId,
+                            account.getAccountUuid(),
+                            Long.toString(advanced.generation()),
+                            Long.toString(advanced.sourceVersion()),
+                            Long.toString(sequence),
+                            request.mutationKinds(),
+                            afterState));
+                return new AccountAuthorityOutboxRepository.EventEvidence(
+                    sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
+              });
+      fences.markSourceCommitted(change);
+      var completed = security.complete(request, event, advanced, roleVersion);
+      assertThat(completed.receipt().orElseThrow().event()).isEqualTo(event);
+      assertThat(completed.receipt().orElseThrow().sourceState()).isEqualTo(advanced);
+      assertThat(completed.capture().sourceChange().canonicalBytes())
+          .isEqualTo(change.canonicalBytes());
+      assertThat(fences.readSourceChange(change).status()).isEqualTo("SOURCE_COMMITTED");
+      return evidence.readCurrentIssuerAccountSources(
+          "firemud-account-service", account.getAccountUuid());
+    }
+
+    private List<String> currentRoles() {
+      return in(
+          () -> {
+            operations.lockAccount(account.getId());
+            var member =
+                members
+                    .findFreshMembershipForUpdate(account.getAccountUuid(), tenantId)
+                    .orElseThrow();
+            var provenance =
+                new AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
+                    null,
+                    AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
+                    source.operationId(),
+                    source.evidenceDigest());
+            return roles
+                .findForCanonicalUpdate(
+                    account.getAccountUuid(),
+                    tenantId,
+                    provenance,
+                    member.getId(),
+                    member.getMembershipVersion())
+                .orElseThrow()
+                .roles();
+          });
+    }
+
+    private long membershipCount() {
+      return Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ? AND tenant_uuid = ?",
+                  account.getId(),
+                  tenantId))
+          .get(0, Long.class);
+    }
+
+    private String stream() {
+      return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+          + "membership/"
+          + account.getAccountUuid()
+          + "/"
+          + tenantId;
+    }
+
+    private void assertTransitionCount(long expected) {
+      assertThat(
+              dsl.fetchValue(
+                  "SELECT COUNT(*) FROM account_authority_outbox_events WHERE outbox_stream_key = ?",
+                  stream()))
+          .isEqualTo(expected);
+      assertThat(
+              dsl.fetchValue(
+                  "SELECT COUNT(*) FROM account_audit_outbox WHERE tenant_uuid = ? AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+                  tenantId))
+          .isEqualTo(expected);
+    }
+
+    private List<String> state(String request) {
+      return List.of(
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT row_to_json(j)::text FROM account_join_operations j WHERE request_id = ?",
+                      request))
+              .get(0, String.class),
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT COALESCE(json_agg(m)::text, '[]') FROM account_tenant_membership m WHERE account_id = ? AND tenant_uuid = ?",
+                      account.getId(),
+                      tenantId))
+              .get(0, String.class),
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT COALESCE(json_agg(e ORDER BY outbox_sequence)::text, '[]') FROM account_authority_outbox_events e WHERE outbox_stream_key = ?",
+                      stream()))
+              .get(0, String.class),
+          Objects.requireNonNull(
+                  dsl.fetchOne(
+                      "SELECT COALESCE(json_agg(to_jsonb(a) - ARRAY['attempt_count','last_attempt_at','next_attempt_at'])::text, '[]') FROM account_audit_outbox a WHERE tenant_uuid = ?",
+                      tenantId))
+              .get(0, String.class));
+    }
+
+    private <T> T in(Supplier<T> work) {
+      return transaction.execute(status -> work.get());
+    }
+  }
+
+  private static final class FixtureClock extends Clock {
+    private final Clock delegate;
+    private Duration offset = Duration.ZERO;
+
+    private FixtureClock(Clock delegate) {
+      this.delegate = delegate;
+    }
+
+    @Override
+    public java.time.ZoneId getZone() {
+      return java.time.ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(java.time.ZoneId zone) {
+      return this;
+    }
+
+    @Override
+    public Instant instant() {
+      return delegate.instant().plus(offset);
+    }
+  }
+
+  @Test
   void publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly() throws Exception {
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     String username = "global-" + suffix;
@@ -478,7 +2315,7 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
-  void ordinaryUuidPasswordOtpBootstrapJourneysPreserveIdentityWithPublicConsumersHeld()
+  void ordinaryUuidPasswordOtpBootstrapAndScopeJourneysPreservePersistedIdentity()
       throws Exception {
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     String username = "auth-uuid-" + suffix;
@@ -569,58 +2406,35 @@ class AccountApplicationIntegrationTest {
     assertThat(bootstrapClaims.getSubject()).isEqualTo(persistedAccountUuid.toString());
     assertThat(bootstrapClaims.get("accountId", String.class))
         .isEqualTo(persistedAccountUuid.toString());
+    // Controlled complete empty source; caller identity and Redis session reads remain real.
+    var emptyTargets = org.mockito.Mockito.mock(CanonicalGameplayAdmissionDecisionReadClient.class);
+    org.mockito.Mockito.when(
+            emptyTargets.listVisiblePublicProductionAdmissionTargets(
+                org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              var request =
+                  new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+                      invocation.getArgument(0, UUID.class), "test");
+              return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                  request,
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                      request, List.of()));
+            });
+    var unusedEntitlements = org.mockito.Mockito.mock(AccountPublicBootstrapEntitlementOwner.class);
+    canonicalFacade.setPublicBootstrapWorldsOwner(
+        new AccountPublicBootstrapWorldsOwner(
+            new AccountPlayerBootstrapCallerVerifier(
+                jwtUtil, accountRepository, realAccountSessions),
+            emptyTargets,
+            unusedEntitlements,
+            Clock.systemUTC()));
     String passwordBootstrap = bootstrapData.path("bootstrapToken").asText();
-    assertThat(bootstrapClaims.getAudience()).containsExactly("player-bootstrap");
-    assertThat(realAccountSessions.isAccountSessionActive(numericAccountId, passwordBootstrap))
-        .isTrue();
-    HttpResponse<String> heldPasswordWorlds = bootstrapWorlds(passwordBootstrap);
-    assertThat(heldPasswordWorlds.statusCode()).isEqualTo(503);
-    assertThat(heldPasswordWorlds.body()).contains("AUTH_UNAVAILABLE");
-    // This foundation has genuine Account identity/session issuance but no public selector or
-    // admission composition. The complete positive public journeys are retained in the successor.
-    for (Runnable held :
-        List.<Runnable>of(
-            () -> accountService.listBootstrapWorlds(passwordBootstrap),
-            () -> accountService.listBootstrapRealms(passwordBootstrap, "world"),
-            () ->
-                accountService.listBootstrapCharacters(
-                    passwordBootstrap, "world", "production", "uncomposed-scope"),
-            () ->
-                accountService.joinPublicProduction(
-                    passwordBootstrap,
-                    new JoinPublicProductionRequest("uncomposed-scope", "foundation-join")),
-            () -> accountService.issueDirectTextConnectScope(null, null),
-            () ->
-                accountService.joinPublicProductionFromGameSession(
-                    null,
-                    new JoinPublicProductionRequest("uncomposed-scope", "foundation-direct-join")),
-            () ->
-                accountService.issueConnectToken(
-                    passwordBootstrap,
-                    new ConnectTokenRequest("uncomposed-scope", "foundation-connect")))) {
-      assertThatThrownBy(held::run)
-          .isInstanceOf(AuthenticationException.class)
-          .extracting(value -> ((AuthenticationException) value).getCode())
-          .isEqualTo("AUTH_UNAVAILABLE");
-    }
-    assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ?",
-                numericAccountId))
-        .isEqualTo(0L);
-    assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM account_connect_scope_records WHERE account_id = ?",
-                numericAccountId))
-        .isEqualTo(0L);
-    assertThat(
-            dsl.fetchValue(
-                "SELECT COUNT(*) FROM account_join_operations WHERE account_id = ?",
-                numericAccountId))
-        .isEqualTo(0L);
+    assertThat(bootstrapWorlds(passwordBootstrap).statusCode()).isEqualTo(200);
     invalidateBootstrapSession(numericAccountId, passwordBootstrap);
-    assertThat(realAccountSessions.isAccountSessionActive(numericAccountId, passwordBootstrap))
-        .isFalse();
+    HttpResponse<String> expiredPassword = bootstrapWorlds(passwordBootstrap);
+    assertThat(expiredPassword.statusCode()).isEqualTo(401);
+    assertThat(expiredPassword.body()).contains("CONNECT_CONTEXT_INVALID");
 
     accountService.requestEmailVerification(email);
     String verificationToken =
@@ -678,14 +2492,9 @@ class AccountApplicationIntegrationTest {
                     "Expected challenge-count record")
                 .get(0, Long.class))
         .isZero();
-    assertThat(otpClaims.getAudience()).containsExactly("player-bootstrap");
-    assertThat(realAccountSessions.isAccountSessionActive(numericAccountId, otpBootstrap)).isTrue();
-    HttpResponse<String> heldOtpWorlds = bootstrapWorlds(otpBootstrap);
-    assertThat(heldOtpWorlds.statusCode()).isEqualTo(503);
-    assertThat(heldOtpWorlds.body()).contains("AUTH_UNAVAILABLE");
+    assertThat(bootstrapWorlds(otpBootstrap).statusCode()).isEqualTo(200);
     invalidateBootstrapSession(numericAccountId, otpBootstrap);
-    assertThat(realAccountSessions.isAccountSessionActive(numericAccountId, otpBootstrap))
-        .isFalse();
+    assertThat(bootstrapWorlds(otpBootstrap).statusCode()).isEqualTo(401);
 
     // Obtain a fresh real challenge: bootstrap issuance consumed the preceding one.
     accountService.requestEmailLoginOtp(email);

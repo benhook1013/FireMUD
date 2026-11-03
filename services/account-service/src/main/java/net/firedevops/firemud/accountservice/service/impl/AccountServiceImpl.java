@@ -11,8 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -23,6 +25,9 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.AccountUuidText;
+import net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient;
+import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
@@ -31,10 +36,12 @@ import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -75,14 +82,22 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReadFence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
@@ -91,8 +106,12 @@ import net.firedevops.firemud.accountservice.repository.PaymentTransactionReposi
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
 import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalConnectScopeReader;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalPublicRealmScopeOwner;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository.Intent;
+import net.firedevops.firemud.accountservice.service.AccountPublicBootstrapWorldsOwner;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
@@ -104,11 +123,16 @@ import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -119,6 +143,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -141,6 +166,10 @@ public class AccountServiceImpl implements AccountService {
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
 
   private String gameplayDecoyPasswordVerifier;
+  private AccountPublicBootstrapWorldsOwner publicBootstrapWorldsOwner;
+  private AccountCanonicalPublicRealmScopeOwner canonicalPublicRealmScopeOwner;
+  private CanonicalScopeConsumers canonicalScopeConsumers;
+  private AccountBootstrapRosterReadClient accountBootstrapRosterReadClient;
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
@@ -419,51 +448,714 @@ public class AccountServiceImpl implements AccountService {
         Instant.ofEpochMilli(expiresAt).toString());
   }
 
-  // Numeric retained billing history cannot authorize public discovery or admission.
-  // The complete canonical public facade is integrated in the receiving successor.
+  /**
+   * Explicit held composition only. The canonical source remains unregistered until its owning
+   * runtime boundary is qualified; absence never selects the retained numeric discovery path.
+   */
+  @Autowired(required = false)
+  public void setPublicBootstrapWorldsOwner(AccountPublicBootstrapWorldsOwner owner) {
+    this.publicBootstrapWorldsOwner = Objects.requireNonNull(owner);
+  }
+
+  // Bootstrap/JOIN orchestration deliberately has no transaction advice: NOT_SUPPORTED would
+  // still create empty synchronization. These entry points reject ambient SQL, while each
+  // canonical owner opens its own short transaction around owner-local state only.
   @Override
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
-    throw publicBootstrapUnavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Public bootstrap world discovery refuses ambient SQL");
+    }
+    AccountPublicBootstrapWorldsOwner owner = publicBootstrapWorldsOwner;
+    if (owner == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical public-world discovery source is unavailable");
+    }
+    return owner.listWorlds(bootstrapToken);
+  }
+
+  /**
+   * Explicit held composition; the owner retains the signed V2 selector before publication. Its
+   * direct-text entry point authenticates the existing Game Session caller separately.
+   */
+  @Autowired(required = false)
+  public void setCanonicalPublicRealmScopeOwner(AccountCanonicalPublicRealmScopeOwner owner) {
+    this.canonicalPublicRealmScopeOwner = Objects.requireNonNull(owner);
+  }
+
+  /** Explicit composition of the existing canonical consumers; this does not register an issuer. */
+  public void setCanonicalScopeConsumers(
+      AccountCanonicalConnectScopeReader reader,
+      CanonicalGameplayAdmissionDecisionReadClient targets,
+      AccountTenantAuthorityEventRepository tenantSources,
+      AccountDemoTenantEntitlementRepository demos,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      StripeHostingSubscriptionObserver observer,
+      AccountCanonicalFirstJoinTerminalCoordinator firstJoin,
+      String namespace,
+      Clock clock) {
+    if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Canonical Account workload namespace required");
+    }
+    canonicalScopeConsumers =
+        new CanonicalScopeConsumers(
+            Objects.requireNonNull(reader),
+            Objects.requireNonNull(targets),
+            Objects.requireNonNull(tenantSources),
+            Objects.requireNonNull(demos),
+            Objects.requireNonNull(hosting),
+            Objects.requireNonNull(observer),
+            Objects.requireNonNull(firstJoin),
+            namespace,
+            Objects.requireNonNull(clock));
+  }
+
+  private CanonicalScopeConsumers requireCanonicalScopeConsumers() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Canonical scope consumers refuse ambient Account SQL");
+    }
+    if (canonicalScopeConsumers == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical scope consumers are unavailable");
+    }
+    return canonicalScopeConsumers;
+  }
+
+  private Target readCanonicalScopeTarget(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    return readCanonicalScopePublishedTarget(consumers, scope).currentTarget();
+  }
+
+  private PublishedRealmEvidence readCanonicalScopePublishedTarget(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    try {
+      RetainedTargetSelector selector =
+          new RetainedTargetSelector(
+              UUID.randomUUID(),
+              scope.accountId(),
+              consumers.namespace(),
+              scope.tenantId(),
+              scope.tenantSlug(),
+              scope.worldSlug(),
+              scope.realmId(),
+              scope.realmSlug(),
+              scope.playableStateNamespaceId(),
+              scope.playableStateScope(),
+              scope.gameInstanceId(),
+              scope.catalogRevision(),
+              scope.pointerVersion());
+      var resolved =
+          Objects.requireNonNull(
+              consumers.targets().resolvePublishedRealmAdmissionTarget(selector));
+      net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec
+          .requireRetainedTargetMatches(selector, resolved.currentTarget());
+      if (!selector.equals(resolved.selector()))
+        throw new IllegalStateException("Resolved selector differs");
+      var published =
+          Objects.requireNonNull(
+              consumers.targets().readPublishedRealmAdmissionOwner(resolved.strictSelector()));
+      if (!resolved.strictSelector().equals(published.selector())
+          || !resolved.currentTarget().equals(published.currentTarget())) {
+        throw new IllegalStateException(
+            "Published target differs from its resolved owner selectors");
+      }
+      return published;
+    } catch (AuthenticationException failure) {
+      throw failure;
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE", STALE_CONNECT_SCOPE_MESSAGE, failure);
+    }
+  }
+
+  private Account lockCanonicalScopeAccount(CanonicalJoinScopeV2 scope) {
+    Account account =
+        accountRepository
+            .findByAccountUuidForUpdate(scope.accountId())
+            .orElseThrow(
+                () -> new AuthenticationException("AUTH_UNAVAILABLE", "Account is unavailable"));
+    requireAccountStorageId(account, scope.accountId());
+    requireAuthenticationEligible(account);
+    return account;
+  }
+
+  private CanonicalJoinPreparation prepareCanonicalJoin(
+      CanonicalScopeConsumers consumers,
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String callerBinding) {
+    // Retain the exact policy-independent intent before any fallible source/provider work.
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          lockCanonicalScopeAccount(scope);
+          accountJoinOperationRepository.insertCanonicalIntent(requestId, scope, callerBinding);
+        });
+    return Objects.requireNonNull(
+        joinTransactionTemplate.execute(
+            status -> {
+              lockCanonicalScopeAccount(scope);
+              CanonicalJoinOperationEvidence operation =
+                  accountJoinOperationRepository
+                      .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                      .orElseThrow();
+              if ("FAILED".equals(operation.status())) {
+                return new CanonicalJoinPreparation(operation, null, null, null);
+              }
+              SourceSelection source =
+                  consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+              return switch (source.kind()) {
+                case PAID_HOSTING ->
+                    new CanonicalJoinPreparation(
+                        operation,
+                        source,
+                        null,
+                        consumers.hosting().prepareCurrentRead(scope.tenantId()));
+                case NON_PAID_DEMO ->
+                    new CanonicalJoinPreparation(
+                        operation, source, consumers.demos().readCurrent(scope.tenantId()), null);
+              };
+            }));
+  }
+
+  private CanonicalJoinResult commitCanonicalJoin(
+      CanonicalScopeConsumers consumers,
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String callerBinding,
+      CanonicalJoinPreparation prepared,
+      StripeHostingSubscriptionObserver.Result observation) {
+    return Objects.requireNonNull(
+        joinTransactionTemplate.execute(
+            status -> {
+              lockCanonicalScopeAccount(scope);
+              requireCanonicalScopeFresh(consumers, scope);
+              if ("FAILED".equals(prepared.operation().status())) {
+                return new CanonicalJoinResult(prepared.operation().outcome(), null, false);
+              }
+              SourceSelection current =
+                  consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+              if (current.kind() != prepared.source().kind()
+                  || !prepared.source().matches(current.checkpoint())) {
+                throw new AuthenticationException(
+                    "ENTITLEMENT_UNAVAILABLE", "Tenant source changed");
+              }
+              final boolean gameplayAvailable;
+              final boolean allowPublicJoin;
+              final long entitlementVersion;
+              if (prepared.fence() != null) {
+                AccountHostingSubscriptionCurrentReceipt receipt =
+                    consumers.hosting().readCurrent(prepared.fence(), observation);
+                gameplayAvailable = receipt.gameplayAvailable();
+                allowPublicJoin = receipt.allowPublicJoin();
+                entitlementVersion = receipt.entitlementVersion();
+              } else {
+                DemoTenantEntitlementSnapshot demo = consumers.demos().revalidate(prepared.demo());
+                gameplayAvailable = demo.gameplayAvailable();
+                allowPublicJoin = demo.allowPublicJoin();
+                entitlementVersion = demo.entitlementVersion();
+              }
+              accountJoinOperationRepository.bindCanonicalPolicyEvidence(
+                  requestId, scope, callerBinding, allowPublicJoin, entitlementVersion);
+              Optional<AccountTenantMembership> member =
+                  accountTenantMembershipRepository.findFreshMembershipForUpdate(
+                      scope.accountId(), scope.tenantId());
+              boolean active =
+                  member.filter(value -> "ACTIVE".equals(value.getLifecycleState())).isPresent();
+              if (!gameplayAvailable || (!active && !allowPublicJoin)) {
+                String outcome =
+                    gameplayAvailable
+                        ? "PUBLIC_PRODUCTION_ADMISSION_DENIED"
+                        : "TENANT_BILLING_BLOCKED";
+                if ("PENDING".equals(prepared.operation().status())) {
+                  accountJoinOperationRepository.finishCanonicalFailure(
+                      requestId, scope, callerBinding, outcome);
+                }
+                return new CanonicalJoinResult(outcome, null, false);
+              }
+              var committed =
+                  consumers
+                      .firstJoin()
+                      .commitCanonicalJoin(
+                          scope,
+                          requestId,
+                          callerBinding,
+                          prepared.fence() == null ? null : consumers.hosting(),
+                          prepared.fence(),
+                          observation);
+              requireCanonicalScopeFresh(consumers, scope);
+              var currentMembership =
+                  accountTenantMembershipRepository
+                      .findFreshMembershipForUpdate(scope.accountId(), scope.tenantId())
+                      .orElseThrow();
+              if (currentMembership.getMembershipVersion()
+                      != committed.terminalProof().membershipVersion()
+                  || currentMembership.getMembershipAuthorityGeneration()
+                      != committed.terminalProof().membershipAuthorityGeneration()) {
+                throw new IllegalStateException(
+                    "Canonical JOIN result differs from current membership");
+              }
+              return new CanonicalJoinResult(
+                  committed.outcome(),
+                  committed.terminalProof(),
+                  currentMembership.isGameplayAdmissionAllowed());
+            }));
+  }
+
+  private void requireCanonicalScopeFresh(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    Instant now = consumers.clock().instant();
+    if (now.isBefore(Instant.parse(scope.evaluatedAt()))
+        || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) {
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
+    }
+  }
+
+  private record CanonicalScopeConsumers(
+      AccountCanonicalConnectScopeReader reader,
+      CanonicalGameplayAdmissionDecisionReadClient targets,
+      AccountTenantAuthorityEventRepository tenantSources,
+      AccountDemoTenantEntitlementRepository demos,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      StripeHostingSubscriptionObserver observer,
+      AccountCanonicalFirstJoinTerminalCoordinator firstJoin,
+      String namespace,
+      Clock clock) {}
+
+  private record CanonicalJoinPreparation(
+      CanonicalJoinOperationEvidence operation,
+      SourceSelection source,
+      DemoTenantEntitlementSnapshot demo,
+      ReadFence fence) {}
+
+  private record CanonicalJoinResult(
+      String outcome, CanonicalJoinTerminalProof proof, boolean gameplayAdmissionAllowed) {}
+
+  /** Explicit non-admitting Entity projection; no default runtime client is registered here. */
+  public void setAccountBootstrapRosterReadClient(AccountBootstrapRosterReadClient client) {
+    accountBootstrapRosterReadClient = Objects.requireNonNull(client);
+  }
+
+  private BootstrapCharacterAuthority prepareBootstrapCharacterAuthority(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    return Objects.requireNonNull(
+        joinTransactionTemplate.execute(
+            status -> {
+              lockCanonicalScopeAccount(scope);
+              requireCanonicalScopeFresh(consumers, scope);
+              var membership = readBootstrapCharacterMembership(scope);
+              try {
+                SourceSelection source =
+                    consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+                return new BootstrapCharacterAuthority(
+                    source,
+                    membership,
+                    source.kind() == AccountTenantAuthorityEventRepository.SourceKind.NON_PAID_DEMO
+                        ? consumers.demos().readCurrent(scope.tenantId())
+                        : null,
+                    source.kind() == AccountTenantAuthorityEventRepository.SourceKind.PAID_HOSTING
+                        ? consumers.hosting().prepareCurrentRead(scope.tenantId())
+                        : null,
+                    consumers.clock().instant());
+              } catch (RuntimeException failure) {
+                throw new AuthenticationException(
+                    "ENTITLEMENT_UNAVAILABLE",
+                    "Bootstrap entitlement source is unavailable",
+                    failure);
+              }
+            }));
+  }
+
+  private Optional<AccountCanonicalPublicRealmScopeOwner.ExistingMembership>
+      readBootstrapCharacterMembership(CanonicalJoinScopeV2 scope) {
+    try {
+      return accountTenantMembershipRepository
+          .findFreshMembershipForUpdate(scope.accountId(), scope.tenantId())
+          .map(
+              member ->
+                  new AccountCanonicalPublicRealmScopeOwner.ExistingMembership(
+                      member.getId(),
+                      member.getLifecycleState(),
+                      member.isGameplayAdmissionAllowed(),
+                      member.getMembershipVersion(),
+                      member.getMembershipAuthorityGeneration()));
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Bootstrap membership source is unavailable", failure);
+    }
+  }
+
+  private void requireBootstrapCharacterAuthority(
+      CanonicalScopeConsumers consumers,
+      CanonicalJoinScopeV2 scope,
+      BootstrapCharacterAuthority prepared,
+      StripeHostingSubscriptionObserver.Result observation) {
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          lockCanonicalScopeAccount(scope);
+          requireCanonicalScopeFresh(consumers, scope);
+          var membership = readBootstrapCharacterMembership(scope);
+          if (!prepared.membership().equals(membership)) {
+            throw new AuthenticationException(
+                "AUTH_UNAVAILABLE", "Bootstrap membership changed during discovery");
+          }
+          final boolean gameplayAvailable;
+          final boolean allowPublicJoin;
+          try {
+            SourceSelection current =
+                consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+            if (current.kind() != prepared.source().kind()
+                || !prepared.source().matches(current.checkpoint())) {
+              throw new IllegalStateException("Bootstrap entitlement source changed");
+            }
+            if (prepared.fence() != null) {
+              var receipt = consumers.hosting().readCurrent(prepared.fence(), observation);
+              gameplayAvailable = receipt.gameplayAvailable();
+              allowPublicJoin = receipt.allowPublicJoin();
+            } else {
+              Instant currentTime = consumers.clock().instant();
+              if (currentTime.isBefore(prepared.observedAt())
+                  || !currentTime.isBefore(prepared.observedAt().plusSeconds(15))) {
+                throw new IllegalStateException(
+                    "Original bootstrap entitlement observation expired");
+              }
+              var demo = consumers.demos().revalidate(prepared.demo());
+              gameplayAvailable = demo.gameplayAvailable();
+              allowPublicJoin = demo.allowPublicJoin();
+            }
+          } catch (RuntimeException failure) {
+            throw new AuthenticationException(
+                "ENTITLEMENT_UNAVAILABLE",
+                "Bootstrap entitlement source is unavailable or changed",
+                failure);
+          }
+          if (!gameplayAvailable) {
+            throw new AuthenticationException(
+                "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+          }
+          if (membership.isEmpty()
+              || "INACTIVE".equals(membership.orElseThrow().lifecycleState())) {
+            throw new AuthenticationException(
+                allowPublicJoin ? "JOIN_REQUIRED" : "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+                allowPublicJoin ? JOIN_REQUIRED_CHARACTERS_MESSAGE : "Public enrollment is closed");
+          }
+          if (!"ACTIVE".equals(membership.orElseThrow().lifecycleState())
+              || !membership.orElseThrow().gameplayAdmissionAllowed()) {
+            throw new AuthenticationException(
+                "PUBLIC_PRODUCTION_ADMISSION_DENIED", "Membership does not allow actor discovery");
+          }
+        });
+  }
+
+  private record BootstrapCharacterAuthority(
+      SourceSelection source,
+      Optional<AccountCanonicalPublicRealmScopeOwner.ExistingMembership> membership,
+      DemoTenantEntitlementSnapshot demo,
+      ReadFence fence,
+      Instant observedAt) {}
+
+  private StripeHostingSubscriptionObserver.Result observeBootstrapCharacterSource(
+      CanonicalScopeConsumers consumers, BootstrapCharacterAuthority prepared) {
+    if (prepared.fence() == null) return null;
+    try {
+      return consumers.observer().observe(prepared.fence().binding());
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE", "Bootstrap provider source is unavailable", failure);
+    }
+  }
+
+  private void requireSameBootstrapCaller(BootstrapContext original, String token) {
+    if (!original.equals(requireBootstrapContext(token))) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Bootstrap caller changed during actor discovery");
+    }
   }
 
   @Override
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
-    throw publicBootstrapUnavailable();
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Public bootstrap realm discovery refuses ambient SQL");
+    }
+    AccountCanonicalPublicRealmScopeOwner owner = canonicalPublicRealmScopeOwner;
+    if (owner == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical public-realm scope source is unavailable");
+    }
+    return owner.listRealmScopes(bootstrapToken, worldSlug).stream()
+        .map(
+            retained -> {
+              var target = retained.target();
+              var scope = retained.scope();
+              return new BootstrapRealmDto(
+                  scope.worldSlug(),
+                  scope.realmSlug(),
+                  scope.realmId(),
+                  target.realmDisplayName(),
+                  scope.tenantId(),
+                  scope.gameInstanceId(),
+                  scope.pointerVersion(),
+                  scope.catalogRevision(),
+                  scope.playableStateNamespaceId(),
+                  PlayableStateScope.valueOf("PLAYABLE_STATE_SCOPE_" + scope.playableStateScope())
+                      .name(),
+                  scope.playableStateScope(),
+                  target.characterCreationPolicy(),
+                  scope.evaluatedAt(),
+                  scope.connectScopeExpiresAt(),
+                  scope.connectScopeId());
+            })
+        .toList();
   }
 
   @Override
   @Timed(value = "account.bootstrap_characters")
   public List<BootstrapCharacterDto> listBootstrapCharacters(
       String bootstrapToken, String worldSlug, String realmSlug, String connectScopeId) {
-    throw publicBootstrapUnavailable();
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
+    AccountBootstrapRosterReadClient roster = accountBootstrapRosterReadClient;
+    if (roster == null)
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical Entity bootstrap discovery is unavailable");
+    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    CanonicalJoinScopeV2 scope =
+        consumers.reader().read(bootstrapContext.accountUuid(), connectScopeId);
+    if (!scope.worldSlug().equals(worldSlug) || !scope.realmSlug().equals(realmSlug)) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    if (!"SHARED".equals(scope.playableStateScope())) {
+      throw new AuthenticationException(
+          "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
+    }
+    PublishedRealmEvidence published = readCanonicalScopePublishedTarget(consumers, scope);
+    if (!"SHARED".equals(published.currentTarget().playableStateScope())
+        || !"PRESEEDED_ONLY".equals(published.currentTarget().characterCreationPolicy())) {
+      throw new AuthenticationException(
+          "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
+    }
+    BootstrapCharacterAuthority prepared = prepareBootstrapCharacterAuthority(consumers, scope);
+    var observation = observeBootstrapCharacterSource(consumers, prepared);
+    requireBootstrapCharacterAuthority(consumers, scope, prepared, observation);
+    requireSameBootstrapCaller(bootstrapContext, bootstrapToken);
+    final List<AccountBootstrapRosterReadClient.Actor> actors;
+    try {
+      actors = List.copyOf(roster.read(UUID.randomUUID(), scope.accountId(), published));
+    } catch (io.grpc.StatusRuntimeException failure) {
+      String code =
+          failure.getStatus().getCode() == io.grpc.Status.Code.FAILED_PRECONDITION
+              ? "CONNECT_SCOPE_MISMATCH"
+              : "AUTH_UNAVAILABLE";
+      throw new AuthenticationException(
+          code, "Entity bootstrap discovery is unavailable or changed", failure);
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Entity bootstrap discovery is malformed or unavailable", failure);
+    }
+    PublishedRealmEvidence current = readCanonicalScopePublishedTarget(consumers, scope);
+    if (!published.currentTarget().equals(current.currentTarget())
+        || !java.util.Arrays.equals(
+            published.sourceEvidence().publishedPolicySetEvidence().canonicalBytes(),
+            current.sourceEvidence().publishedPolicySetEvidence().canonicalBytes())) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    requireSameBootstrapCaller(bootstrapContext, bootstrapToken);
+    var finalObservation = observeBootstrapCharacterSource(consumers, prepared);
+    requireBootstrapCharacterAuthority(consumers, scope, prepared, finalObservation);
+    requireCanonicalScopeFresh(consumers, scope);
+    requireSameBootstrapCaller(bootstrapContext, bootstrapToken);
+    return actors.stream()
+        .sorted(
+            Comparator.comparing(AccountBootstrapRosterReadClient.Actor::displayName)
+                .thenComparing(actor -> actor.characterId().toString()))
+        .map(
+            actor ->
+                new BootstrapCharacterDto(
+                    actor.characterId().toString(),
+                    actor.displayName(),
+                    actor.level(),
+                    scope.playableStateScope(),
+                    published.currentTarget().characterCreationPolicy()))
+        .toList();
   }
 
   @Override
   @Timed(value = "account.public_production_join")
   public JoinPublicProductionResult joinPublicProduction(
       String bootstrapToken, JoinPublicProductionRequest request) {
-    throw publicBootstrapUnavailable();
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
+    BootstrapContext caller = requireBootstrapContext(bootstrapToken);
+    Claims callerClaims =
+        requireSignedTokenClaims(
+            bootstrapToken,
+            "player-bootstrap",
+            "CONNECT_CONTEXT_INVALID",
+            "Missing bootstrap token",
+            "Invalid bootstrap token");
+    String callerBinding;
+    try {
+      callerBinding = JwtClaims.requireText(callerClaims.get("jti"), "jti");
+    } catch (IllegalArgumentException ex) {
+      throw new AuthenticationException(
+          "CONNECT_CONTEXT_INVALID", "Bootstrap caller binding is missing", ex);
+    }
+    return joinCanonicalPublicProduction(
+        consumers,
+        caller.accountUuid(),
+        callerBinding,
+        request,
+        () -> {
+          BootstrapContext current = requireBootstrapContext(bootstrapToken);
+          if (!caller.equals(current)) {
+            throw new AuthenticationException("AUTH_UNAVAILABLE", "Bootstrap caller changed");
+          }
+        });
+  }
+
+  private JoinPublicProductionResult joinCanonicalPublicProduction(
+      CanonicalScopeConsumers consumers,
+      UUID accountUuid,
+      String callerBinding,
+      JoinPublicProductionRequest request,
+      Runnable recheckCaller) {
+    if (request == null
+        || !StringUtils.hasText(request.connectScopeId())
+        || !StringUtils.hasText(request.requestId())) {
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
+    }
+    if (request.requestId().length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
+      throw new AuthenticationException(
+          "INVALID_ARGUMENT", "JOIN requestId exceeds the maximum length");
+    }
+    CanonicalJoinScopeV2 scope = consumers.reader().read(accountUuid, request.connectScopeId());
+    try {
+      CanonicalJoinPreparation prepared =
+          prepareCanonicalJoin(consumers, scope, request.requestId(), callerBinding);
+      Target target = readCanonicalScopeTarget(consumers, scope);
+      // The SDK's sealed result crosses source transactions; provider I/O never runs under SQL.
+      StripeHostingSubscriptionObserver.Result observation =
+          prepared.fence() == null
+              ? null
+              : consumers.observer().observe(prepared.fence().binding());
+      if (!target.equals(readCanonicalScopeTarget(consumers, scope))) {
+        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+      }
+      recheckCaller.run();
+      CanonicalJoinResult committed =
+          commitCanonicalJoin(
+              consumers, scope, request.requestId(), callerBinding, prepared, observation);
+      requireCanonicalScopeFresh(consumers, scope);
+      CanonicalJoinTerminalProof proof = committed.proof();
+      // Publish only after the owner transaction has committed; response loss is exact-retryable.
+      return new JoinPublicProductionResult(
+          proof != null,
+          committed.outcome(),
+          scope.accountId().toString(),
+          scope.tenantId(),
+          proof == null ? 0L : proof.membershipId(),
+          proof == null ? 0L : proof.membershipVersion(),
+          proof == null ? 0L : proof.membershipAuthorityGeneration(),
+          committed.gameplayAdmissionAllowed(),
+          !"PENDING".equals(prepared.operation().status()));
+    } catch (AccountJoinOperationRepository.CanonicalJoinOperationConflictException failure) {
+      throw new AuthenticationException(
+          "IDEMPOTENCY_CONFLICT", "JOIN request ID conflicts", failure);
+    } catch (RuntimeException failure) {
+      String code =
+          failure instanceof AuthenticationException authentication
+              ? authentication.getCode()
+              : "ENTITLEMENT_UNAVAILABLE";
+      recordCanonicalJoinFailure(scope, request.requestId(), callerBinding, code);
+      if (failure instanceof AuthenticationException authentication) throw authentication;
+      throw new AuthenticationException(
+          code, "Canonical JOIN authority is unavailable; retry the same request", failure);
+    }
+  }
+
+  private void recordCanonicalJoinFailure(
+      CanonicalJoinScopeV2 scope, String requestId, String callerBinding, String failureCode) {
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          lockCanonicalScopeAccount(scope);
+          Optional<CanonicalJoinOperationEvidence> found =
+              accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId);
+          if (found.isEmpty() || !"PENDING".equals(found.orElseThrow().status())) return;
+          if (List.of("CONNECT_SCOPE_MISMATCH", "CONNECT_SCOPE_INVALID").contains(failureCode)) {
+            accountJoinOperationRepository.finishCanonicalFailure(
+                requestId, scope, callerBinding, failureCode);
+          } else {
+            String retryCode =
+                List.of(
+                            "ADMISSION_POINTER_UNAVAILABLE",
+                            "ENTITLEMENT_UNAVAILABLE",
+                            "AUTH_UNAVAILABLE")
+                        .contains(failureCode)
+                    ? failureCode
+                    : "AUTH_UNAVAILABLE";
+            accountJoinOperationRepository.recordCanonicalAttemptFailure(
+                requestId, scope, callerBinding, "UNAVAILABLE", retryCode);
+          }
+        });
   }
 
   @Override
   @Timed(value = "account.direct_text_connect_scope")
   public DirectTextJoinScope issueDirectTextConnectScope(
       DirectTextCallerContext caller, DirectTextJoinTarget target) {
-    throw publicBootstrapUnavailable();
+    if (canonicalPublicRealmScopeOwner == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical scope producer is unavailable");
+    }
+    CanonicalJoinScopeV2 scope =
+        canonicalPublicRealmScopeOwner.issueDirectTextScope(caller, target).scope();
+    return new DirectTextJoinScope(
+        scope.connectScopeId(), scope.connectScopeExpiresAt(), scope.evaluatedAt());
   }
 
   @Override
   @Timed(value = "account.public_production_join_internal")
   public JoinPublicProductionResult joinPublicProductionFromGameSession(
       DirectTextCallerContext caller, JoinPublicProductionRequest request) {
-    throw publicBootstrapUnavailable();
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
+    requireCanonicalDirectPeer(consumers);
+    if (caller == null
+        || caller.accountId() == null
+        || NIL_ACCOUNT_UUID.equals(caller.accountId())
+        || !StringUtils.hasText(caller.sessionId())
+        || AccountUuidText.parseOrNull(caller.sessionId()) == null
+        || !StringUtils.hasText(caller.requestId())
+        || request == null
+        || !caller.requestId().equals(request.requestId())) {
+      throw new AuthenticationException(
+          "CONNECT_CONTEXT_INVALID", "JOIN caller context is missing");
+    }
+    CanonicalJoinScopeV2 scope =
+        consumers.reader().read(caller.accountId(), request.connectScopeId());
+    if (!scope.tenantId().equals(caller.tenantId())
+        || !scope.realmId().equals(caller.realmId())
+        || !scope.playableStateNamespaceId().equals(caller.playableStateNamespaceId())
+        || !scope.playableStateScope().equals(caller.playableStateScope())
+        || !scope.gameInstanceId().equals(caller.gameInstanceId())) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    return joinCanonicalPublicProduction(
+        consumers,
+        caller.accountId(),
+        caller.sessionId(),
+        request,
+        () -> requireCanonicalDirectPeer(consumers));
   }
 
-  private AuthenticationException publicBootstrapUnavailable() {
-    return new AuthenticationException(
-        "AUTH_UNAVAILABLE", "Canonical public gameplay authority is unavailable");
+  private void requireCanonicalDirectPeer(CanonicalScopeConsumers consumers) {
+    var peer = net.firedevops.firemud.common.grpc.GrpcPeerIdentity.current();
+    if (peer == null
+        || !peer.isService("game-session-service")
+        || !peer.isInNamespace(consumers.namespace())) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Exact Game Session workload is required");
+    }
   }
 
   private String responseAccountUuid(Long accountId) {
@@ -498,7 +1190,11 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Timed(value = "account.connect_token")
   public ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request) {
-    throw publicBootstrapUnavailable();
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
+    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    consumers.reader().read(bootstrapContext.accountUuid(), request.connectScopeId());
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE", "Canonical gameplay connect-token authority is unavailable");
   }
 
   @Override

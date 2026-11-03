@@ -4,11 +4,11 @@ import java.util.UUID;
 
 /** Parsed scope data from a verified Game Session mTLS call, never an independent capability. */
 public record DirectTextCallerContext(
-    long accountId,
-    long tenantId,
+    UUID accountId,
+    UUID tenantId,
     UUID realmId,
-    String playableStateNamespaceId,
+    UUID playableStateNamespaceId,
     String playableStateScope,
-    long gameInstanceId,
+    UUID gameInstanceId,
     String sessionId,
     String requestId) {}

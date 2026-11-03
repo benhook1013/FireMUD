@@ -363,6 +363,444 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
     assertThat(scopeRowCount(setupDsl, v2Scope.connectScopeId())).isEqualTo(1);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void definitiveFailureRetainsOriginalIntentAndOptionalPolicyAndExactlyReplaysWithoutRewrite(
+      boolean bound) {
+    JournalFixture f = journalFixture();
+    if (bound)
+      f.transaction()
+          .execute(
+              status ->
+                  f.operations()
+                      .bindCanonicalPolicyEvidence(f.requestId(), f.scope(), f.caller(), true, 23));
+    else
+      f.transaction()
+          .execute(
+              status ->
+                  f.operations()
+                      .recordCanonicalPolicyUnavailable(
+                          f.requestId(), f.scope(), f.caller(), "ENTITLEMENT_UNAVAILABLE"));
+    var original = f.read();
+    String outcome = bound ? "IDEMPOTENCY_CONFLICT" : "CONNECT_SCOPE_INVALID";
+    var failed =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .finishCanonicalFailure(f.requestId(), f.scope(), f.caller(), outcome));
+    assertThat(failed.status()).isEqualTo("FAILED");
+    assertThat(failed.outcome()).isEqualTo(outcome);
+    assertThat(failed.intentDigest()).isEqualTo(original.intentDigest());
+    assertThat(failed.scopeEvidence()).isEqualTo(original.scopeEvidence());
+    assertThat(failed.requestDigest()).isEqualTo(original.requestDigest());
+    assertThat(failed.requestDigestVersion()).isEqualTo(original.requestDigestVersion());
+    assertThat(failed.allowPublicJoin()).isEqualTo(original.allowPublicJoin());
+    assertThat(failed.entitlementVersion()).isEqualTo(original.entitlementVersion());
+    assertThat(failed.entitlementAuthorityAvailability())
+        .isEqualTo(bound ? "AVAILABLE" : "NOT_EVALUATED");
+    assertThat(failed.lastAttemptFailureCode()).isNull();
+    assertThat(failed.membershipId()).isNull();
+    assertThat(failed.terminalProof()).isNull();
+    String retained = f.bytes();
+    var replay =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .finishCanonicalFailure(f.requestId(), f.scope(), f.caller(), outcome));
+    assertThat(replay).isEqualTo(failed);
+    assertThat(f.bytes()).isEqualTo(retained);
+    f.transaction()
+        .executeWithoutResult(
+            status ->
+                assertThat(
+                        f.operations().insertCanonicalIntent(f.requestId(), f.scope(), f.caller()))
+                    .isFalse());
+    if (bound) {
+      var policyReplay =
+          f.transaction()
+              .execute(
+                  status ->
+                      f.operations()
+                          .bindCanonicalPolicyEvidence(
+                              f.requestId(), f.scope(), f.caller(), true, 23));
+      assertThat(policyReplay).isEqualTo(failed);
+    } else {
+      assertThatThrownBy(
+              () ->
+                  f.transaction()
+                      .execute(
+                          status ->
+                              f.operations()
+                                  .bindCanonicalPolicyEvidence(
+                                      f.requestId(), f.scope(), f.caller(), true, 23)))
+          .isInstanceOf(
+              AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                f.transaction()
+                    .execute(
+                        status ->
+                            f.operations()
+                                .finishCanonicalFailure(
+                                    f.requestId(),
+                                    f.scope(),
+                                    f.caller(),
+                                    "TENANT_BILLING_BLOCKED")))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                f.transaction()
+                    .execute(
+                        status ->
+                            f.operations()
+                                .recordCanonicalPolicyUnavailable(
+                                    f.requestId(),
+                                    f.scope(),
+                                    f.caller(),
+                                    "ENTITLEMENT_UNAVAILABLE")))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                f.dsl()
+                    .execute(
+                        "UPDATE account_join_operations SET updated_at = CURRENT_TIMESTAMP WHERE request_id = ?",
+                        f.requestId()))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(f.bytes()).isEqualTo(retained);
+    f.assertNoSuccessEffects();
+  }
+
+  @Test
+  void
+      boundPendingUnavailableDiagnosticsNeverDowngradePolicyAndExactRecoveryOnlyClearsDiagnostics() {
+    JournalFixture f = journalFixture();
+    var bound =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .bindCanonicalPolicyEvidence(
+                            f.requestId(), f.scope(), f.caller(), true, 23));
+    var unavailable =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .recordCanonicalPolicyUnavailable(
+                            f.requestId(), f.scope(), f.caller(), "ENTITLEMENT_UNAVAILABLE"));
+    assertThat(unavailable.entitlementAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(unavailable.requestDigest()).isEqualTo(bound.requestDigest());
+    assertThat(unavailable.entitlementVersion()).isEqualTo(23);
+    assertThat(unavailable.allowPublicJoin()).isTrue();
+    assertThat(unavailable.lastAttemptAuthorityAvailability()).isEqualTo("UNAVAILABLE");
+    assertThat(unavailable.lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    var targetUnavailable =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .recordCanonicalAttemptFailure(
+                            f.requestId(),
+                            f.scope(),
+                            f.caller(),
+                            "NOT_EVALUATED",
+                            "AUTH_UNAVAILABLE"));
+    assertThat(targetUnavailable.requestDigest()).isEqualTo(bound.requestDigest());
+    assertThat(targetUnavailable.lastAttemptFailureCode()).isEqualTo("AUTH_UNAVAILABLE");
+    String beforeConflict = f.bytes();
+    assertThatThrownBy(
+            () ->
+                f.transaction()
+                    .execute(
+                        status ->
+                            f.operations()
+                                .bindCanonicalPolicyEvidence(
+                                    f.requestId(), f.scope(), f.caller(), true, 24)))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    assertThat(f.bytes()).isEqualTo(beforeConflict);
+    var recovered =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .bindCanonicalPolicyEvidence(
+                            f.requestId(), f.scope(), f.caller(), true, 23));
+    assertThat(recovered.requestDigest()).isEqualTo(bound.requestDigest());
+    assertThat(recovered.entitlementVersion()).isEqualTo(bound.entitlementVersion());
+    assertThat(recovered.allowPublicJoin()).isEqualTo(bound.allowPublicJoin());
+    assertThat(recovered.lastAttemptAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(recovered.lastAttemptFailureCode()).isNull();
+    String recoveredBytes = f.bytes();
+    f.transaction()
+        .execute(
+            status ->
+                f.operations()
+                    .bindCanonicalPolicyEvidence(f.requestId(), f.scope(), f.caller(), true, 23));
+    assertThat(f.bytes()).isEqualTo(recoveredBytes);
+    f.assertNoSuccessEffects();
+  }
+
+  @Test
+  void definitivePublicJoinDenialRetainsItsAlreadyBoundNegativePolicy() {
+    JournalFixture f = journalFixture();
+    var deniedPolicy =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .bindCanonicalPolicyEvidence(
+                            f.requestId(), f.scope(), f.caller(), false, 23));
+    var failed =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .finishCanonicalFailure(
+                            f.requestId(),
+                            f.scope(),
+                            f.caller(),
+                            "PUBLIC_PRODUCTION_ADMISSION_DENIED"));
+    assertThat(failed.status()).isEqualTo("FAILED");
+    assertThat(failed.allowPublicJoin()).isFalse();
+    assertThat(failed.entitlementAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(failed.requestDigest()).isEqualTo(deniedPolicy.requestDigest());
+    assertThat(failed.entitlementVersion()).isEqualTo(deniedPolicy.entitlementVersion());
+    f.assertNoSuccessEffects();
+  }
+
+  @Test
+  void failedJournalRejectsConflictingCallerRequestAndRetainedScopeWithoutRewritingReceipt() {
+    JournalFixture f = journalFixture();
+    f.transaction()
+        .execute(
+            status ->
+                f.operations()
+                    .finishCanonicalFailure(
+                        f.requestId(), f.scope(), f.caller(), "CONNECT_SCOPE_INVALID"));
+    String retained = f.bytes();
+    var alternate =
+        canonicalScope("different-canonical-bearer", f.scope().accountId(), f.scope().tenantId());
+    f.transaction()
+        .executeWithoutResult(
+            status ->
+                f.scopes()
+                    .insertCanonical(
+                        f.accountId(), alternate, f.read().scopeEvidence().tenantProvenance()));
+    assertThatThrownBy(
+            () ->
+                f.transaction()
+                    .execute(
+                        status ->
+                            f.operations()
+                                .finishCanonicalFailure(
+                                    f.requestId(),
+                                    f.scope(),
+                                    "different-caller",
+                                    "CONNECT_SCOPE_INVALID")))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                f.transaction()
+                    .execute(
+                        status ->
+                            f.operations()
+                                .finishCanonicalFailure(
+                                    "different-global-request",
+                                    f.scope(),
+                                    f.caller(),
+                                    "CONNECT_SCOPE_INVALID")))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    assertThatThrownBy(
+            () ->
+                f.transaction()
+                    .execute(
+                        status ->
+                            f.operations()
+                                .finishCanonicalFailure(
+                                    f.requestId(), alternate, f.caller(), "CONNECT_SCOPE_INVALID")))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    assertThat(f.bytes()).isEqualTo(retained);
+  }
+
+  @Test
+  void sqlGuardsRefuseRetryableTerminalOutcomesPolicyDowngradeInventedProofAndTerminalMutation() {
+    JournalFixture f = journalFixture();
+    String original = f.bytes();
+    for (String change :
+        java.util.List.of(
+            "status = 'FAILED', outcome = 'ENTITLEMENT_UNAVAILABLE'",
+            "status = 'FAILED', outcome = 'CONNECT_SCOPE_INVALID', membership_id = 1",
+            "status = 'COMMITTED', outcome = 'JOINED'",
+            "intent_digest = 'sha256:" + "b".repeat(64) + "'")) {
+      assertThatThrownBy(
+              () ->
+                  f.dsl()
+                      .execute(
+                          "UPDATE account_join_operations SET " + change + " WHERE request_id = ?",
+                          f.requestId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(f.bytes()).isEqualTo(original);
+    }
+    f.transaction()
+        .execute(
+            status ->
+                f.operations()
+                    .bindCanonicalPolicyEvidence(f.requestId(), f.scope(), f.caller(), true, 23));
+    String bound = f.bytes();
+    for (String change :
+        java.util.List.of(
+            "entitlement_authority_availability = 'UNAVAILABLE'",
+            "entitlement_version = 24",
+            "request_digest = NULL",
+            "last_attempt_authority_availability = 'UNAVAILABLE', last_attempt_failure_code = NULL")) {
+      assertThatThrownBy(
+              () ->
+                  f.dsl()
+                      .execute(
+                          "UPDATE account_join_operations SET " + change + " WHERE request_id = ?",
+                          f.requestId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(f.bytes()).isEqualTo(bound);
+    }
+    f.transaction()
+        .execute(
+            status ->
+                f.operations()
+                    .finishCanonicalFailure(
+                        f.requestId(), f.scope(), f.caller(), "CONNECT_SCOPE_INVALID"));
+    String terminal = f.bytes();
+    assertThatThrownBy(
+            () ->
+                f.dsl()
+                    .execute(
+                        "DELETE FROM account_join_operations WHERE request_id = ?", f.requestId()))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThatThrownBy(() -> f.dsl().execute("TRUNCATE account_join_operations"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(f.bytes()).isEqualTo(terminal);
+    f.assertNoSuccessEffects();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void journalDiagnosticsAndDefinitiveFailureRollBackAsOneTransaction(boolean bound) {
+    JournalFixture f = journalFixture();
+    if (bound)
+      f.transaction()
+          .execute(
+              status ->
+                  f.operations()
+                      .bindCanonicalPolicyEvidence(f.requestId(), f.scope(), f.caller(), true, 23));
+    String original = f.bytes();
+    assertThatThrownBy(
+            () ->
+                f.transaction()
+                    .execute(
+                        status -> {
+                          f.operations()
+                              .recordCanonicalPolicyUnavailable(
+                                  f.requestId(), f.scope(), f.caller(), "ENTITLEMENT_UNAVAILABLE");
+                          f.operations()
+                              .finishCanonicalFailure(
+                                  f.requestId(), f.scope(), f.caller(), "CONNECT_SCOPE_INVALID");
+                          throw new IllegalStateException("controlled canonical journal rollback");
+                        }))
+        .hasMessageContaining("controlled canonical journal rollback");
+    assertThat(f.bytes()).isEqualTo(original);
+    var failed =
+        f.transaction()
+            .execute(
+                status ->
+                    f.operations()
+                        .finishCanonicalFailure(
+                            f.requestId(), f.scope(), f.caller(), "CONNECT_SCOPE_INVALID"));
+    assertThat(failed.status()).isEqualTo("FAILED");
+    f.assertNoSuccessEffects();
+  }
+
+  private JournalFixture journalFixture() {
+    String schema = createSchema("canonical_join_scope_");
+    var source = postgres.dataSource(schema);
+    Flyway.configure()
+        .dataSource(source)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+    DSLContext setup = DSL.using(source, SQLDialect.POSTGRES);
+    DSLContext owner = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
+    var account =
+        Objects.requireNonNull(
+            setup.fetchOne(
+                "INSERT INTO accounts (username, email, password_hash) VALUES ('journal-player', 'journal@example.test', 'controlled-hash') RETURNING id, account_uuid"));
+    long privateAccountId = account.get("id", Long.class);
+    UUID accountId = account.get("account_uuid", UUID.class);
+    var fresh = new FreshTenantIdentityAssociationRepository(owner, "prod");
+    var tenant = freshTenantEvidence();
+    transaction.executeWithoutResult(status -> fresh.importVerified(tenant));
+    var scopes =
+        new AccountConnectScopeRepository(owner, mock(AccountTenantIdentityResolver.class), fresh);
+    var operations = new AccountJoinOperationRepository(owner, scopes);
+    var scope = canonicalScope(accountId, tenant.canonicalTenantId());
+    String requestId = "journal-" + UUID.randomUUID();
+    String caller = "controlled-journal-caller";
+    transaction.executeWithoutResult(
+        status -> {
+          scopes.insertCanonical(
+              privateAccountId,
+              scope,
+              new VerifiedTenantProvenance(
+                  null,
+                  TenantProvenanceKind.FRESH_GAME_DESIGN,
+                  tenant.operationId(),
+                  tenant.evidenceDigest()));
+          operations.insertCanonicalIntent(requestId, scope, caller);
+        });
+    return new JournalFixture(
+        setup, transaction, operations, scopes, scope, privateAccountId, requestId, caller);
+  }
+
+  /** Physical journal storage proof only; supplied caller/scope selectors do not authenticate. */
+  private record JournalFixture(
+      DSLContext dsl,
+      TransactionTemplate transaction,
+      AccountJoinOperationRepository operations,
+      AccountConnectScopeRepository scopes,
+      CanonicalJoinScopeV2 scope,
+      long accountId,
+      String requestId,
+      String caller) {
+    private CanonicalJoinOperationEvidence read() {
+      return Objects.requireNonNull(
+          transaction.execute(
+              status -> operations.findCanonicalEvidenceByRequestId(requestId).orElseThrow()));
+    }
+
+    private String bytes() {
+      return Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT row_to_json(j)::text FROM account_join_operations j WHERE request_id = ?",
+                  requestId))
+          .get(0, String.class);
+    }
+
+    private void assertNoSuccessEffects() {
+      for (String table :
+          java.util.List.of(
+              "account_tenant_membership",
+              "account_authority_outbox_events",
+              "account_audit_outbox")) assertThat(dsl.fetchCount(DSL.table(table))).isZero();
+      assertThat(read().membershipId()).isNull();
+      assertThat(read().terminalProof()).isNull();
+    }
+  }
+
   private static long scopeRowCount(DSLContext dsl, String connectScopeId) {
     return Objects.requireNonNull(
             dsl.fetchOne(

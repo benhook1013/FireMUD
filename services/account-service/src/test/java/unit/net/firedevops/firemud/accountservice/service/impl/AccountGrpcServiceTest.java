@@ -86,6 +86,10 @@ class AccountGrpcServiceTest {
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   private static final String OTHER_REALM_ID = "57c58f36-c5ea-4aa8-8ef7-91a45e407f01";
   private static final String PLAYABLE_STATE_NAMESPACE_ID = "c6ed6a44-c7e7-4f18-81fc-078a74e67c07";
+  private static final UUID DIRECT_TENANT = UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID DIRECT_INSTANCE =
+      UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final String DIRECT_SESSION = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   private static final GrpcPeerIdentity GAME_SESSION_PEER =
       new GrpcPeerIdentity(
           "spiffe://firemud/ns/test/sa/game-session-service",
@@ -105,12 +109,12 @@ class AccountGrpcServiceTest {
   private static PlayerExecutionContext validPlayerContext() {
     return PlayerExecutionContext.newBuilder()
         .setAccountId(ACCOUNT_UUID)
-        .setTenantId("20")
+        .setTenantId(DIRECT_TENANT.toString())
         .setRealmId(REALM_ID)
         .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
-        .setPlayableStateScope("realm:30")
-        .setGameInstanceId("40")
-        .setSessionId("session-1")
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId(DIRECT_INSTANCE.toString())
+        .setSessionId(DIRECT_SESSION)
         .setRequestId("request-1")
         .build();
   }
@@ -118,13 +122,13 @@ class AccountGrpcServiceTest {
   private static IssueDirectTextConnectScopeRequest validScopeRequest() {
     return IssueDirectTextConnectScopeRequest.newBuilder()
         .setPlayerContext(validPlayerContext())
-        .setTenantId("20")
+        .setTenantId(DIRECT_TENANT.toString())
         .setRealmId(REALM_ID)
         .setWorldSlug("world")
         .setRealmSlug("public")
         .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
-        .setPlayableStateScope("realm:30")
-        .setGameInstanceId("40")
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId(DIRECT_INSTANCE.toString())
         .setCatalogRevision(5)
         .setPointerVersion(8)
         .build();
@@ -228,29 +232,29 @@ class AccountGrpcServiceTest {
         () -> service.issueDirectTextConnectScope(validScopeRequest(), observer));
 
     assertTrue(observer.completed());
-    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never()).resolveAccountStorageId(Mockito.any());
     assertEquals("scope-1", observer.response().getConnectScopeId());
     assertEquals("2026-09-24T12:00:00Z", observer.response().getConnectScopeExpiresAt());
     assertEquals("2026-09-24T11:59:30Z", observer.response().getEvaluatedAt());
     Mockito.verify(accountService)
         .issueDirectTextConnectScope(
             new DirectTextCallerContext(
-                10L,
-                20L,
+                UUID.fromString(ACCOUNT_UUID),
+                DIRECT_TENANT,
                 UUID.fromString(REALM_ID),
-                PLAYABLE_STATE_NAMESPACE_ID,
-                "realm:30",
-                40L,
-                "session-1",
+                UUID.fromString(PLAYABLE_STATE_NAMESPACE_ID),
+                "SHARED",
+                DIRECT_INSTANCE,
+                DIRECT_SESSION,
                 "request-1"),
             new DirectTextJoinTarget(
-                20L,
+                DIRECT_TENANT,
                 UUID.fromString(REALM_ID),
                 "world",
                 "public",
-                PLAYABLE_STATE_NAMESPACE_ID,
-                "realm:30",
-                40L,
+                UUID.fromString(PLAYABLE_STATE_NAMESPACE_ID),
+                "SHARED",
+                DIRECT_INSTANCE,
                 5L,
                 8L));
   }
@@ -332,7 +336,15 @@ class AccountGrpcServiceTest {
                 Mockito.any(JoinPublicProductionRequest.class)))
         .thenReturn(
             new JoinPublicProductionResult(
-                false, "ENTITLEMENT_UNAVAILABLE", ACCOUNT_UUID, 20L, 0L, 0L, 0L, true));
+                false,
+                "ENTITLEMENT_UNAVAILABLE",
+                ACCOUNT_UUID,
+                DIRECT_TENANT,
+                0L,
+                0L,
+                0L,
+                false,
+                true));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
@@ -345,22 +357,52 @@ class AccountGrpcServiceTest {
     assertFalse(observer.response().getSuccess());
     assertEquals("ENTITLEMENT_UNAVAILABLE", observer.response().getOutcomeCode());
     assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
-    assertEquals("20", observer.response().getTenantId());
+    assertEquals(DIRECT_TENANT.toString(), observer.response().getTenantId());
     assertEquals("0", observer.response().getMembershipId());
     assertTrue(observer.response().getReplayed());
     assertFalse(observer.response().hasError());
     Mockito.verify(accountService)
         .joinPublicProductionFromGameSession(
             new DirectTextCallerContext(
-                10L,
-                20L,
+                UUID.fromString(ACCOUNT_UUID),
+                DIRECT_TENANT,
                 UUID.fromString(REALM_ID),
-                PLAYABLE_STATE_NAMESPACE_ID,
-                "realm:30",
-                40L,
-                "session-1",
+                UUID.fromString(PLAYABLE_STATE_NAMESPACE_ID),
+                "SHARED",
+                DIRECT_INSTANCE,
+                DIRECT_SESSION,
                 "request-1"),
             new JoinPublicProductionRequest("scope-1", "request-1"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void successfulJoinProjectsTheActualMembershipAdmissionFlag(boolean admitting) {
+    AccountService owner = Mockito.mock(AccountService.class);
+    Mockito.when(owner.joinPublicProductionFromGameSession(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            new JoinPublicProductionResult(
+                true,
+                admitting ? "JOINED" : "ALREADY_ACTIVE",
+                ACCOUNT_UUID,
+                DIRECT_TENANT,
+                7L,
+                3L,
+                2L,
+                admitting,
+                false));
+    var service =
+        new AccountGrpcService(Mockito.mock(PingService.class), owner, null, WORKLOAD_NAMESPACE);
+    var observer = new RecordingObserver<JoinPublicProductionMembershipResponse>();
+    withPeer(
+        GAME_SESSION_PEER,
+        () -> service.joinPublicProductionMembership(validJoinRequest(), observer));
+    assertTrue(observer.response().getSuccess());
+    assertEquals(admitting, observer.response().getGameplayAdmissionAllowed());
+    assertEquals(DIRECT_TENANT.toString(), observer.response().getTenantId());
+    assertEquals(3L, observer.response().getMembershipVersion());
+    assertEquals(2L, observer.response().getMembershipAuthorityGeneration());
+    assertFalse(observer.response().hasError());
   }
 
   @Test
@@ -646,10 +688,13 @@ class AccountGrpcServiceTest {
                 false,
                 "ENTITLEMENT_UNAVAILABLE",
                 changedAccount ? OTHER_ACCOUNT_UUID : ACCOUNT_UUID,
-                changedAccount ? 20L : 21L,
+                changedAccount
+                    ? DIRECT_TENANT
+                    : UUID.fromString("33333333-3333-4333-8333-333333333333"),
                 0L,
                 0L,
                 0L,
+                false,
                 true));
     AccountGrpcService service =
         new AccountGrpcService(Mockito.mock(PingService.class), owner, null, WORKLOAD_NAMESPACE);

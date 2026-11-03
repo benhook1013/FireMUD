@@ -270,6 +270,48 @@ class AccountMembershipPairAuthorityRepositoryTest {
     verifyNoInteractions(dsl);
   }
 
+  @Test
+  void restoreCannotReuseAbsenceOrInventAnAuthorityInvalidation() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountMembershipPairAuthorityRepository repository =
+        new AccountMembershipPairAuthorityRepository(dsl);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    PairAuthority absence =
+        new PairAuthority(
+            ACCOUNT_UUID, TENANT_UUID, freshProvenance(), false, 1L, 1L, 0L, null, null, false);
+    assertThatThrownBy(
+            () ->
+                repository.commitRestore(
+                    absence, new PairTransition(true, 1L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact current positive pair");
+    PairAuthority positive =
+        new PairAuthority(
+            ACCOUNT_UUID,
+            TENANT_UUID,
+            freshProvenance(),
+            true,
+            3L,
+            2L,
+            2L,
+            "inactive-event",
+            EVENT_DIGEST,
+            true);
+    assertThatThrownBy(
+            () ->
+                repository.commitRestore(
+                    positive, new PairTransition(true, 3L, EVENT_ID_TEXT, EVENT_DIGEST, true)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact current positive pair");
+    assertThatThrownBy(
+            () ->
+                repository.commitRestore(
+                    positive, new PairTransition(true, 4L, EVENT_ID_TEXT, EVENT_DIGEST, false)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact current positive pair");
+    verifyNoInteractions(dsl);
+  }
+
   private static VerifiedTenantProvenance freshProvenance() {
     return new VerifiedTenantProvenance(
         null, TenantProvenanceKind.FRESH_GAME_DESIGN, OPERATION_ID, DIGEST);
