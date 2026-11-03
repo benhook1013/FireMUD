@@ -29,8 +29,8 @@ public class JwtUtil {
       String subject, long tokenExpirationMillis, Map<String, Object> claims) {
     long now = System.currentTimeMillis();
     return Jwts.builder()
-        .subject(subject)
         .claims(claims)
+        .subject(subject)
         .issuedAt(new Date(now))
         .expiration(new Date(now + tokenExpirationMillis))
         .signWith(Keys.hmacShaKeyFor(key))
@@ -55,8 +55,8 @@ public class JwtUtil {
       throw new IllegalArgumentException("Absolute JWT expiration must be after issuance");
     }
     return Jwts.builder()
-        .subject(subject)
         .claims(claims)
+        .subject(subject)
         .issuedAt(issuedAt)
         .expiration(expiration)
         .signWith(Keys.hmacShaKeyFor(key))
