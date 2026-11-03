@@ -103,6 +103,7 @@ The drill evidence may be reused within the configured freshness window only whi
 1. **Review Release Notes**
    - Confirm which services and schema changes are included.
    - Identify any manual migration or configuration steps called out for operators.
+   - For an installed owner catalog that drifts after a PostgreSQL upgrade or migration, follow [sealed catalog epoch recovery](./system-architecture-database-migrations.md#sealed-runtime-family-catalog-epochs): keep reads failed closed, apply the reviewed forward owner catalog migration and explicit next epoch, and reacquire dependent evidence. Do not edit Flyway history, historical epochs or snapshots to clear the failure.
 2. **Verify CI/CD Status**
    - Ensure the GitHub Actions pipeline for the target branch and tag is green.
    - Check that container image digests are available in the configured registry.
