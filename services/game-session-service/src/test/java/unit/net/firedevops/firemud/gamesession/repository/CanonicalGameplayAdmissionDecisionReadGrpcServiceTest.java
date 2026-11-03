@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -115,7 +116,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   }
 
   @Test
-  void discoveryRejectsChangedContentsMembershipDuplicatesAndOversizedCompleteTarget() {
+  void discoveryRejectsChangedContentsMembershipAndDuplicates() {
     var first = discoveryTarget("first", "First world");
     var second = discoveryTarget("second", "Second world");
     for (var changed :
@@ -123,8 +124,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
             List.<CanonicalPlayableTarget>of(),
             List.of(first, second),
             List.of(discoveryTarget("first", "Changed display")),
-            List.of(first, first),
-            List.of(discoveryTarget("first", "x".repeat(64 * 1024))))) {
+            List.of(first, first))) {
       var routes = mock(CanonicalPlayerRouteReadService.class);
       when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(first), changed);
       var observer = discoveryObserver();
@@ -132,6 +132,18 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
           .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
       assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
     }
+  }
+
+  @Test
+  void discoveryRejectsAnUnchangedOversizedTargetBeforeTheSecondSourceRead() {
+    var oversized = discoveryTarget("first", "x".repeat(64 * 1024));
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(oversized));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+    verify(routes, times(1)).readVisiblePublicProductionTargets();
   }
 
   @Test
