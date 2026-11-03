@@ -223,7 +223,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     } catch (JwtException | IllegalArgumentException failure) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap credential");
     } catch (RuntimeException failure) {
-      throw authUnavailable("Bootstrap caller authority is unavailable", null);
+      throw authUnavailable("Bootstrap caller authority is unavailable", failure);
     }
   }
 
@@ -377,7 +377,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     try {
       token = jwt.generateToken(caller.caller().accountUuid().toString(), expiresAt, claims);
     } catch (IllegalArgumentException expired) {
-      throw authUnavailable("Scope signing clock is outside its validity", null);
+      throw authUnavailable("Scope signing clock is outside its validity", expired);
     }
     Claims signed = jwt.parseToken(token).getPayload();
     if (!caller.caller().accountUuid().toString().equals(signed.getSubject())
