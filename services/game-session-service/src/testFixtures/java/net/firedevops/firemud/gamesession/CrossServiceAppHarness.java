@@ -140,7 +140,13 @@ public final class CrossServiceAppHarness {
     props.put("spring.grpc.server.port", "0");
     props.put("spring.main.allow-bean-definition-overriding", "true");
     props.put("spring.flyway.enabled", "true");
-    props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
+    props.put("spring.flyway.placeholders.serviceSchema", "public");
+    props.put(
+        "spring.flyway.locations",
+        "filesystem:"
+            + gameSessionMigrationDir()
+            + ",filesystem:"
+            + resolveModuleMigrationDir("common-saga").resolve("saga"));
     props.put(
         "spring.autoconfigure.exclude",
         "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
