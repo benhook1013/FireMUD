@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -108,10 +110,24 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
                       eq(f.selector), any()))
           .thenReturn(response);
       f.service.resolvePublishedRealmAdmissionTarget(request, f.resolverObserver);
+      var encoded =
+          org.mockito.ArgumentCaptor.forClass(
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
+      codec.verify(
+          () ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+                  eq(f.selector), encoded.capture()));
+      assertThat(encoded.getValue())
+          .usingRecursiveComparison()
+          .withComparatorForFields(
+              java.util.Comparator.comparing(Object::toString),
+              "initialAdmissionOriginKind",
+              "ownerProofOutcome")
+          .isEqualTo(route);
       codec.verify(
           () ->
               CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
-                  eq(f.selector), any()));
+                  eq(f.selector), eq(encoded.getValue())));
     }
     verify(f.routes, times(2)).readCurrentTarget(TENANT);
     verify(f.resolverObserver).onNext(response);
@@ -292,12 +308,11 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
       when(parsed.selector()).thenReturn(selector);
       f.configureStrictRoute(selector);
       if ("UNAVAILABLE".equals(outcome)) {
-        when(f.world.read(any())).thenThrow(Status.UNAVAILABLE.asRuntimeException());
+        doThrow(Status.UNAVAILABLE.asRuntimeException()).when(f.world).read(any());
       } else if ("MISSING".equals(outcome)) {
-        when(f.world.read(any())).thenReturn(null);
+        doReturn(null).when(f.world).read(any());
       } else {
-        when(f.world.read(any()))
-            .thenAnswer(
+        doAnswer(
                 invocation -> {
                   var evidence =
                       f.worldEvidence(
@@ -311,7 +326,9 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
                     when(evidence.launchBinding())
                         .thenReturn(mock(CompleteLaunchBindingEvidence.class));
                   return evidence;
-                });
+                })
+            .when(f.world)
+            .read(any());
       }
       try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
         codec
