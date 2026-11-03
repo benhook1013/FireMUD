@@ -29,6 +29,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -327,25 +328,52 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       try (Fixture f = fixture(null)) {
         Request retained = request();
         f.owner().read(retained);
+        List<String> history = f.historyRows();
+        String epochs = f.catalogRows("social_runtime_family_catalog_epoch");
+        String snapshots = f.catalogRows("social_runtime_family_catalog_snapshot");
         if (change.startsWith("CREATE TRIGGER")) {
           f.dsl.execute(
               "CREATE FUNCTION social_runtime_family_immutable_probe() RETURNS trigger"
                   + " LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$");
         }
         f.dsl.execute(change);
+        boolean classifiedColumnRemoved =
+            change.startsWith("ALTER TABLE chat_messages RENAME COLUMN effect_id");
+        Class<? extends RuntimeException> expectedType =
+            classifiedColumnRemoved
+                ? DataAccessException.class
+                : SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class;
+        String expectedMessage =
+            classifiedColumnRemoved
+                ? "Unclassified or changed"
+                : "Social schema/classification drift invalidates its epoch";
         assertThatThrownBy(() -> f.owner().readExact(retained))
-            .isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> f.owner().read(request())).isInstanceOf(RuntimeException.class);
-        assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
-        assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
+            .isInstanceOf(expectedType)
+            .hasMessageContaining(expectedMessage);
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(expectedType)
+            .hasMessageContaining(expectedMessage);
+        assertThat(f.historyRows()).isEqualTo(history);
+        assertThat(f.catalogRows("social_runtime_family_catalog_epoch")).isEqualTo(epochs);
+        assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
       }
     }
     try (Fixture f = fixture(null)) {
       Request retained = request();
       f.owner().read(retained);
+      List<String> history = f.historyRows();
+      String epochs = f.catalogRows("social_runtime_family_catalog_epoch");
+      String snapshots = f.catalogRows("social_runtime_family_catalog_snapshot");
       f.dsl.execute("DROP TABLE guild_storage_items");
       assertThatThrownBy(() -> f.owner().readExact(retained))
+          .isInstanceOf(DataAccessException.class)
           .hasMessageContaining("Unclassified or changed");
+      assertThatThrownBy(() -> f.owner().read(request()))
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining("Unclassified or changed");
+      assertThat(f.historyRows()).isEqualTo(history);
+      assertThat(f.catalogRows("social_runtime_family_catalog_epoch")).isEqualTo(epochs);
+      assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
     }
   }
 

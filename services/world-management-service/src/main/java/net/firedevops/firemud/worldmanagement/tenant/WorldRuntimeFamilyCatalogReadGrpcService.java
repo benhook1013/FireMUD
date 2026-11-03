@@ -80,7 +80,11 @@ public final class WorldRuntimeFamilyCatalogReadGrpcService
         | org.springframework.dao.DataAccessException failure) {
       refuse(
           observer,
-          Status.fromCode(WorldPreparationStorageFailureStatus.from(failure)),
+          net.firedevops.firemud.common.runtimecatalog.RuntimeFamilyCatalogStorageStatus.classify(
+              failure,
+              failure instanceof org.jooq.exception.DataAccessException
+                  ? Status.UNAVAILABLE
+                  : Status.INTERNAL),
           "World catalog storage read failed");
       return;
     } catch (org.springframework.transaction.CannotCreateTransactionException unavailable) {
