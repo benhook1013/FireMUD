@@ -3444,7 +3444,8 @@ class AccountServiceImplTest {
     assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.getCode());
     org.mockito.Mockito.verify(discovery.entitlements(), org.mockito.Mockito.times(3))
         .evaluate(demoTenant);
-    org.mockito.Mockito.verify(discovery.entitlements(), org.mockito.Mockito.times(2))
+    // Every discovery call joins all independent tenant reads, including a failed call.
+    org.mockito.Mockito.verify(discovery.entitlements(), org.mockito.Mockito.times(3))
         .evaluate(sandboxTenant);
   }
 

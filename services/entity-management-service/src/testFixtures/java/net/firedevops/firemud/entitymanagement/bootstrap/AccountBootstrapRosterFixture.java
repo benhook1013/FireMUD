@@ -1,5 +1,6 @@
 package net.firedevops.firemud.entitymanagement.bootstrap;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -36,10 +37,18 @@ public final class AccountBootstrapRosterFixture {
 
   private AccountBootstrapRosterFixture() {}
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The retained generated protobuf request message is immutable.")
   public record Fixture(
       AccountBootstrapRosterReadRequest request,
       CanonicalGameplayRosterTarget target,
-      CanonicalGameplayRosterOwnerReadEvidence evidence) {}
+      CanonicalGameplayRosterOwnerReadEvidence evidence) {
+    @SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification = "The retained generated protobuf request message is immutable.")
+    public Fixture {}
+  }
 
   public static Fixture create() throws Exception {
     var account = AuthoringFixtures.freshGraphRequest().accountBinding();
