@@ -56,6 +56,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBoo
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
@@ -351,9 +352,6 @@ final class AccountControlUiOwnerSourcesFixture {
                 net.firedevops.firemud.accountservice.service
                     .AccountPasswordResetDraftSourceChangeRepository.class),
             mock(AccountAuditOutboxRepository.class),
-            mock(
-                net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository
-                    .class),
             mock(AccountJoinOperationRepository.class),
             challenges,
             null, // Realm grants are not used by primary authentication.
@@ -362,7 +360,8 @@ final class AccountControlUiOwnerSourcesFixture {
             null, // Profiles are not used by primary authentication.
             null, // Profile mapper is not used by primary authentication.
             null, // Payment transactions are not used by primary authentication.
-            null, // Subscriptions are not used by primary authentication.
+            // Retained evidence is not read by primary authentication.
+            org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
             null, // External identities are not used by primary authentication.
             null, // Password reset tokens are not used by primary authentication.
             null, // Email verification tokens are not used by primary authentication.
@@ -370,8 +369,6 @@ final class AccountControlUiOwnerSourcesFixture {
             null, // Email delivery is not used by primary authentication.
             null, // Mail properties are not used by primary authentication.
             null, // Token properties are not used by primary authentication.
-            null, // JWT auth properties are not used by primary authentication.
-            null, // Game Session client is not used by primary authentication.
             null, // Entity Management client is not used by primary authentication.
             null, // JWT utility is not used by primary authentication.
             null, // Session service is not used by primary authentication.

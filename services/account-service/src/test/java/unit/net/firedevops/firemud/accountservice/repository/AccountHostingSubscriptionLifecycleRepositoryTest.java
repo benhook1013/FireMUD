@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -45,6 +46,51 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
     assertTransactionRefusal();
     verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void terminalResolutionCaptureAndApplyRequireWritableOwnerTransactionBeforeSql() {
+    assertThatThrownBy(() -> repository.prepareTerminalResolution(null))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> repository.applyTerminalResolution(null, null, null))
+        .isInstanceOf(IllegalStateException.class);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    assertThatThrownBy(() -> repository.prepareTerminalResolution(null))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> repository.applyTerminalResolution(null, null, null))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void terminalResolutionReasonIsCanonicalBoundedScalarComparisonData() {
+    var first = terminalRequest("e\u0301 reason");
+    assertThat(first.auditReason()).isEqualTo("é reason");
+    assertThat(first.payload()).isNotEmpty();
+    for (String invalid :
+        List.of("", "\u0085\u00a0", "nul\u0000reason", "\ud800", "é".repeat(501))) {
+      assertThatThrownBy(() -> terminalRequest(invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThat(terminalRequest("é".repeat(500)).auditReason()).hasSize(500);
+  }
+
+  private static AccountHostingSubscriptionTerminalResolution.Request terminalRequest(
+      String reason) {
+    return new AccountHostingSubscriptionTerminalResolution.Request(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        4,
+        3,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "a".repeat(64),
+        UUID.randomUUID(),
+        reason);
   }
 
   private void assertTransactionRefusal() {
