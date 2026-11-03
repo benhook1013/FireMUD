@@ -85,6 +85,27 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static final String NAMESPACE = "canonical-initial-admission-it";
+  private static final List<String> PRIVATE_CATALOG_COLUMNS =
+      List.of(
+          "private_target_request_preimage",
+          "private_preparation_request_id",
+          "private_playtest_lifecycle_id",
+          "private_preparation_request_digest",
+          "private_state_generation",
+          "private_source_catalog_realm_id",
+          "private_source_catalog_request_id",
+          "private_source_catalog_revision",
+          "private_source_catalog_receipt_digest",
+          "private_target_policy_id",
+          "private_target_policy_digest",
+          "private_target_policy_source_commit_id",
+          "private_target_policy_source_revision_id",
+          "private_target_policy_logical_revision_id",
+          "private_canonical_version_id",
+          "private_published_release_bundle_ref",
+          "private_published_release_bundle_digest",
+          "private_source_policy_set_digest",
+          "private_source_policy_carrier_digest");
   private static final UUID TENANT = uuid(101);
   private static final UUID SOURCE_OPERATION = uuid(102);
   private static final UUID INTAKE_REQUEST = uuid(103);
@@ -1275,6 +1296,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         String v1011Guard = launchGuardProjection(predecessor, true);
         migration(predecessor, null).migrate();
         migration(predecessor, null).validate();
+        assertPrivateCatalogColumnsNull(predecessor, prepared.catalog().creationRequestId());
         assertV1013RetentionLaunchForeignKey(predecessor);
         assertV1040CompletionForeignKeyTriggers(predecessor);
         assertThat(
@@ -1845,6 +1867,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   /** Entire original source, namespace, catalog, runtime, launch and original-pin heap evidence. */
   private static String predecessorSourceProjection(Fixture fixture) {
+    String privateCatalogColumns =
+        PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> "'" + column + "'")
+            .collect(java.util.stream.Collectors.joining(", "));
     return fixture
         .dsl
         .fetchSingle(
@@ -1855,13 +1881,37 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY canonical_tenant_id) FROM game_session_tenant_canonical_claim source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY to_jsonb(source)::TEXT) FROM game_session_tenant_scope_reservation source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY canonical_tenant_id) FROM gameplay_tenant_shared_playable_state_namespace source),"
-                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest']) ORDER BY realm_id) FROM game_session_canonical_realm_catalog source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest'] - ARRAY["
+                + privateCatalogColumns
+                + "]) ORDER BY realm_id) FROM game_session_canonical_realm_catalog source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY id) FROM game_instances source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest']) ORDER BY game_instance_id) FROM game_session_canonical_instance_launch source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_operator_attempt source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_template_association_pin source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_launch_descriptor_pin source))::TEXT AS projection")
         .get("projection", String.class);
+  }
+
+  private static void assertPrivateCatalogColumnsNull(Fixture fixture, UUID creationRequestId) {
+    String columns =
+        PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> "'" + column + "'")
+            .collect(java.util.stream.Collectors.joining(", "));
+    String nullChecks =
+        PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> "to_jsonb(catalog) -> '" + column + "' = 'null'::jsonb")
+            .collect(java.util.stream.Collectors.joining(" AND "));
+    var row =
+        fixture.dsl.fetchSingle(
+            "SELECT jsonb_exists_all(to_jsonb(catalog), ARRAY["
+                + columns
+                + "]) AS has_all_columns, ("
+                + nullChecks
+                + ") AS all_null FROM game_session_canonical_realm_catalog catalog "
+                + "WHERE creation_request_id = ?",
+            creationRequestId);
+    assertThat(row.get("has_all_columns", Boolean.class)).isTrue();
+    assertThat(row.get("all_null", Boolean.class)).isTrue();
   }
 
   private static void seedPre1006ExpectedClosedTerminal(
