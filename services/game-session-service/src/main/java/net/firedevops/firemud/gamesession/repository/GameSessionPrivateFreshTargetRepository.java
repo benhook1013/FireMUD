@@ -56,6 +56,10 @@ public class GameSessionPrivateFreshTargetRepository {
    * Allocates a target realm ID for the exact prepared FRESH lifecycle in the caller's SERIALIZABLE
    * owner transaction. Namespace, lifecycle, generation, selectors, and policy come only from the
    * locked retained preparation.
+   *
+   * <p>The caller must handle PostgreSQL SQLSTATE 40001 by rolling back and retrying the complete
+   * owner transaction with this same immutable request. An advisory-lock wait does not refresh a
+   * SERIALIZABLE snapshot; retrying only this statement or allocating another request is invalid.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public Allocation allocate(Request request) {
