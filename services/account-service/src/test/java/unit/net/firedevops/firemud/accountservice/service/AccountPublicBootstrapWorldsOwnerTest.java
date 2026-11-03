@@ -20,7 +20,11 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.IntStream;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
@@ -246,6 +250,66 @@ class AccountPublicBootstrapWorldsOwnerTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("workload-only");
     verifyNoInteractions(callerContext.targets, callerContext.entitlements, callerContext.accounts);
+  }
+
+  @Test
+  void independentTenantEvaluationsOverlapWithEightWorkerBoundAndNoAmbientContexts() {
+    Fixture f = new Fixture();
+    var tenants = IntStream.range(0, 24).mapToObj(index -> UUID.randomUUID()).toList();
+    var targets =
+        IntStream.range(0, tenants.size())
+            .mapToObj(
+                index ->
+                    target(
+                        tenants.get(index),
+                        "tenant-" + index,
+                        "world-" + index,
+                        "World " + index,
+                        1))
+            .toList();
+    f.stubTargetReads(targets, targets.reversed());
+    var firstWave = new CountDownLatch(8);
+    var entered = new AtomicInteger();
+    var active = new AtomicInteger();
+    var peak = new AtomicInteger();
+    when(f.entitlements.evaluate(any()))
+        .thenAnswer(
+            invocation -> {
+              int current = active.incrementAndGet();
+              peak.accumulateAndGet(current, Math::max);
+              try {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+                assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+                if (entered.incrementAndGet() <= 8) {
+                  firstWave.countDown();
+                  assertThat(firstWave.await(5, TimeUnit.SECONDS)).isTrue();
+                }
+                return evaluation(invocation.getArgument(0), true, NOW.plusSeconds(15));
+              } finally {
+                active.decrementAndGet();
+              }
+            });
+    assertThat(f.owner.listWorlds(TOKEN)).hasSize(24);
+    assertThat(peak.get()).isEqualTo(8);
+    assertThat(entered.get()).isEqualTo(24);
+    for (UUID tenant : tenants) verify(f.entitlements, times(1)).evaluate(tenant);
+    verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
+    verify(f.accounts, times(2)).findByAccountUuid(ACCOUNT_UUID);
+  }
+
+  @Test
+  void parallelEvaluationForAnotherTenantRefusesInsteadOfReturningPartialList() {
+    Fixture f = new Fixture();
+    var first = target(TENANT_A, "tenant-a", "alpha", "Alpha", 1);
+    var second = target(TENANT_B, "tenant-b", "beta", "Beta", 1);
+    f.stubTargetReads(List.of(first, second), List.of(first, second));
+    when(f.entitlements.evaluate(TENANT_A))
+        .thenReturn(evaluation(TENANT_A, true, NOW.plusSeconds(15)));
+    when(f.entitlements.evaluate(TENANT_B))
+        .thenReturn(evaluation(TENANT_A, true, NOW.plusSeconds(15)));
+    assertCode("ENTITLEMENT_UNAVAILABLE", () -> f.owner.listWorlds(TOKEN));
+    verify(f.targets, times(1)).listVisiblePublicProductionAdmissionTargets(any());
   }
 
   private static void assertCode(String expectedCode, ThrowingCallable action) {

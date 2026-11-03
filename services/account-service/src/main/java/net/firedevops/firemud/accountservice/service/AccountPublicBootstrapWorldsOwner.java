@@ -11,6 +11,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
@@ -26,6 +29,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * This owner creates no scope, membership, JOIN, or gameplay-admission authority.
  */
 public final class AccountPublicBootstrapWorldsOwner {
+  private static final int ENTITLEMENT_CONCURRENCY = 8;
   private final AccountPlayerBootstrapCallerVerifier callerVerifier;
   private final CanonicalGameplayAdmissionDecisionReadClient targets;
   private final AccountPublicBootstrapEntitlementOwner entitlements;
@@ -102,20 +106,46 @@ public final class AccountPublicBootstrapWorldsOwner {
 
   private Map<UUID, AccountPublicBootstrapEntitlementOwner.Evaluation> evaluateEachTenantOnce(
       List<Target> canonicalTargets) {
-    Map<UUID, AccountPublicBootstrapEntitlementOwner.Evaluation> evaluations =
-        new LinkedHashMap<>();
-    try {
-      for (Target target : canonicalTargets) {
-        UUID tenantId = Objects.requireNonNull(target.canonicalTenantId());
-        if (evaluations.containsKey(tenantId)) continue;
-        AccountPublicBootstrapEntitlementOwner.Evaluation evaluation =
-            Objects.requireNonNull(entitlements.evaluate(tenantId));
-        if (!tenantId.equals(evaluation.canonicalTenantId())) {
-          throw new IllegalStateException("Entitlement source returned another canonical tenant");
-        }
-        evaluations.put(tenantId, evaluation);
-      }
+    List<UUID> tenants =
+        canonicalTargets.stream()
+            .map(target -> Objects.requireNonNull(target.canonicalTenantId()))
+            .distinct()
+            .toList();
+    if (tenants.isEmpty()) return Map.of();
+    // Independent tenant owners retain their own transactions. No caller or SQL context is copied
+    // to these bounded workers, and no observation is extended to hide slow discovery.
+    try (var workers =
+        Executors.newFixedThreadPool(
+            ENTITLEMENT_CONCURRENCY,
+            Thread.ofVirtual()
+                .name("account-public-world-entitlement-", 0)
+                .inheritInheritableThreadLocals(false)
+                .factory())) {
+      List<Callable<AccountPublicBootstrapEntitlementOwner.Evaluation>> reads =
+          tenants.stream()
+              .<Callable<AccountPublicBootstrapEntitlementOwner.Evaluation>>map(
+                  tenantId ->
+                      () -> {
+                        requireNoAmbientTransaction();
+                        requireWorkloadOnlySourceContext();
+                        var evaluation = Objects.requireNonNull(entitlements.evaluate(tenantId));
+                        if (!tenantId.equals(evaluation.canonicalTenantId()))
+                          throw new IllegalStateException(
+                              "Entitlement source returned another canonical tenant");
+                        return evaluation;
+                      })
+              .toList();
+      var completed = workers.invokeAll(reads);
+      Map<UUID, AccountPublicBootstrapEntitlementOwner.Evaluation> evaluations =
+          new LinkedHashMap<>();
+      for (int index = 0; index < tenants.size(); index++)
+        evaluations.put(tenants.get(index), completed.get(index).get());
       return Map.copyOf(evaluations);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw entitlementUnavailable(interrupted);
+    } catch (ExecutionException unavailable) {
+      throw entitlementUnavailable(unavailable.getCause());
     } catch (RuntimeException unavailable) {
       throw entitlementUnavailable(unavailable);
     }
