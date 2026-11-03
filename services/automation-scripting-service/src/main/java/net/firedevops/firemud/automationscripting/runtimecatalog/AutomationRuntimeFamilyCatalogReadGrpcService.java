@@ -9,8 +9,7 @@ import net.firedevops.firemud.automationscripting.v1.ReadAutomationRuntimeFamily
 import net.firedevops.firemud.common.automation.AutomationRuntimeFamilyCatalog.Request;
 import net.firedevops.firemud.common.automation.AutomationRuntimeFamilyCatalogCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.security.SessionContext;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import net.firedevops.firemud.common.runtimecatalog.RuntimeFamilyCatalogReadGuard;
 
 /** Manual unregistered producer. Exact Game Session workload authentication precedes decode/SQL. */
 public final class AutomationRuntimeFamilyCatalogReadGrpcService
@@ -32,24 +31,17 @@ public final class AutomationRuntimeFamilyCatalogReadGrpcService
       ReadAutomationRuntimeFamilyCatalogRequest wire,
       StreamObserver<ReadAutomationRuntimeFamilyCatalogResponse> observer) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null) {
-      refuse(observer, Status.UNAUTHENTICATED, "Authenticated workload required");
-      return;
-    }
-    if (!peer.isService("game-session-service")
-        || !peer.isInNamespace(namespace)
-        || SessionContext.hasAuthenticatedCallerContext()
-        || SessionContext.isInternalService()) {
-      refuse(
-          observer,
-          Status.PERMISSION_DENIED,
-          "Exact same-namespace Game Session workload required without caller context");
-      return;
-    }
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive()) {
-      refuse(
-          observer, Status.FAILED_PRECONDITION, "Independent Automation owner operation required");
+    var refusal = RuntimeFamilyCatalogReadGuard.refuseBeforeDecode(peer, namespace);
+    if (refusal.isPresent()) {
+      RuntimeFamilyCatalogReadGuard.Refusal reason = refusal.orElseThrow();
+      String description =
+          switch (reason) {
+            case UNAUTHENTICATED -> "Authenticated workload required";
+            case PERMISSION_DENIED ->
+                "Exact same-namespace Game Session workload required without caller context";
+            case FAILED_PRECONDITION -> "Independent Automation owner operation required";
+          };
+      refuse(observer, reason.status(), description);
       return;
     }
     Request request;
@@ -59,7 +51,7 @@ public final class AutomationRuntimeFamilyCatalogReadGrpcService
       refuse(observer, Status.INVALID_ARGUMENT, "Complete bounded catalog request required");
       return;
     }
-    if (!namespace.equals(request.targetNamespace())) {
+    if (!RuntimeFamilyCatalogReadGuard.matchesNamespace(namespace, request.targetNamespace())) {
       refuse(
           observer,
           Status.PERMISSION_DENIED,
