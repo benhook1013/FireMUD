@@ -4,13 +4,12 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.runtimecatalog.RuntimeFamilyCatalogReadGuard;
 import net.firedevops.firemud.common.social.SocialRuntimeFamilyCatalog.Request;
 import net.firedevops.firemud.common.social.SocialRuntimeFamilyCatalogCodec;
 import net.firedevops.firemud.socialgroups.v1.ReadSocialRuntimeFamilyCatalogRequest;
 import net.firedevops.firemud.socialgroups.v1.ReadSocialRuntimeFamilyCatalogResponse;
 import net.firedevops.firemud.socialgroups.v1.SocialRuntimeFamilyCatalogReadServiceGrpc;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Manual, unregistered, exact Game Session workload read. Authentication precedes decode and SQL.
@@ -35,23 +34,17 @@ public final class SocialRuntimeFamilyCatalogReadGrpcService
       ReadSocialRuntimeFamilyCatalogRequest wire,
       StreamObserver<ReadSocialRuntimeFamilyCatalogResponse> observer) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null) {
-      refuse(observer, Status.UNAUTHENTICATED, "Authenticated workload required");
-      return;
-    }
-    if (!peer.isService("game-session-service")
-        || !peer.isInNamespace(namespace)
-        || SessionContext.hasAuthenticatedCallerContext()
-        || SessionContext.isInternalService()) {
-      refuse(
-          observer,
-          Status.PERMISSION_DENIED,
-          "Exact same-namespace Game Session workload required without caller context");
-      return;
-    }
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive()) {
-      refuse(observer, Status.FAILED_PRECONDITION, "Independent Social owner operation required");
+    var refusal = RuntimeFamilyCatalogReadGuard.refuseBeforeDecode(peer, namespace);
+    if (refusal.isPresent()) {
+      RuntimeFamilyCatalogReadGuard.Refusal reason = refusal.orElseThrow();
+      String description =
+          switch (reason) {
+            case UNAUTHENTICATED -> "Authenticated workload required";
+            case PERMISSION_DENIED ->
+                "Exact same-namespace Game Session workload required without caller context";
+            case FAILED_PRECONDITION -> "Independent Social owner operation required";
+          };
+      refuse(observer, reason.status(), description);
       return;
     }
     Request request;
@@ -61,7 +54,7 @@ public final class SocialRuntimeFamilyCatalogReadGrpcService
       refuse(observer, Status.INVALID_ARGUMENT, "Complete bounded Social catalog request required");
       return;
     }
-    if (!namespace.equals(request.targetNamespace())) {
+    if (!RuntimeFamilyCatalogReadGuard.matchesNamespace(namespace, request.targetNamespace())) {
       refuse(
           observer,
           Status.PERMISSION_DENIED,

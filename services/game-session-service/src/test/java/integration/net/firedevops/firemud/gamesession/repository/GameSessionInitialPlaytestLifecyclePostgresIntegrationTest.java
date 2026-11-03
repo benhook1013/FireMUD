@@ -26,6 +26,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPrivateFreshTargetSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
@@ -40,7 +41,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestL
 import net.firedevops.firemud.gamesession.repository.GameSessionPrivateFreshTargetRepository;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -399,7 +399,7 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   void expiredPreparationCannotAllocatePrivateCatalogIdentity() {
     Context context = context(true);
     Request preparationRequest =
-        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(1));
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(5));
     var preparation = context.prepare(preparationRequest).preparation();
     awaitExpiry(context, preparationRequest.forkExpiresAt());
 
@@ -1069,19 +1069,11 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .placeholders(Map.of("serviceSchema", schema))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource,
+        schema,
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        null);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     var transactionManager = new DataSourceTransactionManager(dataSource);

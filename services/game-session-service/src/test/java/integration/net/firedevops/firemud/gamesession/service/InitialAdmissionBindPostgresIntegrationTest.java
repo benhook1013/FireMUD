@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Path;
 import java.util.Objects;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindAttemptRepository;
@@ -13,7 +14,6 @@ import net.firedevops.firemud.gamesession.repository.InitialAdmissionBindCatalog
 import net.firedevops.firemud.gamesession.service.impl.DatabaseInitialAdmissionBindOwnerService;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -45,17 +45,8 @@ class InitialAdmissionBindPostgresIntegrationTest {
   @Test
   void initialAdmissionLedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
     DriverManagerDataSource dataSource = dataSource();
-    Flyway.configure()
-        .dataSource(dataSource)
-        .placeholders(java.util.Map.of("serviceSchema", "public"))
-        .locations(
-            MIGRATION_LOCATION,
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, "public", MIGRATION_LOCATION, null);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     TransactionTemplate transactionTemplate =

@@ -6,12 +6,11 @@ import java.util.Objects;
 import net.firedevops.firemud.common.entity.EntityRuntimeFamilyCatalog.Request;
 import net.firedevops.firemud.common.entity.EntityRuntimeFamilyCatalogCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.runtimecatalog.RuntimeFamilyCatalogReadGuard;
 import net.firedevops.firemud.entitymanagement.repository.EntityRuntimeFamilyCatalogRepository;
 import net.firedevops.firemud.entitymanagement.v1.EntityRuntimeFamilyCatalogReadServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ReadEntityRuntimeFamilyCatalogRequest;
 import net.firedevops.firemud.entitymanagement.v1.ReadEntityRuntimeFamilyCatalogResponse;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Manually composed and unregistered. Workload guard precedes decoding and every SQL access. */
 public final class EntityRuntimeFamilyCatalogReadGrpcService
@@ -33,23 +32,17 @@ public final class EntityRuntimeFamilyCatalogReadGrpcService
       ReadEntityRuntimeFamilyCatalogRequest wire,
       StreamObserver<ReadEntityRuntimeFamilyCatalogResponse> observer) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer == null) {
-      refuse(observer, Status.UNAUTHENTICATED, "Authenticated workload required");
-      return;
-    }
-    if (!peer.isService("game-session-service")
-        || !peer.isInNamespace(namespace)
-        || SessionContext.hasAuthenticatedCallerContext()
-        || SessionContext.isInternalService()) {
-      refuse(
-          observer,
-          Status.PERMISSION_DENIED,
-          "Exact same-namespace Game Session workload required without caller context");
-      return;
-    }
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive()) {
-      refuse(observer, Status.FAILED_PRECONDITION, "Independent Entity owner operation required");
+    var refusal = RuntimeFamilyCatalogReadGuard.refuseBeforeDecode(peer, namespace);
+    if (refusal.isPresent()) {
+      RuntimeFamilyCatalogReadGuard.Refusal reason = refusal.orElseThrow();
+      String description =
+          switch (reason) {
+            case UNAUTHENTICATED -> "Authenticated workload required";
+            case PERMISSION_DENIED ->
+                "Exact same-namespace Game Session workload required without caller context";
+            case FAILED_PRECONDITION -> "Independent Entity owner operation required";
+          };
+      refuse(observer, reason.status(), description);
       return;
     }
     Request request;
@@ -59,7 +52,7 @@ public final class EntityRuntimeFamilyCatalogReadGrpcService
       refuse(observer, Status.INVALID_ARGUMENT, "Complete bounded catalog request required");
       return;
     }
-    if (!namespace.equals(request.targetNamespace())) {
+    if (!RuntimeFamilyCatalogReadGuard.matchesNamespace(namespace, request.targetNamespace())) {
       refuse(
           observer,
           Status.PERMISSION_DENIED,

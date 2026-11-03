@@ -40,6 +40,7 @@ import net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPoin
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
@@ -2625,23 +2626,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    var migration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .placeholders(java.util.Map.of("serviceSchema", schema))
-            .locations(
-                MIGRATION_LOCATION,
-                "filesystem:"
-                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                        .toAbsolutePath()
-                        .normalize());
-    if (targetVersion != null) {
-      migration.target(MigrationVersion.fromVersion(targetVersion));
-    }
-    migration.load().migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, targetVersion);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
