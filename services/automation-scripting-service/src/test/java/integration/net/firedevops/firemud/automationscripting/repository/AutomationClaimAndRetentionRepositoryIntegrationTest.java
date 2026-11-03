@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -87,7 +88,14 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
 
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
+        .schemas("public")
+        .defaultSchema("public")
+        .placeholders(Map.of("serviceSchema", "public"))
+        .load()
+        .migrate();
 
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     ingressRepository = new ScriptEventIngressAuditRepository(dsl);
@@ -173,9 +181,10 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     Flyway.configure()
         .dataSource(upgradeDataSource)
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(upgradeSchema)
         .defaultSchema(upgradeSchema)
+        .placeholders(Map.of("serviceSchema", upgradeSchema))
         .load()
         .migrate();
 

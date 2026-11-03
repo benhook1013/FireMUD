@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -58,9 +59,10 @@ class ScriptDefinitionRepositoryIntegrationTest {
     DriverManagerDataSource dataSource = dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
