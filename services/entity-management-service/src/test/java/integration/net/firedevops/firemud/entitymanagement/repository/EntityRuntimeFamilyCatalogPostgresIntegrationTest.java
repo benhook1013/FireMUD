@@ -31,6 +31,7 @@ import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -394,23 +395,50 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
-  void columnTableRoutineConstraintAndSequenceDefinitionDriftCannotResample() {
+  void columnRoutineConstraintAndSequenceDefinitionDriftCannotResample() {
     for (String change :
         List.of(
             "ALTER TABLE npcs ADD COLUMN future_state TEXT",
             "ALTER TABLE npcs RENAME COLUMN last_defeated_at TO defeated_later",
             "ALTER TABLE npcs ALTER COLUMN behavior TYPE VARCHAR(120)",
             "ALTER TABLE npcs ADD CONSTRAINT catalog_probe CHECK(id>0)",
-            "ALTER TABLE npcs RENAME TO renamed_npcs",
             "CREATE FUNCTION future_writer() RETURNS INTEGER LANGUAGE SQL AS 'SELECT 1'",
             "ALTER SEQUENCE entity_runtime_entity_id_sequence INCREMENT BY 2")) {
       try (var f = fixture(null, HISTORY)) {
         var read = request();
-        f.owner().read(read);
+        var original = f.owner().read(read);
+        var retained =
+            f.dsl
+                .fetchSingle(
+                    "SELECT evidence_bytes FROM entity_runtime_family_catalog_snapshot WHERE read_request_id=?",
+                    read.readRequestId())
+                .get(0, byte[].class);
         f.dsl.execute(change);
-        assertThatThrownBy(() -> f.owner().readExact(read)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> f.owner().read(request())).isInstanceOf(RuntimeException.class);
+        boolean classifiedColumnRemoved =
+            change.startsWith("ALTER TABLE npcs RENAME COLUMN last_defeated_at");
+        Class<? extends RuntimeException> expectedType =
+            classifiedColumnRemoved
+                ? DataAccessException.class
+                : EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class;
+        String expectedMessage =
+            classifiedColumnRemoved
+                ? "Unclassified or changed"
+                : "Entity schema/classification drift invalidates its epoch";
+        assertThatThrownBy(() -> f.owner().readExact(read))
+            .isInstanceOf(expectedType)
+            .hasMessageContaining(expectedMessage);
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(expectedType)
+            .hasMessageContaining(expectedMessage);
         assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(1);
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT evidence_bytes FROM entity_runtime_family_catalog_snapshot WHERE read_request_id=?",
+                        read.readRequestId())
+                    .get(0, byte[].class))
+            .isEqualTo(retained)
+            .isEqualTo(EntityRuntimeFamilyCatalogCodec.evidenceBytes(original));
       }
     }
   }
@@ -420,7 +448,30 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
     for (String change :
         List.of(
             "DROP TABLE npcs",
-            "INSERT INTO entity_runtime_family_classification VALUES ('npcs.version_id_extra','npcs','version_id_extra','SOURCE','NOT_PAYLOAD','AUTHORED_SOURCE_ONLY')",
+            "ALTER TABLE npcs RENAME TO renamed_npcs",
+            "INSERT INTO entity_runtime_family_classification VALUES ('npcs.version_id_extra','npcs','version_id_extra','SOURCE','NOT_PAYLOAD','AUTHORED_SOURCE_ONLY')")) {
+      try (var f = fixture(null, HISTORY)) {
+        var read = request();
+        var original = f.owner().read(read);
+        f.dsl.execute(change);
+        assertThatThrownBy(() -> f.owner().readExact(read))
+            .isInstanceOf(DataAccessException.class)
+            .hasMessageContaining("Unclassified or changed");
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(DataAccessException.class)
+            .hasMessageContaining("Unclassified or changed");
+        assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(1);
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT evidence_bytes FROM entity_runtime_family_catalog_snapshot WHERE read_request_id=?",
+                        read.readRequestId())
+                    .get(0, byte[].class))
+            .isEqualTo(EntityRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      }
+    }
+    for (String change :
+        List.of(
             "UPDATE " + HISTORY + " SET checksum=checksum+1 WHERE version='1'",
             "UPDATE " + HISTORY + " SET success=false WHERE version='1025'",
             "UPDATE " + HISTORY + " SET success=false WHERE version='1026'",
@@ -430,8 +481,17 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
         var read = request();
         var original = f.owner().read(read);
         f.dsl.execute(change);
-        assertThatThrownBy(() -> f.owner().readExact(read)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> f.owner().read(request())).isInstanceOf(RuntimeException.class);
+        String expectedMessage =
+            change.contains("version='1025'") || change.contains("version='1026'")
+                ? "No durable Entity catalog epoch"
+                : "Entity schema/classification drift invalidates its epoch";
+        assertThatThrownBy(() -> f.owner().readExact(read))
+            .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class)
+            .hasMessage(expectedMessage);
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class)
+            .hasMessage(expectedMessage);
+        assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(1);
         assertThat(
                 f.dsl
                     .fetchSingle(
@@ -536,52 +596,90 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
   @Test
   void directSqlPoisonFramesRefuseWithoutConsumingRequestIdentity() {
     try (var f = fixture(null, HISTORY)) {
-      var catalog = f.owner().read(request()).catalog();
-      for (int mismatch = 0; mismatch < 6; mismatch++) {
-        var read = request();
-        var snapshot = UUID.randomUUID();
-        var evidence = new Evidence(read, snapshot, catalog);
+      var original = f.owner().read(request());
+      for (String vector :
+          List.of(
+              "request-arbitrary",
+              "evidence-arbitrary",
+              "request-id",
+              "namespace",
+              "row-namespace",
+              "request-magic",
+              "request-trailing",
+              "request-truncated",
+              "evidence-request",
+              "snapshot",
+              "catalog-digest",
+              "catalog-bytes",
+              "evidence-magic",
+              "evidence-trailing",
+              "evidence-truncated")) {
+        Request read = request();
+        UUID snapshot = UUID.randomUUID();
+        var proposal = new Evidence(read, snapshot, original.catalog());
         byte[] requestBytes = EntityRuntimeFamilyCatalogCodec.requestBytes(read);
-        byte[] evidenceBytes = EntityRuntimeFamilyCatalogCodec.evidenceBytes(evidence);
-        switch (mismatch) {
-          case 0 -> requestBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
-          case 1 -> requestBytes = EntityRuntimeFamilyCatalogCodec.requestBytes(request());
-          case 2 ->
+        byte[] evidenceBytes = EntityRuntimeFamilyCatalogCodec.evidenceBytes(proposal);
+        String namespace = read.targetNamespace();
+        switch (vector) {
+          case "request-id" ->
+              requestBytes = EntityRuntimeFamilyCatalogCodec.requestBytes(request());
+          case "namespace" ->
               requestBytes =
                   EntityRuntimeFamilyCatalogCodec.requestBytes(
                       new Request(read.readRequestId(), "other"));
-          case 3 -> evidenceBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
-          case 4 ->
+          case "row-namespace" -> namespace = "other";
+          case "request-arbitrary" ->
+              requestBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
+          case "evidence-arbitrary" ->
+              evidenceBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
+          case "request-magic" -> requestBytes[0] ^= 1;
+          case "request-trailing" ->
+              requestBytes = java.util.Arrays.copyOf(requestBytes, requestBytes.length + 1);
+          case "request-truncated" ->
+              requestBytes = java.util.Arrays.copyOf(requestBytes, requestBytes.length - 1);
+          case "evidence-request" ->
               evidenceBytes =
                   EntityRuntimeFamilyCatalogCodec.evidenceBytes(
-                      new Evidence(request(), snapshot, catalog));
-          case 5 ->
+                      new Evidence(request(), snapshot, original.catalog()));
+          case "snapshot" ->
               evidenceBytes =
                   EntityRuntimeFamilyCatalogCodec.evidenceBytes(
-                      new Evidence(read, UUID.randomUUID(), catalog));
-          default -> throw new AssertionError("Unknown poison vector");
+                      new Evidence(read, UUID.randomUUID(), original.catalog()));
+          case "catalog-digest" ->
+              evidenceBytes[Integer.BYTES * 3 + requestBytes.length + Long.BYTES * 2] ^= 1;
+          case "catalog-bytes" -> evidenceBytes[evidenceBytes.length - 1] ^= 1;
+          case "evidence-magic" -> evidenceBytes[0] ^= 1;
+          case "evidence-trailing" ->
+              evidenceBytes = java.util.Arrays.copyOf(evidenceBytes, evidenceBytes.length + 1);
+          case "evidence-truncated" ->
+              evidenceBytes = java.util.Arrays.copyOf(evidenceBytes, evidenceBytes.length - 1);
+          default -> throw new AssertionError("Unknown poison vector: " + vector);
         }
-        byte[] poisonedRequest = requestBytes;
-        byte[] poisonedEvidence = evidenceBytes;
+        byte[] insertedRequest = requestBytes;
+        byte[] insertedEvidence = evidenceBytes;
+        String insertedNamespace = namespace;
         long before = f.count("entity_runtime_family_catalog_snapshot");
         assertThatThrownBy(
                 () ->
                     f.dsl.execute(
                         "INSERT INTO entity_runtime_family_catalog_snapshot(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)",
                         read.readRequestId(),
-                        read.targetNamespace(),
-                        poisonedRequest,
-                        EntityRuntimeFamilyCatalog.sha256(poisonedRequest),
+                        insertedNamespace,
+                        insertedRequest,
+                        EntityRuntimeFamilyCatalog.sha256(insertedRequest),
                         snapshot,
-                        catalog.catalogEpoch(),
-                        catalog.digest(),
-                        poisonedEvidence,
-                        EntityRuntimeFamilyCatalog.sha256(poisonedEvidence)))
+                        original.catalog().catalogEpoch(),
+                        original.catalog().digest(),
+                        insertedEvidence,
+                        EntityRuntimeFamilyCatalog.sha256(insertedEvidence)))
+            .as(vector)
             .hasMessageContaining("complete exact request and evidence");
         assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(before);
         var committed = f.owner().read(read);
-        assertThat(f.owner().readExact(read)).isEqualTo(committed);
         assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(before + 1);
+        assertThat(f.owner().readExact(read)).isEqualTo(committed);
+        assertThat(f.owner().read(read)).isEqualTo(committed);
+        assertThat(f.owner().readExact(original.request())).isEqualTo(original);
       }
     }
   }
