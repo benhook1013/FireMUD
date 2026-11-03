@@ -254,7 +254,8 @@ public class GameSessionInitialPlaytestLifecycleRepository {
     Record target =
         dsl.fetchOne(
             "SELECT realm_id FROM game_session_canonical_realm_catalog WHERE target_namespace = ? "
-                + "AND canonical_tenant_id = ? AND world_slug = ? AND realm_slug = ?",
+                + "AND canonical_tenant_id = ? AND world_slug = ? AND realm_slug = ? "
+                + "AND public_production",
             request.targetNamespace(),
             request.tenantId(),
             request.worldSlug(),
