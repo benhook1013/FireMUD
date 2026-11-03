@@ -48,7 +48,10 @@ class AccountHostingSubscriptionLifecyclePolicyTest {
   @Test
   void mapsActiveAndTrialOnlyFromActualSdkEvidenceAndExpiresAtStrictReadStartDeadline() {
     var active = observed(RESPONSE, NOW);
-    assertThat(policy().evaluate(active, NOW, null).status()).isEqualTo(Status.ACTIVE);
+    var decision = policy().evaluate(active, NOW, null);
+    assertThat(decision.status()).isEqualTo(Status.ACTIVE);
+    assertThat(decision.validUntil()).isEqualTo(NOW.plusSeconds(15));
+    assertThat(decision.receiptValidUntil()).isEqualTo(END);
     assertThat(policy().evaluate(active, NOW.plusSeconds(14), null).resolved()).isTrue();
     assertThat(policy().evaluate(active, NOW.plusSeconds(15), null).reason())
         .isEqualTo(Reason.OBSERVATION_EXPIRED);
@@ -76,6 +79,12 @@ class AccountHostingSubscriptionLifecyclePolicyTest {
     assertThat(cutoff.cutoffAt()).isEqualTo(graceEnd);
     assertThat(policy().evaluate(observed(response, NOW), NOW, NOW).validUntil())
         .isEqualTo(NOW.plusSeconds(15));
+    assertThat(policy().evaluate(observed(response, NOW), NOW, NOW).receiptValidUntil())
+        .isEqualTo(warningEnd);
+    assertThat(
+            policy().evaluate(observed(response, warningEnd), warningEnd, NOW).receiptValidUntil())
+        .isEqualTo(graceEnd);
+    assertThat(cutoff.receiptValidUntil()).isEqualTo(END);
   }
 
   @Test
@@ -84,8 +93,9 @@ class AccountHostingSubscriptionLifecyclePolicyTest {
         RESPONSE
             .replace("\"cancel_at_period_end\":false", "\"cancel_at_period_end\":true")
             .replace("\"canceled_at\":null", "\"canceled_at\":1778000005");
-    assertThat(policy().evaluate(observed(response, NOW), NOW, null).status())
-        .isEqualTo(Status.ACTIVE);
+    var scheduled = policy().evaluate(observed(response, NOW), NOW, null);
+    assertThat(scheduled.status()).isEqualTo(Status.ACTIVE);
+    assertThat(scheduled.receiptValidUntil()).isEqualTo(END);
     var atBoundary = policy().evaluate(observed(response, END), END, null);
     assertThat(atBoundary.status()).isEqualTo(Status.CANCELED);
     assertThat(atBoundary.cutoffAt()).isEqualTo(END);
