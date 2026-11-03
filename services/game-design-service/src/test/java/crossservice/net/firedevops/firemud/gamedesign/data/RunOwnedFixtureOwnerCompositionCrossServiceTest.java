@@ -12,6 +12,7 @@ import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.CertificateFactory;
@@ -52,6 +53,7 @@ import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchE
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -235,6 +237,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                 .CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
                 .STARTING);
     assertThat(starting.rowVersion()).isZero();
+    var controlledInstallation = registerControlledInstallation(worldDatabase, testDirectory);
     var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
     var gsHandler = org.mockito.Mockito.spy(actualGsFixtureReadHandler(registry));
     gsHandler.configureRunOwnedFixtureLaunchAssociationReadBoundary(
@@ -322,7 +325,11 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
       RunOwnedCanonicalWorldLaunchEvidence worldEvidence =
           withControlledGameSessionPeer(fixture, provider::requireAuthenticatedEvidence);
       var request = exactPreparedWorldRequest(worldEvidence);
-      var emptyWorldRows = allComposedOwnerRows(worldDatabase.dsl());
+      // Freeze through the actual owner before capturing the no-allocation baseline. These
+      // controlled installation inputs establish no genuine external installation authority.
+      var emptyWorldRows =
+          controlledInstallation.withLaunchOwners(
+              starting.gameInstanceUuid(), () -> allComposedOwnerRows(worldDatabase.dsl()));
       org.mockito.Mockito.clearInvocations(authoredWorldSourceRepository);
       var changedSource = changedPreparedSourceEvidence(receipt.sourceEvidence());
       org.mockito.Mockito.doReturn(java.util.Optional.of(changedSource))
@@ -333,8 +340,14 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                   withControlledGameSessionPeer(
                       fixture,
                       () ->
-                          ReflectionTestUtils.invokeMethod(
-                              initialCommands, "prepareRunOwnedFixture", request, worldEvidence)))
+                          controlledInstallation.withLaunchOwners(
+                              starting.gameInstanceUuid(),
+                              () ->
+                                  ReflectionTestUtils.invokeMethod(
+                                      initialCommands,
+                                      "prepareRunOwnedFixture",
+                                      request,
+                                      worldEvidence))))
           .isInstanceOf(RuntimeException.class);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(emptyWorldRows);
       org.mockito.Mockito.verify(authoredWorldSourceRepository)
@@ -346,9 +359,16 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
           withControlledGameSessionPeer(
               fixture,
               () ->
-                  (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
-                      ReflectionTestUtils.invokeMethod(
-                          initialCommands, "prepareRunOwnedFixture", request, worldEvidence));
+                  controlledInstallation.withLaunchOwners(
+                      starting.gameInstanceUuid(),
+                      () ->
+                          (net.firedevops.firemud.worldmanagement.dto
+                                  .WorldInstanceLifecycleSnapshotDto)
+                              ReflectionTestUtils.invokeMethod(
+                                  initialCommands,
+                                  "prepareRunOwnedFixture",
+                                  request,
+                                  worldEvidence)));
       assertThat(prepared).isNotNull();
       assertThat(prepared.status()).isEqualTo("PREPARING");
       assertThat(prepared.lifecycleEpoch()).isEqualTo(1L);
@@ -495,11 +515,14 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                   withControlledGameSessionPeer(
                       fixture,
                       () ->
-                          ReflectionTestUtils.invokeMethod(
-                              initialCommands,
-                              "prepareRunOwnedFixture",
-                              mismatchedRequest,
-                              worldEvidence)))
+                          controlledInstallation.withLaunchOwners(
+                              starting.gameInstanceUuid(),
+                              () ->
+                                  ReflectionTestUtils.invokeMethod(
+                                      initialCommands,
+                                      "prepareRunOwnedFixture",
+                                      mismatchedRequest,
+                                      worldEvidence))))
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(worldRows);
       org.mockito.Mockito.verifyNoInteractions(entityClient);
@@ -544,9 +567,16 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               withControlledGameSessionPeer(
                   fixture,
                   () ->
-                      (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
-                          ReflectionTestUtils.invokeMethod(
-                              replayCommands, "prepareRunOwnedFixture", request, replayEvidence)))
+                      controlledInstallation.withLaunchOwners(
+                          starting.gameInstanceUuid(),
+                          () ->
+                              (net.firedevops.firemud.worldmanagement.dto
+                                      .WorldInstanceLifecycleSnapshotDto)
+                                  ReflectionTestUtils.invokeMethod(
+                                      replayCommands,
+                                      "prepareRunOwnedFixture",
+                                      request,
+                                      replayEvidence))))
           .isEqualTo(prepared);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(worldRows);
       var reads =
@@ -604,6 +634,101 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
         }
       }
     }
+  }
+
+  private WorldRuntimeInstallationRegistry registerControlledInstallation(
+      ComposedOwnerDatabase database, Path testDirectory) throws Exception {
+    Path root = Path.of("").toAbsolutePath();
+    while (root != null && !Files.exists(root.resolve("settings.gradle.kts"))) {
+      root = root.getParent();
+    }
+    if (root == null) throw new IllegalStateException("Repository fixture root unavailable");
+    Path inputs = root.resolve("dev-tools/deploy/fixtures/runtime-installation");
+    Path directory = Files.createDirectory(testDirectory.resolve("controlled-installation"));
+    Path rendered = directory.resolve("rendered.yaml");
+    Path declarations = directory.resolve("declarations.json");
+    Path candidate = directory.resolve("candidate.json");
+    // Reuse the complete producer interoperability render, including its sidecar and init
+    // container. Only its controlled namespace/identity metadata changes for this composition.
+    Files.writeString(
+        rendered,
+        Files.readString(inputs.resolve("rendered.yaml"), StandardCharsets.UTF_8)
+            .replace("namespace: firemud", "namespace: " + NAMESPACE),
+        StandardCharsets.UTF_8);
+    var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+    var declaration =
+        (tools.jackson.databind.node.ObjectNode)
+            mapper.readTree(Files.readAllBytes(inputs.resolve("declarations.json")));
+    declaration.put("namespace", NAMESPACE);
+    declaration.put("environment", "local-dev");
+    declaration.put("generation", "controlled-run-owned-owner-composition");
+    declaration.put("clusterUid", "controlled-cluster");
+    declaration.put("namespaceUid", "controlled-namespace");
+    ((tools.jackson.databind.node.ObjectNode) declaration.get("executor"))
+        .put("identity", "controlled-run-owned-owner-composition/v1");
+    for (var member : declaration.get("members")) {
+      ((tools.jackson.databind.node.ObjectNode) member).put("workloadNamespace", NAMESPACE);
+    }
+    Files.write(declarations, mapper.writeValueAsBytes(declaration));
+    Path producerLog = directory.resolve("producer.log");
+    Process producer =
+        new ProcessBuilder(
+                "python3",
+                root.resolve("dev-tools/deploy/runtime-installation-inventory.py").toString(),
+                "--rendered-manifest",
+                rendered.toString(),
+                "--declarations",
+                declarations.toString(),
+                "--output",
+                candidate.toString())
+            .directory(root.toFile())
+            .redirectErrorStream(true)
+            .redirectOutput(producerLog.toFile())
+            .start();
+    try {
+      assertThat(producer.waitFor(30, TimeUnit.SECONDS))
+          .as("controlled installation candidate producer completed")
+          .isTrue();
+      assertThat(producer.exitValue()).withFailMessage(Files.readString(producerLog)).isZero();
+    } finally {
+      if (producer.isAlive()) {
+        producer.destroyForcibly();
+        assertThat(producer.waitFor(5, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+    byte[] exact = Files.readAllBytes(candidate);
+    String schema = database.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
+    // This immutable in-memory hold is controlled test authority only. Candidate production and
+    // SQL readback do not qualify completed installation, protected delivery, custody or FRESH.
+    var installation =
+        new WorldRuntimeInstallationRegistry(
+            database.dsl(),
+            database.transactions(),
+            schema,
+            NAMESPACE,
+            () ->
+                new WorldRuntimeInstallationRegistry.HeldInstallation() {
+                  private boolean closed;
+
+                  @Override
+                  public byte[] exactArtifactBytes() {
+                    return exact.clone();
+                  }
+
+                  @Override
+                  public void requireCurrent() {
+                    if (closed)
+                      throw new IllegalStateException("Controlled installation hold is closed");
+                  }
+
+                  @Override
+                  public void close() {
+                    closed = true;
+                  }
+                });
+    installation.register();
+    assertThat(installation.current().artifact().exactBytes()).containsExactly(exact);
+    return installation;
   }
 
   private GameSessionControlPlaneGrpcService actualGsFixtureReadHandler(

@@ -1099,6 +1099,12 @@ jobs:
         with:
           requirements: none
 
+      - name: Set up Python for installation inventory composition
+        if: ${{ matrix.module == 'game-design-service' }}
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
+
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
