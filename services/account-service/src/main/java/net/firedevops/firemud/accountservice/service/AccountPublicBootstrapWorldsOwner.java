@@ -14,6 +14,8 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
@@ -30,6 +32,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class AccountPublicBootstrapWorldsOwner {
   private static final int ENTITLEMENT_CONCURRENCY = 8;
+  private static final Semaphore ENTITLEMENT_PERMITS = new Semaphore(ENTITLEMENT_CONCURRENCY, true);
   private final AccountPlayerBootstrapCallerVerifier callerVerifier;
   private final CanonicalGameplayAdmissionDecisionReadClient targets;
   private final AccountPublicBootstrapEntitlementOwner entitlements;
@@ -128,11 +131,18 @@ public final class AccountPublicBootstrapWorldsOwner {
                       () -> {
                         requireNoAmbientTransaction();
                         requireWorkloadOnlySourceContext();
-                        var evaluation = Objects.requireNonNull(entitlements.evaluate(tenantId));
-                        if (!tenantId.equals(evaluation.canonicalTenantId()))
+                        if (!ENTITLEMENT_PERMITS.tryAcquire(5, TimeUnit.SECONDS))
                           throw new IllegalStateException(
-                              "Entitlement source returned another canonical tenant");
-                        return evaluation;
+                              "Discovery entitlement capacity is unavailable");
+                        try {
+                          var evaluation = Objects.requireNonNull(entitlements.evaluate(tenantId));
+                          if (!tenantId.equals(evaluation.canonicalTenantId()))
+                            throw new IllegalStateException(
+                                "Entitlement source returned another canonical tenant");
+                          return evaluation;
+                        } finally {
+                          ENTITLEMENT_PERMITS.release();
+                        }
                       })
               .toList();
       var completed = workers.invokeAll(reads);
