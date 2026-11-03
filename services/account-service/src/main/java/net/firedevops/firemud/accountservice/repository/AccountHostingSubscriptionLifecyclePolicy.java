@@ -69,7 +69,12 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
       if (endedAt.isAfter(evaluatedAt)) {
         return unavailable(Reason.CONTRADICTORY_PROVIDER_FACTS);
       }
-      return new Decision(Status.CANCELED, Reason.PROVIDER_CONFIRMED, observationDeadline, endedAt);
+      return new Decision(
+          Status.CANCELED,
+          Reason.PROVIDER_CONFIRMED,
+          observationDeadline,
+          observationDeadline,
+          endedAt);
     }
 
     Instant start = observed.currentPeriodStart().orElse(null);
@@ -86,18 +91,28 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
     }
     if (cancellation != null && !evaluatedAt.isBefore(cancellation)) {
       return new Decision(
-          Status.CANCELED, Reason.EFFECTIVE_CANCELLATION, observationDeadline, cancellation);
+          Status.CANCELED,
+          Reason.EFFECTIVE_CANCELLATION,
+          observationDeadline,
+          observationDeadline,
+          cancellation);
     }
     if (!evaluatedAt.isBefore(end)) {
       // An expired period without a confirmed end schedule is unknown renewal state, not an
       // invented cancellation and not permission to extend the last positive period.
       return unavailable(Reason.PERIOD_UNRESOLVED);
     }
-    Instant validUntil = earlier(observationDeadline, earlier(end, cancellation));
+    Instant receiptValidUntil = earlier(end, cancellation);
+    Instant validUntil = earlier(observationDeadline, receiptValidUntil);
     return switch (observed.providerStatus()) {
-      case "active" -> new Decision(Status.ACTIVE, Reason.PROVIDER_CONFIRMED, validUntil, null);
-      case "trialing" -> new Decision(Status.TRIALING, Reason.PROVIDER_CONFIRMED, validUntil, null);
-      case "past_due" -> pastDue(evaluatedAt, retainedPastDueSince, validUntil);
+      case "active" ->
+          new Decision(
+              Status.ACTIVE, Reason.PROVIDER_CONFIRMED, validUntil, receiptValidUntil, null);
+      case "trialing" ->
+          new Decision(
+              Status.TRIALING, Reason.PROVIDER_CONFIRMED, validUntil, receiptValidUntil, null);
+      case "past_due" ->
+          pastDue(evaluatedAt, retainedPastDueSince, receiptValidUntil, observationDeadline);
       // These provider values cannot establish an active/trialing hosting agreement. Their
       // resolution remains explicit rather than inventing a grace policy for an incomplete or
       // paused subscription. Automatic suspension is driven by the configured past_due episode.
@@ -105,7 +120,8 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
     };
   }
 
-  private Decision pastDue(Instant now, Instant origin, Instant validUntil) {
+  private Decision pastDue(
+      Instant now, Instant origin, Instant receiptValidUntil, Instant observationDeadline) {
     if (origin == null || origin.isAfter(now)) {
       return unavailable(Reason.RECOVERY_ORIGIN_UNRESOLVED);
     }
@@ -113,18 +129,30 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
     Instant suspendAt = plus(graceAt, recovery.grace());
     if (!now.isBefore(suspendAt)) {
       return new Decision(
-          Status.SUSPENDED, Reason.PAYMENT_RECOVERY_EXHAUSTED, validUntil, suspendAt);
+          Status.SUSPENDED,
+          Reason.PAYMENT_RECOVERY_EXHAUSTED,
+          earlier(observationDeadline, receiptValidUntil),
+          receiptValidUntil,
+          suspendAt);
     }
     if (!now.isBefore(graceAt)) {
       return new Decision(
-          Status.GRACE, Reason.PAYMENT_RECOVERY, earlier(validUntil, suspendAt), null);
+          Status.GRACE,
+          Reason.PAYMENT_RECOVERY,
+          earlier(observationDeadline, earlier(receiptValidUntil, suspendAt)),
+          earlier(receiptValidUntil, suspendAt),
+          null);
     }
     return new Decision(
-        Status.PAST_DUE, Reason.PAYMENT_RECOVERY, earlier(validUntil, graceAt), null);
+        Status.PAST_DUE,
+        Reason.PAYMENT_RECOVERY,
+        earlier(observationDeadline, earlier(receiptValidUntil, graceAt)),
+        earlier(receiptValidUntil, graceAt),
+        null);
   }
 
   private static Decision unavailable(Reason reason) {
-    return new Decision(null, reason, null, null);
+    return new Decision(null, reason, null, null, null);
   }
 
   private static Instant earlier(Instant left, Instant right) {
@@ -191,8 +219,17 @@ public final class AccountHostingSubscriptionLifecyclePolicy {
     UNMAPPED_PROVIDER_STATUS
   }
 
-  /** Null status denotes unavailable mapping, not a known suspended/canceled entitlement. */
-  public record Decision(Status status, Reason reason, Instant validUntil, Instant cutoffAt) {
+  /**
+   * Null status denotes unavailable mapping, not a known suspended/canceled entitlement. The fresh
+   * read's validUntil includes observation age; receiptValidUntil retains the provider/policy fact
+   * boundary so a later independently fresh read does not require another lifecycle mutation.
+   */
+  public record Decision(
+      Status status,
+      Reason reason,
+      Instant validUntil,
+      Instant receiptValidUntil,
+      Instant cutoffAt) {
     public boolean resolved() {
       return status != null;
     }
