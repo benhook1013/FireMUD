@@ -40,6 +40,8 @@ import net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTarge
 import net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTargetResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -185,6 +187,58 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
     verify(f.publishedObserver).onNext(response);
     verify(f.publishedObserver).onCompleted();
     verifyNoInteractions(f.inventory);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "namespace",
+        "tenant",
+        "world",
+        "realm",
+        "realm-slug",
+        "playable-namespace",
+        "scope",
+        "instance",
+        "version",
+        "catalog",
+        "pointer",
+        "epoch"
+      })
+  void staleRouteRefusesBeforeLaunchPublicationAndWorldEvenWhenDependencyIsUnavailable(
+      String changed) {
+    Fixture f = new Fixture();
+    var selector = strictSelector(f.selector);
+    var route = f.configureStrictRoute(selector);
+    switch (changed) {
+      case "namespace" -> when(route.targetNamespace()).thenReturn("other");
+      case "tenant" -> when(route.canonicalTenantId()).thenReturn(UUID.randomUUID());
+      case "world" -> when(route.worldSlug()).thenReturn("other");
+      case "realm" -> when(route.realmId()).thenReturn(UUID.randomUUID());
+      case "realm-slug" -> when(route.realmSlug()).thenReturn("other");
+      case "playable-namespace" ->
+          when(route.playableStateNamespaceId()).thenReturn(UUID.randomUUID());
+      case "scope" -> when(route.playableStateScope()).thenReturn("ISOLATED");
+      case "instance" -> when(route.canonicalGameInstanceId()).thenReturn(UUID.randomUUID());
+      case "version" -> when(route.canonicalVersionId()).thenReturn(UUID.randomUUID());
+      case "catalog" ->
+          when(route.catalogRevision()).thenReturn(selector.expectedCatalogRevision() + 1);
+      case "pointer" ->
+          when(route.pointerVersion()).thenReturn(selector.expectedPointerVersion() + 1);
+      case "epoch" ->
+          when(route.activeWorldEpoch()).thenReturn(selector.expectedActiveWorldEpoch() + 1);
+      default -> throw new IllegalArgumentException(changed);
+    }
+    when(f.published.readCurrent(selector))
+        .thenThrow(
+            new CanonicalPublishedPlayerRouteReadService.StorageUnavailableException(
+                "private source"));
+    f.service.getPublishedRealmAdmissionOwnerRead(
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmRequest(selector),
+        f.publishedObserver);
+    assertFailure(f.publishedObserver, Status.Code.FAILED_PRECONDITION);
+    verify(f.routes).readCurrentTarget(TENANT);
+    verifyNoInteractions(f.launches, f.published, f.world, f.inventory);
   }
 
   @Test
@@ -406,11 +460,14 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
       when(current.targetNamespace()).thenReturn("test");
       when(current.canonicalTenantId()).thenReturn(TENANT);
       when(current.realmId()).thenReturn(selector.realmUuid());
+      when(current.realmSlug()).thenReturn(selector.realmSlug());
       when(current.worldSlug()).thenReturn(selector.worldSlug());
       when(current.canonicalGameInstanceId()).thenReturn(selector.canonicalGameInstanceUuid());
       when(current.playableStateNamespaceId()).thenReturn(selector.playableStateNamespaceUuid());
       when(current.playableStateScope()).thenReturn("SHARED");
       when(current.canonicalVersionId()).thenReturn(selector.canonicalVersionUuid());
+      when(current.catalogRevision()).thenReturn(selector.expectedCatalogRevision());
+      when(current.pointerVersion()).thenReturn(selector.expectedPointerVersion());
       when(current.activeWorldEpoch()).thenReturn(7L);
       when(current.gameSessionTenantId()).thenReturn(11L);
       when(current.gameInstanceId()).thenReturn(71L);
