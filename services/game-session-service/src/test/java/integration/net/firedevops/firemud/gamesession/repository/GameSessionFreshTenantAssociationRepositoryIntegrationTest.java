@@ -32,7 +32,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssoc
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantSourceException;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -841,20 +840,8 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            MIGRATION_LOCATION,
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, null);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
@@ -883,20 +870,8 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            MIGRATION_LOCATION,
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, null);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);

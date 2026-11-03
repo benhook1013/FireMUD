@@ -39,7 +39,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestL
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.ReadState;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -411,19 +410,12 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .placeholders(Map.of("serviceSchema", schema))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource,
+        schema,
+        "filesystem:"
+            + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        null);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     TransactionTemplate transaction =

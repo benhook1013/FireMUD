@@ -1246,20 +1246,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
               net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence.PublishedSet>
           publishedSets) {
     void migrateToLatest() {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .placeholders(java.util.Map.of("serviceSchema", schema))
-          .locations(
-              MIGRATION_LOCATION,
-              "filesystem:"
-                  + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                      .toAbsolutePath()
-                      .normalize())
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
     }
 
     IntakeReceipt register(UUID tenantId, String worldSlug, String displayName, String provenance) {

@@ -47,7 +47,6 @@ import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordin
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalUnavailableException;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -109,19 +108,12 @@ class InitialGameplayLoginCoordinationJournalRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource,
+        schema,
+        "filesystem:"
+            + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        null);
     dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
