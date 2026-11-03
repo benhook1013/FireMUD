@@ -712,6 +712,68 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void canceledReceiptsReturnFreshNegativeProjectionAfterOriginalObservationAgeWithoutMutation() {
+    for (boolean providerCanceled : new boolean[] {true, false}) {
+      Context c = context("1030");
+      Fixture f = fixture(c);
+      f.transport().json =
+          providerCanceled
+              ? response(f, "canceled")
+              : response(f, "active")
+                  .replace(
+                      "\"cancel_at\":null",
+                      "\"cancel_at\":" + f.clock().instant().getEpochSecond());
+      String originalFacts = f.transport().json;
+      activate(f);
+      var receipt =
+          one(
+              c,
+              "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r");
+      var authority =
+          one(
+              c,
+              "SELECT row_to_json(a)::text AS value, xmin::text AS xmin FROM account_tenant_authority_source_records a");
+      for (int laterRead = 0; laterRead < 2; laterRead++) {
+        f.clock().advance(Duration.ofSeconds(30));
+        var canceled = f.service().readCurrent(f.creation().tenantId());
+        assertThat(canceled.subscriptionStatus()).isEqualTo(Status.CANCELED);
+        assertThat(canceled.gameplayAvailable()).isFalse();
+        assertThat(canceled.allowPublicJoin()).isFalse();
+        assertThat(canceled.allowNewGameplayBindings()).isFalse();
+        assertThat(canceled.allowNewInstanceStarts()).isFalse();
+        assertThat(canceled.validUntil()).isEqualTo(f.clock().instant().plusSeconds(15));
+        assertThat(canceled.tenantBillingSequence()).isOne();
+      }
+      // An aged terminal receipt is not permission to turn unknown or changed facts into denial.
+      f.transport().duringRead = () -> f.clock().advance(Duration.ofSeconds(15));
+      assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
+          .isInstanceOf(
+              AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException.class);
+      f.transport().json = response(f, "active");
+      assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
+          .isInstanceOf(
+              AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException.class);
+      f.transport().json = originalFacts;
+      assertThat(f.service().readCurrent(f.creation().tenantId()).gameplayAvailable()).isFalse();
+      assertThat(
+              one(
+                  c,
+                  "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r"))
+          .isEqualTo(receipt);
+      assertThat(
+              one(
+                  c,
+                  "SELECT row_to_json(a)::text AS value, xmin::text AS xmin FROM account_tenant_authority_source_records a"))
+          .isEqualTo(authority);
+      assertThat(count(c, "account_tenant_entitlement_outbox_events")).isOne();
+      assertThat(count(c, "account_authority_outbox_events")).isOne();
+      assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
+      assertThat(count(c, "subscription_provider_terminal_resolutions"))
+          .isEqualTo(providerCanceled ? 1 : 0);
+    }
+  }
+
+  @Test
   void inFlightAndStaleObservationOrChangedSdkFactsNeverRefreshAnOldPositiveSnapshot() {
     Context c = context("1030");
     Fixture f = fixture(c);
@@ -832,6 +894,15 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 java.nio.charset.StandardCharsets.UTF_8))
         .contains("TenantBillingStateChanged");
     assertThat(suspended.cutoffAt()).isEqualTo(f.clock().instant());
+    Instant originalSuspensionCutoff = suspended.cutoffAt();
+    f.clock().advance(Duration.ofSeconds(30));
+    var laterSuspended = f.service().readCurrent(f.creation().tenantId());
+    assertThat(laterSuspended.subscriptionStatus()).isEqualTo(Status.SUSPENDED);
+    assertThat(laterSuspended.cutoffAt()).isEqualTo(originalSuspensionCutoff);
+    assertThat(laterSuspended.gameplayAvailable()).isFalse();
+    assertThat(laterSuspended.validUntil()).isEqualTo(f.clock().instant().plusSeconds(15));
+    assertThat(laterSuspended.tenantBillingSequence()).isEqualTo(4);
+    assertThat(count(c, "subscription_lifecycle_receipts")).isEqualTo(4);
     f.transport().json = response(f, "active");
     refresh(f);
     Instant cancellation = f.clock().instant().plusSeconds(2);
