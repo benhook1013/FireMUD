@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRepository;
@@ -71,6 +72,15 @@ public final class CanonicalHostingSubscriptionTestFixture {
   private CanonicalHostingSubscriptionTestFixture() {}
 
   public static Fixture create(DataSource source) {
+    return createInternal(source, null);
+  }
+
+  /** Reuses the exact persisted Account of a genuine actor/authentication composition. */
+  public static Fixture create(DataSource source, Account account) {
+    return createInternal(source, Objects.requireNonNull(account, "persisted Account required"));
+  }
+
+  private static Fixture createInternal(DataSource source, Account existingAccount) {
     Objects.requireNonNull(source, "migrated Account datasource is required");
     JdbcTemplate jdbc = new JdbcTemplate(source);
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
@@ -86,12 +96,18 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     long row = GAME_ROWS.incrementAndGet();
     var accountRow =
-        Objects.requireNonNull(
-            dsl.fetchOne(
+        existingAccount == null
+            ? dsl.fetchOne(
                 "INSERT INTO accounts (username, email, password_hash) "
                     + "VALUES (?, ?, 'controlled-hash') RETURNING id, account_uuid",
                 "hosting-fixture-" + row,
-                "hosting-fixture-" + row + "@example.test"));
+                "hosting-fixture-" + row + "@example.test")
+            : dsl.fetchOne(
+                "SELECT id, account_uuid FROM accounts WHERE id = ? AND account_uuid = ?",
+                Objects.requireNonNull(existingAccount.getId(), "persisted Account ID required"),
+                Objects.requireNonNull(
+                    existingAccount.getAccountUuid(), "persisted Account UUID required"));
+    Objects.requireNonNull(accountRow, "Exact persisted Account row required");
     long accountId = accountRow.get("id", Long.class);
     UUID accountUuid = accountRow.get("account_uuid", UUID.class);
 
@@ -401,9 +417,16 @@ public final class CanonicalHostingSubscriptionTestFixture {
   public static final class ControlledStripeTransport implements StripeResponseGetter {
     private String json;
     private int reads;
+    private Runnable duringRead;
 
     public int reads() {
       return reads;
+    }
+
+    /** One-shot owner mutation while the real SDK request is outside Account SQL. */
+    public void duringRead(Runnable action) {
+      if (duringRead != null) throw new IllegalStateException("A provider-read action is pending");
+      duringRead = Objects.requireNonNull(action);
     }
 
     @Override
@@ -421,6 +444,9 @@ public final class CanonicalHostingSubscriptionTestFixture {
       assertThat(method).isEqualTo(RequestMethod.GET);
       assertThat(path).startsWith("/v1/subscriptions/");
       reads++;
+      Runnable action = duringRead;
+      duringRead = null;
+      if (action != null) action.run();
       return (T) com.stripe.net.ApiResource.GSON.fromJson(json, type);
     }
 
