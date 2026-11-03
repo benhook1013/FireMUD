@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -217,7 +218,37 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     verify(observer, never()).onCompleted();
   }
 
+  @Test
+  void discoveryReturnsCompleteMixedPolicyTargetsWithStableIndependentReread() {
+    var seeded = discoveryTarget("seeded", "Seeded world");
+    var created = discoveryTarget("created", "Created world", "PLAYER_CREATED");
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets())
+        .thenReturn(List.of(seeded, created), List.of(created, seeded));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    var captured =
+        ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+    verify(observer).onNext(captured.capture());
+    var request =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(discoveryRequest());
+    assertThat(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                    request, captured.getValue())
+                .targets())
+        .extracting(target -> target.characterCreationPolicy())
+        .containsExactly("PLAYER_CREATED", "PRESEEDED_ONLY");
+    verify(routes, times(2)).readVisiblePublicProductionTargets();
+    verify(observer).onCompleted();
+  }
+
   private static CanonicalPlayableTarget discoveryTarget(String slug, String displayName) {
+    return discoveryTarget(slug, displayName, "PRESEEDED_ONLY");
+  }
+
+  private static CanonicalPlayableTarget discoveryTarget(
+      String slug, String displayName, String creationPolicy) {
     UUID tenant = UUID.nameUUIDFromBytes(("tenant-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID realm = UUID.nameUUIDFromBytes(("realm-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID namespace = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -277,7 +308,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
         CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
         false,
         Instant.parse("2026-10-25T00:00:00Z"),
-        "PRESEEDED_ONLY");
+        creationPolicy);
   }
 
   @Test
