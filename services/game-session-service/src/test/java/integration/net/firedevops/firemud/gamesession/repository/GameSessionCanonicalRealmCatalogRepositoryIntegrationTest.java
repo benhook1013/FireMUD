@@ -290,7 +290,26 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                     fixture.dsl,
                     "SELECT complete_policy_set_evidence IS NULL AND fixture_policy_request_bytes IS NULL "
                         + "AND fixture_policy_seal_operation_id IS NULL AND fixture_policy_seal_request_digest IS NULL "
-                        + "AND fixture_policy_seal_evidence_digest IS NULL AS historical "
+                        + "AND fixture_policy_seal_evidence_digest IS NULL "
+                        + "AND private_target_request_preimage IS NULL "
+                        + "AND private_preparation_request_id IS NULL "
+                        + "AND private_playtest_lifecycle_id IS NULL "
+                        + "AND private_preparation_request_digest IS NULL "
+                        + "AND private_state_generation IS NULL "
+                        + "AND private_source_catalog_realm_id IS NULL "
+                        + "AND private_source_catalog_request_id IS NULL "
+                        + "AND private_source_catalog_revision IS NULL "
+                        + "AND private_source_catalog_receipt_digest IS NULL "
+                        + "AND private_target_policy_id IS NULL "
+                        + "AND private_target_policy_digest IS NULL "
+                        + "AND private_target_policy_source_commit_id IS NULL "
+                        + "AND private_target_policy_source_revision_id IS NULL "
+                        + "AND private_target_policy_logical_revision_id IS NULL "
+                        + "AND private_canonical_version_id IS NULL "
+                        + "AND private_published_release_bundle_ref IS NULL "
+                        + "AND private_published_release_bundle_digest IS NULL "
+                        + "AND private_source_policy_set_digest IS NULL "
+                        + "AND private_source_policy_carrier_digest IS NULL AS historical "
                         + "FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
                     historicalRequest.requestId())
                 .get("historical", Boolean.class))
@@ -1003,7 +1022,17 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         fixture.dsl,
         "SELECT xmin::text AS xmin, (to_jsonb(catalog) - ARRAY['complete_policy_set_evidence', "
             + "'fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', "
-            + "'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest'])::text AS bytes "
+            + "'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest', "
+            + "'private_target_request_preimage', 'private_preparation_request_id', "
+            + "'private_playtest_lifecycle_id', 'private_preparation_request_digest', "
+            + "'private_state_generation', 'private_source_catalog_realm_id', "
+            + "'private_source_catalog_request_id', 'private_source_catalog_revision', "
+            + "'private_source_catalog_receipt_digest', 'private_target_policy_id', "
+            + "'private_target_policy_digest', 'private_target_policy_source_commit_id', "
+            + "'private_target_policy_source_revision_id', 'private_target_policy_logical_revision_id', "
+            + "'private_canonical_version_id', 'private_published_release_bundle_ref', "
+            + "'private_published_release_bundle_digest', 'private_source_policy_set_digest', "
+            + "'private_source_policy_carrier_digest'])::text AS bytes "
             + "FROM game_session_canonical_realm_catalog catalog WHERE creation_request_id = ?",
         requestId);
   }

@@ -417,7 +417,10 @@ class GameSessionCurrentPrivatePlaytestPostgresIntegrationTest {
         .defaultSchema(schema)
         .locations(
             "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "classpath:db/migration/saga")
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
