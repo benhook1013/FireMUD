@@ -691,15 +691,23 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     data.setSchema(schema);
-    Flyway.configure()
-        .dataSource(data)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations(migrations(service))
-        .load()
-        .migrate();
+    var flyway =
+        Flyway.configure()
+            .dataSource(data)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations(migrations(service));
+    if ("world-management".equals(service)) {
+      flyway.locations(
+          migrations(service),
+          "filesystem:"
+              + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                  .toAbsolutePath()
+                  .normalize());
+    }
+    flyway.load().migrate();
     return new Store(
         DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES),
         new DataSourceTransactionManager(data));

@@ -562,7 +562,13 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
     FluentConfiguration configuration =
         Flyway.configure()
             .dataSource(dataSource)
-            .locations("filesystem:" + migrationDirectory)
+            .locations(
+                "filesystem:" + migrationDirectory,
+                "filesystem:"
+                    + migrationDirectory
+                        .resolve(
+                            "../../../../../../common-saga/src/main/resources/db/migration/saga")
+                        .normalize())
             .placeholders(Map.of("serviceSchema", "public"));
     configuration
         .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
