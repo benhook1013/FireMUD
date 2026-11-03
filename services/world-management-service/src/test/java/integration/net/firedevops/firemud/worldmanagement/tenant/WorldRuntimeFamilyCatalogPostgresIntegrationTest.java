@@ -274,11 +274,27 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
         Request read = request();
         f.owner().read(read);
         f.dsl.execute(change);
-        assertThatThrownBy(() -> f.owner().readExact(read)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> f.owner().read(request())).isInstanceOf(RuntimeException.class);
+        assertCatalogDrift(() -> f.owner().readExact(read));
+        assertCatalogDrift(() -> f.owner().read(request()));
         assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(1);
       }
     }
+  }
+
+  private static void assertCatalogDrift(Runnable read) {
+    assertThatThrownBy(read::run)
+        .satisfies(
+            failure -> {
+              if (failure instanceof org.jooq.exception.DataAccessException sql) {
+                assertThat(sql.sqlState()).isEqualTo("23514");
+                assertThat(sql).hasMessageContaining("Unclassified or changed World schema family");
+              } else {
+                assertThat(failure)
+                    .isInstanceOf(
+                        WorldRuntimeFamilyCatalogRepository.CatalogConflictException.class)
+                    .hasMessageContaining("drift invalidates its epoch");
+              }
+            });
   }
 
   @Test

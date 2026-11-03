@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
@@ -229,6 +230,10 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
     final GetPublishedRealmAdmissionOwnerReadResponse response;
     try {
       var before = routeReader.readCurrentTarget(parsed.selector().canonicalTenantUuid());
+      if (!matchesPublishedRoute(before, parsed.selector())) {
+        fail(observer, Status.FAILED_PRECONDITION);
+        return;
+      }
       var launchBefore = readCurrentLaunch(before);
       var sourceBefore = publishedReader.readCurrent(parsed.selector());
       var association = launchBefore.association();
@@ -278,6 +283,22 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       return;
     }
     sendSource(observer, response);
+  }
+
+  private static boolean matchesPublishedRoute(
+      CanonicalPlayableTarget route, CanonicalGameplayRosterOwnerReadEvidence.Request selector) {
+    return selector.targetNamespace().equals(route.targetNamespace())
+        && selector.canonicalTenantUuid().equals(route.canonicalTenantId())
+        && selector.worldSlug().equals(route.worldSlug())
+        && selector.realmUuid().equals(route.realmId())
+        && selector.realmSlug().equals(route.realmSlug())
+        && selector.playableStateNamespaceUuid().equals(route.playableStateNamespaceId())
+        && selector.playableStateScope().equals(route.playableStateScope())
+        && selector.canonicalGameInstanceUuid().equals(route.canonicalGameInstanceId())
+        && selector.canonicalVersionUuid().equals(route.canonicalVersionId())
+        && selector.expectedCatalogRevision() == route.catalogRevision()
+        && selector.expectedPointerVersion() == route.pointerVersion()
+        && selector.expectedActiveWorldEpoch() == route.activeWorldEpoch();
   }
 
   private CanonicalInitialAdmissionLaunchTarget readCurrentLaunch(CanonicalPlayableTarget route) {

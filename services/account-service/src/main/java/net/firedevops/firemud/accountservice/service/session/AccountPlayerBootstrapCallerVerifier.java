@@ -68,7 +68,7 @@ public final class AccountPlayerBootstrapCallerVerifier {
     try {
       claims = jwtUtil.parseToken(token).getPayload();
     } catch (JwtException | IllegalArgumentException ex) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
     }
     try {
       if (!"player-bootstrap".equals(JwtClaims.requireText(claims.get("aud"), "aud"))) {
@@ -76,7 +76,7 @@ public final class AccountPlayerBootstrapCallerVerifier {
       }
       return claims;
     } catch (IllegalArgumentException ex) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
     }
   }
 

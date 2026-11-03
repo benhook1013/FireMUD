@@ -31,7 +31,8 @@ class JwtUtilTest {
     long defaultExpirationMillis = 3_600_000L;
     long requestedExpirationMillis = 4_000L;
     JwtUtil util = new JwtUtil("mysecretkey123456789012345678901", defaultExpirationMillis);
-    Map<String, Object> suppliedClaims = Map.of("role", "admin", "tenantId", "7");
+    Map<String, Object> suppliedClaims =
+        Map.of("role", "admin", "tenantId", "7", "sub", "claims-subject");
 
     long beforeGeneration = System.currentTimeMillis();
     String token = util.generateToken("demo", requestedExpirationMillis, suppliedClaims);
@@ -60,6 +61,7 @@ class JwtUtilTest {
     Instant expiresAt = Instant.now().plusSeconds(30).truncatedTo(ChronoUnit.SECONDS);
     Map<String, Object> suppliedClaims = new HashMap<>();
     suppliedClaims.put("role", "admin");
+    suppliedClaims.put("sub", "claims-subject");
     suppliedClaims.put("iat", 1L);
     suppliedClaims.put("exp", 2L);
 
