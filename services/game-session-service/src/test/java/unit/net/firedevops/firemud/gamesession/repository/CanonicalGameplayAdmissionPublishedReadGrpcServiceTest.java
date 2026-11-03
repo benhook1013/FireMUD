@@ -18,6 +18,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
@@ -177,8 +178,20 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
     var source = mock(CanonicalGameplayRosterOwnerReadEvidence.class);
     var response =
         GetPublishedRealmAdmissionOwnerReadResponse.newBuilder().addSchemaVersion(1).build();
-    f.configureStrictRoute(selector);
+    var route = f.configureStrictRoute(selector);
     when(f.published.readCurrent(selector)).thenReturn(source);
+    var worldResult = new AtomicReference<WorldCanonicalInstanceLifecycleEvidence>();
+    doAnswer(
+            invocation -> {
+              var evidence = f.worldEvidence(invocation.getArgument(0), "ACTIVE", 7);
+              worldResult.set(evidence);
+              return evidence;
+            })
+        .when(f.world)
+        .read(any());
+    var encodedTarget =
+        ArgumentCaptor.forClass(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class);
+    var encodedWorld = ArgumentCaptor.forClass(WorldCanonicalInstanceLifecycleEvidence.class);
     try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
       codec
           .when(
@@ -193,13 +206,44 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
                       eq(parsed), eq(source), any(), any()))
           .thenReturn(response);
       f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
+      codec.verify(
+          () ->
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
+                  eq(parsed), eq(source), encodedTarget.capture(), encodedWorld.capture()));
     }
+    assertThat(encodedTarget.getValue())
+        .usingRecursiveComparison()
+        .withComparatorForFields(
+            java.util.Comparator.comparing(Object::toString),
+            "initialAdmissionOriginKind",
+            "ownerProofOutcome")
+        .isEqualTo(route);
+    assertThat(encodedWorld.getValue()).isSameAs(worldResult.get());
+    var worldRequest =
+        ArgumentCaptor.forClass(WorldCanonicalInstanceLifecycleEvidence.Request.class);
     var order = org.mockito.Mockito.inOrder(f.routes, f.published, f.world);
     order.verify(f.routes).readCurrentTarget(TENANT);
     order.verify(f.published).readCurrent(selector);
-    order.verify(f.world).read(any());
+    order.verify(f.world).read(worldRequest.capture());
     order.verify(f.published).readCurrent(selector);
     order.verify(f.routes).readCurrentTarget(TENANT);
+    assertThat(worldRequest.getValue())
+        .usingRecursiveComparison()
+        .isEqualTo(encodedWorld.getValue().request());
+    assertThat(worldRequest.getValue().readRequestId()).isEqualTo(selector.requestUuid());
+    assertThat(worldRequest.getValue().targetNamespace()).isEqualTo("test");
+    assertThat(worldRequest.getValue().canonicalTenantId()).isEqualTo(TENANT);
+    assertThat(worldRequest.getValue().worldSlug()).isEqualTo(selector.worldSlug());
+    assertThat(worldRequest.getValue().canonicalGameInstanceId())
+        .isEqualTo(selector.canonicalGameInstanceUuid());
+    assertThat(worldRequest.getValue().playableStateNamespaceId())
+        .isEqualTo(selector.playableStateNamespaceUuid());
+    assertThat(worldRequest.getValue().playableStateScope()).isEqualTo("SHARED");
+    assertThat(worldRequest.getValue().canonicalVersionId())
+        .isEqualTo(selector.canonicalVersionUuid());
+    assertThat(worldRequest.getValue().publicProduction()).isTrue();
+    assertThat(encodedWorld.getValue().lifecycleStatus()).isEqualTo("ACTIVE");
+    assertThat(encodedWorld.getValue().lifecycleEpoch()).isEqualTo(7);
     verify(f.publishedObserver).onNext(response);
     verify(f.publishedObserver).onCompleted();
     verifyNoInteractions(f.inventory);

@@ -282,8 +282,26 @@ class AutomationRuntimeFamilyCatalogPostgresIntegrationTest {
         Request read = request();
         f.owner().read(read);
         f.dsl.execute(change);
-        assertThatThrownBy(() -> f.owner().readExact(read)).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> f.owner().read(request())).isInstanceOf(RuntimeException.class);
+        boolean censusRefusal = change.equals("ALTER TABLE npc_memory RENAME TO renamed_memory");
+        for (Runnable operation :
+            List.<Runnable>of(() -> f.owner().readExact(read), () -> f.owner().read(request()))) {
+          if (censusRefusal) {
+            assertThatThrownBy(operation::run)
+                .isInstanceOfSatisfying(
+                    org.jooq.exception.DataAccessException.class,
+                    sql -> {
+                      assertThat(sql.sqlState()).isEqualTo("23514");
+                      assertThat(sql)
+                          .hasMessageContaining("Unclassified or changed Automation schema family");
+                    });
+          } else {
+            assertThatThrownBy(operation::run)
+                .isInstanceOf(
+                    AutomationRuntimeFamilyCatalogRepository.CatalogConflictException.class)
+                .hasMessageContaining(
+                    "Automation schema/classification drift invalidates its epoch");
+          }
+        }
         assertThat(f.count("automation_runtime_family_catalog_snapshot")).isEqualTo(1);
       }
     }
