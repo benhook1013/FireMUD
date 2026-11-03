@@ -52,15 +52,8 @@ class GameplayCommandAccountUuidMigrationIntegrationTest {
                       + "FROM gameplay_command AS command_row ORDER BY command_id")
               .getValues("retained_row", String.class);
 
-      Flyway.configure()
-          .dataSource(dataSource)
-          .placeholders(java.util.Map.of("serviceSchema", "public"))
-          .locations(
-              MIGRATION_LOCATION,
-              "filesystem:"
-                  + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                      .toAbsolutePath()
-                      .normalize())
+      CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+              dataSource, "public", MIGRATION_LOCATION)
           .load()
           .migrate();
 

@@ -33,7 +33,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssoc
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -775,27 +774,7 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
 
   private static void assertPublicCatalogPrivateColumnsRemainNull(
       Fixture fixture, java.util.Map<String, java.util.List<String>> originalColumns) {
-    var privateColumns =
-        java.util.List.of(
-            "private_target_request_preimage",
-            "private_preparation_request_id",
-            "private_playtest_lifecycle_id",
-            "private_preparation_request_digest",
-            "private_state_generation",
-            "private_source_catalog_realm_id",
-            "private_source_catalog_request_id",
-            "private_source_catalog_revision",
-            "private_source_catalog_receipt_digest",
-            "private_target_policy_id",
-            "private_target_policy_digest",
-            "private_target_policy_source_commit_id",
-            "private_target_policy_source_revision_id",
-            "private_target_policy_logical_revision_id",
-            "private_canonical_version_id",
-            "private_published_release_bundle_ref",
-            "private_published_release_bundle_digest",
-            "private_source_policy_set_digest",
-            "private_source_policy_carrier_digest");
+    var privateColumns = CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS;
     var currentColumns =
         historicalOwnerColumns(fixture, java.util.List.copyOf(originalColumns.keySet()));
     String catalog = "game_session_canonical_realm_catalog";
@@ -1177,18 +1156,8 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
   private static org.flywaydb.core.api.configuration.FluentConfiguration migrate(
       Fixture fixture, String target) {
     var configuration =
-        Flyway.configure()
-            .dataSource(fixture.dataSource)
-            .schemas(fixture.schema)
-            .defaultSchema(fixture.schema)
-            .table("flyway_schema_history")
-            .placeholders(java.util.Map.of("serviceSchema", fixture.schema))
-            .locations(
-                MIGRATION_LOCATION,
-                "filesystem:"
-                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                        .toAbsolutePath()
-                        .normalize());
+        CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            fixture.dataSource, fixture.schema, MIGRATION_LOCATION);
     if (target != null) configuration.target(target);
     return configuration;
   }

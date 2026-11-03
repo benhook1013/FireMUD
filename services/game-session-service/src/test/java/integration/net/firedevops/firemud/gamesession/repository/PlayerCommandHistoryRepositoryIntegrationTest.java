@@ -13,7 +13,6 @@ import net.firedevops.firemud.gamesession.entity.PlayerCommandHistoryEntry;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.test.GameplayHistoryTestFixtures;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -54,15 +53,10 @@ class PlayerCommandHistoryRepositoryIntegrationTest {
 
     // The integration runtime includes other services' db/migration resources; scan this module
     // only.
-    Flyway.configure()
-        .dataSource(dataSource)
-        .placeholders(java.util.Map.of("serviceSchema", "public"))
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
+    CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            dataSource,
+            "public",
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
         .load()
         .migrate();
 
