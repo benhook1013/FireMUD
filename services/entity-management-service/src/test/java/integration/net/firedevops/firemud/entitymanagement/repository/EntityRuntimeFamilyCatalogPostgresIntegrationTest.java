@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.entity.EntityRuntimeFamilyCatalog;
+import net.firedevops.firemud.common.entity.EntityRuntimeFamilyCatalog.Evidence;
 import net.firedevops.firemud.common.entity.EntityRuntimeFamilyCatalog.FactKind;
 import net.firedevops.firemud.common.entity.EntityRuntimeFamilyCatalog.FreshDisposition;
 import net.firedevops.firemud.common.entity.EntityRuntimeFamilyCatalog.Request;
@@ -45,7 +47,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * not genuine upstream custody/PKI, FRESH materialization or cross-owner completeness proof.
  * Repository reconstruction proves durable readback, not operating-system process-death recovery.
  */
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = false)
 @Timeout(value = 3, unit = TimeUnit.MINUTES)
 @SuppressWarnings("resource")
 class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
@@ -59,7 +61,7 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
   void actualCombinedMigrationsYieldExactCompleteCensusIncludingOwnInfrastructure() {
     try (var f = fixture(null, HISTORY)) {
       var catalog = f.owner().read(request()).catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(1);
+      assertThat(catalog.catalogEpoch()).isEqualTo(2);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -109,7 +111,7 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetchSingle(
-                      "SELECT catalog_bytes=entity_runtime_family_catalog_bytes(catalog_epoch) FROM entity_runtime_family_catalog_epoch")
+                      "SELECT catalog_bytes=entity_runtime_family_catalog_bytes(catalog_epoch) FROM entity_runtime_family_catalog_epoch ORDER BY catalog_epoch DESC LIMIT 1")
                   .get(0, Boolean.class))
           .isTrue();
       assertThat(
@@ -122,7 +124,7 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
           .containsExactly(
               "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
               "1010", "1011", "1012", "1014", "1015", "1016", "1017", "1018", "1019", "1020",
-              "1021", "1022", "1023", "1024", "1025");
+              "1021", "1022", "1023", "1024", "1025", "1026");
     }
   }
 
@@ -345,7 +347,7 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
                   .fetch(
                       "SELECT to_jsonb(t)::text||':'||xmin::text FROM "
                           + HISTORY
-                          + " t WHERE version IS DISTINCT FROM '1025' ORDER BY installed_rank")
+                          + " t WHERE version IS DISTINCT FROM '1025' AND version IS DISTINCT FROM '1026' ORDER BY installed_rank")
                   .getValues(0, String.class))
           .containsExactlyInAnyOrderElementsOf(history);
       f.owner().read(request());
@@ -421,6 +423,8 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
             "INSERT INTO entity_runtime_family_classification VALUES ('npcs.version_id_extra','npcs','version_id_extra','SOURCE','NOT_PAYLOAD','AUTHORED_SOURCE_ONLY')",
             "UPDATE " + HISTORY + " SET checksum=checksum+1 WHERE version='1'",
             "UPDATE " + HISTORY + " SET success=false WHERE version='1025'",
+            "UPDATE " + HISTORY + " SET success=false WHERE version='1026'",
+            "UPDATE " + HISTORY + " SET script='other.sql' WHERE version='1026'",
             "UPDATE " + HISTORY + " SET script='other.sql' WHERE version='1025'")) {
       try (var f = fixture(null, HISTORY)) {
         var read = request();
@@ -450,11 +454,11 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       f.dsl.execute(
           "INSERT INTO entity_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-              + " SELECT 2,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM (SELECT entity_runtime_family_catalog_bytes(2) AS bytes) revised");
+              + " SELECT 3,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM (SELECT entity_runtime_family_catalog_bytes(3) AS bytes) revised");
       assertThatThrownBy(() -> f.owner().read(read))
           .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       var revised = f.owner().read(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(3);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
       assertThat(
               f.dsl
@@ -463,6 +467,122 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
                       read.readRequestId())
                   .get(0, byte[].class))
           .isEqualTo(EntityRuntimeFamilyCatalogCodec.evidenceBytes(original));
+    }
+  }
+
+  @Test
+  void viewAuthorizationAndMaterializedOptionsInvalidateTheSealWithoutResampling() {
+    for (String alteration :
+        List.of(
+            "ALTER VIEW catalog_view SET (security_invoker=true)",
+            "ALTER VIEW catalog_view SET (security_barrier=true)",
+            "ALTER MATERIALIZED VIEW catalog_materialized SET (fillfactor=70)")) {
+      try (var f = fixture("1024", HISTORY)) {
+        f.dsl.execute("CREATE VIEW catalog_view AS SELECT id FROM characters");
+        f.dsl.execute(
+            "CREATE MATERIALIZED VIEW catalog_materialized AS SELECT id FROM characters WITH NO DATA");
+        migration(f.source, f.schema, HISTORY, null).load().migrate();
+        var read = request();
+        var original = f.owner().read(read);
+        var retained = f.rows("entity_runtime_family_catalog_snapshot");
+        f.dsl.execute(alteration);
+        assertThatThrownBy(() -> f.owner().readExact(read))
+            .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(read))
+            .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThatThrownBy(() -> f.owner().read(request()))
+            .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+        assertThat(f.rows("entity_runtime_family_catalog_snapshot")).isEqualTo(retained);
+        assertThat(
+                f.dsl
+                    .fetchSingle(
+                        "SELECT evidence_bytes FROM entity_runtime_family_catalog_snapshot WHERE read_request_id=?",
+                        read.readRequestId())
+                    .get(0, byte[].class))
+            .isEqualTo(EntityRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      }
+    }
+  }
+
+  @Test
+  void forwardFrameGuardUpgradeRetainsOldEpochSnapshotAndHistoryWithoutResampling() {
+    try (var f = fixture("1025", HISTORY)) {
+      var read = request();
+      var original = f.owner().read(read);
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(1);
+      var epochs = f.rows("entity_runtime_family_catalog_epoch");
+      var snapshots = f.rows("entity_runtime_family_catalog_snapshot");
+      var history = f.rows(HISTORY);
+      migration(f.source, f.schema, HISTORY, null).load().migrate();
+      assertThat(f.rows("entity_runtime_family_catalog_epoch")).containsAll(epochs).hasSize(2);
+      assertThat(f.rows("entity_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      assertThat(f.rows(HISTORY)).containsAll(history).hasSize(history.size() + 1);
+      assertThatThrownBy(() -> f.owner().readExact(read))
+          .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().read(read))
+          .isInstanceOf(EntityRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      var current = f.owner().read(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(2);
+      assertThat(current.catalog().digest()).isNotEqualTo(original.catalog().digest());
+      assertThat(current.catalog().schemaFacts())
+          .anyMatch(
+              fact ->
+                  fact.kind() == FactKind.MIGRATION
+                      && fact.identity().equals("catalog-installation:1026"));
+      migration(f.source, f.schema, HISTORY, null).load().validate();
+    }
+  }
+
+  @Test
+  void directSqlPoisonFramesRefuseWithoutConsumingRequestIdentity() {
+    try (var f = fixture(null, HISTORY)) {
+      var catalog = f.owner().read(request()).catalog();
+      for (int mismatch = 0; mismatch < 6; mismatch++) {
+        var read = request();
+        var snapshot = UUID.randomUUID();
+        var evidence = new Evidence(read, snapshot, catalog);
+        byte[] requestBytes = EntityRuntimeFamilyCatalogCodec.requestBytes(read);
+        byte[] evidenceBytes = EntityRuntimeFamilyCatalogCodec.evidenceBytes(evidence);
+        switch (mismatch) {
+          case 0 -> requestBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
+          case 1 -> requestBytes = EntityRuntimeFamilyCatalogCodec.requestBytes(request());
+          case 2 ->
+              requestBytes =
+                  EntityRuntimeFamilyCatalogCodec.requestBytes(
+                      new Request(read.readRequestId(), "other"));
+          case 3 -> evidenceBytes = "arbitrary".getBytes(StandardCharsets.US_ASCII);
+          case 4 ->
+              evidenceBytes =
+                  EntityRuntimeFamilyCatalogCodec.evidenceBytes(
+                      new Evidence(request(), snapshot, catalog));
+          case 5 ->
+              evidenceBytes =
+                  EntityRuntimeFamilyCatalogCodec.evidenceBytes(
+                      new Evidence(read, UUID.randomUUID(), catalog));
+          default -> throw new AssertionError("Unknown poison vector");
+        }
+        byte[] poisonedRequest = requestBytes;
+        byte[] poisonedEvidence = evidenceBytes;
+        long before = f.count("entity_runtime_family_catalog_snapshot");
+        assertThatThrownBy(
+                () ->
+                    f.dsl.execute(
+                        "INSERT INTO entity_runtime_family_catalog_snapshot(read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)",
+                        read.readRequestId(),
+                        read.targetNamespace(),
+                        poisonedRequest,
+                        EntityRuntimeFamilyCatalog.sha256(poisonedRequest),
+                        snapshot,
+                        catalog.catalogEpoch(),
+                        catalog.digest(),
+                        poisonedEvidence,
+                        EntityRuntimeFamilyCatalog.sha256(poisonedEvidence)))
+            .hasMessageContaining("complete exact request and evidence");
+        assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(before);
+        var committed = f.owner().read(read);
+        assertThat(f.owner().readExact(read)).isEqualTo(committed);
+        assertThat(f.count("entity_runtime_family_catalog_snapshot")).isEqualTo(before + 1);
+      }
     }
   }
 
@@ -489,7 +609,7 @@ class EntityRuntimeFamilyCatalogPostgresIntegrationTest {
               () ->
                   f.dsl.execute(
                       "INSERT INTO entity_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 2,catalog_bytes,catalog_digest FROM entity_runtime_family_catalog_epoch WHERE catalog_epoch=1"))
+                          + " SELECT 3,catalog_bytes,catalog_digest FROM entity_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
           .hasMessageContaining("exact classified installed schema");
     }
   }

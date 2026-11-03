@@ -1,18 +1,12 @@
 package net.firedevops.firemud.common.automation;
 
 import com.google.protobuf.ByteString;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-import java.util.UUID;
 import net.firedevops.firemud.automationscripting.v1.ReadAutomationRuntimeFamilyCatalogRequest;
 import net.firedevops.firemud.automationscripting.v1.ReadAutomationRuntimeFamilyCatalogResponse;
 import net.firedevops.firemud.common.automation.AutomationRuntimeFamilyCatalog.Evidence;
 import net.firedevops.firemud.common.automation.AutomationRuntimeFamilyCatalog.Request;
+import net.firedevops.firemud.common.runtimecatalog.RuntimeFamilyCatalogFraming;
 
 /** Purpose-specific closed framing; no compatibility, generic parser or numeric fallback. */
 public final class AutomationRuntimeFamilyCatalogCodec {
@@ -22,24 +16,31 @@ public final class AutomationRuntimeFamilyCatalogCodec {
   private static final int REQUEST_V1 = 0x41435231;
   private static final int EVIDENCE_V1 = 0x41434531;
 
+  private static final RuntimeFamilyCatalogFraming FRAMING =
+      new RuntimeFamilyCatalogFraming(
+          MAX_REQUEST_BYTES,
+          MAX_RESPONSE_BYTES,
+          AutomationRuntimeFamilyCatalog.MAX_CATALOG_BYTES,
+          "Frame bound exceeded",
+          "Invalid field bound");
+
   private AutomationRuntimeFamilyCatalogCodec() {}
 
   public static byte[] requestBytes(Request request) {
-    return encode(
-        out -> {
-          out.writeInt(REQUEST_V1);
-          uuid(out, request.readRequestId());
-          bytes(out, request.targetNamespace().getBytes(StandardCharsets.US_ASCII));
-        });
+    return FRAMING.requestBytes(REQUEST_V1, request.readRequestId(), request.targetNamespace());
   }
 
   public static Request requestFromStored(byte[] bytes) {
-    try (var in = input(bytes, MAX_REQUEST_BYTES)) {
-      if (in.readInt() != REQUEST_V1) throw new IllegalArgumentException("Unsupported read schema");
-      Request result = new Request(uuid(in), new String(bytes(in, 63), StandardCharsets.US_ASCII));
-      if (in.available() != 0 || !Arrays.equals(bytes, requestBytes(result))) {
-        throw new IllegalArgumentException("Noncanonical Automation catalog request");
-      }
+    try {
+      var frame =
+          FRAMING.readRequest(
+              bytes,
+              REQUEST_V1,
+              AutomationRuntimeFamilyCatalog::requireUuid,
+              "Noncanonical Automation catalog request");
+      Request result = new Request(frame.requestId(), frame.namespace());
+      RuntimeFamilyCatalogFraming.requireCanonical(
+          bytes, requestBytes(result), "Noncanonical Automation catalog request");
       return result;
     } catch (IOException invalid) {
       throw new IllegalArgumentException("Incomplete Automation catalog request", invalid);
@@ -47,36 +48,31 @@ public final class AutomationRuntimeFamilyCatalogCodec {
   }
 
   public static byte[] evidenceBytes(Evidence evidence) {
-    byte[] result =
-        encode(
-            out -> {
-              out.writeInt(EVIDENCE_V1);
-              bytes(out, requestBytes(evidence.request()));
-              uuid(out, evidence.snapshotId());
-              bytes(out, evidence.catalog().digest().getBytes(StandardCharsets.US_ASCII));
-              bytes(out, evidence.catalog().exactBytes());
-            });
-    if (result.length > MAX_RESPONSE_BYTES)
-      throw new IllegalArgumentException("Oversized complete catalog evidence");
-    return result;
+    return FRAMING.evidenceBytes(
+        EVIDENCE_V1,
+        requestBytes(evidence.request()),
+        evidence.snapshotId(),
+        evidence.catalog().digest(),
+        evidence.catalog().exactBytes(),
+        "Oversized complete catalog evidence");
   }
 
   public static Evidence evidenceFromStored(byte[] bytes) {
-    try (var in = input(bytes, MAX_RESPONSE_BYTES)) {
-      if (in.readInt() != EVIDENCE_V1)
-        throw new IllegalArgumentException("Unsupported evidence schema");
-      Request request = requestFromStored(bytes(in, MAX_REQUEST_BYTES));
-      UUID snapshotId = uuid(in);
-      String digest = new String(bytes(in, 71), StandardCharsets.US_ASCII);
-      AutomationRuntimeFamilyCatalog catalog =
-          AutomationRuntimeFamilyCatalog.fromStored(
-              bytes(in, AutomationRuntimeFamilyCatalog.MAX_CATALOG_BYTES));
-      Evidence result = new Evidence(request, snapshotId, catalog);
-      if (in.available() != 0
-          || !digest.equals(catalog.digest())
-          || !Arrays.equals(bytes, evidenceBytes(result))) {
+    try {
+      var frame =
+          FRAMING.readEvidence(
+              bytes,
+              EVIDENCE_V1,
+              AutomationRuntimeFamilyCatalog::requireUuid,
+              "Changed/noncanonical catalog evidence");
+      Request request = requestFromStored(frame.request());
+      var catalog = AutomationRuntimeFamilyCatalog.fromStored(frame.catalog());
+      Evidence result = new Evidence(request, frame.snapshotId(), catalog);
+      if (!frame.digest().equals(catalog.digest())) {
         throw new IllegalArgumentException("Changed/noncanonical catalog evidence");
       }
+      RuntimeFamilyCatalogFraming.requireCanonical(
+          bytes, evidenceBytes(result), "Changed/noncanonical catalog evidence");
       return result;
     } catch (IOException invalid) {
       throw new IllegalArgumentException("Incomplete Automation catalog evidence", invalid);
@@ -125,49 +121,5 @@ public final class AutomationRuntimeFamilyCatalogCodec {
     if (!request.equals(result.request()))
       throw new IllegalArgumentException("Changed catalog read correlation");
     return result;
-  }
-
-  private static DataInputStream input(byte[] value, int maximum) {
-    if (value == null || value.length == 0 || value.length > maximum)
-      throw new IllegalArgumentException("Frame bound exceeded");
-    return new DataInputStream(new ByteArrayInputStream(value));
-  }
-
-  private static byte[] bytes(DataInputStream in, int maximum) throws IOException {
-    int length = in.readInt();
-    if (length < 0 || length > maximum || length > in.available())
-      throw new IllegalArgumentException("Invalid field bound");
-    return in.readNBytes(length);
-  }
-
-  private static void bytes(DataOutputStream out, byte[] value) throws IOException {
-    out.writeInt(value.length);
-    out.write(value);
-  }
-
-  private static UUID uuid(DataInputStream in) throws IOException {
-    UUID result = new UUID(in.readLong(), in.readLong());
-    AutomationRuntimeFamilyCatalog.requireUuid(result);
-    return result;
-  }
-
-  private static void uuid(DataOutputStream out, UUID value) throws IOException {
-    out.writeLong(value.getMostSignificantBits());
-    out.writeLong(value.getLeastSignificantBits());
-  }
-
-  private interface Encoder {
-    void write(DataOutputStream out) throws IOException;
-  }
-
-  private static byte[] encode(Encoder encoder) {
-    try (var buffer = new ByteArrayOutputStream();
-        var out = new DataOutputStream(buffer)) {
-      encoder.write(out);
-      out.flush();
-      return buffer.toByteArray();
-    } catch (IOException impossible) {
-      throw new IllegalStateException("Memory frame encoding failed", impossible);
-    }
   }
 }
