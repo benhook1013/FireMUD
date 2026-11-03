@@ -159,13 +159,15 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     verifyNoInteractions(routes);
     for (boolean synchronization : new boolean[] {false, true}) {
       var observer = discoveryObserver();
+      var allowed = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
       try {
         if (synchronization) TransactionSynchronizationManager.initSynchronization();
         else TransactionSynchronizationManager.setActualTransactionActive(true);
-        discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        discoveryService(routes, allowed)
             .listVisiblePublicProductionAdmissionTargets(
                 ListVisiblePublicProductionAdmissionTargetsRequest.getDefaultInstance(), observer);
         assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+        verify(allowed).requireAccountCaller();
       } finally {
         TransactionSynchronizationManager.clear();
       }
