@@ -2,7 +2,6 @@ package net.firedevops.firemud.automationscripting.runtimecatalog;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import java.sql.SQLException;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.v1.AutomationRuntimeFamilyCatalogReadServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.ReadAutomationRuntimeFamilyCatalogRequest;
@@ -93,26 +92,11 @@ public final class AutomationRuntimeFamilyCatalogReadGrpcService
   }
 
   private static Status storageStatus(RuntimeException failure) {
-    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-      if (cause instanceof SQLException sql) {
-        String state = sql.getSQLState();
-        if (state == null) continue;
-        if (state.startsWith("23") || state.startsWith("P0") || state.equals("55000"))
-          return Status.FAILED_PRECONDITION;
-        if (state.equals("40001") || state.equals("40P01")) return Status.ABORTED;
-        if (state.startsWith("08") || state.startsWith("57") || state.equals("55P03"))
-          return Status.UNAVAILABLE;
-        if (state.startsWith("22") || state.startsWith("42") || state.startsWith("XX"))
-          return Status.INTERNAL;
-      }
-    }
-    if (failure instanceof org.springframework.dao.DataIntegrityViolationException)
-      return Status.FAILED_PRECONDITION;
-    if (failure instanceof org.jooq.exception.DataAccessException
-        || failure instanceof org.springframework.dao.TransientDataAccessException
-        || failure instanceof org.springframework.dao.DataAccessResourceFailureException)
-      return Status.UNAVAILABLE;
-    return Status.INTERNAL;
+    return net.firedevops.firemud.common.runtimecatalog.RuntimeFamilyCatalogStorageStatus.classify(
+        failure,
+        failure instanceof org.jooq.exception.DataAccessException
+            ? Status.UNAVAILABLE
+            : Status.INTERNAL);
   }
 
   private static void refuse(StreamObserver<?> observer, Status status, String message) {
