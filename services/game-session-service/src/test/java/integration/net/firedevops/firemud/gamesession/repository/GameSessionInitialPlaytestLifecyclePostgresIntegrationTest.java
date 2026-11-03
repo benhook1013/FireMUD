@@ -2,14 +2,17 @@ package integration.net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -18,6 +21,8 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
@@ -41,7 +46,9 @@ import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestL
 import net.firedevops.firemud.gamesession.repository.GameSessionPrivateFreshTargetRepository;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.awaitility.Awaitility;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.BeforeAll;
@@ -529,6 +536,114 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void canonicalIntakeGuardRejectsPrivateForgedTenantSlugWithRecomputedReceipt() {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var preparation = context.prepare(preparationRequest).preparation();
+    UUID creationRequestId = UUID.randomUUID();
+    var targetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            creationRequestId,
+            preparation.request().requestId(),
+            preparation.playtestLifecycleId());
+    var publicCatalogBefore = context.publicCatalogRow();
+    DetachedCatalogRow rolledBackPrivateRow =
+        Objects.requireNonNull(
+            context
+                .serializableTransaction()
+                .execute(
+                    status -> {
+                      context.privateTargets().allocate(targetRequest);
+                      var genuine =
+                          Objects.requireNonNull(
+                              context
+                                  .dsl()
+                                  .fetchOne(
+                                      "SELECT * FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
+                                      creationRequestId));
+                      DetachedCatalogRow detachedValues =
+                          new DetachedCatalogRow(
+                              new LinkedHashMap<>(genuine.intoMap()),
+                              List.copyOf(java.util.Arrays.asList(genuine.fields())));
+                      status.setRollbackOnly();
+                      return detachedValues;
+                    }));
+    assertThat(
+            context
+                .privateTargets()
+                .readByPreparation(
+                    preparation.request().requestId(), preparation.playtestLifecycleId()))
+        .isEmpty();
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(1);
+
+    String sourceTenantSlug =
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT tenant_slug FROM game_session_canonical_realm_catalog WHERE realm_id = ?",
+                context.catalog().realmId())
+            .get(0, String.class);
+    assertThat(rolledBackPrivateRow.values().get("tenant_slug")).isEqualTo(sourceTenantSlug);
+    String forgedTenantSlug = "forged-" + sourceTenantSlug;
+    assertThat(forgedTenantSlug).isNotEqualTo(sourceTenantSlug);
+    String forgedReceiptDigest =
+        privateCatalogReceiptDigest(rolledBackPrivateRow.values(), forgedTenantSlug);
+    assertThat(forgedReceiptDigest)
+        .startsWith("sha256:")
+        .isNotEqualTo(rolledBackPrivateRow.values().get("receipt_digest"));
+
+    Map<String, Object> forged = new LinkedHashMap<>(rolledBackPrivateRow.values());
+    forged.put("tenant_slug", forgedTenantSlug);
+    forged.put("receipt_digest", forgedReceiptDigest);
+    Field<?>[] insertFields = new Field<?>[rolledBackPrivateRow.fields().size()];
+    Object[] values = new Object[insertFields.length];
+    for (int index = 0; index < insertFields.length; index++) {
+      Field<?> originalField = rolledBackPrivateRow.fields().get(index);
+      insertFields[index] =
+          DSL.field(DSL.name(originalField.getName()), originalField.getDataType());
+      values[index] = forged.get(originalField.getName());
+    }
+    Throwable insertFailure =
+        catchThrowable(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .insertInto(
+                                    DSL.table(DSL.name("game_session_canonical_realm_catalog")),
+                                    insertFields)
+                                .values(values)
+                                .execute()));
+    String failureSummary = databaseFailureSummary(insertFailure);
+    assertThat(insertFailure)
+        .as("Forged INSERT failure should expose its database cause: %s", failureSummary)
+        .isNotNull();
+    assertThat(sqlStateInCauseChain(insertFailure))
+        .as("Expected SQLSTATE 23514; actual database failure: %s", failureSummary)
+        .isEqualTo("23514");
+    assertThat(insertFailure)
+        .hasStackTraceContaining(
+            "Canonical realm catalog requires exact committed authored-world intake evidence");
+
+    assertThat(context.publicCatalogRow()).isEqualTo(publicCatalogBefore);
+    assertThat(
+            context
+                .privateTargets()
+                .readByPreparation(
+                    preparation.request().requestId(), preparation.playtestLifecycleId()))
+        .isEmpty();
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
   void privateCatalogCommitGuardRechecksPreparationExpiry() {
     Context context = context(true);
     Request preparationRequest =
@@ -838,6 +953,112 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void staleSerializableSnapshotMustRetryPrivateAllocationInANewOwnerTransaction()
+      throws Exception {
+    Context context = context(true);
+    Request preparationRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var preparation = context.prepare(preparationRequest).preparation();
+    var targetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            UUID.randomUUID(),
+            preparation.request().requestId(),
+            preparation.playtestLifecycleId());
+    CountDownLatch firstAllocationHeld = new CountDownLatch(1);
+    CountDownLatch secondSnapshotEstablished = new CountDownLatch(1);
+    CountDownLatch releaseFirstAllocation = new CountDownLatch(1);
+    AtomicInteger secondBackendPid = new AtomicInteger();
+    AtomicReference<Throwable> staleFailure = new AtomicReference<>();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var firstAllocation =
+          new AtomicReference<GameSessionPrivateFreshTargetRepository.Allocation>();
+      var first =
+          executor.submit(
+              () ->
+                  Objects.requireNonNull(
+                      context
+                          .serializableTransaction()
+                          .execute(
+                              status -> {
+                                var allocated = context.privateTargets().allocate(targetRequest);
+                                firstAllocation.set(allocated);
+                                firstAllocationHeld.countDown();
+                                await(releaseFirstAllocation);
+                                return allocated;
+                              })));
+      await(firstAllocationHeld);
+
+      var second =
+          executor.submit(
+              () -> {
+                try {
+                  context
+                      .serializableTransaction()
+                      .executeWithoutResult(
+                          status -> {
+                            var visibleBeforeCommit =
+                                context
+                                    .dsl()
+                                    .fetchSingle(
+                                        "SELECT count(*) FROM game_session_canonical_realm_catalog WHERE private_preparation_request_id = ?",
+                                        preparation.request().requestId())
+                                    .get(0, Long.class);
+                            assertThat(visibleBeforeCommit).isZero();
+                            secondBackendPid.set(
+                                context
+                                    .dsl()
+                                    .fetchSingle("SELECT pg_backend_pid()")
+                                    .get(0, Integer.class));
+                            secondSnapshotEstablished.countDown();
+                            context.privateTargets().allocate(targetRequest);
+                          });
+                } catch (Throwable failure) {
+                  staleFailure.set(failure);
+                }
+              });
+      await(secondSnapshotEstablished);
+      awaitAdvisoryLockWait(context, secondBackendPid.get());
+      releaseFirstAllocation.countDown();
+
+      first.get(60, TimeUnit.SECONDS);
+      second.get(60, TimeUnit.SECONDS);
+      Throwable failure = Objects.requireNonNull(staleFailure.get());
+      assertThat(sqlStateInCauseChain(failure)).isEqualTo("40001");
+
+      var committed = Objects.requireNonNull(firstAllocation.get());
+      String retainedRowBeforeRetry = privateCatalogRow(context, targetRequest.requestId());
+      // This is manual caller composition in the test, not automatic production retry behavior.
+      var freshTransactionRetry = context.allocatePrivateTarget(targetRequest);
+      assertThat(freshTransactionRetry.replayed()).isTrue();
+      assertThat(freshTransactionRetry.snapshot()).isEqualTo(committed.snapshot());
+      assertThat(freshTransactionRetry.snapshot().realmId())
+          .isEqualTo(committed.snapshot().realmId());
+      assertThat(freshTransactionRetry.snapshot().receiptDigest())
+          .isEqualTo(committed.snapshot().receiptDigest());
+      assertThat(privateCatalogRow(context, targetRequest.requestId()))
+          .isEqualTo(retainedRowBeforeRetry);
+      assertThat(
+              context
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM game_session_canonical_realm_catalog WHERE private_preparation_request_id = ?",
+                      preparation.request().requestId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+      assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+    } finally {
+      releaseFirstAllocation.countDown();
+      executor.shutdown();
+      if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+        executor.shutdownNow();
+        assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
+  @Test
   void exactReadRejectsWrongLifecycleAndReportsRealExpiryWithoutChangingOriginal() {
     Context context = context(true);
     Request request =
@@ -1025,6 +1246,113 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(interrupted);
     }
+  }
+
+  private static void awaitAdvisoryLockWait(Context context, int backendPid) {
+    Awaitility.await()
+        .atMost(30, TimeUnit.SECONDS)
+        .pollInterval(10, TimeUnit.MILLISECONDS)
+        .untilAsserted(
+            () -> {
+              var activity =
+                  context
+                      .dsl()
+                      .fetchOne(
+                          "SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = ?",
+                          backendPid);
+              assertThat(activity).isNotNull();
+              assertThat(activity.get("wait_event_type", String.class)).isEqualTo("Lock");
+              assertThat(activity.get("wait_event", String.class)).isEqualTo("advisory");
+            });
+  }
+
+  private static String privateCatalogRow(Context context, UUID requestId) {
+    return context
+        .dsl()
+        .fetchSingle(
+            "SELECT to_jsonb(c)::text || ':' || xmin::text FROM game_session_canonical_realm_catalog c WHERE creation_request_id = ?",
+            requestId)
+        .get(0, String.class);
+  }
+
+  private static String privateCatalogReceiptDigest(Map<String, Object> row, String tenantSlug) {
+    return sha256(
+        frame(
+            "game-session-private-fresh-catalog-receipt/v1",
+            privateCatalogReceiptField(row, "creation_request_id"),
+            privateCatalogReceiptField(row, "request_digest"),
+            privateCatalogReceiptField(row, "target_namespace"),
+            privateCatalogReceiptField(row, "canonical_tenant_id"),
+            tenantSlug,
+            privateCatalogReceiptField(row, "world_slug"),
+            privateCatalogReceiptField(row, "realm_id"),
+            privateCatalogReceiptField(row, "realm_slug"),
+            privateCatalogReceiptField(row, "realm_display_name"),
+            privateCatalogReceiptField(row, "visible"),
+            privateCatalogReceiptField(row, "public_production"),
+            privateCatalogReceiptField(row, "state_scope"),
+            privateCatalogReceiptField(row, "playable_state_namespace_id"),
+            privateCatalogReceiptField(row, "character_creation_policy"),
+            privateCatalogReceiptField(row, "catalog_revision"),
+            privateCatalogReceiptField(row, "private_preparation_request_id"),
+            privateCatalogReceiptField(row, "private_playtest_lifecycle_id"),
+            privateCatalogReceiptField(row, "private_preparation_request_digest"),
+            privateCatalogReceiptField(row, "private_state_generation"),
+            privateCatalogReceiptField(row, "private_source_catalog_realm_id"),
+            privateCatalogReceiptField(row, "private_source_catalog_request_id"),
+            privateCatalogReceiptField(row, "private_source_catalog_revision"),
+            privateCatalogReceiptField(row, "private_source_catalog_receipt_digest"),
+            privateCatalogReceiptField(row, "private_target_policy_id"),
+            privateCatalogReceiptField(row, "private_target_policy_digest"),
+            privateCatalogReceiptField(row, "private_target_policy_source_commit_id"),
+            privateCatalogReceiptField(row, "private_target_policy_source_revision_id"),
+            privateCatalogReceiptField(row, "private_target_policy_logical_revision_id"),
+            privateCatalogReceiptField(row, "private_canonical_version_id"),
+            privateCatalogReceiptField(row, "private_published_release_bundle_ref"),
+            privateCatalogReceiptField(row, "private_published_release_bundle_digest"),
+            privateCatalogReceiptField(row, "private_source_policy_set_digest"),
+            privateCatalogReceiptField(row, "private_source_policy_carrier_digest"),
+            privateCatalogReceiptField(row, "source_intake_operation_id"),
+            privateCatalogReceiptField(row, "source_intake_receipt_digest")));
+  }
+
+  private static String privateCatalogReceiptField(Map<String, Object> row, String field) {
+    return Objects.requireNonNull(row.get(field), field).toString();
+  }
+
+  private static String sqlStateInCauseChain(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) {
+        for (SQLException chained = sqlException;
+            chained != null;
+            chained = chained.getNextException()) {
+          if (chained.getSQLState() != null) return chained.getSQLState();
+        }
+      }
+    }
+    return null;
+  }
+
+  private static String databaseFailureSummary(Throwable failure) {
+    if (failure == null) return "<no exception>";
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) {
+        for (SQLException chained = sqlException;
+            chained != null;
+            chained = chained.getNextException()) {
+          if (chained.getSQLState() != null) {
+            return boundedDiagnostic(
+                chained.getSQLState() + ": " + Objects.toString(chained.getMessage(), ""));
+          }
+        }
+      }
+    }
+    return boundedDiagnostic(failure.getClass().getName() + ": " + failure.getMessage());
+  }
+
+  private static String boundedDiagnostic(String diagnostic) {
+    if (diagnostic.length() <= 512) return diagnostic;
+    return diagnostic.substring(0, 512) + "...";
   }
 
   private static void awaitExpiry(Context context, Instant expiry) {
@@ -1243,6 +1571,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
           "Controlled private policy fixture encoding failed", malformed);
     }
   }
+
+  private record DetachedCatalogRow(Map<String, Object> values, List<Field<?>> fields) {}
 
   private record Context(
       DSLContext dsl,
