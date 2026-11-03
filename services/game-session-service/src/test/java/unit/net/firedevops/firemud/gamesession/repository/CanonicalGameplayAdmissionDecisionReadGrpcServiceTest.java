@@ -218,6 +218,59 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     return mock(StreamObserver.class);
   }
 
+  @Test
+  void discoveryUnexpectedSourceFailuresUseTheSourceContractsSanitizedStatus() {
+    for (RuntimeException failure :
+        List.of(
+            new UnsupportedOperationException("private storage detail"),
+            new IllegalStateException("private storage detail"),
+            new IllegalArgumentException("private storage detail"))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenThrow(failure);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      assertDiscoveryFailure(
+          observer,
+          failure instanceof IllegalArgumentException
+              ? Status.Code.FAILED_PRECONDITION
+              : Status.Code.INTERNAL);
+    }
+  }
+
+  @Test
+  void discoveryObserverFailuresNeverProduceASecondTerminalSignal() {
+    for (boolean completionFailure : List.of(false, true)) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of());
+      var observer = discoveryObserver();
+      var failure = new IllegalStateException("private observer detail");
+      if (completionFailure) doThrow(failure).when(observer).onCompleted();
+      else doThrow(failure).when(observer).onNext(any());
+      Runnable receive =
+          () ->
+              discoveryService(
+                      routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+                  .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      if (completionFailure) assertThatThrownBy(receive::run).isSameAs(failure);
+      else receive.run();
+      verify(observer).onNext(any());
+      if (completionFailure) {
+        verify(observer).onCompleted();
+        verify(observer, never()).onError(any());
+      } else {
+        var error = ArgumentCaptor.forClass(Throwable.class);
+        verify(observer).onError(error.capture());
+        assertThat(Status.fromThrowable(error.getValue()).getCode())
+            .isEqualTo(Status.Code.INTERNAL);
+        assertThat(error.getValue())
+            .hasMessageNotContaining("private observer detail")
+            .hasNoCause();
+        verify(observer, never()).onCompleted();
+      }
+    }
+  }
+
   private static void assertDiscoveryFailure(
       StreamObserver<ListVisiblePublicProductionAdmissionTargetsResponse> observer,
       Status.Code expected) {

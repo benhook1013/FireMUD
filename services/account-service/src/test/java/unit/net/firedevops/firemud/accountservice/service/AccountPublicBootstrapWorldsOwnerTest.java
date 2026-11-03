@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -327,6 +328,66 @@ class AccountPublicBootstrapWorldsOwnerTest {
         .thenReturn(evaluation(TENANT_A, true, NOW.plusSeconds(15)));
     assertCode("ENTITLEMENT_UNAVAILABLE", () -> f.owner.listWorlds(TOKEN));
     verify(f.targets, times(1)).listVisiblePublicProductionAdmissionTargets(any());
+  }
+
+  @Test
+  void simultaneousDiscoveryCallsAcrossOwnerInstancesShareTheEightEvaluationLimit()
+      throws Exception {
+    Fixture first = new Fixture();
+    Fixture second = new Fixture();
+    var tenants = IntStream.range(0, 16).mapToObj(index -> UUID.randomUUID()).toList();
+    var targets =
+        IntStream.range(0, tenants.size())
+            .mapToObj(
+                index ->
+                    target(
+                        tenants.get(index),
+                        "tenant-" + index,
+                        "world-" + index,
+                        "World " + index,
+                        1))
+            .toList();
+    first.stubTargetReads(targets, targets);
+    second.stubTargetReads(targets, targets);
+    var firstEight = new CountDownLatch(8);
+    var release = new CountDownLatch(1);
+    var exceeded = new CountDownLatch(1);
+    var active = new AtomicInteger();
+    var peak = new AtomicInteger();
+    org.mockito.stubbing.Answer<Evaluation> evaluation =
+        invocation -> {
+          int count = active.incrementAndGet();
+          peak.accumulateAndGet(count, Math::max);
+          if (count > 8) exceeded.countDown();
+          firstEight.countDown();
+          try {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return evaluation(invocation.getArgument(0), true, NOW.plusSeconds(30));
+          } finally {
+            active.decrementAndGet();
+          }
+        };
+    when(first.entitlements.evaluate(any())).thenAnswer(evaluation);
+    when(second.entitlements.evaluate(any())).thenAnswer(evaluation);
+    try (var callers = Executors.newFixedThreadPool(2)) {
+      var left = callers.submit(() -> first.owner.listWorlds(TOKEN));
+      var right = callers.submit(() -> second.owner.listWorlds(TOKEN));
+      try {
+        assertThat(firstEight.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(exceeded.await(200, TimeUnit.MILLISECONDS)).isFalse();
+      } finally {
+        release.countDown();
+      }
+      assertThat(left.get(5, TimeUnit.SECONDS)).hasSize(16);
+      assertThat(right.get(5, TimeUnit.SECONDS)).hasSize(16);
+    }
+    assertThat(peak.get()).isEqualTo(8);
+    for (UUID tenant : tenants) {
+      verify(first.entitlements, times(1)).evaluate(tenant);
+      verify(second.entitlements, times(1)).evaluate(tenant);
+    }
   }
 
   private static void assertCode(String expectedCode, ThrowingCallable action) {
