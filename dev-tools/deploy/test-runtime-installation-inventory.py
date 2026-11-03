@@ -4,11 +4,11 @@
 import copy
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 import yaml
 
@@ -191,9 +191,8 @@ class InventoryTest(unittest.TestCase):
             raw_manifest.replace(b"name: application", b"name: application\n      name: repeated"),
             b"apiVersion: v1\nkind: Pod\nmetadata: &metadata {name: a}\nspec: *metadata\n",
         ):
-            with self.subTest(manifest=manifest[-80:]):
-                with self.assertRaises(inventory.InventoryError):
-                    inventory.produce(manifest, raw_declarations)
+            with self.subTest(manifest=manifest[-80:]), self.assertRaises(inventory.InventoryError):
+                inventory.produce(manifest, raw_declarations)
         for raw in (
             raw_declarations[:-1] + b',"schema":"firemud-runtime-installation-declarations/v1"}',
             raw_declarations.replace(b'"ownerId": ""', b'"ownerId": "", "ownerId": "world"', 1),
