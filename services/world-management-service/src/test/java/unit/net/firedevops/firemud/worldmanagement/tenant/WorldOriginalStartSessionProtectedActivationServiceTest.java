@@ -147,6 +147,29 @@ class WorldOriginalStartSessionProtectedActivationServiceTest {
     verify(activation, never()).activateProtected(any(), any());
   }
 
+  @Test
+  void accountProtectionAloneCannotAuthorizeFreshActivationWithoutConfiguredInstallation() {
+    var input = matchingInput();
+    var protection = matchingEvidence(input);
+    when(repository.readProtectedActivationByAcquisitionInput(input)).thenReturn(Optional.empty());
+    when(repository.readTerminalEvidence(protection)).thenReturn(Optional.empty());
+    when(account.acquire(input)).thenReturn(protection);
+    var defaultDenied =
+        new WorldOriginalStartSessionProtectedActivationService(
+            repository,
+            new WorldCanonicalInstanceActivationService(repository),
+            account,
+            "world-runtime");
+
+    assertThatThrownBy(() -> defaultDenied.activate(input))
+        .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class)
+        .hasMessageContaining("current-installation registry is unavailable");
+
+    verify(account).acquire(input);
+    verify(repository, never()).activateProtected(any(), any());
+    verifyNoInteractions(activation);
+  }
+
   private static AccountStartSessionActivationProtectionAcquisitionInput matchingInput() {
     var input = mock(AccountStartSessionActivationProtectionAcquisitionInput.class);
     var request = mock(WorldCanonicalInstanceActivation.Request.class);

@@ -25,17 +25,28 @@ public final class WorldCanonicalInstancePreparationService {
   private final WorldCanonicalInstancePreparationRepository repository;
   private final OriginalOperationCommitAuthorityVerifier originalOperationVerifier;
   private final OriginalOperationRecoveryVerifier recoveryVerifier;
+  private final WorldRuntimeInstallationRegistry installationRegistry;
 
   /** Constructs the production-safe default: all attempts fail closed. */
   public WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository) {
-    this(repository, null, WorldCanonicalInstancePreparationService::denyRecoveryByDefault, true);
+    this(
+        repository,
+        null,
+        WorldCanonicalInstancePreparationService::denyRecoveryByDefault,
+        null,
+        true);
   }
 
   /** Retained legacy constructor; an untyped verifier cannot authorize a fresh execution. */
   public WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository, CommitAuthorityVerifier verifier) {
-    this(repository, null, WorldCanonicalInstancePreparationService::denyRecoveryByDefault, true);
+    this(
+        repository,
+        null,
+        WorldCanonicalInstancePreparationService::denyRecoveryByDefault,
+        null,
+        true);
     Objects.requireNonNull(verifier, "verifier");
   }
 
@@ -47,6 +58,7 @@ public final class WorldCanonicalInstancePreparationService {
         repository,
         Objects.requireNonNull(verifier, "verifier"),
         WorldCanonicalInstancePreparationService::denyRecoveryByDefault,
+        null,
         true);
   }
 
@@ -58,7 +70,7 @@ public final class WorldCanonicalInstancePreparationService {
       WorldCanonicalInstancePreparationRepository repository,
       CommitAuthorityVerifier verifier,
       OriginalOperationRecoveryVerifier recoveryVerifier) {
-    this(repository, null, recoveryVerifier, true);
+    this(repository, null, recoveryVerifier, null, true);
     Objects.requireNonNull(verifier, "verifier");
   }
 
@@ -67,15 +79,31 @@ public final class WorldCanonicalInstancePreparationService {
       WorldCanonicalInstancePreparationRepository repository,
       OriginalOperationCommitAuthorityVerifier verifier,
       OriginalOperationRecoveryVerifier recoveryVerifier) {
-    this(repository, Objects.requireNonNull(verifier, "verifier"), recoveryVerifier, true);
+    this(repository, Objects.requireNonNull(verifier, "verifier"), recoveryVerifier, null, true);
+  }
+
+  /** Explicit installation owner composition; all existing constructors remain default denied. */
+  public WorldCanonicalInstancePreparationService(
+      WorldCanonicalInstancePreparationRepository repository,
+      OriginalOperationCommitAuthorityVerifier verifier,
+      OriginalOperationRecoveryVerifier recoveryVerifier,
+      WorldRuntimeInstallationRegistry installationRegistry) {
+    this(
+        repository,
+        Objects.requireNonNull(verifier, "verifier"),
+        recoveryVerifier,
+        Objects.requireNonNull(installationRegistry, "installationRegistry"),
+        true);
   }
 
   private WorldCanonicalInstancePreparationService(
       WorldCanonicalInstancePreparationRepository repository,
       OriginalOperationCommitAuthorityVerifier originalOperationVerifier,
       OriginalOperationRecoveryVerifier recoveryVerifier,
+      WorldRuntimeInstallationRegistry installationRegistry,
       boolean ownerTypedConstructor) {
     this.repository = Objects.requireNonNull(repository, "repository");
+    this.installationRegistry = installationRegistry;
     if (!ownerTypedConstructor)
       throw new IllegalArgumentException("Constructor marker is required");
     this.originalOperationVerifier = originalOperationVerifier;
@@ -145,7 +173,12 @@ public final class WorldCanonicalInstancePreparationService {
       held.executionIdentity()
           .requireMatches(
               input, operationInput, WorldCanonicalInstancePreparationRepository.inputJson(input));
-      return repository.materialize(input, held);
+      if (installationRegistry == null) {
+        throw new PreparationDeniedException(
+            "Protected current-installation registry is unavailable");
+      }
+      return installationRegistry.withLaunchOwners(
+          input.canonicalGameInstanceId(), () -> repository.materialize(input, held));
     }
   }
 

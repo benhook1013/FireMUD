@@ -13,6 +13,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class WorldCanonicalInstanceActivationService {
   private final WorldCanonicalInstanceActivationRepository repository;
+  private final WorldRuntimeInstallationRegistry installationRegistry;
 
   /**
    * Production-safe default: request-only transports cannot start activation without the distinct
@@ -21,6 +22,7 @@ public final class WorldCanonicalInstanceActivationService {
   public WorldCanonicalInstanceActivationService(
       WorldCanonicalInstanceActivationRepository repository) {
     this.repository = Objects.requireNonNull(repository, "repository");
+    this.installationRegistry = null;
   }
 
   /**
@@ -31,7 +33,17 @@ public final class WorldCanonicalInstanceActivationService {
   public WorldCanonicalInstanceActivationService(
       WorldCanonicalInstanceActivationRepository repository, ActivationAuthorityVerifier ignored) {
     this.repository = Objects.requireNonNull(repository, "repository");
+    this.installationRegistry = null;
     Objects.requireNonNull(ignored, "verifier");
+  }
+
+  /** Explicit protected installation composition; creates no registered activation route. */
+  public WorldCanonicalInstanceActivationService(
+      WorldCanonicalInstanceActivationRepository repository,
+      WorldRuntimeInstallationRegistry installationRegistry) {
+    this.repository = Objects.requireNonNull(repository, "repository");
+    this.installationRegistry =
+        Objects.requireNonNull(installationRegistry, "installationRegistry");
   }
 
   /**
@@ -61,8 +73,19 @@ public final class WorldCanonicalInstanceActivationService {
     requireNoActiveTransaction();
     try (held) {
       held.requireHeld();
+      var retained = repository.readTerminalEvidence(protection);
+      if (retained.isPresent()) {
+        held.requireHeld();
+        return retained.orElseThrow();
+      }
+      if (installationRegistry == null) {
+        throw new ActivationDeniedException(
+            "Protected current-installation registry is unavailable");
+      }
       WorldOriginalStartSessionActivationTerminalEvidence terminal =
-          repository.activateProtected(protection, held);
+          installationRegistry.withLaunchOwners(
+              protection.request().worldActivationRequest().canonicalGameInstanceId(),
+              () -> repository.activateProtected(protection, held));
       held.requireHeld();
       return terminal;
     }
