@@ -713,7 +713,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         observationDigest,
         receiptPayload,
         AccountHostingSubscriptionLifecycleEvidence.digest(receiptPayload),
-        utc(decision.validUntil()),
+        utc(decision.receiptValidUntil()),
         utcNullable(decision.cutoffAt()),
         utcNullable(origin),
         operation.get("warning_millis", Long.class),
@@ -815,7 +815,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     fields.put(
         "hardCutoff",
         decision.status() == Status.SUSPENDED || decision.status() == Status.CANCELED);
-    fields.put("validUntil", decision.validUntil().toString());
+    fields.put("validUntil", decision.receiptValidUntil().toString());
     fields.put("cutoffAt", decision.cutoffAt() == null ? null : decision.cutoffAt().toString());
     fields.put("pastDueSince", origin == null ? null : origin.toString());
     fields.put("authorityGeneration", Long.toString(generation));
@@ -1009,6 +1009,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         new AccountHostingSubscriptionLifecyclePolicy.Decision(
             decision.status(),
             decision.reason(),
+            instant(receipt, "valid_until"),
             instant(receipt, "valid_until"),
             nullableInstant(receipt, "cutoff_at"));
     Map<String, Object> fields =
