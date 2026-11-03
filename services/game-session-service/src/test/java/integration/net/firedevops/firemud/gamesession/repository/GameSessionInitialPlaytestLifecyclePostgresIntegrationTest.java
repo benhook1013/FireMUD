@@ -1023,7 +1023,10 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
 
       first.get(60, TimeUnit.SECONDS);
       second.get(60, TimeUnit.SECONDS);
-      Throwable failure = Objects.requireNonNull(staleFailure.get());
+      Throwable failure = staleFailure.get();
+      assertThat(failure)
+          .as("stale SERIALIZABLE allocation must refuse with 40001 instead of committing")
+          .isNotNull();
       assertThat(sqlStateInCauseChain(failure)).isEqualTo("40001");
 
       var committed = Objects.requireNonNull(firstAllocation.get());
