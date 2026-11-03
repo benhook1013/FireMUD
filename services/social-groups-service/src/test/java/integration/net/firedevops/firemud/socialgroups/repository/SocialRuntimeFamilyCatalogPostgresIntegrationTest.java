@@ -8,6 +8,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -86,6 +87,16 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
                 fact -> {
                   assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
                   assertThat(fact.identity()).isEqualTo("catalog-installation:1004");
+                })
+            .anySatisfy(
+                fact -> {
+                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+                  assertThat(fact.identity()).isEqualTo("catalog-installation:1005");
+                })
+            .anySatisfy(
+                fact -> {
+                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+                  assertThat(fact.identity()).isEqualTo("catalog-installation:1006");
                 });
         assertThat(f.owner().readExact(evidence.request())).isEqualTo(evidence);
         assertThat(
@@ -108,7 +119,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       throws Exception {
     try (Fixture f = fixture(null)) {
       var catalog = f.owner().read(request()).catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(2);
+      assertThat(catalog.catalogEpoch()).isEqualTo(3);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -260,16 +271,16 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       List<String> historyBefore = f.historyRows();
       migrate(f, null);
       assertThat(f.retainedRows()).isEqualTo(rowsBefore);
-      assertThat(f.historyRowsExcluding("1004", "1005")).isEqualTo(historyBefore);
+      assertThat(f.historyRowsExcluding("1004", "1005", "1006")).isEqualTo(historyBefore);
       var catalog = f.owner().read(request()).catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(2);
+      assertThat(catalog.catalogEpoch()).isEqualTo(3);
       assertThat(catalog.families())
           .anySatisfy(
               family ->
                   assertThat(family.freshDisposition())
                       .isEqualTo(FreshDisposition.ENTITY_VALUE_OWNERSHIP_DRIFT_BLOCKING));
       assertThat(f.retainedRows()).isEqualTo(rowsBefore);
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
   }
@@ -283,7 +294,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.count("unknown_runtime_family")).isZero();
       assertThatThrownBy(() -> f.owner().readExact(retained)).hasMessageContaining("Unclassified");
       assertThatThrownBy(() -> f.owner().read(request())).hasMessageContaining("Unclassified");
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
   }
@@ -325,7 +336,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
         assertThatThrownBy(() -> f.owner().readExact(retained))
             .isInstanceOf(RuntimeException.class);
         assertThatThrownBy(() -> f.owner().read(request())).isInstanceOf(RuntimeException.class);
-        assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
+        assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
         assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
       }
     }
@@ -352,7 +363,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().read(request()))
           .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
       assertThat(f.count("social_runtime_family_catalog_snapshot")).isEqualTo(1);
     }
     try (Fixture f = fixture(null)) {
@@ -419,9 +430,9 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
               () ->
                   f.dsl.execute(
                       "INSERT INTO social_runtime_family_catalog_epoch(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 3,catalog_bytes,catalog_digest FROM social_runtime_family_catalog_epoch WHERE catalog_epoch=2"))
+                          + " SELECT 4,catalog_bytes,catalog_digest FROM social_runtime_family_catalog_epoch WHERE catalog_epoch=3"))
           .hasMessageContaining("exact classified installed schema");
-      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(2);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
     }
   }
 
@@ -465,12 +476,12 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       throws Exception {
     for (String option : List.of("security_invoker", "security_barrier")) {
       try (Fixture f = fixture("1003")) {
-        // Install the real view before either catalog migration so its initial options are sealed.
+        // Install the real view before the catalog migrations so its initial options are sealed.
         f.dsl.execute("CREATE VIEW catalog_security_probe AS SELECT 1 AS id");
         migrate(f, null);
         Request read = request();
         var original = f.owner().read(read);
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(2);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(3);
         assertThat(original.catalog().schemaFacts())
             .anySatisfy(
                 fact -> {
@@ -527,7 +538,7 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       List<String> history = f.historyRows();
       String epoch = f.catalogRows("social_runtime_family_catalog_epoch");
       String snapshots = f.catalogRows("social_runtime_family_catalog_snapshot");
-      migrate(f, null);
+      migrate(f, "1005");
       for (var retained : rows.entrySet())
         assertThat(f.jsonRows(retained.getKey())).isEqualTo(retained.getValue());
       assertThat(
@@ -574,13 +585,13 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
                               script.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
                 });
       }
-      flyway(f.source, f.schema, f.history, null).validate();
+      flyway(f.source, f.schema, f.history, "1005").validate();
     }
   }
 
   @Test
-  void bothExactSuccessfulCatalogInstallationsAreRequired() throws Exception {
-    for (String version : List.of("1004", "1005")) {
+  void allThreeExactSuccessfulCatalogInstallationsAreRequired() throws Exception {
+    for (String version : List.of("1004", "1005", "1006")) {
       for (String change : List.of("success=false", "script='wrong_catalog_installation.sql'")) {
         try (Fixture f = fixture(null)) {
           Request read = request();
@@ -596,6 +607,152 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
           assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
         }
       }
+    }
+  }
+
+  @Test
+  void poisonedFramesWithCorrectIndependentDigestsRefuseWithoutConsumingRequestIdentity()
+      throws Exception {
+    try (Fixture f = fixture(null)) {
+      var original = f.owner().read(request());
+      for (String vector :
+          List.of(
+              "request-id",
+              "namespace",
+              "request-magic",
+              "request-trailing",
+              "request-truncated",
+              "evidence-request",
+              "snapshot",
+              "catalog-digest",
+              "catalog-bytes",
+              "evidence-magic",
+              "evidence-trailing",
+              "evidence-truncated")) {
+        Request read = request();
+        var proposal = new Evidence(read, UUID.randomUUID(), original.catalog());
+        byte[] requestBytes = SocialRuntimeFamilyCatalogCodec.requestBytes(read);
+        byte[] evidenceBytes = SocialRuntimeFamilyCatalogCodec.evidenceBytes(proposal);
+        String namespace = read.targetNamespace();
+        switch (vector) {
+          case "request-id" ->
+              requestBytes = SocialRuntimeFamilyCatalogCodec.requestBytes(request());
+          case "namespace" -> namespace = "other";
+          case "request-magic" -> requestBytes[0] ^= 1;
+          case "request-trailing" ->
+              requestBytes = Arrays.copyOf(requestBytes, requestBytes.length + 1);
+          case "request-truncated" ->
+              requestBytes = Arrays.copyOf(requestBytes, requestBytes.length - 1);
+          case "evidence-request" ->
+              evidenceBytes =
+                  SocialRuntimeFamilyCatalogCodec.evidenceBytes(
+                      new Evidence(request(), proposal.snapshotId(), original.catalog()));
+          case "snapshot" ->
+              evidenceBytes =
+                  SocialRuntimeFamilyCatalogCodec.evidenceBytes(
+                      new Evidence(read, UUID.randomUUID(), original.catalog()));
+          case "catalog-digest" -> evidenceBytes[4 + 4 + requestBytes.length + 16 + 4] ^= 1;
+          case "catalog-bytes" -> evidenceBytes[evidenceBytes.length - 1] ^= 1;
+          case "evidence-magic" -> evidenceBytes[0] ^= 1;
+          case "evidence-trailing" ->
+              evidenceBytes = Arrays.copyOf(evidenceBytes, evidenceBytes.length + 1);
+          case "evidence-truncated" ->
+              evidenceBytes = Arrays.copyOf(evidenceBytes, evidenceBytes.length - 1);
+          default -> throw new AssertionError("Unknown frame vector: " + vector);
+        }
+        byte[] insertedRequest = requestBytes;
+        byte[] insertedEvidence = evidenceBytes;
+        String insertedNamespace = namespace;
+        String retained = f.catalogRows("social_runtime_family_catalog_snapshot");
+        // Each forged frame gets its own correct digest; a hash-only constraint cannot reject it.
+        assertThatThrownBy(
+                () ->
+                    f.insertSnapshot(
+                        proposal, insertedNamespace, insertedRequest, insertedEvidence))
+            .as(vector)
+            .hasMessageContaining("complete exact request and evidence");
+        assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(retained);
+        // The failed insert must leave the same request and snapshot identities available.
+        f.insertSnapshot(
+            proposal,
+            read.targetNamespace(),
+            SocialRuntimeFamilyCatalogCodec.requestBytes(read),
+            SocialRuntimeFamilyCatalogCodec.evidenceBytes(proposal));
+        assertThat(f.owner().read(read)).isEqualTo(proposal);
+        assertThat(f.owner().readExact(read)).isEqualTo(proposal);
+        assertThat(f.owner().read(original.request())).isEqualTo(original);
+        assertThat(f.owner().readExact(original.request())).isEqualTo(original);
+      }
+    }
+  }
+
+  @Test
+  void exactFramesUpgradeRetainsV1005RowsHistoryEpochsAndSnapshot() throws Exception {
+    try (Fixture f = fixture("1005")) {
+      f.dsl.execute(
+          "INSERT INTO guilds(tenant_id,name,owner_account_id) VALUES (7,'retained',?::uuid)",
+          "10000000-0000-4000-8000-000000000001");
+      f.dsl.execute("INSERT INTO saga_instance(saga_name,state) VALUES ('retained','PENDING')");
+      Map<String, String> rows = f.retainedRows();
+      Request read = request();
+      var original = f.owner().read(read);
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(2);
+      List<String> history = f.historyRows();
+      String epochs = f.catalogRows("social_runtime_family_catalog_epoch");
+      String snapshots = f.catalogRows("social_runtime_family_catalog_snapshot");
+      migrate(f, null);
+      assertThat(f.retainedRows()).isEqualTo(rows);
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(h)::text FROM "
+                          + f.history
+                          + " h WHERE version IS DISTINCT FROM '1006' ORDER BY installed_rank")
+                  .getValues(0, String.class))
+          .isEqualTo(history);
+      assertThat(f.catalogRows("social_runtime_family_catalog_epoch WHERE catalog_epoch<3"))
+          .isEqualTo(epochs);
+      assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      assertThat(f.count("social_runtime_family_catalog_epoch")).isEqualTo(3);
+      assertThatThrownBy(() -> f.owner().readExact(read))
+          .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().read(read))
+          .isInstanceOf(SocialRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.catalogRows("social_runtime_family_catalog_snapshot")).isEqualTo(snapshots);
+      var current = f.owner().read(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(3);
+      assertThat(current.catalog().digest()).isNotEqualTo(original.catalog().digest());
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      assertThat(
+              current.catalog().schemaFacts().stream()
+                  .filter(fact -> fact.kind() == FactKind.MIGRATION)
+                  .map(SocialRuntimeFamilyCatalog.SchemaFact::identity)
+                  .toList())
+          .contains(
+              "catalog-installation:1004", "catalog-installation:1005", "catalog-installation:1006")
+          .noneMatch(
+              identity ->
+                  identity.contains(":1004:")
+                      || identity.contains(":1005:")
+                      || identity.contains(":1006:"));
+      for (var marker :
+          Map.of(
+                  "1004", "V1004__social_owner_runtime_family_catalog.sql",
+                  "1005", "V1005__social_catalog_view_options.sql",
+                  "1006", "V1006__social_catalog_snapshot_exact_frames.sql")
+              .entrySet()) {
+        assertThat(current.catalog().schemaFacts())
+            .anySatisfy(
+                fact -> {
+                  assertThat(fact.kind()).isEqualTo(FactKind.MIGRATION);
+                  assertThat(fact.identity()).isEqualTo("catalog-installation:" + marker.getKey());
+                  assertThat(fact.definitionDigest())
+                      .isEqualTo(
+                          SocialRuntimeFamilyCatalog.sha256(
+                              marker.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+                });
+      }
+      flyway(f.source, f.schema, f.history, null).validate();
     }
   }
 
@@ -672,6 +829,23 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
       return new SocialRuntimeFamilyCatalogRepository(dsl, manager, schema, "test");
     }
 
+    void insertSnapshot(
+        Evidence proposal, String namespace, byte[] requestBytes, byte[] evidenceBytes) {
+      dsl.execute(
+          "INSERT INTO social_runtime_family_catalog_snapshot"
+              + " (read_request_id,target_namespace,request_bytes,request_digest,snapshot_id,"
+              + "catalog_epoch,catalog_digest,evidence_bytes,evidence_digest) VALUES (?,?,?,?,?,?,?,?,?)",
+          proposal.request().readRequestId(),
+          namespace,
+          requestBytes,
+          SocialRuntimeFamilyCatalog.sha256(requestBytes),
+          proposal.snapshotId(),
+          proposal.catalog().catalogEpoch(),
+          proposal.catalog().digest(),
+          evidenceBytes,
+          SocialRuntimeFamilyCatalog.sha256(evidenceBytes));
+    }
+
     String catalogRows(String source) {
       return dsl.fetchSingle(
               "SELECT coalesce(jsonb_agg(row_json ORDER BY row_json::text),'[]'::jsonb)::text"
@@ -708,13 +882,14 @@ class SocialRuntimeFamilyCatalogPostgresIntegrationTest {
           .getValues(0, String.class);
     }
 
-    List<String> historyRowsExcluding(String first, String second) {
+    List<String> historyRowsExcluding(String first, String second, String third) {
       return dsl.fetch(
               "SELECT to_jsonb(h)::text FROM "
                   + history
-                  + " h WHERE version IS DISTINCT FROM ? AND version IS DISTINCT FROM ? ORDER BY installed_rank",
+                  + " h WHERE version IS DISTINCT FROM ? AND version IS DISTINCT FROM ? AND version IS DISTINCT FROM ? ORDER BY installed_rank",
               first,
-              second)
+              second,
+              third)
           .getValues(0, String.class);
     }
 
