@@ -82,15 +82,24 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     requireTransaction();
     Objects.requireNonNull(request);
     var original = intents.findCreation(request.creationRequestId()).orElseThrow();
-    var observedCurrent = intents.findCurrentByTenant(original.tenantId()).orElseThrow();
-    var current = intents.lockForLifecycle(original.requestId(), observedCurrent.rowVersion());
-    Record failed = operationForUpdate(request.failedRequestId());
     Record journal =
         dsl.fetchOne(
             "SELECT * FROM subscription_lifecycle_terminal_resolutions WHERE resolution_request_id = ? FOR UPDATE",
             request.resolutionRequestId());
+    // Exact committed-result disclosure belongs to the original authenticated actor. It must not
+    // select a successor subscription or require the canceled predecessor to remain current.
+    // Only a new mutation takes today's current-row/owner/instrument fence, in its original order.
+    long currentVersion;
+    if (journal == null) {
+      var observedCurrent = intents.findCurrentByTenant(original.tenantId()).orElseThrow();
+      currentVersion =
+          intents.lockForLifecycle(original.requestId(), observedCurrent.rowVersion()).rowVersion();
+    } else {
+      currentVersion = journal.get("result_row_version", Long.class);
+    }
+    Record failed = operationForUpdate(request.failedRequestId());
     if (!request.tenantId().equals(original.tenantId())
-        || !request.subscriptionId().equals(current.subscriptionId())
+        || !request.subscriptionId().equals(original.subscriptionId())
         || !request.actorAccountId().equals(original.owner().accountUuid())
         || !request.creationRequestId().equals(failed.get("creation_request_id", UUID.class))
         || !request.subscriptionId().equals(failed.get("subscription_id", UUID.class))
@@ -129,7 +138,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return new ResolutionPreparation(
           request,
           binding,
-          current.rowVersion(),
+          currentVersion,
           now(),
           now(),
           new TransitionResult(
@@ -138,11 +147,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
               journal.get("result_row_version", Long.class),
               null));
     }
-    if (request.expectedSubscriptionVersion() != current.rowVersion()
+    if (request.expectedSubscriptionVersion() != currentVersion
         || !request
             .failedRequestId()
             .equals(
-                links(current.subscriptionId()).get("lifecycle_inflight_request_id", UUID.class))) {
+                links(request.subscriptionId()).get("lifecycle_inflight_request_id", UUID.class))) {
       throw new FenceRejectedException("Terminal resolution lost its exact failed current fence");
     }
     Instant captured = now();
@@ -150,8 +159,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         earlier(
             captured.plus(limits.lease()),
             captured.plusMillis(failed.get("observation_age_millis", Long.class)));
-    return new ResolutionPreparation(
-        request, binding, current.rowVersion(), captured, deadline, null);
+    return new ResolutionPreparation(request, binding, currentVersion, captured, deadline, null);
   }
 
   /**
@@ -1296,8 +1304,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
   /**
    * Inserts a separate immutable provider-dispatch boundary after revalidating the exact live
-   * private worker claim. Only a new first-attempt insertion may carry initial-call permission.
-   * Preexisting unknown migration guards and all replayed/recovered attempts reconcile only.
+   * private worker claim. Only a newly inserted first-dispatch receipt may carry initial-call
+   * permission, even if an earlier worker attempt expired without dispatching. Preexisting unknown
+   * migration guards and all replayed dispatches reconcile only.
    */
   public ProviderDispatch prepareProviderDispatch(ProvisioningClaim supplied, UUID dispatchId) {
     requireTransaction();
@@ -1322,7 +1331,6 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     requireDispatchBinding(retained, receipt);
     boolean initial =
         inserted == 1
-            && retained.attemptNumber() == 1
             && "FIRST_DISPATCH".equals(receipt.classification())
             && retained.attemptId().equals(receipt.firstAttemptId());
     return providerDispatch(retained, receipt, initial, false, transactionId());

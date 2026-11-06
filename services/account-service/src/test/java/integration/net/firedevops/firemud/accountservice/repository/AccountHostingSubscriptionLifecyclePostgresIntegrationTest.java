@@ -1058,6 +1058,62 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void committedTerminalCancellationReplaysAfterCanceledSubscriptionIsReplaced() {
+    FailedResolution f = failedResolution();
+    Context c = f.fixture.context();
+    var owner = f.fixture.owner();
+    var prepared = in(c, () -> owner.prepareTerminalResolution(f.request));
+    f.fixture.transport().json = response(f.fixture, "canceled");
+    var sdk = f.fixture.observer().observe(prepared.binding());
+    var committed =
+        in(c, () -> owner.applyTerminalResolution(prepared, sdk, target -> authorized(f)));
+    var predecessor = c.intents().findCurrentByTenant(f.request.tenantId()).orElseThrow();
+    var successor =
+        in(
+            c,
+            () ->
+                c.intents()
+                    .retainPending(
+                        new AccountSubscriptionCreateRequest(
+                            UUID.randomUUID(),
+                            f.request.tenantId(),
+                            f.fixture.creation().owner(),
+                            f.fixture.creation().planCode(),
+                            f.fixture.instrument().instrumentUuid(),
+                            1,
+                            new ProducerEvidence(
+                                f.request.actorAccountId(), UUID.randomUUID(), DIGEST),
+                            new AccountSubscriptionCreateRequest.ReplacementFence(
+                                f.request.subscriptionId(), predecessor.rowVersion()))));
+    List<String> retained = resolutionImage(c);
+    var replay = in(c, () -> owner.prepareTerminalResolution(f.request));
+    assertThat(replay.replayResult()).isEqualTo(committed);
+    assertThat(
+            in(
+                c,
+                () ->
+                    owner.applyTerminalResolution(
+                        replay,
+                        null,
+                        target -> {
+                          assertThat(target.currentSubscriptionVersion())
+                              .isEqualTo(committed.committedRowVersion());
+                          return authorized(f);
+                        })))
+        .isEqualTo(committed);
+    assertThat(resolutionImage(c)).isEqualTo(retained);
+    assertThat(c.intents().findCurrentByTenant(f.request.tenantId()).orElseThrow().subscriptionId())
+        .isEqualTo(successor.subscriptionId());
+    assertThatThrownBy(
+            () ->
+                in(
+                    c,
+                    () -> owner.prepareTerminalResolution(withReason(f.request, "changed reason"))))
+        .hasMessageContaining("IDEMPOTENCY_CONFLICT");
+    assertThat(failedImage(c, f.request.failedRequestId())).isEqualTo(f.failureImage);
+  }
+
+  @Test
   void
       terminalCancellationResolutionCommitsOneCanonicalReceiptAndReplaysWithoutChangingFailureHistory() {
     FailedResolution f = failedResolution();

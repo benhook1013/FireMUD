@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionProvisioner;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionBirthSource.Category;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
@@ -154,19 +155,45 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
-  void recoveredAttemptWithNoPreviousDispatchStillCannotCreateAndExpiredLeaseRefusesReadback() {
+  void recoveredUndispatchedAttemptMayOwnFirstDispatchButReplayAndExpiredReadbackCannot() {
     Fixture f = fixture("1032");
     var first = claim(f, 1);
-    f.tx().executeWithoutResult(s -> f.owner().deferUnresolved(first));
-    f.clock().advance(Duration.ofSeconds(2));
+    // Simulate a crash after the worker claim commits but before any dispatch transaction.
+    f.clock().advance(Duration.ofSeconds(11));
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
+    assertThat(f.transport().creates).isZero();
     var second = claim(f, first.subscriptionRowVersion());
+    assertThat(second.attemptNumber()).isEqualTo(2);
     var prepared =
         f.tx().execute(s -> f.owner().prepareProviderDispatch(second, UUID.randomUUID()));
     assertThat(f.tx().execute(s -> f.owner().readProviderDispatch(prepared)).initialCallAllowed())
-        .isFalse();
+        .isTrue();
+    assertThat(prepareAndRead(f, second).initialCallAllowed()).isFalse();
     f.clock().advance(Duration.ofSeconds(10));
     assertThatThrownBy(() -> f.tx().execute(s -> f.owner().readProviderDispatch(prepared)))
         .isInstanceOf(RuntimeException.class);
+  }
+
+  @Test
+  void expiredUndispatchedFirstClaimRecoversThroughExactlyOneInitialCreate() {
+    Fixture f = fixture("1032");
+    var first = claim(f, 1);
+    f.clock().advance(Duration.ofSeconds(11));
+    var second = claim(f, first.subscriptionRowVersion());
+    var result =
+        (AccountHostingSubscriptionProvisioningService.Committed)
+            service(f).provision(second, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(result.current().current().subscriptionId())
+        .isEqualTo(f.creation().subscriptionId());
+    assertThat(f.transport().creates).isEqualTo(1);
+    var dispatch =
+        Objects.requireNonNull(
+            f.dsl().fetchOne("SELECT * FROM subscription_provider_dispatch_claim"));
+    assertThat(dispatch.get("classification", String.class)).isEqualTo("FIRST_DISPATCH");
+    assertThat(dispatch.get("first_attempt_id", UUID.class)).isEqualTo(second.attemptId());
+    assertThat(dispatch.get("first_claimed_row_version", Long.class))
+        .isEqualTo(second.subscriptionRowVersion());
   }
 
   @Test
@@ -204,20 +231,109 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
-  void lostCreateResponseRecoversSameResourceWithoutRecreatingAndRetainsItsOriginalIdentity() {
+  void lostCreateResponseRecoversAfterTransientEmptySearchWithoutRecreating() {
     Fixture f = fixture("1032");
     f.transport().loseCreateResponse = true;
     var first = claim(f, 1);
-    assertThat(service(f).provision(first, UUID.randomUUID(), UUID.randomUUID()))
-        .isInstanceOf(AccountHostingSubscriptionProvisioningService.Pending.class);
+    var lost =
+        (AccountHostingSubscriptionProvisioningService.Pending)
+            service(f).provision(first, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(lost.disposition()).isEqualTo(Disposition.WAITING);
+    assertThat(((StripeHostingSubscriptionProvisioner.Pending) lost.providerResult()).reason())
+        .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
     assertThat(f.transport().creates).isEqualTo(1);
+    f.transport().emptySearchesRemaining = 1;
     f.clock().advance(Duration.ofSeconds(2));
     var second = claim(f, first.subscriptionRowVersion());
+    var delayed =
+        (AccountHostingSubscriptionProvisioningService.Pending)
+            service(f).provision(second, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(delayed.disposition()).isEqualTo(Disposition.WAITING);
+    assertThat(delayed.providerResult())
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending("PROVIDER_LOOKUP_UNRESOLVED", null));
+    assertThat(f.transport().creates).isEqualTo(1);
+    f.clock().advance(Duration.ofSeconds(2));
+    var third = claim(f, second.subscriptionRowVersion());
     var result =
         (AccountHostingSubscriptionProvisioningService.Committed)
-            service(f).provision(second, UUID.randomUUID(), UUID.randomUUID());
+            service(f).provision(third, UUID.randomUUID(), UUID.randomUUID());
     assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(f.transport().creates).isEqualTo(1);
+    assertThat(f.transport().searches).isEqualTo(3);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isOne();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
+  }
+
+  @Test
+  void prolongedEmptySearchAfterLostCreateStopsWithOneOperatorItemAndHeldReservation() {
+    Fixture f = fixture("1032");
+    f.transport().loseCreateResponse = true;
+    var first = claim(f, 1);
+    var lost =
+        (AccountHostingSubscriptionProvisioningService.Pending)
+            service(f).provision(first, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(lost.disposition()).isEqualTo(Disposition.WAITING);
+    assertThat(((StripeHostingSubscriptionProvisioner.Pending) lost.providerResult()).reason())
+        .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
+    assertThat(f.transport().exists).isTrue();
+    f.transport().emptySearchesRemaining = 2;
+    ProvisioningClaim previous = first;
+    for (int attempt = 2; attempt <= 3; attempt++) {
+      f.clock().advance(Duration.ofSeconds(2));
+      previous = claim(f, previous.subscriptionRowVersion());
+      var pending =
+          (AccountHostingSubscriptionProvisioningService.Pending)
+              service(f).provision(previous, UUID.randomUUID(), UUID.randomUUID());
+      assertThat(pending.disposition())
+          .isEqualTo(attempt == 3 ? Disposition.TERMINAL_FAILURE : Disposition.WAITING);
+      assertThat(pending.providerResult())
+          .isEqualTo(
+              new StripeHostingSubscriptionProvisioner.Pending("PROVIDER_LOOKUP_UNRESOLVED", null));
+      assertThat(f.transport().creates).isEqualTo(1);
+    }
+    long finalVersion = previous.subscriptionRowVersion();
+    var retry =
+        Objects.requireNonNull(
+            f.tx()
+                .execute(
+                    s ->
+                        f.owner()
+                            .claim(f.creation().requestId(), finalVersion, UUID.randomUUID())));
+    assertThat(retry.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(retry.claim()).isNull();
+    assertThat(f.transport().searches).isEqualTo(3);
+    assertThat(f.transport().creates).isEqualTo(1);
+    var current =
+        Objects.requireNonNull(
+            f.dsl()
+                .fetchOne(
+                    "SELECT status, provider_subscription_id, terminal_resolution_id FROM subscription WHERE subscription_id = ?",
+                    f.creation().subscriptionId()));
+    assertThat(current.get("status", String.class)).isEqualTo("provisioning");
+    assertThat(current.get("provider_subscription_id")).isNull();
+    assertThat(current.get("terminal_resolution_id")).isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl()
+                        .fetchOne(
+                            "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                            f.creation().requestId()))
+                .get("released_at"))
+        .isNull();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isOne();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_terminal_resolutions")))
+        .isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl()
+                        .fetchOne(
+                            "SELECT phase, failure_reason FROM subscription_provisioning_work WHERE request_id = ?",
+                            f.creation().requestId()))
+                .intoMap())
+        .containsEntry("phase", "BILLING_RECONCILIATION_TERMINAL_FAILURE")
+        .containsEntry("failure_reason", "STALLED_WITHOUT_COMMITTED_PROGRESS");
   }
 
   private static ProviderDispatch prepareAndRead(Fixture f, ProvisioningClaim claim) {
@@ -536,6 +652,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     private final Clock clock;
     private boolean exists;
     private boolean loseCreateResponse;
+    private int emptySearchesRemaining;
+    private int searches;
     private int creates;
     private int subscriptionReads;
 
@@ -578,13 +696,18 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
                 + creation.providerCustomerId()
                 + "\",\"livemode\":false,\"type\":\"card\",\"card\":{\"brand\":\"visa\",\"last4\":\"4242\",\"exp_month\":12,\"exp_year\":2030}}";
       } else if (path.equals("/v1/subscriptions/search")) {
+        searches++;
         assertThat(params.get("query").toString())
             .contains(
                 creation.subscriptionProvisioningRequestId().toString(),
                 creation.subscriptionId().toString());
+        boolean visible = exists && emptySearchesRemaining == 0;
+        if (emptySearchesRemaining > 0) {
+          emptySearchesRemaining--;
+        }
         response =
             "{\"object\":\"search_result\",\"has_more\":false,\"data\":["
-                + (exists ? subscription() : "")
+                + (visible ? subscription() : "")
                 + "]}";
       } else if (path.equals("/v1/subscriptions") && method == RequestMethod.POST) {
         creates++;

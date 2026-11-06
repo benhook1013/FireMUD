@@ -306,8 +306,15 @@ public final class AccountTenantOperationEntitlementOwner {
     }
   }
 
-  private static IllegalStateException unavailable(String message) {
-    return new IllegalStateException("ENTITLEMENT_UNAVAILABLE: " + message);
+  private static SourceUnavailableException unavailable(String message) {
+    return new SourceUnavailableException(message);
+  }
+
+  /** An evaluated source cannot supply current evidence; not a configuration or codec failure. */
+  public static final class SourceUnavailableException extends IllegalStateException {
+    public SourceUnavailableException(String message) {
+      super("ENTITLEMENT_UNAVAILABLE: " + message);
+    }
   }
 
   /** Trusted transport assertion only; construction itself does not authenticate the caller. */
