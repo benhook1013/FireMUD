@@ -352,6 +352,20 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void actualCommittedPreparationRetryReturnsAfterInstallationRegistryAdvances() throws Exception {
+    compose(
+        Refusal.NONE,
+        9_007_199_254_740_993L,
+        temporary,
+        ActivationFailure.NONE,
+        false,
+        false,
+        false,
+        false,
+        true);
+  }
+
+  @Test
   void mismatchedOwnerAttemptCannotAcquireParticipationOrMutateWorld() throws Exception {
     compose(Refusal.MISMATCHED_ATTEMPT);
   }
@@ -536,6 +550,29 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       boolean exerciseCoupledCanonicalInitialAdmission,
       boolean abortCanonicalInitialAdmission,
       boolean playerCreatedPlacement)
+      throws Exception {
+    compose(
+        refusal,
+        reservationClaimFence,
+        proofDirectory,
+        activationFailure,
+        exerciseCanonicalInitialAdmissionHold,
+        exerciseCoupledCanonicalInitialAdmission,
+        abortCanonicalInitialAdmission,
+        playerCreatedPlacement,
+        false);
+  }
+
+  private void compose(
+      Refusal refusal,
+      long reservationClaimFence,
+      Path proofDirectory,
+      ActivationFailure activationFailure,
+      boolean exerciseCanonicalInitialAdmissionHold,
+      boolean exerciseCoupledCanonicalInitialAdmission,
+      boolean abortCanonicalInitialAdmission,
+      boolean playerCreatedPlacement,
+      boolean advanceInstallationBeforeRetry)
       throws Exception {
     if (abortCanonicalInitialAdmission && !exerciseCoupledCanonicalInitialAdmission) {
       throw new IllegalArgumentException("Admission abort proof requires the coupled owner path");
@@ -1031,7 +1068,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     "world_canonical_instance_association",
                     "world_canonical_instance_preparation",
                     "world_canonical_instance_execution",
-                    "world_canonical_instance_activation_fence");
+                    "world_canonical_instance_activation_fence",
+                    "world_runtime_installation_registration",
+                    "world_runtime_installation_current",
+                    "world_runtime_required_owner_snapshot");
             Map<String, List<String>> accountBefore =
                 rows(
                     issuer.sourceDsl(),
@@ -1150,6 +1190,50 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             var after = rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
             var protectedAccount =
                 rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new));
+            if (advanceInstallationBeforeRetry) {
+              long firstRevision =
+                  world
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT revision FROM world_runtime_installation_current WHERE target_namespace=?",
+                          NAMESPACE)
+                      .get(0, Long.class);
+              long frozenRevision =
+                  world
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT registry_revision FROM world_runtime_required_owner_snapshot WHERE canonical_game_instance_id=?",
+                          input.canonicalGameInstanceId())
+                      .get(0, Long.class);
+              assertThat(frozenRevision).isEqualTo(firstRevision);
+
+              var advancedRegistration = advanceInstallationRegistry(world);
+              assertThat(advancedRegistration.revision()).isGreaterThan(firstRevision);
+              assertThat(
+                      world
+                          .dsl()
+                          .fetchSingle(
+                              "SELECT revision FROM world_runtime_installation_current WHERE target_namespace=?",
+                              NAMESPACE)
+                          .get(0, Long.class))
+                  .isEqualTo(advancedRegistration.revision());
+              assertThat(
+                      world
+                          .dsl()
+                          .fetchSingle(
+                              "SELECT registry_revision FROM world_runtime_required_owner_snapshot WHERE canonical_game_instance_id=?",
+                              input.canonicalGameInstanceId())
+                          .get(0, Long.class))
+                  .isEqualTo(firstRevision);
+              var afterAdvance = rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
+              assertThat(afterAdvance.get("world_runtime_installation_registration"))
+                  .hasSize(after.get("world_runtime_installation_registration").size() + 1);
+              assertThat(afterAdvance.get("world_runtime_installation_current"))
+                  .isNotEqualTo(after.get("world_runtime_installation_current"));
+              assertThat(afterAdvance.get("world_runtime_required_owner_snapshot"))
+                  .isEqualTo(after.get("world_runtime_required_owner_snapshot"));
+              after = afterAdvance;
+            }
             ClientCalls.blockingUnaryCall(
                 channel,
                 method,
@@ -1175,6 +1259,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             assertThat(
                     repository.readExactExecution(identity.get()).operation().orElseThrow().state())
                 .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED);
+            if (advanceInstallationBeforeRetry) {
+              return;
+            }
             var evidence = input.gameSessionReadEvidence();
             var lifecycleReadRequest =
                 new WorldCanonicalInstanceLifecycleEvidence.Request(
@@ -4727,18 +4814,56 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     return new Database(schema, dsl, manager, write, installation);
   }
 
+  private static WorldRuntimeInstallationRegistry.Registration advanceInstallationRegistry(
+      Database world) {
+    byte[] artifact = controlledInstallationArtifact(world.schema(), "synthetic-installation-v2");
+    var advancedRegistry =
+        new WorldRuntimeInstallationRegistry(
+            world.dsl(),
+            world.manager(),
+            world.schema(),
+            NAMESPACE,
+            () ->
+                new WorldRuntimeInstallationRegistry.HeldInstallation() {
+                  @Override
+                  public byte[] exactArtifactBytes() {
+                    return artifact.clone();
+                  }
+
+                  @Override
+                  public void requireCurrent() {}
+
+                  @Override
+                  public void close() {}
+                });
+    return advancedRegistry.register();
+  }
+
   private static byte[] controlledInstallationArtifact(String schema) {
+    return controlledInstallationArtifact(
+        schema, "synthetic-installation-v1", schema + ":artifact", schema + ":installation");
+  }
+
+  private static byte[] controlledInstallationArtifact(String schema, String generation) {
+    return controlledInstallationArtifact(
+        schema,
+        generation,
+        schema + ":" + generation + ":artifact",
+        schema + ":" + generation + ":installation");
+  }
+
+  private static byte[] controlledInstallationArtifact(
+      String schema, String generation, String artifactName, String installationName) {
     var artifact = JSON.createObjectNode();
     artifact.put("schema", "firemud-runtime-installation-inventory/v1");
     artifact.put(
         "artifactId",
-        UUID.nameUUIDFromBytes((schema + ":artifact").getBytes(StandardCharsets.UTF_8)).toString());
+        UUID.nameUUIDFromBytes(artifactName.getBytes(StandardCharsets.UTF_8)).toString());
     artifact.put(
         "installationId",
-        UUID.nameUUIDFromBytes((schema + ":installation").getBytes(StandardCharsets.UTF_8))
-            .toString());
+        UUID.nameUUIDFromBytes(installationName.getBytes(StandardCharsets.UTF_8)).toString());
     artifact.put("environment", "local-dev");
-    artifact.put("generation", "synthetic-installation-v1");
+    artifact.put("generation", generation);
     artifact.put("clusterUid", "synthetic-cluster");
     artifact.put("namespaceUid", "synthetic-namespace");
     artifact.put("namespace", NAMESPACE);

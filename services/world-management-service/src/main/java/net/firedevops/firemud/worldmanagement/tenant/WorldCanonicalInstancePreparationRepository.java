@@ -108,6 +108,34 @@ public final class WorldCanonicalInstancePreparationRepository {
   }
 
   /**
+   * Reads the immutable result only when the exact typed operation is already COMMITTED. This
+   * read-only historical retry does not require a current installation snapshot; all absent,
+   * PENDING and ABORTED operations remain on the installation-guarded materialization path.
+   */
+  Optional<Result> readRetainedCommittedResult(
+      Input input, WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
+    Objects.requireNonNull(input, "input");
+    Objects.requireNonNull(authority, "authority");
+    requireNoActiveTransaction("Canonical World preparation retained-result read");
+    WorldCanonicalInstanceExecutionIdentity executionIdentity =
+        Objects.requireNonNull(
+            authority.executionIdentity(),
+            "Canonical preparation authority returned no typed World execution identity");
+    if (!executionIdentity.hasOriginalAttemptEvidence()) {
+      throw new WorldCanonicalInstancePreparationService.PreparationDeniedException(
+          "Fresh World admission requires Account's exact original Game Session attempt observation");
+    }
+    String inputJson = inputJson(input);
+    executionIdentity.requireMatches(input, inputJson);
+
+    Optional<ExecutionOperation> retained = readExactExecution(executionIdentity).operation();
+    if (retained.isEmpty() || retained.orElseThrow().state() != ExecutionState.COMMITTED) {
+      return Optional.empty();
+    }
+    return Optional.of(readCommittedResult(input, retained.orElseThrow()));
+  }
+
+  /**
    * Runs the one owner transaction, then independently reads its committed immutable result. The
    * Account source-protection handle remains open through the transaction manager's commit path;
    * the stored original Game Session lease is checked separately at actual World admission.

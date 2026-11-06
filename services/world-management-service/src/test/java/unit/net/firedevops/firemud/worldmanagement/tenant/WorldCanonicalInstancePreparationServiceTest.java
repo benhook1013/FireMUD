@@ -11,12 +11,15 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceExecutionIdentity;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationRepository.ExecutionLookup;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationRepository.ExecutionOperation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationRepository.ExecutionState;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceTopologyPlan;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -147,6 +150,38 @@ class WorldCanonicalInstancePreparationServiceTest {
         .hasMessageContaining("exact original Game Session owner operation");
 
     verifyNoInteractions(repository, commitVerifier, input);
+  }
+
+  @Test
+  void missingInstallationRegistryDeniesBeforeAcquiringAccountParticipation() {
+    var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+    var input = mock(WorldCanonicalInstancePreparation.Input.class);
+    var evidence = mock(WorldCanonicalInstanceAssociation.GameSessionReadEvidence.class);
+    var topology = mock(WorldCanonicalInstanceTopologyPlan.class);
+    when(input.gameSessionReadEvidence()).thenReturn(evidence);
+    when(evidence.targetNamespace()).thenReturn("test");
+    when(input.topologyPlan()).thenReturn(topology);
+    when(topology.generationRules()).thenReturn(java.util.List.of());
+    when(topology.spawnBindings()).thenReturn(java.util.List.of());
+
+    var operationInput =
+        mock(WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput.class);
+    var verifier =
+        mock(
+            WorldCanonicalInstancePreparationService.OriginalOperationCommitAuthorityVerifier
+                .class);
+    var service =
+        new WorldCanonicalInstancePreparationService(
+            repository,
+            verifier,
+            mock(WorldCanonicalInstancePreparationService.OriginalOperationRecoveryVerifier.class));
+
+    assertThatThrownBy(() -> service.prepare(input, operationInput))
+        .isInstanceOf(WorldCanonicalInstancePreparationService.PreparationDeniedException.class)
+        .hasMessage("Protected current-installation registry is unavailable");
+
+    verify(operationInput).requireMatches(input, "test");
+    verifyNoInteractions(repository, verifier);
   }
 
   @Test
