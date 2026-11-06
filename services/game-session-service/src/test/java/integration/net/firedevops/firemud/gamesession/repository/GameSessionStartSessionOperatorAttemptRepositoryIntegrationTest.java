@@ -32,6 +32,7 @@ import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReserv
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepository;
@@ -124,14 +125,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
                   .get(0, String.class))
           .isEqualTo("34.3");
 
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
 
       assertThat(
               dsl.fetch(
@@ -1946,14 +1941,7 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);

@@ -555,7 +555,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 proofDirectory.resolve("account"),
                 tenant);
         var world = database(WORLD, "world-management-service", true);
-        var gs = database(GS, "game-session-service", false)) {
+        var gs = database(GS, "game-session-service", true)) {
       var issuer =
           new AccountOriginalStartSessionAuthorizationProofFixture(
               account, proofDirectory.resolve("issuer"), NAMESPACE);

@@ -7,6 +7,7 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerPreimage;
@@ -34,14 +36,37 @@ import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerLayo
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerLayoutBootstrapRepository.TrustedLayoutDescriptor;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /** Shared actual-owner fixtures for issuer bootstrap and ordinary NEW integration proof. */
-final class CanonicalGameplayIssuerTestFixtures {
+public final class CanonicalGameplayIssuerTestFixtures {
   private CanonicalGameplayIssuerTestFixtures() {}
+
+  public static final List<String> PRIVATE_CATALOG_COLUMNS =
+      List.of(
+          "private_target_request_preimage",
+          "private_preparation_request_id",
+          "private_playtest_lifecycle_id",
+          "private_preparation_request_digest",
+          "private_state_generation",
+          "private_source_catalog_realm_id",
+          "private_source_catalog_request_id",
+          "private_source_catalog_revision",
+          "private_source_catalog_receipt_digest",
+          "private_target_policy_id",
+          "private_target_policy_digest",
+          "private_target_policy_source_commit_id",
+          "private_target_policy_source_revision_id",
+          "private_target_policy_logical_revision_id",
+          "private_canonical_version_id",
+          "private_published_release_bundle_ref",
+          "private_published_release_bundle_digest",
+          "private_source_policy_set_digest",
+          "private_source_policy_carrier_digest");
 
   static String schemaName(String prefix) {
     return prefix + UUID.randomUUID().toString().replace("-", "");
@@ -94,20 +119,31 @@ final class CanonicalGameplayIssuerTestFixtures {
     return configured;
   }
 
-  static void migrateSchema(
-      DriverManagerDataSource dataSource,
-      String schema,
-      String migrationLocation,
-      String targetVersion) {
-    var configuration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(migrationLocation);
+  /**
+   * Migrates one isolated owner schema with shared Saga history and an optional original target.
+   */
+  public static void migrateSchema(
+      DataSource dataSource, String schema, String migrationLocation, String targetVersion) {
+    var configuration = migrationConfiguration(dataSource, schema, migrationLocation);
     if (targetVersion != null) configuration.target(MigrationVersion.fromVersion(targetVersion));
     configuration.load().migrate();
+  }
+
+  /** Configures one isolated owner schema with shared Saga history and service migrations. */
+  public static FluentConfiguration migrationConfiguration(
+      DataSource dataSource, String schema, String migrationLocation) {
+    return Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations(
+            migrationLocation,
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize());
   }
 
   static void dropSchema(

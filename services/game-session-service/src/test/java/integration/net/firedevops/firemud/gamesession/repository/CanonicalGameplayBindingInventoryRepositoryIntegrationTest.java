@@ -40,7 +40,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransi
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -96,14 +95,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     String schema = "gs_binding_inventory_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
       DSLContext dsl = dslForSchema(dataSource, schema);
       CanonicalGameplayBindingInventoryRepository repository =
           new CanonicalGameplayBindingInventoryRepository(dsl);
@@ -132,14 +125,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     String schema = "gs_binding_first_inventory_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
       DSLContext dsl = dslForSchema(dataSource, schema);
       seedSyntheticVerifiedLegacyDisposition(dsl);
       CanonicalGameplayBindingInventoryRepository repository =
@@ -1088,14 +1075,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     String schema = "gs_binding_pending_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
       DSLContext dsl = dslForSchema(dataSource, schema);
       CanonicalGameplayBindingInventoryRepository repository =
           new CanonicalGameplayBindingInventoryRepository(dsl);
@@ -1132,14 +1113,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     String schema = "gs_binding_generation_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
       DSLContext dsl = dslForSchema(dataSource, schema);
       CanonicalGameplayBindingIdentity prior = identity(sourceSession());
       seedActiveSource(dsl, prior);
@@ -1371,14 +1346,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   private static TestSchema newTestSchema(String prefix, String applicationName) {
     String schema = prefix + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema, applicationName);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     return new TestSchema(schema, dataSource, dslForSchema(dataSource, schema));
   }
 

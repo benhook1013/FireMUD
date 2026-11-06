@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
@@ -681,14 +682,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
                 "canonical_tenant_id",
                 preV24Source.source().canonicalTenantId());
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     GameSessionCanonicalLaunchPreparationRepository preparationRepository =
         new GameSessionCanonicalLaunchPreparationRepository(transactionalDsl, catalogRepository);
     GameSessionStartSessionOperatorAttemptRepository attemptRepository =
@@ -919,11 +913,21 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
 
   private static String historicalProjection(
       DSLContext dsl, String table, String selector, UUID identity) {
+    String privateProjection =
+        "game_session_canonical_realm_catalog".equals(table)
+            ? " - ARRAY["
+                + CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+                    .map(column -> "'" + column + "'")
+                    .collect(java.util.stream.Collectors.joining(","))
+                + "]"
+            : "";
     return requiredRecord(
             dsl,
             "SELECT xmin::text || '/' || (to_jsonb(owner_row) "
                 + "- 'complete_policy_set_evidence' - 'fixture_policy_request_bytes' - 'fixture_policy_seal_operation_id' "
-                + "- 'fixture_policy_seal_request_digest' - 'fixture_policy_seal_evidence_digest')::text AS retained "
+                + "- 'fixture_policy_seal_request_digest' - 'fixture_policy_seal_evidence_digest' "
+                + privateProjection
+                + ")::text AS retained "
                 + "FROM "
                 + table
                 + " owner_row WHERE "
@@ -1001,6 +1005,18 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
                       preV24Catalog.creationRequestId())
                   .get("complete_policy_set_evidence", byte[].class))
           .isNull();
+      assertThat(
+              requiredRecord(
+                      dsl,
+                      "SELECT "
+                          + CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+                              .map(column -> column + " IS NULL")
+                              .collect(java.util.stream.Collectors.joining(" AND "))
+                          + " AS private_fields_clear "
+                          + "FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
+                      preV24Catalog.creationRequestId())
+                  .get("private_fields_clear", Boolean.class))
+          .isTrue();
       assertThatThrownBy(
               () -> catalogRepository.readByRequest(NAMESPACE, preV24Catalog.creationRequestId()))
           .isInstanceOf(

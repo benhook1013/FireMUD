@@ -14,7 +14,6 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -163,14 +162,11 @@ class GameSessionFreshTenantHistoryPostgresIntegrationTest {
   }
 
   private static void migrate(DriverManagerDataSource source, String schema, String target) {
-    var configuration =
-        Flyway.configure()
-            .dataSource(source)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .locations("filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath());
-    if (target != null) configuration.target(target);
-    configuration.load().migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        source,
+        schema,
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath(),
+        target);
   }
 
   private static Map<String, List<Map<String, Object>>> snapshot(

@@ -18,7 +18,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRef;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionRequest;
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -43,14 +42,8 @@ class CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest {
     String schema = "gs_tenant_tag_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
       DSLContext dsl = dslForSchema(dataSource, schema);
 
       UUID tenantA = UUID.randomUUID();
@@ -210,14 +203,8 @@ class CanonicalGameplayTenantGameplayTagRepositoryPostgresIntegrationTest {
     String schema = "gs_tenant_tag_lock_order_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
       DSLContext dsl = dslForSchema(dataSource, schema);
 
       UUID tenantId = UUID.randomUUID();

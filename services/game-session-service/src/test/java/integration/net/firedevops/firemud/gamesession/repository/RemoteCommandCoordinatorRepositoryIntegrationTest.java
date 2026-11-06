@@ -10,7 +10,6 @@ import net.firedevops.firemud.gamesession.entity.RemoteCommandCoordinator;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowup;
 import net.firedevops.firemud.gamesession.entity.RemoteFollowupResult;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -45,9 +44,9 @@ class RemoteCommandCoordinatorRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(
+    CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            dataSource,
+            "public",
             "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
         .load()
         .migrate();

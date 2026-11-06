@@ -82,7 +82,6 @@ import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationO
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRegionResponse;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationResponse;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -144,9 +143,9 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   void composesLeaseInstallRevalidationHandoffAndFailClosedSourceChanges() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     ControlledConnectionFailureDataSource dataSource = dataSource();
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(
+    CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            dataSource,
+            "public",
             "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
         .load()
         .migrate();
@@ -1523,14 +1522,10 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
 
   private static org.flywaydb.core.api.configuration.FluentConfiguration regionMigrations(
       DataSource dataSource, String schema) {
-    return Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(
-            "filesystem:"
-                + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
+    return CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+        dataSource,
+        schema,
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
   }
 
   private static void dropSchema(String schema) {

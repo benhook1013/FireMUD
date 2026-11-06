@@ -52,7 +52,10 @@ class GameplayCommandAccountUuidMigrationIntegrationTest {
                       + "FROM gameplay_command AS command_row ORDER BY command_id")
               .getValues("retained_row", String.class);
 
-      Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+      CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+              dataSource, "public", MIGRATION_LOCATION)
+          .load()
+          .migrate();
 
       List<Record> migratedRows =
           dsl.fetch(

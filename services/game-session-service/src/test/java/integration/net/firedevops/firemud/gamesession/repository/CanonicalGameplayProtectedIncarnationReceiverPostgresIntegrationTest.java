@@ -52,7 +52,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountInitialBarrierRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -1137,14 +1136,8 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
     private static Fixture open() throws Exception {
       String schema = "gs_incarnation_" + UUID.randomUUID().toString().replace("-", "");
       DriverManagerDataSource dataSource = dataSource(schema);
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       UUID tenantId = UUID.randomUUID();
       var runtime =
@@ -1328,14 +1321,8 @@ class CanonicalGameplayProtectedIncarnationReceiverPostgresIntegrationTest {
       private static InitialFixture open(BigInteger sourceControlEpoch) throws Exception {
         String schema = "gs_initial_incarnation_" + UUID.randomUUID().toString().replace("-", "");
         DriverManagerDataSource dataSource = Fixture.dataSource(schema);
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION)
-            .load()
-            .migrate();
+        CanonicalGameplayIssuerTestFixtures.migrateSchema(
+            dataSource, schema, MIGRATION_LOCATION, null);
         DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
         UUID tenantId = UUID.randomUUID();
         var runtime =

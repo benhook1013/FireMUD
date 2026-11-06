@@ -51,7 +51,13 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
     Flyway flyway =
         Flyway.configure()
             .dataSource(dataSource)
-            .locations(MIGRATION_LOCATION)
+            .placeholders(java.util.Map.of("serviceSchema", "public"))
+            .locations(
+                MIGRATION_LOCATION,
+                "filesystem:"
+                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                        .toAbsolutePath()
+                        .normalize())
             .cleanDisabled(false)
             .load();
     flyway.clean();

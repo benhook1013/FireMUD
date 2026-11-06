@@ -383,7 +383,13 @@ class AccountInitialAdmissionSettlementPostgresIntegrationTest {
             .dataSource(data)
             .schemas(data.getSchema())
             .defaultSchema(data.getSchema())
-            .locations(MIGRATIONS)
+            .placeholders(java.util.Map.of("serviceSchema", data.getSchema()))
+            .locations(
+                MIGRATIONS,
+                "filesystem:"
+                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                        .toAbsolutePath()
+                        .normalize())
             .load();
     migrations.migrate();
     return migrations;

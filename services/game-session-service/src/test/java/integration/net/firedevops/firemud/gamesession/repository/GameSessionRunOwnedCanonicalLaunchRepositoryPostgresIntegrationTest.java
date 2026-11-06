@@ -21,6 +21,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidenceTestFixture;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository;
@@ -32,7 +33,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssoc
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -617,12 +617,18 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     insertHistoricalCatalog(fixture, receipt, realmId);
     migrate(fixture, "1011").load().migrate();
     insertHumanLaunch(fixture, receipt, realmId, "retained-human-launch");
-    var before = retainedLaunchCatalogRows(fixture);
+    var columns =
+        historicalOwnerColumns(
+            fixture,
+            java.util.List.of(
+                "game_session_canonical_realm_catalog", "game_session_canonical_instance_launch"));
+    var before = originalOwnerRows(fixture, columns);
     Record triggerBefore = launchTriggerIdentity(fixture);
 
     migrate(fixture, null).load().migrate();
 
-    assertThat(retainedLaunchCatalogRows(fixture)).isEqualTo(before);
+    assertThat(originalOwnerRows(fixture, columns)).isEqualTo(before);
+    assertPublicCatalogPrivateColumnsRemainNull(fixture, columns);
     assertThat(launchTriggerIdentity(fixture)).isEqualTo(triggerBefore);
     assertThat(
             fixture
@@ -636,7 +642,8 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining(
             "Launch provenance differs from the exact retained canonical catalog owner");
-    assertThat(retainedLaunchCatalogRows(fixture)).isEqualTo(before);
+    assertThat(originalOwnerRows(fixture, columns)).isEqualTo(before);
+    assertPublicCatalogPrivateColumnsRemainNull(fixture, columns);
   }
 
   @Test
@@ -682,8 +689,8 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
 
   private static java.util.Map<String, java.util.List<String>> historicalOwnerColumns(
       Fixture fixture) {
-    var columns = new java.util.LinkedHashMap<String, java.util.List<String>>();
-    for (String table :
+    return historicalOwnerColumns(
+        fixture,
         java.util.List.of(
             "game_session_tenant_scope_reservation",
             "game_session_tenant_canonical_claim",
@@ -691,7 +698,13 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
             "game_session_authored_world_tenant_source_binding",
             "game_session_authored_world_source_intake",
             "gameplay_tenant_shared_playable_state_namespace",
-            "game_session_canonical_realm_catalog")) {
+            "game_session_canonical_realm_catalog"));
+  }
+
+  private static java.util.Map<String, java.util.List<String>> historicalOwnerColumns(
+      Fixture fixture, java.util.List<String> tables) {
+    var columns = new java.util.LinkedHashMap<String, java.util.List<String>>();
+    for (String table : tables) {
       columns.put(
           table,
           fixture
@@ -759,15 +772,23 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     return receipt;
   }
 
-  private static java.util.List<String> retainedLaunchCatalogRows(Fixture fixture) {
-    return fixture
+  private static void assertPublicCatalogPrivateColumnsRemainNull(
+      Fixture fixture, java.util.Map<String, java.util.List<String>> originalColumns) {
+    var privateColumns = CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS;
+    var currentColumns =
+        historicalOwnerColumns(fixture, java.util.List.copyOf(originalColumns.keySet()));
+    String catalog = "game_session_canonical_realm_catalog";
+    var expectedCatalogColumns = new java.util.ArrayList<>(originalColumns.get(catalog));
+    expectedCatalogColumns.addAll(privateColumns);
+    assertThat(currentColumns.get(catalog))
+        .containsExactlyInAnyOrderElementsOf(expectedCatalogColumns);
+    String launch = "game_session_canonical_instance_launch";
+    assertThat(currentColumns.get(launch)).containsExactlyElementsOf(originalColumns.get(launch));
+    fixture
         .dsl
-        .fetch(
-            "SELECT 'catalog' AS kind, xmin::text AS xmin, to_jsonb(owner_row)::text AS bytes "
-                + "FROM game_session_canonical_realm_catalog owner_row UNION ALL "
-                + "SELECT 'launch', xmin::text, to_jsonb(owner_row)::text "
-                + "FROM game_session_canonical_instance_launch owner_row ORDER BY kind, bytes")
-        .map(row -> row.get("kind") + "/" + row.get("xmin") + "/" + row.get("bytes"));
+        .fetch("SELECT " + String.join(", ", privateColumns) + " FROM " + catalog)
+        .intoMaps()
+        .forEach(row -> assertThat(row.values()).containsOnlyNulls());
   }
 
   private static Record launchTriggerIdentity(Fixture fixture) {
@@ -1135,12 +1156,8 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
   private static org.flywaydb.core.api.configuration.FluentConfiguration migrate(
       Fixture fixture, String target) {
     var configuration =
-        Flyway.configure()
-            .dataSource(fixture.dataSource)
-            .schemas(fixture.schema)
-            .defaultSchema(fixture.schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
+        CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            fixture.dataSource, fixture.schema, MIGRATION_LOCATION);
     if (target != null) configuration.target(target);
     return configuration;
   }
@@ -1329,15 +1346,8 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    var migration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
-    if (targetVersion != null) migration.target(targetVersion);
-    migration.load().migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, targetVersion);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
