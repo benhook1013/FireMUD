@@ -104,6 +104,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "player_entitlement_";
+  // Syntax-only credential for the explicitly mocked caller verifier, not a signed LOGIN.
+  private static final String CONTROLLED_COMPACT_TOKEN = "e30.e30.c2lnbmF0dXJl";
   private static final String NAMESPACE = "player-entitlement-proof";
   private static final String ISSUER = "firemud-account-service";
   private static final String PEER =
@@ -149,7 +151,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     for (boolean joined : new boolean[] {false, true}) {
       Fixture f = fixture(joined);
       var request = f.request();
-      var expected = f.owner.evaluate(request, "controlled-token");
+      var expected = f.owner.evaluate(request, CONTROLLED_COMPACT_TOKEN);
       var targetFields = (Map<?, ?>) expected.fields().get("target");
       var sources = (Map<?, ?>) expected.fields().get("sourceReferences");
       // Only the upstream target/custody are doubles. No owner, receiver or consumer is mocked.
@@ -184,7 +186,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       when(context.resolvedTarget()).thenReturn(target);
       var login = mock(CanonicalGameplayLoginResult.class);
       when(login.compactJwtBytes())
-          .thenAnswer(invocation -> "controlled-token".getBytes(StandardCharsets.US_ASCII));
+          .thenAnswer(invocation -> CONTROLLED_COMPACT_TOKEN.getBytes(StandardCharsets.US_ASCII));
       when(login.evidence())
           .thenReturn(
               new CanonicalGameplayLoginResult.NonSecretEvidence(
@@ -225,7 +227,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         assertThat(received.membershipSource().membershipExists()).isEqualTo(joined);
         assertThat(received.membershipSource().gameplayAdmissionAllowed()).isEqualTo(joined);
         assertThat(new String(received.canonicalBytes(), StandardCharsets.UTF_8))
-            .doesNotContain("controlled-token");
+            .doesNotContain(CONTROLLED_COMPACT_TOKEN);
         assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> false))
             .isInstanceOf(RuntimeException.class);
         assertThat(f.dsl.fetchCount(DSL.table("account_tenant_membership")))
@@ -242,7 +244,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       return HexFormat.of()
           .formatHex(
               MessageDigest.getInstance("SHA-256")
-                  .digest("controlled-token".getBytes(StandardCharsets.US_ASCII)));
+                  .digest(CONTROLLED_COMPACT_TOKEN.getBytes(StandardCharsets.US_ASCII)));
     } catch (java.security.NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException(unavailable);
     }
@@ -252,7 +254,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   void actualAbsenceBaselineReturnsNonadmittingPlayerEvidenceWithoutCreatingMembership() {
     Fixture f = fixture(false);
     long before = f.dsl.fetchCount(DSL.table("account_tenant_membership"));
-    var value = f.owner.evaluate(f.request(), "controlled-token");
+    var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
     assertThat(value.fields()).containsEntry("variant", "PLAYER_ADMISSION");
     assertThat(value.membershipSource().accountId())
         .isEqualTo(f.account.getAccountUuid().toString());
@@ -278,7 +280,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   @Test
   void actualFirstJoinRetainsItsPositiveMembershipAndExactScopeBinding() {
     Fixture f = fixture(true);
-    var value = f.owner.evaluate(f.request(), "controlled-token");
+    var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
     assertThat(value.membershipSource().membershipExists()).isTrue();
     assertThat(value.membershipSource().membershipVersion())
         .containsExactlyEntriesOf(Map.of(f.tenantId.toString(), "2"));
@@ -291,7 +293,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThat(binding.get("gameInstanceId")).isEqualTo(f.scope.gameInstanceId().toString());
     assertThat(binding.get("catalogRevision")).isEqualTo("7");
     assertThat(binding.get("pointerVersion")).isEqualTo("3");
-    assertThat(value.toString()).doesNotContain(f.scope.connectScopeId(), "controlled-token");
+    assertThat(value.toString()).doesNotContain(f.scope.connectScopeId(), CONTROLLED_COMPACT_TOKEN);
   }
 
   @Test
@@ -333,7 +335,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             })
         .when(f.demos)
         .readCurrent(f.tenantId);
-    assertThatThrownBy(() -> f.owner.evaluate(f.request(), "controlled-token"))
+    assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
         .hasMessageContaining("controlled final source commit refusal");
     assertThat(competingWriterRefused.get()).isTrue();
     var unlocked =
@@ -633,7 +635,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       var caller = mock(VerifiedCaller.class);
       when(caller.identity()).thenReturn(identity);
       when(caller.currentCandidate()).thenReturn(candidate);
-      when(callers.verifyPresentedCompactToken("controlled-token")).thenReturn(caller);
+      when(callers.verifyPresentedCompactToken(CONTROLLED_COMPACT_TOKEN)).thenReturn(caller);
       when(issuances.readCurrentCommittedCandidateByJti(identity.tokenJti()))
           .thenAnswer(
               invocation -> {

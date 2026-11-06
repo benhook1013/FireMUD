@@ -3436,6 +3436,13 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           try {
             var worldEndpoints = new ServiceEndpointsProperties();
             worldEndpoints.setWorldManagementService("127.0.0.1:" + worldLocationServer.getPort());
+            WorldPublishedAdmissionSourceComposition.exercise(
+                proofDirectory,
+                gs.dsl(),
+                currentTarget,
+                accountUuid,
+                worldEndpoints,
+                worldPki.client("game-session-service"));
             var initialLocationClient =
                 new CanonicalInitialPlayerLocationClient(
                     worldEndpoints, worldPki.client("game-session-service"), channels, NAMESPACE);
