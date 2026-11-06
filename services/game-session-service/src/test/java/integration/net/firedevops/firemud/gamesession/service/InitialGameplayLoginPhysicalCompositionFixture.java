@@ -51,6 +51,7 @@ public final class InitialGameplayLoginPhysicalCompositionFixture implements Aut
   private final InitialGameplayLoginCoordinationJournalRepository journal;
   private final RedisClient writer;
   private final List<String> mutations = new ArrayList<>();
+  private final List<String> journalObservations = new ArrayList<>();
   private InitialGameplayLoginOwner.Outcome outcome;
   private CanonicalGameplayLoginResult loginResult;
   private InitialGameplayLoginContextState installedReadback;
@@ -93,7 +94,28 @@ public final class InitialGameplayLoginPhysicalCompositionFixture implements Aut
 
   private InitialGameplayLoginPhysicalCompositionFixture(
       DSLContext gs, String redisHost, int redisPort) {
-    journal = new InitialGameplayLoginCoordinationJournalRepository(gs);
+    var actualJournal = new InitialGameplayLoginCoordinationJournalRepository(gs);
+    // Observation only: every method delegates to the unchanged real SQL owner.
+    journal =
+        org.mockito.Mockito.mock(
+            InitialGameplayLoginCoordinationJournalRepository.class,
+            invocation -> {
+              String operation = invocation.getMethod().getName();
+              try {
+                Object result =
+                    invoke(actualJournal, invocation.getMethod(), invocation.getArguments());
+                journalObservations.add(operation + ":OK");
+                return result;
+              } catch (Throwable failure) {
+                String sqlState =
+                    failure instanceof org.jooq.exception.DataAccessException sql
+                        ? sql.sqlState()
+                        : "none";
+                journalObservations.add(
+                    operation + ":" + failure.getClass().getSimpleName() + ":" + sqlState);
+                throw failure;
+              }
+            });
     String password = UUID.randomUUID().toString();
     configureOwnedPrincipal(redisHost, redisPort, password);
     writer = redis(redisHost, redisPort, PRINCIPAL, password);
@@ -120,6 +142,9 @@ public final class InitialGameplayLoginPhysicalCompositionFixture implements Aut
             transactionManager);
     outcome = new InitialGameplayLoginOwner(contexts, cleanup, account).receive(credentials);
     assertThat(outcome.status())
+        .as(
+            "Initial LOGIN failureCode=%s journal=%s mutations=%s",
+            outcome.failureCode(), journalObservations, mutations)
         .isEqualTo(InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING);
     loginResult = outcome.takePrivateResult().orElseThrow();
     assertThat(mutations).containsExactly("CREATE_PENDING", "INSTALL");
