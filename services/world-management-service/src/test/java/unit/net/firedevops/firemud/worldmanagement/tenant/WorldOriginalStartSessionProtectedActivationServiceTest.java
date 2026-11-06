@@ -148,12 +148,9 @@ class WorldOriginalStartSessionProtectedActivationServiceTest {
   }
 
   @Test
-  void accountProtectionAloneCannotAuthorizeFreshActivationWithoutConfiguredInstallation() {
+  void missingInstallationDeniesFreshActivationBeforeAcquiringAccountProtection() {
     var input = matchingInput();
-    var protection = matchingEvidence(input);
     when(repository.readProtectedActivationByAcquisitionInput(input)).thenReturn(Optional.empty());
-    when(repository.readTerminalEvidence(protection)).thenReturn(Optional.empty());
-    when(account.acquire(input)).thenReturn(protection);
     var defaultDenied =
         new WorldOriginalStartSessionProtectedActivationService(
             repository,
@@ -165,9 +162,32 @@ class WorldOriginalStartSessionProtectedActivationServiceTest {
         .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class)
         .hasMessageContaining("current-installation registry is unavailable");
 
-    verify(account).acquire(input);
+    verifyNoInteractions(account, activation);
+    verify(repository, never()).readTerminalEvidence(any());
     verify(repository, never()).activateProtected(any(), any());
-    verifyNoInteractions(activation);
+  }
+
+  @Test
+  void missingInstallationStillReplaysRetainedTerminalBeforeAcquiringAccountProtection() {
+    var input = matchingInput();
+    var terminal = mock(WorldOriginalStartSessionActivationTerminalEvidence.class);
+    when(repository.readProtectedActivationByAcquisitionInput(input))
+        .thenReturn(
+            Optional.of(
+                new WorldCanonicalInstanceActivationRepository.ProtectedActivationReadback(
+                    false, terminal)));
+    var defaultDenied =
+        new WorldOriginalStartSessionProtectedActivationService(
+            repository,
+            new WorldCanonicalInstanceActivationService(repository),
+            account,
+            "world-runtime");
+
+    assertThat(defaultDenied.activate(input)).isSameAs(terminal);
+
+    verifyNoInteractions(account, activation);
+    verify(repository, never()).readTerminalEvidence(any());
+    verify(repository, never()).activateProtected(any(), any());
   }
 
   private static AccountStartSessionActivationProtectionAcquisitionInput matchingInput() {

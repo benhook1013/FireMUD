@@ -93,6 +93,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     })
 @Import(NoGrpcServerTestConfiguration.class)
 class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederIntegrationSupport {
+  private static final String PREPARE_RUN_OWNED_FIXTURE = "prepareRunOwnedFixture";
+
   @Container
   static PostgreSQLContainer<?> composedGameSessionPostgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
@@ -345,7 +347,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                               () ->
                                   ReflectionTestUtils.invokeMethod(
                                       initialCommands,
-                                      "prepareRunOwnedFixture",
+                                      PREPARE_RUN_OWNED_FIXTURE,
                                       request,
                                       worldEvidence))))
           .isInstanceOf(RuntimeException.class);
@@ -366,7 +368,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                                   .WorldInstanceLifecycleSnapshotDto)
                               ReflectionTestUtils.invokeMethod(
                                   initialCommands,
-                                  "prepareRunOwnedFixture",
+                                  PREPARE_RUN_OWNED_FIXTURE,
                                   request,
                                   worldEvidence)));
       assertThat(prepared).isNotNull();
@@ -477,7 +479,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                       (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
                           ReflectionTestUtils.invokeMethod(
                               initialCommands,
-                              "prepareRunOwnedFixture",
+                              PREPARE_RUN_OWNED_FIXTURE,
                               request,
                               initialProvider.requireAuthenticatedEvidence())))
           .isEqualTo(prepared);
@@ -520,7 +522,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                               () ->
                                   ReflectionTestUtils.invokeMethod(
                                       initialCommands,
-                                      "prepareRunOwnedFixture",
+                                      PREPARE_RUN_OWNED_FIXTURE,
                                       mismatchedRequest,
                                       worldEvidence))))
           .isInstanceOf(IllegalArgumentException.class);
@@ -574,7 +576,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                                       .WorldInstanceLifecycleSnapshotDto)
                                   ReflectionTestUtils.invokeMethod(
                                       replayCommands,
-                                      "prepareRunOwnedFixture",
+                                      PREPARE_RUN_OWNED_FIXTURE,
                                       request,
                                       replayEvidence))))
           .isEqualTo(prepared);
