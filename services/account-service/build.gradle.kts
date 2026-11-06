@@ -204,6 +204,9 @@ val accountOriginalOrderProofJar by tasks.registering(Jar::class) {
         include("redis/scripts/account-game-session-delegation-authority-project-issuer.json")
         include("redis/scripts/account-initial-gameplay-login-dispose.json")
         include("redis/scripts/account-generation-projection-cas.json")
+        include("redis/scripts/account-selected-tenant-generation-projection.json")
+        include("redis/scripts/account-selected-membership-generation-projection.json")
+        include("META-INF/services/net.firedevops.firemud.common.redis.contracts.RedisScriptContribution")
     }
 }
 
