@@ -96,6 +96,67 @@ class WorldCanonicalInstancePreparationPreflightTest {
   }
 
   @Test
+  void exactCommittedReplayWithoutRegistryStillRequiresHeldAuthentication() {
+    var service = service(false);
+    var held = mock(HeldCommitAuthority.class);
+    var identity = mock(WorldCanonicalInstanceExecutionIdentity.class);
+    var result = mock(WorldCanonicalInstancePreparation.Result.class);
+    when(repository.hasRetainedCommittedCandidate(input, operation)).thenReturn(true);
+    when(verifier.verifyAndHold(input, operation)).thenReturn(held);
+    when(held.executionIdentity()).thenReturn(identity);
+    when(repository.readRetainedCommittedResult(input, held)).thenReturn(Optional.of(result));
+
+    try (var inputEncoding = mockStatic(WorldCanonicalInstancePreparationRepository.class)) {
+      inputEncoding
+          .when(() -> WorldCanonicalInstancePreparationRepository.inputJson(input))
+          .thenReturn("{}");
+      assertThat(service.prepare(input, operation)).isSameAs(result);
+    }
+
+    var order = inOrder(repository, verifier, held, identity);
+    order.verify(repository).hasRetainedCommittedCandidate(input, operation);
+    order.verify(verifier).verifyAndHold(input, operation);
+    order.verify(held).requireHeld();
+    order.verify(held).executionIdentity();
+    order.verify(identity).requireMatches(input, operation, "{}");
+    order.verify(repository).readRetainedCommittedResult(input, held);
+    order.verify(held).close();
+    verifyNoInteractions(registry);
+    verify(repository, never()).materialize(input, held);
+  }
+
+  @Test
+  void falseCommittedCandidateWithoutRegistryDeniesAfterHeldQualificationAndExactRead() {
+    var service = service(false);
+    var held = mock(HeldCommitAuthority.class);
+    var identity = mock(WorldCanonicalInstanceExecutionIdentity.class);
+    when(repository.hasRetainedCommittedCandidate(input, operation)).thenReturn(true);
+    when(verifier.verifyAndHold(input, operation)).thenReturn(held);
+    when(held.executionIdentity()).thenReturn(identity);
+    when(repository.readRetainedCommittedResult(input, held)).thenReturn(Optional.empty());
+
+    try (var inputEncoding = mockStatic(WorldCanonicalInstancePreparationRepository.class)) {
+      inputEncoding
+          .when(() -> WorldCanonicalInstancePreparationRepository.inputJson(input))
+          .thenReturn("{}");
+      assertThatThrownBy(() -> service.prepare(input, operation))
+          .isInstanceOf(WorldCanonicalInstancePreparationService.PreparationDeniedException.class)
+          .hasMessage("Protected current-installation registry is unavailable");
+    }
+
+    var order = inOrder(repository, verifier, held, identity);
+    order.verify(repository).hasRetainedCommittedCandidate(input, operation);
+    order.verify(verifier).verifyAndHold(input, operation);
+    order.verify(held).requireHeld();
+    order.verify(held).executionIdentity();
+    order.verify(identity).requireMatches(input, operation, "{}");
+    order.verify(repository).readRetainedCommittedResult(input, held);
+    order.verify(held).close();
+    verifyNoInteractions(registry);
+    verify(repository, never()).materialize(input, held);
+  }
+
+  @Test
   void candidateWithoutExactRetainedResultStillRequiresCommitTimeInstallationGuard() {
     var service = service();
     var held = mock(HeldCommitAuthority.class);
@@ -125,6 +186,10 @@ class WorldCanonicalInstancePreparationPreflightTest {
   }
 
   private WorldCanonicalInstancePreparationService service() {
+    return service(true);
+  }
+
+  private WorldCanonicalInstancePreparationService service(boolean withRegistry) {
     var evidence = mock(WorldCanonicalInstanceAssociation.GameSessionReadEvidence.class);
     var topology = mock(WorldCanonicalInstanceTopologyPlan.class);
     when(input.gameSessionReadEvidence()).thenReturn(evidence);
@@ -133,7 +198,10 @@ class WorldCanonicalInstancePreparationPreflightTest {
     when(input.topologyPlan()).thenReturn(topology);
     when(topology.generationRules()).thenReturn(List.of());
     when(topology.spawnBindings()).thenReturn(List.of());
-    return new WorldCanonicalInstancePreparationService(
-        repository, verifier, mock(OriginalOperationRecoveryVerifier.class), registry);
+    var recoveryVerifier = mock(OriginalOperationRecoveryVerifier.class);
+    return withRegistry
+        ? new WorldCanonicalInstancePreparationService(
+            repository, verifier, recoveryVerifier, registry)
+        : new WorldCanonicalInstancePreparationService(repository, verifier, recoveryVerifier);
   }
 }
