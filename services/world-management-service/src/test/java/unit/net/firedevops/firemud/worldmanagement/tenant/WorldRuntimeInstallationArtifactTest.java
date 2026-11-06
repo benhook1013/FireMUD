@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 import net.firedevops.firemud.common.world.WorldRuntimeFamilyCatalog;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -258,11 +259,16 @@ class WorldRuntimeInstallationArtifactTest {
 
   @Test
   void enforcesArtifactFieldAndArrayCeilings() {
+    byte[] oversized =
+        bytes(
+            FIXTURE
+                + " "
+                    .repeat(
+                        WorldRuntimeInstallationArtifact.MAX_BYTES + 1 - bytes(FIXTURE).length));
+    assertThat(oversized).hasSize(WorldRuntimeInstallationArtifact.MAX_BYTES + 1);
     assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                WorldRuntimeInstallationArtifact.parse(
-                    new byte[WorldRuntimeInstallationArtifact.MAX_BYTES + 1]));
+        .isThrownBy(() -> WorldRuntimeInstallationArtifact.parse(oversized))
+        .withMessage("Artifact byte bound exceeded");
     refuses(root -> root.put("generation", "x".repeat(257)));
     refuses(root -> root.put("generation", "\u00e9".repeat(129)));
     refuses(root -> object(root, "executor").put("identity", "x".repeat(513)));
@@ -283,11 +289,17 @@ class WorldRuntimeInstallationArtifactTest {
           ArrayNode families = (ArrayNode) owner(root).get("families");
           for (int index = 0; index < 256; index++) families.add(family(root).deepCopy());
         });
-    assertThatIllegalArgumentException()
-        .isThrownBy(
-            () ->
-                WorldRuntimeInstallationArtifact.parse(
-                    bytes("[".repeat(100) + "0" + "]".repeat(100))));
+    byte[] tooDeepObjectRoot = bytes("{\"nested\":".repeat(65) + "null" + "}".repeat(65));
+    IllegalArgumentException depthFailure =
+        Assertions.assertThrows(
+            IllegalArgumentException.class,
+            () -> WorldRuntimeInstallationArtifact.parse(tooDeepObjectRoot));
+    assertThat(depthFailure)
+        .hasMessage("Invalid closed runtime installation artifact")
+        .hasCauseInstanceOf(tools.jackson.core.exc.StreamConstraintsException.class);
+    assertThat(depthFailure.getCause())
+        .hasMessageContaining("Document nesting depth")
+        .hasMessageContaining("exceeds the maximum allowed (64");
   }
 
   private static void refuses(Consumer<ObjectNode> mutation) {
