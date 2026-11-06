@@ -4,6 +4,7 @@ import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestS
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -139,6 +140,8 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
       var first = registry.register();
       UUID gameInstanceId = UUID.randomUUID();
       AtomicInteger calls = new AtomicInteger();
+      registry.preflightLaunchOwners(gameInstanceId);
+      assertThat(f.count("world_runtime_required_owner_snapshot")).isZero();
       assertThat(registry.withLaunchOwners(gameInstanceId, calls::incrementAndGet)).isEqualTo(1);
       assertThat(
               f.dsl
@@ -154,12 +157,18 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
                   .get(0, Boolean.class))
           .isTrue();
       var frozen = f.retainedRows("world_runtime_required_owner_snapshot");
+      registry.preflightLaunchOwners(gameInstanceId);
+      assertThat(f.retainedRows("world_runtime_required_owner_snapshot")).isEqualTo(frozen);
       assertThat(registry.withLaunchOwners(gameInstanceId, calls::incrementAndGet)).isEqualTo(2);
       assertThat(f.retainedRows("world_runtime_required_owner_snapshot")).isEqualTo(frozen);
 
       source.replace(artifact());
       var second = registry.register();
       assertThat(second.revision()).isGreaterThan(first.revision());
+      assertThatThrownBy(() -> registry.preflightLaunchOwners(gameInstanceId))
+          .isInstanceOf(WorldRuntimeInstallationRegistry.RegistryUnavailableException.class)
+          .hasMessageContaining("Frozen required-owner set is absent or invalidated");
+      assertThat(f.retainedRows("world_runtime_required_owner_snapshot")).isEqualTo(frozen);
       assertThatThrownBy(() -> registry.withLaunchOwners(gameInstanceId, calls::incrementAndGet))
           .isInstanceOf(WorldRuntimeInstallationRegistry.RegistryUnavailableException.class);
       assertThat(calls.get()).isEqualTo(2);
@@ -238,7 +247,8 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
                       registration.revision() + 1,
                       registration.artifact().digest(),
                       registration.artifact().exactBytes()))
-          .isInstanceOf(RuntimeException.class);
+          .hasMessageContaining("Frozen owners must match the complete current installation")
+          .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
       assertThat(f.count("world_runtime_required_owner_snapshot")).isZero();
     }
   }
@@ -262,7 +272,9 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
                 "UPDATE " + table + " SET " + column + "=" + column,
                 "DELETE FROM " + table,
                 "TRUNCATE " + table)) {
-          assertThatThrownBy(() -> f.dsl.execute(statement)).isInstanceOf(RuntimeException.class);
+          assertThatThrownBy(() -> f.dsl.execute(statement))
+              .hasMessageContaining("Runtime installation and required-owner history is immutable")
+              .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("55000"));
           assertThat(f.retainedRows(table)).isEqualTo(retained);
         }
       }
@@ -295,7 +307,9 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
           List.of(
               "DELETE FROM world_runtime_installation_current",
               "TRUNCATE world_runtime_installation_current")) {
-        assertThatThrownBy(() -> f.dsl.execute(statement)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> f.dsl.execute(statement))
+            .hasMessageContaining("Current runtime installation cannot be deleted")
+            .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("55000"));
       }
       source.replace(firstBytes);
       assertThatThrownBy(registry::register)
@@ -541,6 +555,13 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
       dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
       throw failed;
     }
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current instanceof SQLException sqlException) return sqlException.getSQLState();
+    }
+    return null;
   }
 
   private record Fixture(

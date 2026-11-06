@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -21,6 +23,7 @@ import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTe
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -187,6 +190,34 @@ class WorldOriginalStartSessionProtectedActivationServiceTest {
 
     verifyNoInteractions(account, activation);
     verify(repository, never()).readTerminalEvidence(any());
+    verify(repository, never()).activateProtected(any(), any());
+  }
+
+  @Test
+  void unavailableProtectedSourceRefusesBeforeAccountAcquisition() {
+    var input = matchingInput();
+    var instanceId = UUID.fromString("88888888-8888-4888-8888-888888888888");
+    when(input.worldActivationRequest().canonicalGameInstanceId()).thenReturn(instanceId);
+    when(repository.readProtectedActivationByAcquisitionInput(input)).thenReturn(Optional.empty());
+    var registry = mock(WorldRuntimeInstallationRegistry.class);
+    doThrow(new WorldRuntimeInstallationRegistry.RegistryUnavailableException("source unavailable"))
+        .when(registry)
+        .preflightLaunchOwners(instanceId);
+    var composed =
+        new WorldOriginalStartSessionProtectedActivationService(
+            repository,
+            new WorldCanonicalInstanceActivationService(repository, registry),
+            account,
+            "world-runtime");
+
+    assertThatThrownBy(() -> composed.activate(input))
+        .isInstanceOf(WorldRuntimeInstallationRegistry.RegistryUnavailableException.class)
+        .hasMessage("source unavailable");
+
+    var order = inOrder(repository, registry);
+    order.verify(repository).readProtectedActivationByAcquisitionInput(input);
+    order.verify(registry).preflightLaunchOwners(instanceId);
+    verifyNoInteractions(account);
     verify(repository, never()).activateProtected(any(), any());
   }
 
