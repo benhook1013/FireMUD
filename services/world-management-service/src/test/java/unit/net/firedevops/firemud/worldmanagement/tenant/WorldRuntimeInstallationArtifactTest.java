@@ -273,22 +273,42 @@ class WorldRuntimeInstallationArtifactTest {
     refuses(root -> root.put("generation", "\u00e9".repeat(129)));
     refuses(root -> object(root, "executor").put("identity", "x".repeat(513)));
     refuses(root -> source(root).put("epoch", "1".repeat(20)));
-    refuses(
+    refusesWithMessage(
         root -> {
           ArrayNode entries = members(root);
-          ObjectNode first = owner(root).deepCopy();
-          for (int index = 0; index < 1024; index++) entries.add(first.deepCopy());
-        });
-    refuses(
+          ObjectNode noStateMember = ((ObjectNode) entries.get(1)).deepCopy();
+          for (int index = 0; index < 1023; index++) {
+            ObjectNode member = noStateMember.deepCopy();
+            member.put("workloadName", "z-member-%04d".formatted(index));
+            entries.add(member);
+          }
+          assertThat(entries.size()).isEqualTo(1025);
+        },
+        "Bounded installation array required");
+    refusesWithMessage(
         root -> {
           ArrayNode sources = (ArrayNode) owner(root).get("catalogSources");
-          for (int index = 0; index < 64; index++) sources.add(source(root).deepCopy());
-        });
-    refuses(
+          ObjectNode template = source(root).deepCopy();
+          for (int index = 1; index <= 64; index++) {
+            ObjectNode additional = template.deepCopy();
+            additional.put("sourceId", "world-sql-" + index);
+            sources.add(additional);
+          }
+          assertThat(sources.size()).isEqualTo(65);
+        },
+        "Bounded installation array required");
+    refusesWithMessage(
         root -> {
           ArrayNode families = (ArrayNode) owner(root).get("families");
-          for (int index = 0; index < 256; index++) families.add(family(root).deepCopy());
-        });
+          ObjectNode template = family(root).deepCopy();
+          for (int index = 1; index <= 256; index++) {
+            ObjectNode additional = template.deepCopy();
+            additional.put("familyId", "world-state-" + index);
+            families.add(additional);
+          }
+          assertThat(families.size()).isEqualTo(257);
+        },
+        "Bounded installation array required");
     byte[] tooDeepObjectRoot = bytes("{\"nested\":".repeat(65) + "null" + "}".repeat(65));
     IllegalArgumentException depthFailure =
         Assertions.assertThrows(
@@ -306,6 +326,13 @@ class WorldRuntimeInstallationArtifactTest {
     byte[] value = changed(mutation);
     assertThatIllegalArgumentException()
         .isThrownBy(() -> WorldRuntimeInstallationArtifact.parse(value));
+  }
+
+  private static void refusesWithMessage(Consumer<ObjectNode> mutation, String message) {
+    byte[] value = changed(mutation);
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> WorldRuntimeInstallationArtifact.parse(value))
+        .withMessage(message);
   }
 
   private static byte[] changed(Consumer<ObjectNode> mutation) {
