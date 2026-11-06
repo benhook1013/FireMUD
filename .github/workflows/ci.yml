@@ -825,7 +825,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      K3S_IMAGE: rancher/k3s:v1.34.12-k3s1@sha256:4ea0adb6b0ffedab0c58ffe5c99a49f2f7be871f38636c8baa2692899648d8c5
+      K3S_IMAGE: rancher/k3s:v1.34.13-k3s1@sha256:fb940fd33b04fe6894e5c09ca1d976e25a5eb378e2ee49144401d660dd1d306f
     if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.lightweight_only != 'true' }}
     steps:
       - name: Harden runner

@@ -8,17 +8,23 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
+import com.stripe.exception.ApiConnectionException;
+import com.stripe.exception.RateLimitException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.StripeObject;
 import com.stripe.net.ApiMode;
 import com.stripe.net.ApiResource;
 import com.stripe.net.ApiResource.RequestMethod;
 import com.stripe.net.BaseAddress;
+import com.stripe.net.HttpClient;
 import com.stripe.net.RequestOptions;
+import com.stripe.net.StripeRequest;
+import com.stripe.net.StripeResponse;
 import com.stripe.net.StripeResponseGetter;
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -70,9 +76,81 @@ class StripeHostingSubscriptionObserverTest {
     assertThrows(
         UnsupportedOperationException.class,
         () -> result.providerMetadata().put("unexpected", "mutation"));
+    assertEquals(250, transport.requestOptions.getConnectTimeout());
+    assertEquals(1000, transport.requestOptions.getReadTimeout());
+    assertEquals(0, transport.requestOptions.getMaxNetworkRetries());
     assertEquals(1, transport.callCount());
     assertEquals(RequestMethod.GET, transport.method());
     assertEquals("/v1/subscriptions/" + PROVIDER_SUBSCRIPTION_ID, transport.path());
+  }
+
+  @Test
+  void sdkOverridesClientDefaultsAndDoesNotRetryTransportTimeout() {
+    var calls = new java.util.ArrayList<StripeRequest>();
+    var failure =
+        new ApiConnectionException("read timed out", new java.net.SocketTimeoutException());
+    var http =
+        new HttpClient() {
+          @Override
+          public StripeResponse request(StripeRequest request) throws StripeException {
+            calls.add(request);
+            throw failure;
+          }
+        };
+    var client =
+        com.stripe.StripeClient.builder()
+            .setApiKey("sk_test_observation_fixture")
+            .setConnectTimeout(30_000)
+            .setReadTimeout(80_000)
+            .setMaxNetworkRetries(3)
+            .setHttpClient(http)
+            .build();
+    var observer =
+        new StripeHostingSubscriptionObserver(
+            client,
+            Clock.fixed(READ_STARTED_AT, ZoneOffset.UTC),
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
+
+    var result =
+        assertInstanceOf(
+            StripeHostingSubscriptionObserver.UnresolvedObservation.class,
+            observer.observe(expected()));
+
+    assertSame(failure, result.providerFailure());
+    assertEquals(1, calls.size());
+    assertEquals(250, calls.getFirst().options().getConnectTimeout());
+    assertEquals(1000, calls.getFirst().options().getReadTimeout());
+    assertEquals(0, calls.getFirst().options().getMaxNetworkRetries());
+  }
+
+  @Test
+  void requiresExplicitFiniteWholeMillisecondTimeouts() {
+    var client = new com.stripe.StripeClient(new ControlledStripeTransport(VALID_RESPONSE));
+    var clock = Clock.fixed(READ_STARTED_AT, ZoneOffset.UTC);
+    for (Duration invalid :
+        java.util.List.of(
+            Duration.ZERO,
+            Duration.ofMillis(-1),
+            Duration.ofNanos(1),
+            Duration.ofNanos(1_000_001),
+            Duration.ofMillis((long) Integer.MAX_VALUE + 1),
+            Duration.ofSeconds(Long.MAX_VALUE))) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              new StripeHostingSubscriptionObserver(client, clock, invalid, Duration.ofSeconds(1)));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              new StripeHostingSubscriptionObserver(client, clock, Duration.ofSeconds(1), invalid));
+    }
+    assertThrows(
+        NullPointerException.class,
+        () -> new StripeHostingSubscriptionObserver(client, clock, null, Duration.ofSeconds(1)));
+    assertThrows(
+        NullPointerException.class,
+        () -> new StripeHostingSubscriptionObserver(client, clock, Duration.ofSeconds(1), null));
   }
 
   @Test
@@ -259,6 +337,26 @@ class StripeHostingSubscriptionObserverTest {
   }
 
   @Test
+  void timeoutAndRateLimitRemainUnresolvedWithoutObserverRetry() {
+    for (StripeException failure :
+        java.util.List.of(
+            new ApiConnectionException("read timed out", new java.net.SocketTimeoutException()),
+            new RateLimitException("rate limited", null, "req_test", "rate_limit", 429, null))) {
+      var transport = new ControlledStripeTransport(failure);
+      var result =
+          assertInstanceOf(
+              StripeHostingSubscriptionObserver.UnresolvedObservation.class,
+              observer(transport).observe(expected()));
+      assertSame(failure, result.providerFailure());
+      assertTrue(result.retryable());
+      assertEquals(1, transport.callCount());
+      assertEquals(250, transport.requestOptions.getConnectTimeout());
+      assertEquals(1000, transport.requestOptions.getReadTimeout());
+      assertEquals(0, transport.requestOptions.getMaxNetworkRetries());
+    }
+  }
+
+  @Test
   void unknownProviderIdAndProviderReadFailureRemainUnresolvedWithTypedCause() {
     StripeException unknownIdFailure = mock(StripeException.class);
     ControlledStripeTransport transport = new ControlledStripeTransport(unknownIdFailure);
@@ -271,6 +369,9 @@ class StripeHostingSubscriptionObserverTest {
     assertEquals("sub_unknown", result.providerSubscriptionId());
     assertTrue(result.retryable());
     assertSame(unknownIdFailure, result.providerFailure());
+    assertEquals(250, transport.requestOptions.getConnectTimeout());
+    assertEquals(1000, transport.requestOptions.getReadTimeout());
+    assertEquals(0, transport.requestOptions.getMaxNetworkRetries());
     assertEquals(1, transport.callCount());
   }
 
@@ -331,7 +432,11 @@ class StripeHostingSubscriptionObserverTest {
 
   private static StripeHostingSubscriptionObserver observer(
       ControlledStripeTransport transport, Clock clock) {
-    return new StripeHostingSubscriptionObserver(new com.stripe.StripeClient(transport), clock);
+    return new StripeHostingSubscriptionObserver(
+        new com.stripe.StripeClient(transport),
+        clock,
+        Duration.ofMillis(250),
+        Duration.ofSeconds(1));
   }
 
   private static StripeHostingSubscriptionObserver.ExpectedBinding expected() {
@@ -399,6 +504,7 @@ class StripeHostingSubscriptionObserverTest {
     private int callCount;
     private RequestMethod method;
     private String path;
+    private RequestOptions requestOptions;
 
     private ControlledStripeTransport(String responseJson) {
       this.responseJson = responseJson;
@@ -422,6 +528,7 @@ class StripeHostingSubscriptionObserverTest {
         ApiMode apiMode)
         throws StripeException {
       callCount++;
+      requestOptions = options;
       method = requestMethod;
       path = requestPath;
       if (failure != null) {

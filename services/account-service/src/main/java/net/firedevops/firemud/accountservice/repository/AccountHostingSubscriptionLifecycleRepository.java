@@ -295,12 +295,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       requireObservedBinding(binding, observed);
     }
     Record oldReceipt = receiptForCurrent(links(current.subscriptionId()));
-    Instant origin = oldReceipt == null ? null : nullableInstant(oldReceipt, "past_due_since");
-    if (result instanceof ObservedSubscription observed
-        && "past_due".equals(observed.providerStatus())
-        && origin == null) {
-      origin = observed.observedAt().truncatedTo(ChronoUnit.MICROS);
-    }
+    Instant origin = retainedPastDueOrigin(oldReceipt);
+    // A provider read cannot establish when an uninterrupted payment-failure episode began.
+    // Missing retained history must remain unresolved rather than restarting warning/grace.
     var decision = retainedPolicy(operation).evaluate(result, now, origin);
     byte[] observation = AccountHostingSubscriptionLifecycleEvidence.observation(result);
     String observationDigest = AccountHostingSubscriptionLifecycleEvidence.digest(observation);
@@ -845,6 +842,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     public ExpectedBinding binding() {
       return binding;
     }
+  }
+
+  static Instant retainedPastDueOrigin(Record receipt) {
+    return receipt == null ? null : nullableInstant(receipt, "past_due_since");
   }
 
   private static Instant nullableInstant(Record row, String field) {
