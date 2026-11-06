@@ -135,6 +135,7 @@ The full direct-text `WORLDS` -> `LOGIN` -> `REALMS` -> conditional `JOIN` -> co
 
 ## Active Gaps
 
+- The [protected installation registry prerequisite](#protected-installation-registry-prerequisite) still lacks a protected current-installation source; default and runtime registration remain denied, and all-owner epoch/applicability and FRESH manifest collection remain unavailable.
 - Later gameplay-state families, especially loadouts, abilities, authored effects, richer resource tables, and any new character-creation or social/runtime consumer, still need explicit adoption of `{tenantId, gameInstanceId, playableStateScope}` before they become live. They must not reopen tenant-wide or bare-character shortcuts.
 - Entity Management owns actor rows and the Account relationship/projection to those rows remains an evolving Account/Entity seam. Actor rows carry account and tenant identity, but neither membership nor that relationship establishes one implicit gameplay namespace across realms.
 - Text `JOIN`/`Join & Play` dispatch remains unimplemented; the Account-local explicit writer is separate. Text `PLAY` lifecycle/generation validation is implemented; its outcome rules remain with the canonical owner linked above. Current connect-token issuance remains held before replay and authority reads. Full caller-target/atomic authority, connect-token membership/version reread, `allowNewGameplayBindings`, grant lifecycle/expiry, and lease-commit boundaries remain gaps; no membership is created implicitly.
