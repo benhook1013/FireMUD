@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -81,12 +82,20 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
             CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
                 discoveryRequest()),
             captured.getValue());
-    assertThat(result.targets()).hasSize(2);
-    assertThat(result.targets().getFirst().canonicalTenantId())
-        .isEqualTo(second.canonicalTenantId());
-    assertThat(result.targets().getFirst().canonicalGameInstanceId())
-        .isEqualTo(second.canonicalGameInstanceId());
-    assertThat(result.targets().getFirst().ownerProofDigest()).isEqualTo(second.ownerProofDigest());
+    assertThat(result.targets())
+        .extracting(
+            target -> target.canonicalTenantId(),
+            target -> target.canonicalGameInstanceId(),
+            target -> target.ownerProofDigest())
+        .containsExactlyInAnyOrder(
+            tuple(
+                first.canonicalTenantId(),
+                first.canonicalGameInstanceId(),
+                first.ownerProofDigest()),
+            tuple(
+                second.canonicalTenantId(),
+                second.canonicalGameInstanceId(),
+                second.ownerProofDigest()));
     verify(routes, org.mockito.Mockito.times(2)).readVisiblePublicProductionTargets();
   }
 

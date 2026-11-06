@@ -158,7 +158,9 @@ class AccountHostingSubscriptionLifecyclePolicyTest {
     var observer =
         new StripeHostingSubscriptionObserver(
             new com.stripe.StripeClient(new ControlledTransport(json)),
-            Clock.fixed(readAt, ZoneOffset.UTC));
+            Clock.fixed(readAt, ZoneOffset.UTC),
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     return observer.observe(
         new StripeHostingSubscriptionObserver.ExpectedBinding(
             "sub_expected",
