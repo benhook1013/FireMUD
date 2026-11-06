@@ -228,6 +228,11 @@ final class WorldPlayerAdmissionEntitlementComposition {
                         entitlementClient.read(
                             lobby, coordinates, transport, UUID.randomUUID(), login, () -> true))
                 .isInstanceOf(RuntimeException.class);
+          } catch (RuntimeException | Error failure) {
+            failure.addSuppressed(
+                new AssertionError(
+                    "Account LOGIN owner stages: " + loginOwner.ownerObservations()));
+            throw failure;
           }
         }
       } finally {

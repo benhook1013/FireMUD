@@ -305,7 +305,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
   @Container
   static final PostgreSQLContainer<?> ACCOUNT =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      // Account's exact-original LOGIN disposal refuses nondurable PostgreSQL settings.
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withCommand("postgres", "-c", "fsync=on", "-c", "synchronous_commit=on");
 
   @Container
   static final GenericContainer<?> REDIS =
@@ -602,6 +604,15 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       var issuer =
           new AccountOriginalStartSessionAuthorizationProofFixture(
               account, proofDirectory.resolve("issuer"), NAMESPACE);
+      var accountDurability =
+          issuer
+              .sourceDsl()
+              .fetchSingle(
+                  "SELECT pg_is_in_recovery() AS recovery, current_setting('fsync') AS fsync,"
+                      + " current_setting('synchronous_commit') AS commit_mode");
+      assertThat(accountDurability.get("recovery", Boolean.class)).isFalse();
+      assertThat(accountDurability.get("fsync", String.class)).isEqualTo("on");
+      assertThat(accountDurability.get("commit_mode", String.class)).isEqualTo("on");
       Duration lease =
           refusal == Refusal.EXPIRED_ATTEMPT
               ? Duration.ofSeconds(30)

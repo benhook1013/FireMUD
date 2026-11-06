@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +17,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.GameplayLoginSourceContext;
@@ -77,6 +79,7 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
   private final AccountGameplayPrimaryCredentialVerifier verifier;
   private final AccountGameplayDelegationCommittedIssuanceOwner committedOwner;
   private final AccountInitialGameplayLoginDisposalOwner disposal;
+  private final List<String> ownerObservations = new CopyOnWriteArrayList<>();
   private final String otp = "shared-login-" + UUID.randomUUID();
 
   public AccountPlayerAdmissionSharedOwnerFixture(
@@ -130,9 +133,11 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
     issuanceProxy.addAdvice(
         new TransactionInterceptor(sources.manager, new AnnotationTransactionAttributeSource()));
     issuance =
-        (AccountGameplayDelegationIssuanceRepository)
-            issuanceProxy.getProxy(
-                AccountGameplayDelegationIssuanceRepository.class.getClassLoader());
+        observed(
+            AccountGameplayDelegationIssuanceRepository.class,
+            (AccountGameplayDelegationIssuanceRepository)
+                issuanceProxy.getProxy(
+                    AccountGameplayDelegationIssuanceRepository.class.getClassLoader()));
     var cryptography =
         new AccountResponseEnvelopeCryptography(
             new AccountResponseEnvelopeKeyring(writeResponseKeyring(temporary).toString()));
@@ -141,58 +146,110 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
             sources.dsl, authoritySources, bundles, issuance, cryptography);
     var lifecycle = original.signerFixture;
     var signer =
-        new AccountGameplayDelegationSigner(
-            issuance,
-            lifecycle.desired,
-            lifecycle.trust,
-            lifecycle.api,
-            original.publicSource,
-            new AccountGameplayDelegationResponseEnvelopeService(envelopes),
-            sources.manager,
-            clock,
-            lifecycle.privateRoot,
-            Path.of("current.key"),
-            lifecycle.publicRoot,
-            Path.of("jwks.json"));
+        observed(
+            AccountGameplayDelegationSigner.class,
+            new AccountGameplayDelegationSigner(
+                issuance,
+                lifecycle.desired,
+                lifecycle.trust,
+                lifecycle.api,
+                original.publicSource,
+                new AccountGameplayDelegationResponseEnvelopeService(envelopes),
+                sources.manager,
+                clock,
+                lifecycle.privateRoot,
+                Path.of("current.key"),
+                lifecycle.publicRoot,
+                Path.of("jwks.json")));
     var redis =
-        new AccountGameplayDelegationRedisClient(
-            connections,
-            loginScriptCatalog(),
-            new AcknowledgementRequirements(1, 1, 5_000),
-            clock,
-            REGISTRY_BYTES,
-            AccountPlayerAdmissionSharedOwnerFixture.class.getClassLoader());
+        observed(
+            AccountGameplayDelegationRedisClient.class,
+            new AccountGameplayDelegationRedisClient(
+                connections,
+                loginScriptCatalog(),
+                new AcknowledgementRequirements(1, 1, 5_000),
+                clock,
+                REGISTRY_BYTES,
+                AccountPlayerAdmissionSharedOwnerFixture.class.getClassLoader()));
     projection =
-        new AccountGameplayDelegationAuthorityProjection(authoritySources, sources.manager, redis);
+        observed(
+            AccountGameplayDelegationAuthorityProjection.class,
+            new AccountGameplayDelegationAuthorityProjection(
+                authoritySources, sources.manager, redis));
     var registry =
-        new AccountGameplayDelegationTokenRegistry(
-            issuance, sources.manager, redis, clock, REGISTRY_BYTES, REGISTRY_CLEANUP_MILLIS);
+        observed(
+            AccountGameplayDelegationTokenRegistry.class,
+            new AccountGameplayDelegationTokenRegistry(
+                issuance, sources.manager, redis, clock, REGISTRY_BYTES, REGISTRY_CLEANUP_MILLIS));
     disposal =
-        new AccountInitialGameplayLoginDisposalOwner(
-            new AccountInitialGameplayLoginDisposalRepository(sources.dsl),
-            registry,
-            sources.manager);
+        observed(
+            AccountInitialGameplayLoginDisposalOwner.class,
+            new AccountInitialGameplayLoginDisposalOwner(
+                observed(
+                    AccountInitialGameplayLoginDisposalRepository.class,
+                    new AccountInitialGameplayLoginDisposalRepository(sources.dsl)),
+                registry,
+                sources.manager));
     var commit =
-        new AccountGameplayDelegationIssuanceCommitService(
-            signer, registry, projection, issuance, sources.manager, clock);
+        observed(
+            AccountGameplayDelegationIssuanceCommitService.class,
+            new AccountGameplayDelegationIssuanceCommitService(
+                signer, registry, projection, issuance, sources.manager, clock));
     committedOwner =
-        new AccountGameplayDelegationCommittedIssuanceOwner(
-            issuance, signer, registry, sources.manager, clock);
+        observed(
+            AccountGameplayDelegationCommittedIssuanceOwner.class,
+            new AccountGameplayDelegationCommittedIssuanceOwner(
+                issuance, signer, registry, sources.manager, clock));
     var recovery =
-        new AccountGameplayDelegationResponseRecoveryOwner(
-            envelopes, committedOwner, sources.manager);
-    verifier = new AccountGameplayPrimaryCredentialVerifier(sources.primary);
+        observed(
+            AccountGameplayDelegationResponseRecoveryOwner.class,
+            new AccountGameplayDelegationResponseRecoveryOwner(
+                envelopes, committedOwner, sources.manager));
+    verifier =
+        observed(
+            AccountGameplayPrimaryCredentialVerifier.class,
+            new AccountGameplayPrimaryCredentialVerifier(sources.primary));
     login =
-        new AccountGameplayCanonicalLoginOwner(
-            sources.accounts,
-            issuance,
-            digestKeys(clock),
-            commit,
-            recovery,
-            sources.manager,
-            clock);
+        observed(
+            AccountGameplayCanonicalLoginOwner.class,
+            new AccountGameplayCanonicalLoginOwner(
+                sources.accounts,
+                issuance,
+                digestKeys(clock),
+                commit,
+                recovery,
+                sources.manager,
+                clock));
     // Control-UI consumed the original challenge. Never resurrect or reuse that consumed row.
     sources.installGlobalOtp(account, otp);
+  }
+
+  /** Bounded stage names only; no invocation arguments, results, SQL or token material. */
+  public List<String> ownerObservations() {
+    return List.copyOf(ownerObservations);
+  }
+
+  private <T> T observed(Class<T> type, T actual) {
+    return org.mockito.Mockito.mock(
+        type,
+        invocation -> {
+          String operation = type.getSimpleName() + "." + invocation.getMethod().getName();
+          ownerObservations.add(operation + ":ENTER");
+          try {
+            Object result = invocation.getMethod().invoke(actual, invocation.getArguments());
+            ownerObservations.add(operation + ":OK");
+            return result;
+          } catch (InvocationTargetException wrapped) {
+            Throwable failure = wrapped.getCause();
+            String sqlState =
+                failure instanceof org.jooq.exception.DataAccessException sql
+                    ? sql.sqlState()
+                    : "none";
+            ownerObservations.add(
+                operation + ":" + failure.getClass().getSimpleName() + ":" + sqlState);
+            throw failure;
+          }
+        });
   }
 
   public UUID accountId() {
