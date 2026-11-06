@@ -3,6 +3,8 @@ package net.firedevops.firemud.accountservice.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.grpc.Server;
@@ -143,6 +145,36 @@ class CanonicalGameplayAdmissionDecisionReadClientMtlsTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("invalid canonical discovery evidence");
       assertThat(service.calls()).hasValue(2);
+    }
+  }
+
+  @Test
+  void oversizedAuthenticatedResponsePreservesResourceExhaustedFromInboundLimit() throws Exception {
+    var service = new DiscoveryProbeService();
+    service.respondWith(
+        request ->
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(request, List.of())
+                .toBuilder()
+                .setUnknownFields(
+                    UnknownFieldSet.newBuilder()
+                        .addField(
+                            100,
+                            UnknownFieldSet.Field.newBuilder()
+                                .addLengthDelimited(ByteString.copyFrom(new byte[4 * 1024 * 1024]))
+                                .build())
+                        .build())
+                .build());
+    try (var server = startServer("game-session", service);
+        var client = newClient(server.port(), "account")) {
+      client.init();
+      assertThatThrownBy(
+              () -> client.listVisiblePublicProductionAdmissionTargets(UUID.randomUUID()))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.RESOURCE_EXHAUSTED));
+      assertThat(service.calls()).hasValue(1);
     }
   }
 
