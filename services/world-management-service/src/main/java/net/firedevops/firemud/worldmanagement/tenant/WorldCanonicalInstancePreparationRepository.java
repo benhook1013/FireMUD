@@ -114,9 +114,28 @@ public final class WorldCanonicalInstancePreparationRepository {
    */
   Optional<Result> readRetainedCommittedResult(
       Input input, WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
+    VerifiedPreparationInput verified =
+        verifyPreparationInput(
+            input, authority, "Canonical World preparation retained-result read");
+    WorldCanonicalInstanceExecutionIdentity executionIdentity = verified.identity();
+
+    Optional<ExecutionOperation> retained = readExactExecution(executionIdentity).operation();
+    if (retained.isEmpty() || retained.orElseThrow().state() != ExecutionState.COMMITTED) {
+      return Optional.empty();
+    }
+    return Optional.of(readCommittedResult(input, retained.orElseThrow()));
+  }
+
+  private record VerifiedPreparationInput(
+      WorldCanonicalInstanceExecutionIdentity identity, String inputJson) {}
+
+  private VerifiedPreparationInput verifyPreparationInput(
+      Input input,
+      WorldCanonicalInstancePreparationService.HeldCommitAuthority authority,
+      String operation) {
     Objects.requireNonNull(input, "input");
     Objects.requireNonNull(authority, "authority");
-    requireNoActiveTransaction("Canonical World preparation retained-result read");
+    requireNoActiveTransaction(operation);
     WorldCanonicalInstanceExecutionIdentity executionIdentity =
         Objects.requireNonNull(
             authority.executionIdentity(),
@@ -127,12 +146,7 @@ public final class WorldCanonicalInstancePreparationRepository {
     }
     String inputJson = inputJson(input);
     executionIdentity.requireMatches(input, inputJson);
-
-    Optional<ExecutionOperation> retained = readExactExecution(executionIdentity).operation();
-    if (retained.isEmpty() || retained.orElseThrow().state() != ExecutionState.COMMITTED) {
-      return Optional.empty();
-    }
-    return Optional.of(readCommittedResult(input, retained.orElseThrow()));
+    return new VerifiedPreparationInput(executionIdentity, inputJson);
   }
 
   /**
@@ -142,20 +156,11 @@ public final class WorldCanonicalInstancePreparationRepository {
    */
   public Result materialize(
       Input input, WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
-    Objects.requireNonNull(input, "input");
-    Objects.requireNonNull(authority, "authority");
-    requireNoActiveTransaction("Canonical World preparation");
-    WorldCanonicalInstanceExecutionIdentity executionIdentity =
-        Objects.requireNonNull(
-            authority.executionIdentity(),
-            "Canonical preparation authority returned no typed World execution identity");
-    if (!executionIdentity.hasOriginalAttemptEvidence()) {
-      throw new WorldCanonicalInstancePreparationService.PreparationDeniedException(
-          "Fresh World admission requires Account's exact original Game Session attempt observation");
-    }
-    String inputJson = inputJson(input);
+    VerifiedPreparationInput verified =
+        verifyPreparationInput(input, authority, "Canonical World preparation");
+    WorldCanonicalInstanceExecutionIdentity executionIdentity = verified.identity();
+    String inputJson = verified.inputJson();
     String inputDigest = digest(inputJson.getBytes(StandardCharsets.UTF_8));
-    executionIdentity.requireMatches(input, inputJson);
 
     ExecutionLookup lookup = readExactExecution(executionIdentity);
     Optional<ExecutionOperation> retained = lookup.operation();

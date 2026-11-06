@@ -37,6 +37,10 @@ dependencies {
   add("crossServiceTestImplementation", "io.grpc:grpc-util:${libs.versions.grpc.get()}")
 }
 
+tasks.named<Test>("test") {
+    inputs.file(rootProject.file("dev-tools/deploy/fixtures/runtime-installation/candidate.json"))
+}
+
 // Receiving owner proof uses World classes without its application or Flyway resources.
 val worldClassesProofJar by tasks.registering(Jar::class) {
     archiveClassifier.set("classes-proof")
