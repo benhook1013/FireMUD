@@ -27,6 +27,7 @@ import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 
 /**
  * Genuine Account owner mutations. Fresh creator/legal sources and signer platform evidence are
@@ -98,6 +99,35 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
         null,
         Clock.systemUTC(),
         ownedCompositionConnections);
+  }
+
+  /**
+   * Test-only composition with one preselected Game Design provenance tuple shared by Account and
+   * World. It is imported during construction, never substituted onto existing associations.
+   */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      FreshTenantCreationEvidence creationEvidence,
+      boolean ownedCompositionConnections)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        Objects.requireNonNull(creationEvidence, "creationEvidence").canonicalTenantId(),
+        Clock.systemUTC(),
+        null,
+        Clock.systemUTC(),
+        ownedCompositionConnections,
+        creationEvidence);
   }
 
   /** Actor clock is injectable for genuine signed-credential expiry recovery proof. */
@@ -193,6 +223,35 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       Clock serviceClock,
       boolean ownedCompositionConnections)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        migrationTarget,
+        serviceClock,
+        ownedCompositionConnections,
+        AccountControlUiOwnerSourcesFixture.defaultCreation(gameDesignTenant));
+  }
+
+  private AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget,
+      Clock serviceClock,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence)
+      throws Exception {
     this.temporary = temporary;
     Objects.requireNonNull(actorClock, "actorClock");
     Objects.requireNonNull(serviceClock, "serviceClock");
@@ -205,7 +264,8 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             false,
             gameDesignTenant,
             migrationTarget,
-            ownedCompositionConnections);
+            ownedCompositionConnections,
+            creationEvidence);
     RedisClient allocatedClient = null;
     try {
       signerFixture = new AccountControlUiSignerFixture(f, temporary, serviceClock);
@@ -235,6 +295,8 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
                     .on()
                     .addPassword(PASSWORD)
                     .keyPattern("session:auth:token:*")
+                    .keyPattern("session:auth:generation:issuer:*")
+                    .keyPattern("session:auth:generation:account:*")
                     .addCommand(io.lettuce.core.protocol.CommandType.HELLO)
                     .addCommand(io.lettuce.core.protocol.CommandType.PING)
                     .addCommand(
@@ -250,6 +312,8 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
                     .addCommand(io.lettuce.core.protocol.CommandType.GET)
                     .addCommand(io.lettuce.core.protocol.CommandType.SET)
                     .addCommand(io.lettuce.core.protocol.CommandType.PEXPIRETIME)
+                    .addCommand(io.lettuce.core.protocol.CommandType.PTTL)
+                    .addCommand(io.lettuce.core.protocol.CommandType.TYPE)
                     .addCommand(io.lettuce.core.protocol.CommandType.TIME));
         connection
             .sync()
@@ -333,6 +397,16 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
 
   public UUID tenantId() {
     return f.tenant;
+  }
+
+  /** The exact immutable source tuple imported at construction for cross-owner composition. */
+  public FreshTenantCreationEvidence creationEvidence() {
+    return f.creationEvidence;
+  }
+
+  /** Reuse the same physical test-only Account writer without resetting its ACL or credentials. */
+  AccountCoordinationPinnedConnectionProvider gameplayConnectionProvider() {
+    return () -> accountClient.connect(ByteArrayCodec.INSTANCE);
   }
 
   /**

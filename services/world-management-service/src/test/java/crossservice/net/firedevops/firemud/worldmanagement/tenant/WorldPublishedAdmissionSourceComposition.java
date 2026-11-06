@@ -38,9 +38,10 @@ import org.jooq.DSLContext;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Real GS OPEN/current publication reader and World ACTIVE owner over authenticated sockets.
- * Upstream Game Design publication and ephemeral PKI remain controlled test inputs. This reads
- * evidence only, and does not establish LOGIN, entitlement, gameplay binding or activation.
+ * Real GS OPEN/current publication and World ACTIVE reads over authenticated sockets, followed by
+ * actual Account LOGIN, absent-player entitlement, owner-local first JOIN and positive source
+ * reread. Game Design publication, DEMO policy, PKI, caller coordinates and custody callbacks are
+ * controlled. No public ingress, World hold across JOIN, installed custody or activation is proved.
  */
 final class WorldPublishedAdmissionSourceComposition {
   private WorldPublishedAdmissionSourceComposition() {}
@@ -50,6 +51,8 @@ final class WorldPublishedAdmissionSourceComposition {
       DSLContext gs,
       CanonicalPlayableTarget target,
       UUID account,
+      net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture
+          originalAccount,
       ServiceEndpointsProperties worldEndpoints,
       CommonGrpcClientProperties worldTls)
       throws Exception {
@@ -195,6 +198,8 @@ final class WorldPublishedAdmissionSourceComposition {
                     target.pointerVersion());
             assertThatThrownBy(() -> accountClient.resolvePublishedRealmAdmissionTarget(wrong))
                 .isInstanceOf(RuntimeException.class);
+            WorldPlayerAdmissionEntitlementComposition.exercise(
+                root, originalAccount, accountClient, target);
           }
         } finally {
           stop(receiver);

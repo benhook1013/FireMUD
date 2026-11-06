@@ -64,12 +64,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture;
+import net.firedevops.firemud.accountservice.service.session.AccountPlayerAdmissionSharedOwnerFixture;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementService;
@@ -584,6 +586,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           "Created placement proof requires the committed coupled owner path");
     }
     UUID tenant = UUID.randomUUID();
+    var sharedAuthoredSource = controlledSource("controlled-upstream", tenant);
+    var sharedCreation =
+        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(sharedAuthoredSource);
     try (var account =
             new AccountControlUiOriginalOrderFixture(
                 ACCOUNT.getJdbcUrl(),
@@ -592,7 +597,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 REDIS.getHost(),
                 REDIS.getMappedPort(6379),
                 proofDirectory.resolve("account"),
-                tenant,
+                sharedCreation,
                 true);
         var world = database(WORLD, "world-management-service", true);
         var gs = database(GS, "game-session-service", true)) {
@@ -682,7 +687,14 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       var createdPublication = new AtomicReference<RealmPolicyPublishedEvidence.PublishedSet>();
       var preparedInput =
           preparationInputs(
-              world, gs, tuple, claim.get(), tenant, playerCreatedPlacement, createdPublication);
+              world,
+              gs,
+              tuple,
+              claim.get(),
+              tenant,
+              playerCreatedPlacement,
+              createdPublication,
+              sharedAuthoredSource);
       var input =
           refusal == Refusal.MISMATCHED_ATTEMPT
               ? new WorldCanonicalInstancePreparation.Input(
@@ -1860,6 +1872,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               exerciseCoupledCanonicalInitialAdmission(
                   gs,
                   world,
+                  account,
                   issuer,
                   currentAttempt,
                   proofDirectory,
@@ -2426,6 +2439,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   private static void exerciseCoupledCanonicalInitialAdmission(
       Database gs,
       Database world,
+      AccountControlUiOriginalOrderFixture account,
       AccountOriginalStartSessionAuthorizationProofFixture issuer,
       GrpcOriginalStartSessionCurrentAttemptClient currentAttempt,
       Path proofDirectory,
@@ -3008,6 +3022,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       composeActualEntityWorldRegionPrerequisite(
           gs,
           world,
+          account,
           proofDirectory,
           pki,
           factory,
@@ -3088,6 +3103,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   private static void composeActualEntityWorldRegionPrerequisite(
       Database gs,
       Database world,
+      AccountControlUiOriginalOrderFixture account,
       Path proofDirectory,
       WorldOriginalStartSessionPreparationProofPki worldPki,
       GrpcChannelFactory channels,
@@ -3436,13 +3452,22 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           try {
             var worldEndpoints = new ServiceEndpointsProperties();
             worldEndpoints.setWorldManagementService("127.0.0.1:" + worldLocationServer.getPort());
-            WorldPublishedAdmissionSourceComposition.exercise(
-                proofDirectory,
-                gs.dsl(),
-                currentTarget,
-                accountUuid,
-                worldEndpoints,
-                worldPki.client("game-session-service"));
+            // Authenticate after the earlier password/authority mutation has settled. The
+            // creation tuple is shared by Account, World and GS; the caller is still controlled.
+            var loginOwner =
+                new AccountPlayerAdmissionSharedOwnerFixture(
+                    account, proofDirectory.resolve("shared-login"));
+            var loginRequest =
+                loginOwner.loginRequest(
+                    UUID.randomUUID(),
+                    new GameplayCredentialSourceContext(
+                        UUID.randomUUID(), "192.0.2.42", "direct-text"));
+            var loginResult =
+                loginOwner.authenticate(
+                    loginRequest, "spiffe://firemud/ns/firemud/sa/game-session-service");
+            loginOwner.assertCommittedNonAdmittingLogin(loginResult);
+            assertThat(loginResult.accountId()).isEqualTo(accountUuid);
+            assertThat(loginOwner.creationEvidence()).isEqualTo(account.creationEvidence());
             var initialLocationClient =
                 new CanonicalInitialPlayerLocationClient(
                     worldEndpoints, worldPki.client("game-session-service"), channels, NAMESPACE);
@@ -3549,6 +3574,15 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               assertThat(regionProofs.foreignOwnerCapabilityRejectedWithoutStateChange()).isTrue();
               assertThat(regionProofs.expiredGrantRejectedWithoutStateChange()).isTrue();
             }
+            // Run the genuine second-player DEMO mutation after original placement assertions.
+            WorldPublishedAdmissionSourceComposition.exercise(
+                proofDirectory,
+                gs.dsl(),
+                currentTarget,
+                accountUuid,
+                account,
+                worldEndpoints,
+                worldPki.client("game-session-service"));
           } finally {
             shutdown(worldLocationServer);
             entityReceiptClient.close();
@@ -4168,11 +4202,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
       UUID tenant,
       boolean playerCreatedPlacement,
-      AtomicReference<RealmPolicyPublishedEvidence.PublishedSet> createdPublication)
+      AtomicReference<RealmPolicyPublishedEvidence.PublishedSet> createdPublication,
+      AuthoredWorldSourceEvidence source)
       throws Exception {
     var intakeRepository = new WorldAuthoredSourceIntakeRepository(world.dsl());
     var versionRepository = new WorldAuthoredVersionIdentityRepository(world.dsl());
-    var source = controlledSource("controlled-upstream", tenant);
     var intake =
         Objects.requireNonNull(
             world
