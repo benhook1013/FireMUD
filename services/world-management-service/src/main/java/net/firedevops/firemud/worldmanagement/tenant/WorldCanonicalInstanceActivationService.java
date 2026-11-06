@@ -78,10 +78,7 @@ public final class WorldCanonicalInstanceActivationService {
         held.requireHeld();
         return retained.orElseThrow();
       }
-      if (installationRegistry == null) {
-        throw new ActivationDeniedException(
-            "Protected current-installation registry is unavailable");
-      }
+      requireInstallationRegistry();
       WorldOriginalStartSessionActivationTerminalEvidence terminal =
           installationRegistry.withLaunchOwners(
               protection.request().worldActivationRequest().canonicalGameInstanceId(),
@@ -111,6 +108,13 @@ public final class WorldCanonicalInstanceActivationService {
     Objects.requireNonNull(protection, "protection");
     requireNoActiveTransaction();
     return repository.abortProtected(protection, terminalCode);
+  }
+
+  /** Rejects missing composition before the orchestrator acquires durable Account protection. */
+  void requireInstallationRegistry() {
+    if (installationRegistry == null) {
+      throw new ActivationDeniedException("Protected current-installation registry is unavailable");
+    }
   }
 
   private static void requireNoActiveTransaction() {
