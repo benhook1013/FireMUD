@@ -8,17 +8,23 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
@@ -50,17 +56,27 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner.Request;
+import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmissionEntitlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.EvidenceBundleReference;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.ContextClaims;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.gamesession.client.AccountPlayerAdmissionEntitlementClient;
+import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
+import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -69,6 +85,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -81,7 +98,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Physical canonical Account/membership/scope/demo composition and lock/commit proof definitions.
  * JWT/JWKS/Redis caller verification and current committed issuance are controlled doubles here;
  * the protected GS/World client is also controlled. This does not prove custody, actual issuance,
- * paid composition, mTLS or physical published routing.
+ * paid composition or physical published routing. The explicit loopback composition additionally
+ * uses the actual Account receiver and Game Session client over mTLS; its LOGIN and target inputs
+ * remain controlled doubles, not genuine custody or production activation.
  */
 class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "player_entitlement_";
@@ -92,6 +111,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   private static final Instant NOW = Instant.parse("2026-11-02T00:00:00Z");
   private static final AccountPostgresIntegrationFixture POSTGRES =
       new AccountPostgresIntegrationFixture();
+  @TempDir Path certificateDirectory;
   private final Set<String> schemas = ConcurrentHashMap.newKeySet();
 
   @BeforeAll
@@ -114,6 +134,118 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       jdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     }
     schemas.clear();
+  }
+
+  @Test
+  void controlledOwnerReceiverAndGameSessionClientComposeWithoutGrantingAdmission()
+      throws Exception {
+    var pki =
+        LoopbackMtlsTestPki.create(
+            certificateDirectory,
+            "Controlled player admission composition",
+            new LoopbackMtlsTestPki.IdentitySpec("client", PEER, false),
+            new LoopbackMtlsTestPki.IdentitySpec(
+                "account", "spiffe://firemud/ns/" + NAMESPACE + "/sa/account-service", true));
+    for (boolean joined : new boolean[] {false, true}) {
+      Fixture f = fixture(joined);
+      var request = f.request();
+      var expected = f.owner.evaluate(request, "controlled-token");
+      var targetFields = (Map<?, ?>) expected.fields().get("target");
+      var sources = (Map<?, ?>) expected.fields().get("sourceReferences");
+      // Only the upstream target/custody are doubles. No owner, receiver or consumer is mocked.
+      var target = mock(CanonicalPlayableTarget.class);
+      when(target.targetNamespace()).thenReturn(NAMESPACE);
+      when(target.canonicalTenantId()).thenReturn(f.tenantId);
+      when(target.tenantSlug()).thenReturn(f.scope.tenantSlug());
+      when(target.worldSlug()).thenReturn(f.scope.worldSlug());
+      when(target.realmId()).thenReturn(f.scope.realmId());
+      when(target.realmSlug()).thenReturn(f.scope.realmSlug());
+      when(target.playableStateNamespaceId()).thenReturn(f.scope.playableStateNamespaceId());
+      when(target.playableStateScope()).thenReturn("SHARED");
+      when(target.characterCreationPolicy()).thenReturn("PRESEEDED_ONLY");
+      when(target.canonicalGameInstanceId()).thenReturn(f.scope.gameInstanceId());
+      when(target.canonicalVersionId())
+          .thenReturn(UUID.fromString((String) targetFields.get("canonicalVersionId")));
+      when(target.catalogRevision()).thenReturn(f.scope.catalogRevision());
+      when(target.pointerVersion()).thenReturn(f.scope.pointerVersion());
+      when(target.activeWorldEpoch())
+          .thenReturn(Long.parseLong((String) targetFields.get("activeWorldEpoch")));
+      when(target.admissionPointerSnapshotDigest())
+          .thenReturn((String) sources.get("admissionPointerSnapshotDigest"));
+      when(target.ownerProofDigest())
+          .thenReturn((String) sources.get("gameSessionOwnerProofDigest"));
+      var claims = mock(ContextClaims.class);
+      when(claims.expiresAtMillis()).thenReturn(NOW.plusSeconds(120).toEpochMilli());
+      var context = mock(FirstPartyConnectContext.class);
+      when(context.hasCompleteRoutingScope()).thenReturn(true);
+      when(context.claims()).thenReturn(claims);
+      when(context.accountId()).thenReturn(f.account.getAccountUuid().toString());
+      when(context.connectScopeId()).thenReturn(f.scope.connectScopeId());
+      when(context.resolvedTarget()).thenReturn(target);
+      var login = mock(CanonicalGameplayLoginResult.class);
+      when(login.compactJwtBytes())
+          .thenAnswer(invocation -> "controlled-token".getBytes(StandardCharsets.US_ASCII));
+      when(login.evidence())
+          .thenReturn(
+              new CanonicalGameplayLoginResult.NonSecretEvidence(
+                  f.account.getAccountUuid(),
+                  UUID.randomUUID(),
+                  UUID.fromString((String) sources.get("callerContextId")),
+                  UUID.fromString((String) sources.get("callerTokenJti")),
+                  controlledTokenDigest(),
+                  GameSessionAccountDelegationProfile.PROFILE,
+                  NOW.minusSeconds(10).getEpochSecond(),
+                  NOW.minusSeconds(10).getEpochSecond(),
+                  NOW.plusSeconds(120).getEpochSecond(),
+                  "1",
+                  "1",
+                  ByteString.EMPTY,
+                  ByteString.EMPTY,
+                  ByteString.EMPTY));
+      var receiver = new AccountPlayerAdmissionEntitlementGrpcService(f.owner, NAMESPACE);
+      var server =
+          receiver.createUnregisteredServer(
+              "127.0.0.1:0",
+              pki.keyManagerFactory(pki.identity("account")),
+              pki.trustManagerFactory());
+      server.start();
+      long membershipsBefore = f.dsl.fetchCount(DSL.table("account_tenant_membership"));
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setAccountService("localhost:" + server.getPort());
+      try (var client =
+          new AccountPlayerAdmissionEntitlementClient(
+              endpoints,
+              pki.clientProperties(certificateDirectory, pki.identity("client")),
+              new GrpcChannelFactory(),
+              NAMESPACE,
+              Clock.fixed(NOW, ZoneOffset.UTC))) {
+        client.init();
+        var received = client.read(context, request.requestId(), login, () -> true);
+        assertThat(received.canonicalBytes()).isEqualTo(expected.canonicalBytes());
+        assertThat(received.membershipSource().membershipExists()).isEqualTo(joined);
+        assertThat(received.membershipSource().gameplayAdmissionAllowed()).isEqualTo(joined);
+        assertThat(new String(received.canonicalBytes(), StandardCharsets.UTF_8))
+            .doesNotContain("controlled-token");
+        assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> false))
+            .isInstanceOf(RuntimeException.class);
+        assertThat(f.dsl.fetchCount(DSL.table("account_tenant_membership")))
+            .isEqualTo(membershipsBefore);
+      } finally {
+        server.shutdownNow();
+        assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+      }
+    }
+  }
+
+  private static String controlledTokenDigest() {
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256")
+                  .digest("controlled-token".getBytes(StandardCharsets.US_ASCII)));
+    } catch (java.security.NoSuchAlgorithmException unavailable) {
+      throw new IllegalStateException(unavailable);
+    }
   }
 
   @Test
@@ -491,7 +623,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
       when(candidate.evidenceBundleReference()).thenReturn(mock(EvidenceBundleReference.class));
       when(candidate.signerCorrespondence())
           .thenReturn(mock(AuthenticatedSignerCorrespondence.class));
-      when(candidate.tokenSha256()).thenReturn("a".repeat(64));
+      when(candidate.tokenSha256()).thenReturn(controlledTokenDigest());
       when(candidate.signerKid()).thenReturn("controlled-kid");
       when(candidate.signerGeneration()).thenReturn("1");
       when(candidate.canonicalRegistryRecordSha256()).thenReturn("b".repeat(64));
