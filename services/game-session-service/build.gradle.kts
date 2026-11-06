@@ -190,8 +190,11 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("net/firedevops/firemud/gamesession/repository/CanonicalPublishedAdmissionActualOwnerCompositionFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayControlledInitialObservationFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionTestFixture*.class")
+        include("net/firedevops/firemud/gamesession/service/InitialGameplayLoginPhysicalCompositionFixture*.class")
     }
     from("src/main/resources") {
+        include("redis/lua/game-session-initial-context-cas.lua")
+        include("redis/scripts/game-session-initial-context-cas.json")
         include("redis/lua/game-session-issuer-bootstrap-partition-build.lua")
         include("redis/scripts/game-session-issuer-bootstrap-partition-build.json")
         include("redis/lua/game-session-issuer-binding-local-add.lua")

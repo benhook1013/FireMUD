@@ -41,7 +41,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Real GS OPEN/current publication and World ACTIVE reads over authenticated sockets, followed by
  * actual Account LOGIN, absent-player entitlement, owner-local first JOIN and positive source
  * reread. Game Design publication, DEMO policy, PKI, caller coordinates and custody callbacks are
- * controlled. No public ingress, World hold across JOIN, installed custody or activation is proved.
+ * controlled. No public ingress, World hold across JOIN, protected receiving custody or activation
+ * is proved.
  */
 final class WorldPublishedAdmissionSourceComposition {
   private WorldPublishedAdmissionSourceComposition() {}
@@ -49,6 +50,9 @@ final class WorldPublishedAdmissionSourceComposition {
   static void exercise(
       Path root,
       DSLContext gs,
+      org.springframework.transaction.PlatformTransactionManager gsTransactions,
+      String redisHost,
+      int redisPort,
       CanonicalPlayableTarget target,
       UUID account,
       net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture
@@ -199,7 +203,14 @@ final class WorldPublishedAdmissionSourceComposition {
             assertThatThrownBy(() -> accountClient.resolvePublishedRealmAdmissionTarget(wrong))
                 .isInstanceOf(RuntimeException.class);
             WorldPlayerAdmissionEntitlementComposition.exercise(
-                root, originalAccount, accountClient, target);
+                root,
+                originalAccount,
+                accountClient,
+                target,
+                gs,
+                gsTransactions,
+                redisHost,
+                redisPort);
           }
         } finally {
           stop(receiver);

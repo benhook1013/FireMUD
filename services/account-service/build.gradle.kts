@@ -197,10 +197,12 @@ val accountOriginalOrderProofJar by tasks.registering(Jar::class) {
         include("redis/lua/account-game-session-delegation-pending-register.lua")
         include("redis/lua/account-game-session-delegation-activate-committed.lua")
         include("redis/lua/account-game-session-delegation-authority-project.lua")
+        include("redis/lua/account-initial-gameplay-login-dispose.lua")
         include("redis/account_generation_projection_cas.lua")
         include("redis/scripts/account-game-session-delegation-pending-register.json")
         include("redis/scripts/account-game-session-delegation-activate-committed.json")
         include("redis/scripts/account-game-session-delegation-authority-project-issuer.json")
+        include("redis/scripts/account-initial-gameplay-login-dispose.json")
         include("redis/scripts/account-generation-projection-cas.json")
     }
 }

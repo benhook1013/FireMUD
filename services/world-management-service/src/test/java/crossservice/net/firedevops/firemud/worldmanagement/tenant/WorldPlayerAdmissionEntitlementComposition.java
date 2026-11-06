@@ -34,16 +34,16 @@ import net.firedevops.firemud.gamesession.client.CanonicalGameplayLoginAccountCl
 import net.firedevops.firemud.gamesession.client.DirectTextIssuedConnectScope;
 import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
-import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextState;
+import net.firedevops.firemud.gamesession.service.InitialGameplayLoginPhysicalCompositionFixture;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 
 /**
  * Actual LOGIN and PLAYER_ADMISSION producer/consumer with a genuine absent player and shared
- * Account/GS/World sources, followed by genuine owner-local first JOIN and positive source read.
- * DEMO policy, caller coordinates, PKI and local custody callbacks are controlled. No public
- * ingress, installed custody, World hold across JOIN, runtime activation or PLAY is proved.
+ * Account/GS/World sources and physical GS journal/PENDING/INSTALLED state, followed by actual
+ * first JOIN, positive source read and known-token retirement. DEMO policy, caller coordinates,
+ * PKI, reset/promotion qualification and receiving custody remain controlled. No public ingress,
+ * protected receiving custody, World hold across JOIN, runtime activation or PLAY is proved.
  */
 final class WorldPlayerAdmissionEntitlementComposition {
   private WorldPlayerAdmissionEntitlementComposition() {}
@@ -52,7 +52,11 @@ final class WorldPlayerAdmissionEntitlementComposition {
       Path root,
       AccountControlUiOriginalOrderFixture original,
       CanonicalGameplayAdmissionDecisionReadClient targets,
-      CanonicalPlayableTarget target)
+      CanonicalPlayableTarget target,
+      org.jooq.DSLContext gs,
+      org.springframework.transaction.PlatformTransactionManager gsTransactions,
+      String redisHost,
+      int redisPort)
       throws Exception {
     var clock = Clock.systemUTC();
     String namespace = target.targetNamespace();
@@ -131,13 +135,23 @@ final class WorldPlayerAdmissionEntitlementComposition {
                     entitlementEndpoints, tls, channels, namespace, clock)) {
           loginClient.initialize();
           entitlementClient.init();
-          var wireRequest =
-              loginOwner.wireLoginRequest(
+          // This request is only a controlled credential source. GS allocates real coordinates.
+          var credentialSource =
+              loginOwner.loginRequest(
                   UUID.randomUUID(),
                   new GameplayCredentialSourceContext(
                       UUID.randomUUID(), "192.0.2.42", "trusted_tcp_proxy"));
-          // Controlled original custody; the returned credential and Account currentness are real.
-          try (var login = loginClient.authenticate(wireRequest, () -> true)) {
+          try (var physicalLogin =
+              InitialGameplayLoginPhysicalCompositionFixture.open(
+                  gs,
+                  gsTransactions,
+                  redisHost,
+                  redisPort,
+                  loginClient,
+                  credentialSource.email(),
+                  "192.0.2.42",
+                  credentialSource.credential().toCharArray())) {
+            var login = physicalLogin.loginResult();
             var evidence = login.evidence();
             loginOwner.assertCommittedNonAdmittingLogin(
                 evidence.requestId(),
@@ -178,14 +192,12 @@ final class WorldPlayerAdmissionEntitlementComposition {
                         .setConnectScopeExpiresAt(scope.connectScopeExpiresAt())
                         .build(),
                     clock);
-            var coordinates =
-                new InitialGameplayLoginAttemptCoordinates(
-                    evidence.requestId(), evidence.callerContextId(), 1L);
-            // This encodes a desired value only. No Redis installed-custody proof is claimed.
+            var coordinates = physicalLogin.coordinates();
+            // Physical INSTALLED readback is real; protected receiving custody remains controlled.
             var lobby =
                 new DirectTextAuthenticatedLobbyScope(
                     UUID.randomUUID(),
-                    InitialGameplayLoginContextState.installed(coordinates, login),
+                    physicalLogin.installedReadback(),
                     transport,
                     target,
                     issued);
@@ -206,6 +218,15 @@ final class WorldPlayerAdmissionEntitlementComposition {
                     () ->
                         entitlementClient.read(
                             lobby, coordinates, transport, UUID.randomUUID(), login, () -> false))
+                .isInstanceOf(RuntimeException.class);
+            assertThat(physicalLogin.abandonOriginalAfterCustodyLoss().status())
+                .isEqualTo(
+                    net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwner
+                        .Status.ACCOUNT_RETIRED);
+            assertThatThrownBy(
+                    () ->
+                        entitlementClient.read(
+                            lobby, coordinates, transport, UUID.randomUUID(), login, () -> true))
                 .isInstanceOf(RuntimeException.class);
           }
         }

@@ -31,6 +31,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.GameplayLoginReplayState;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountInitialGameplayLoginDisposalRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
@@ -75,6 +76,7 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
   private final AccountGameplayCanonicalLoginOwner login;
   private final AccountGameplayPrimaryCredentialVerifier verifier;
   private final AccountGameplayDelegationCommittedIssuanceOwner committedOwner;
+  private final AccountInitialGameplayLoginDisposalOwner disposal;
   private final String otp = "shared-login-" + UUID.randomUUID();
 
   public AccountPlayerAdmissionSharedOwnerFixture(
@@ -165,6 +167,11 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
     var registry =
         new AccountGameplayDelegationTokenRegistry(
             issuance, sources.manager, redis, clock, REGISTRY_BYTES, REGISTRY_CLEANUP_MILLIS);
+    disposal =
+        new AccountInitialGameplayLoginDisposalOwner(
+            new AccountInitialGameplayLoginDisposalRepository(sources.dsl),
+            registry,
+            sources.manager);
     var commit =
         new AccountGameplayDelegationIssuanceCommitService(
             signer, registry, projection, issuance, sources.manager, clock);
@@ -224,12 +231,15 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
         .build();
   }
 
-  /** The caller must install the real TLS peer interceptor on its private mTLS server. */
+  /**
+   * The caller must install the real TLS peer interceptor on its private mTLS server. Known-token
+   * retirement uses the same SQL/Redis owners; unqualified no-binding disposal remains PENDING.
+   */
   public AccountGameplayAuthenticateReceiver authenticateReceiver(String namespace) {
     if (!creationEvidence().targetNamespace().equals(namespace)) {
       throw new IllegalArgumentException("Receiver namespace must match the shared tenant source");
     }
-    return new AccountGameplayAuthenticateReceiver(login, verifier, namespace);
+    return new AccountGameplayAuthenticateReceiver(login, verifier, namespace, disposal);
   }
 
   /** Actual receipt-backed public source, not a replacement JWKS document. */
@@ -426,7 +436,8 @@ public final class AccountPlayerAdmissionSharedOwnerFixture {
         List.of(
             "/redis/scripts/account-game-session-delegation-pending-register.json",
             "/redis/scripts/account-game-session-delegation-activate-committed.json",
-            "/redis/scripts/account-game-session-delegation-authority-project-issuer.json")) {
+            "/redis/scripts/account-game-session-delegation-authority-project-issuer.json",
+            "/redis/scripts/account-initial-gameplay-login-dispose.json")) {
       try (var input =
           AccountPlayerAdmissionSharedOwnerFixture.class.getResourceAsStream(resource)) {
         if (input == null) throw new IllegalStateException("Account LOGIN descriptor is absent");

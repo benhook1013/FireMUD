@@ -64,14 +64,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture;
-import net.firedevops.firemud.accountservice.service.session.AccountPlayerAdmissionSharedOwnerFixture;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementService;
@@ -3452,22 +3450,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           try {
             var worldEndpoints = new ServiceEndpointsProperties();
             worldEndpoints.setWorldManagementService("127.0.0.1:" + worldLocationServer.getPort());
-            // Authenticate after the earlier password/authority mutation has settled. The
-            // creation tuple is shared by Account, World and GS; the caller is still controlled.
-            var loginOwner =
-                new AccountPlayerAdmissionSharedOwnerFixture(
-                    account, proofDirectory.resolve("shared-login"));
-            var loginRequest =
-                loginOwner.loginRequest(
-                    UUID.randomUUID(),
-                    new GameplayCredentialSourceContext(
-                        UUID.randomUUID(), "192.0.2.42", "direct-text"));
-            var loginResult =
-                loginOwner.authenticate(
-                    loginRequest, "spiffe://firemud/ns/firemud/sa/game-session-service");
-            loginOwner.assertCommittedNonAdmittingLogin(loginResult);
-            assertThat(loginResult.accountId()).isEqualTo(accountUuid);
-            assertThat(loginOwner.creationEvidence()).isEqualTo(account.creationEvidence());
+            // The earlier generic password-write proof deliberately leaves creator LOGIN
+            // currentness unavailable. The later composition uses a separate fresh player.
             var initialLocationClient =
                 new CanonicalInitialPlayerLocationClient(
                     worldEndpoints, worldPki.client("game-session-service"), channels, NAMESPACE);
@@ -3578,6 +3562,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             WorldPublishedAdmissionSourceComposition.exercise(
                 proofDirectory,
                 gs.dsl(),
+                gs.manager(),
+                REDIS.getHost(),
+                REDIS.getMappedPort(6379),
                 currentTarget,
                 accountUuid,
                 account,
