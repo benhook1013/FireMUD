@@ -116,6 +116,8 @@ def bounded_tree(value: Any, depth: int = 0, budget: list[int] | None = None) ->
     elif type(value) is list:
         for item in value:
             bounded_tree(item, depth + 1, budget)
+    else:
+        require(value is None or type(value) in (str, int, float, bool), "unsupported YAML/JSON value type")
 
 
 def json_pairs(pairs: list) -> dict:
@@ -313,6 +315,7 @@ def produce(rendered_bytes: bytes, declarations_bytes: bytes) -> bytes:
         artifact["renderedManifestDigest"] = digest(rendered_bytes)
         artifact["declarationsDigest"] = digest(declarations_bytes)
         artifact["members"] = [dict(member, image=containers[identity(member)]) for member in sorted(declarations["members"], key=identity)]
+        bounded_tree(artifact)
         result = (json.dumps(artifact, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
         require(len(result) <= MAX_BYTES, "candidate artifact too large")
         return result

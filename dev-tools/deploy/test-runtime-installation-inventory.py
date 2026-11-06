@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -183,15 +184,46 @@ class InventoryTest(unittest.TestCase):
         documents[0]["otherTemplate"] = {"spec": {"containers": [{"name": "hidden", "image": IMAGE}]}}
         self.refuse(documents, declarations)
 
+    def test_candidate_structural_budget_includes_added_images_and_digests(self):
+        documents, declarations = fixture()
+        declarations["inputBindings"]["configurations"] = [
+            {"name": f"configuration-{index}", "version": "1", "digest": DIGEST}
+            for index in range(100)
+        ]
+        encoded = encode(documents, declarations)
+        artifact = json.loads(inventory.produce(*encoded))
+        budget = [inventory.MAX_NODES]
+        inventory.bounded_tree(artifact, budget=budget)
+        artifact_nodes = inventory.MAX_NODES - budget[0]
+        with patch.object(inventory, "MAX_NODES", artifact_nodes):
+            self.assertEqual(json.loads(inventory.produce(*encoded)), artifact)
+        with patch.object(inventory, "MAX_NODES", artifact_nodes - 1):
+            inventory.bounded_tree(declarations)
+            with self.assertRaisesRegex(inventory.InventoryError, "document exceeds structural bounds"):
+                inventory.produce(*encoded)
+
+    def test_tagged_hidden_podspec_and_non_json_values_refused(self):
+        documents, declarations = fixture()
+        declarations["nonWorkloadKinds"] = [{"apiVersion": "v1", "kind": "ConfigMap"}]
+        raw_manifest, raw_declarations = encode(documents, declarations)
+        for tagged in (
+            b"!!omap [{containers: [{name: hidden, image: ignored}]}]",
+            b"!!pairs [{containers: [{name: hidden, image: ignored}]}]",
+            b"!!set {hidden: null}",
+        ):
+            manifest = raw_manifest + b"\n---\napiVersion: v1\nkind: ConfigMap\ndata: " + tagged + b"\n"
+            with self.subTest(tagged=tagged), self.assertRaisesRegex(inventory.InventoryError, "unsupported YAML/JSON value type"):
+                inventory.produce(manifest, raw_declarations)
+
     def test_duplicate_yaml_and_json_keys_and_yaml_aliases(self):
         documents, declarations = fixture()
         raw_manifest, raw_declarations = encode(documents, declarations)
         for manifest in (
             raw_manifest + b"\n---\napiVersion: v1\nkind: ConfigMap\nkind: Pod\n",
-            raw_manifest.replace(b"name: application", b"name: application\n      name: repeated"),
+            raw_manifest.replace(b"name: application", b"name: application\n        name: repeated"),
             b"apiVersion: v1\nkind: Pod\nmetadata: &metadata {name: a}\nspec: *metadata\n",
         ):
-            with self.subTest(manifest=manifest[-80:]), self.assertRaises(inventory.InventoryError):
+            with self.subTest(manifest=manifest[-80:]), self.assertRaisesRegex(inventory.InventoryError, "duplicate YAML mapping key|aliases"):
                 inventory.produce(manifest, raw_declarations)
         for raw in (
             raw_declarations[:-1] + b',"schema":"firemud-runtime-installation-declarations/v1"}',

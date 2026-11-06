@@ -1105,6 +1105,10 @@ jobs:
         with:
           requirements: yaml
 
+      - name: Run installation inventory offline vectors
+        if: ${{ matrix.module == 'game-design-service' }}
+        run: python3 dev-tools/deploy/test-runtime-installation-inventory.py
+
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
