@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -429,9 +430,10 @@ class ScriptPatchReadinessSingletonIntegrationTest {
     schema = newSchemaName();
     Flyway.configure()
         .dataSource(dataSource(schema))
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
     return schemaDsl();
@@ -453,9 +455,10 @@ class ScriptPatchReadinessSingletonIntegrationTest {
   private void migrateExistingSchemaToLatest() {
     Flyway.configure()
         .dataSource(dataSource(schema))
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
   }

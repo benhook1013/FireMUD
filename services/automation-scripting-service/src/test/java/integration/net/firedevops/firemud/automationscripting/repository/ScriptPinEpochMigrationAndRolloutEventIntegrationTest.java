@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventAudit;
 import net.firedevops.firemud.automationscripting.entity.ScriptEventIngressAudit;
@@ -246,9 +247,10 @@ class ScriptPinEpochMigrationAndRolloutEventIntegrationTest {
     schema = newSchemaName();
     Flyway.configure()
         .dataSource(dataSource(schema))
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
     return schemaDsl();

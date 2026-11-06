@@ -1443,6 +1443,25 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       var retainedRowsAtDefaultFrontierOriginalColumns =
           new LinkedHashMap<>(allRowsWithoutNewServerStamps(connection));
       retainedRowsAtDefaultFrontierOriginalColumns.remove(HISTORY);
+      for (String addedCatalog :
+          List.of(
+              "world_runtime_family_classification",
+              "world_runtime_family_catalog_epoch",
+              "world_runtime_family_catalog_snapshot")) {
+        assertThat(retainedRowsAtDefaultFrontierOriginalColumns.remove(addedCatalog))
+            .as("new additive catalog table %s is installed", addedCatalog)
+            .isNotNull();
+      }
+      assertThat(
+              connection
+                  .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_epoch")
+                  .get(0, Long.class))
+          .isEqualTo(2L);
+      assertThat(
+              connection
+                  .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
+                  .get(0, Long.class))
+          .isZero();
       assertThat(retainedRowsAtDefaultFrontierOriginalColumns)
           .as("all retained original row values and xmin from V1042.8 through the V1042.11 repairs")
           .isEqualTo(retainedRowsAt10428);
@@ -3142,6 +3161,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1044");
     versions.add("1044.1");
     versions.add("1045");
+    versions.add("1046");
+    versions.add("1047");
     return List.copyOf(versions);
   }
 

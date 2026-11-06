@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -68,9 +69,10 @@ class ScriptDefinitionServiceTransactionIntegrationTest {
     DriverManagerDataSource rawDataSource = dataSource(schema);
     Flyway.configure()
         .dataSource(rawDataSource)
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
 
