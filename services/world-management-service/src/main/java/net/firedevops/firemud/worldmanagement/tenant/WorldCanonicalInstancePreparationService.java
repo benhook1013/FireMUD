@@ -168,6 +168,10 @@ public final class WorldCanonicalInstancePreparationService {
       throw new PreparationDeniedException(
           "Protected current-installation registry is unavailable");
     }
+    // This candidate only skips preflight, never Account authentication or the exact retained read.
+    if (!repository.hasRetainedCommittedCandidate(input, operationInput)) {
+      installationRegistry.preflightLaunchOwners(input.canonicalGameInstanceId());
+    }
     HeldCommitAuthority held =
         Objects.requireNonNull(
             originalOperationVerifier.verifyAndHold(input, operationInput),

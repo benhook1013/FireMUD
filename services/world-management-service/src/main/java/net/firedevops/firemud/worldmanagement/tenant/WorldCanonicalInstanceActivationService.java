@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
@@ -108,6 +109,14 @@ public final class WorldCanonicalInstanceActivationService {
     Objects.requireNonNull(protection, "protection");
     requireNoActiveTransaction();
     return repository.abortProtected(protection, terminalCode);
+  }
+
+  /**
+   * Read-only early refusal; the held installation check at actual commit remains authoritative.
+   */
+  void preflightInstallationRegistry(UUID gameInstanceId) {
+    requireInstallationRegistry();
+    installationRegistry.preflightLaunchOwners(gameInstanceId);
   }
 
   /** Rejects missing composition before the orchestrator acquires durable Account protection. */

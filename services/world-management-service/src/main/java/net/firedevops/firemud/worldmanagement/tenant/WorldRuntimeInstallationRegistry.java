@@ -139,6 +139,38 @@ public final class WorldRuntimeInstallationRegistry {
   }
 
   /**
+   * Read-only readiness check before acquiring durable Account protection. An absent frozen set is
+   * allowed; an existing set must match exactly. This is not a race guarantee or launch authority:
+   * the protected source is released on return and {@link #withLaunchOwners} must still guard the
+   * actual synchronous launch commit.
+   */
+  public void preflightLaunchOwners(UUID gameInstanceId) {
+    independent();
+    if (gameInstanceId == null || gameInstanceId.equals(new UUID(0, 0))) {
+      throw new IllegalArgumentException("Non-nil canonical game instance required");
+    }
+    try (HeldInstallation held =
+        Objects.requireNonNull(source.acquireCurrent(), "held installation")) {
+      held.requireCurrent();
+      var artifact = artifact(held);
+      artifact.requireResolved();
+      read.executeWithoutResult(
+          status -> {
+            var registered = currentInTransaction(false);
+            exact(registered.artifact(), artifact);
+            if (dsl.fetchExists(
+                dsl.selectOne()
+                    .from(table("world_runtime_required_owner_snapshot"))
+                    .where("canonical_game_instance_id=?", gameInstanceId))) {
+              requireFrozen(gameInstanceId, registered);
+            }
+          });
+      held.requireCurrent();
+      exact(artifact(held), artifact);
+    }
+  }
+
+  /**
    * Freezes the complete set before invoking an existing launch owner and keeps the protected
    * installation authority held through that owner's actual synchronous commit. This grants no
    * Account, publication, FRESH, lifecycle activation or admission authority.

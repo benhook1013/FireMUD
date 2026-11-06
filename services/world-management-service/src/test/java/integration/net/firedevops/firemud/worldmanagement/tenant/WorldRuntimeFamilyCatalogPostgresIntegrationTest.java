@@ -527,7 +527,11 @@ class WorldRuntimeFamilyCatalogPostgresIntegrationTest {
           .anyMatch(
               fact ->
                   fact.kind() == FactKind.MIGRATION
-                      && fact.identity().equals("catalog-installation:1047"));
+                      && fact.identity().equals("catalog-installation:1047"))
+          .anyMatch(
+              fact ->
+                  fact.kind() == FactKind.MIGRATION
+                      && fact.identity().equals("catalog-installation:1048"));
       assertThat(f.count("world_runtime_family_catalog_snapshot")).isEqualTo(2);
       migration(f.source, f.schema, null).validate();
     }

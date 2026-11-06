@@ -81,6 +81,15 @@ val gameDesignClassesProof by configurations.creating {
 
 // Composed owner proofs load foreign migrations from disk; classes-only artifacts omit them.
 tasks.named("crossServiceTest") {
+    inputs
+        .file(rootProject.layout.projectDirectory.file("dev-tools/deploy/runtime-installation-inventory.py"))
+        .withPropertyName("runtimeInstallationInventoryProducer")
+    inputs
+        .file(rootProject.layout.projectDirectory.file("dev-tools/deploy/fixtures/runtime-installation/rendered.yaml"))
+        .withPropertyName("runtimeInstallationRenderedFixture")
+    inputs
+        .file(rootProject.layout.projectDirectory.file("dev-tools/deploy/fixtures/runtime-installation/declarations.json"))
+        .withPropertyName("runtimeInstallationDeclarationsFixture")
     inputs.dir(rootProject.layout.projectDirectory.dir("services/entity-management-service/src/main/resources/db/migration"))
         .withPropertyName("entityOwnerMigrations")
     inputs.dir(rootProject.layout.projectDirectory.dir("services/automation-scripting-service/src/main/resources/db/migration"))
