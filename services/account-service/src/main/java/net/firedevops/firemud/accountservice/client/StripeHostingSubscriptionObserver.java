@@ -5,9 +5,11 @@ import com.stripe.model.Price;
 import com.stripe.model.Subscription;
 import com.stripe.model.SubscriptionItem;
 import com.stripe.model.SubscriptionItemCollection;
+import com.stripe.net.RequestOptions;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Clock;
 import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -49,10 +51,26 @@ public final class StripeHostingSubscriptionObserver {
 
   private final com.stripe.StripeClient stripeClient;
   private final Clock clock;
+  private final RequestOptions requestOptions;
 
-  public StripeHostingSubscriptionObserver(com.stripe.StripeClient stripeClient, Clock clock) {
+  /**
+   * Explicit transport limits are required; composition must keep them below the applicable
+   * lifecycle policy's maximum observation age. Socket timeouts are not a wall-clock deadline: the
+   * owner still rejects evidence whose read-start freshness bound has elapsed.
+   */
+  public StripeHostingSubscriptionObserver(
+      com.stripe.StripeClient stripeClient,
+      Clock clock,
+      Duration connectTimeout,
+      Duration readTimeout) {
     this.stripeClient = Objects.requireNonNull(stripeClient, "stripe client is required");
     this.clock = Objects.requireNonNull(clock, "clock is required");
+    this.requestOptions =
+        RequestOptions.builder()
+            .setConnectTimeout(timeoutMillis(connectTimeout))
+            .setReadTimeout(timeoutMillis(readTimeout))
+            .setMaxNetworkRetries(0)
+            .build();
   }
 
   /**
@@ -68,7 +86,8 @@ public final class StripeHostingSubscriptionObserver {
     Instant readStartedAt = clock.instant();
     Subscription subscription;
     try {
-      subscription = stripeClient.subscriptions().retrieve(expected.providerSubscriptionId());
+      subscription =
+          stripeClient.subscriptions().retrieve(expected.providerSubscriptionId(), requestOptions);
     } catch (StripeException providerFailure) {
       return new UnresolvedObservation(
           expected.providerSubscriptionId(), readStartedAt, clock.instant(), providerFailure);
@@ -88,6 +107,20 @@ public final class StripeHostingSubscriptionObserver {
       return new InvalidObservation(
           expected.providerSubscriptionId(), readStartedAt, observedAt, invalid.reason);
     }
+  }
+
+  private static int timeoutMillis(Duration timeout) {
+    Objects.requireNonNull(timeout, "explicit Stripe observation timeout is required");
+    // Zero means unbounded to the SDK. Reject sub-millisecond and overflowing values rather
+    // than truncating them into a different transport policy.
+    if (timeout.isNegative()
+        || timeout.isZero()
+        || timeout.compareTo(Duration.ofMillis(Integer.MAX_VALUE)) > 0
+        || timeout.getNano() % 1_000_000 != 0) {
+      throw new IllegalArgumentException(
+          "Stripe observation timeouts must be positive whole milliseconds within the SDK range");
+    }
+    return (int) timeout.toMillis();
   }
 
   private static ObservedSubscription validate(

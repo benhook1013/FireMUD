@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -81,13 +82,80 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
             CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
                 discoveryRequest()),
             captured.getValue());
-    assertThat(result.targets()).hasSize(2);
-    assertThat(result.targets().getFirst().canonicalTenantId())
-        .isEqualTo(second.canonicalTenantId());
-    assertThat(result.targets().getFirst().canonicalGameInstanceId())
-        .isEqualTo(second.canonicalGameInstanceId());
-    assertThat(result.targets().getFirst().ownerProofDigest()).isEqualTo(second.ownerProofDigest());
+    assertThat(result.targets())
+        .extracting(
+            target -> target.canonicalTenantId(),
+            target -> target.canonicalGameInstanceId(),
+            target -> target.ownerProofDigest())
+        .containsExactlyInAnyOrder(
+            tuple(
+                first.canonicalTenantId(),
+                first.canonicalGameInstanceId(),
+                first.ownerProofDigest()),
+            tuple(
+                second.canonicalTenantId(),
+                second.canonicalGameInstanceId(),
+                second.ownerProofDigest()));
     verify(routes, org.mockito.Mockito.times(2)).readVisiblePublicProductionTargets();
+  }
+
+  @Test
+  void discoveryExcludesValidPlayerCreatedTargetsOnBothReads() {
+    var preseeded = discoveryTarget("first", "First world");
+    var created = discoveryTarget("second", "Created world", "PLAYER_CREATED");
+    for (var initial : List.of(List.of(preseeded, created), List.of(created))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      var reversed = new java.util.ArrayList<>(initial);
+      java.util.Collections.reverse(reversed);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(initial, reversed);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      var captured =
+          ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+      verify(observer).onNext(captured.capture());
+      verify(observer).onCompleted();
+      verify(observer, never()).onError(any());
+      var result =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
+                  discoveryRequest()),
+              captured.getValue());
+      assertThat(result.targets()).hasSize(initial.size() - 1);
+      assertThat(result.targets())
+          .allMatch(target -> target.characterCreationPolicy().equals("PRESEEDED_ONLY"));
+      verify(routes, times(2)).readVisiblePublicProductionTargets();
+    }
+  }
+
+  @Test
+  void discoveryDoesNotHideMalformedPlayerCreatedAuthority() {
+    var created = discoveryTarget("created", "World", "PLAYER_CREATED");
+    var malformed =
+        mock(CanonicalPlayableTarget.class, org.mockito.AdditionalAnswers.delegatesTo(created));
+    org.mockito.Mockito.doReturn("not-a-proof-digest").when(malformed).ownerProofDigest();
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(malformed));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+    verify(routes).readVisiblePublicProductionTargets();
+  }
+
+  @Test
+  void discoveryDoesNotHideDuplicateAuthorityBehindPlayerCreatedFiltering() {
+    var preseeded = discoveryTarget("same", "World");
+    var created = discoveryTarget("same", "World", "PLAYER_CREATED");
+    for (var targets : List.of(List.of(preseeded, created), List.of(created, created))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(targets);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+      verify(routes).readVisiblePublicProductionTargets();
+    }
   }
 
   @Test
@@ -285,6 +353,11 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   }
 
   private static CanonicalPlayableTarget discoveryTarget(String slug, String displayName) {
+    return discoveryTarget(slug, displayName, "PRESEEDED_ONLY");
+  }
+
+  private static CanonicalPlayableTarget discoveryTarget(
+      String slug, String displayName, String policy) {
     UUID tenant = UUID.nameUUIDFromBytes(("tenant-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID realm = UUID.nameUUIDFromBytes(("realm-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID namespace = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -344,7 +417,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
         CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
         false,
         Instant.parse("2026-10-25T00:00:00Z"),
-        "PRESEEDED_ONLY");
+        policy);
   }
 
   @Test
