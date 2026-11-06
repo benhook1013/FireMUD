@@ -914,17 +914,12 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
   private static String historicalProjection(
       DSLContext dsl, String table, String selector, UUID identity) {
     String privateProjection =
-        table.equals("game_session_canonical_realm_catalog")
-            ? " - ARRAY['private_target_request_preimage','private_preparation_request_id',"
-                + "'private_playtest_lifecycle_id','private_preparation_request_digest',"
-                + "'private_state_generation','private_source_catalog_realm_id',"
-                + "'private_source_catalog_request_id','private_source_catalog_revision',"
-                + "'private_source_catalog_receipt_digest','private_target_policy_id',"
-                + "'private_target_policy_digest','private_target_policy_source_commit_id',"
-                + "'private_target_policy_source_revision_id','private_target_policy_logical_revision_id',"
-                + "'private_canonical_version_id','private_published_release_bundle_ref',"
-                + "'private_published_release_bundle_digest','private_source_policy_set_digest',"
-                + "'private_source_policy_carrier_digest']"
+        "game_session_canonical_realm_catalog".equals(table)
+            ? " - ARRAY["
+                + CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+                    .map(column -> "'" + column + "'")
+                    .collect(java.util.stream.Collectors.joining(","))
+                + "]"
             : "";
     return requiredRecord(
             dsl,
@@ -1013,25 +1008,11 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       assertThat(
               requiredRecord(
                       dsl,
-                      "SELECT private_target_request_preimage IS NULL "
-                          + "AND private_preparation_request_id IS NULL "
-                          + "AND private_playtest_lifecycle_id IS NULL "
-                          + "AND private_preparation_request_digest IS NULL "
-                          + "AND private_state_generation IS NULL "
-                          + "AND private_source_catalog_realm_id IS NULL "
-                          + "AND private_source_catalog_request_id IS NULL "
-                          + "AND private_source_catalog_revision IS NULL "
-                          + "AND private_source_catalog_receipt_digest IS NULL "
-                          + "AND private_target_policy_id IS NULL "
-                          + "AND private_target_policy_digest IS NULL "
-                          + "AND private_target_policy_source_commit_id IS NULL "
-                          + "AND private_target_policy_source_revision_id IS NULL "
-                          + "AND private_target_policy_logical_revision_id IS NULL "
-                          + "AND private_canonical_version_id IS NULL "
-                          + "AND private_published_release_bundle_ref IS NULL "
-                          + "AND private_published_release_bundle_digest IS NULL "
-                          + "AND private_source_policy_set_digest IS NULL "
-                          + "AND private_source_policy_carrier_digest IS NULL AS private_fields_clear "
+                      "SELECT "
+                          + CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+                              .map(column -> column + " IS NULL")
+                              .collect(java.util.stream.Collectors.joining(" AND "))
+                          + " AS private_fields_clear "
                           + "FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
                       preV24Catalog.creationRequestId())
                   .get("private_fields_clear", Boolean.class))
