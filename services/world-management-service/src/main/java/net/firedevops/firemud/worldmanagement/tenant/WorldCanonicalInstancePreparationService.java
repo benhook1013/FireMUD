@@ -164,6 +164,10 @@ public final class WorldCanonicalInstancePreparationService {
           "Canonical World preparation has no authenticated Account participation verifier");
     }
     operationInput.requireMatches(input, input.gameSessionReadEvidence().targetNamespace());
+    if (installationRegistry == null) {
+      throw new PreparationDeniedException(
+          "Protected current-installation registry is unavailable");
+    }
     HeldCommitAuthority held =
         Objects.requireNonNull(
             originalOperationVerifier.verifyAndHold(input, operationInput),
@@ -173,9 +177,9 @@ public final class WorldCanonicalInstancePreparationService {
       held.executionIdentity()
           .requireMatches(
               input, operationInput, WorldCanonicalInstancePreparationRepository.inputJson(input));
-      if (installationRegistry == null) {
-        throw new PreparationDeniedException(
-            "Protected current-installation registry is unavailable");
+      Optional<Result> retained = repository.readRetainedCommittedResult(input, held);
+      if (retained.isPresent()) {
+        return retained.orElseThrow();
       }
       return installationRegistry.withLaunchOwners(
           input.canonicalGameInstanceId(), () -> repository.materialize(input, held));
