@@ -13,6 +13,8 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Evidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RequestEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.ResolvedPublishedTarget;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -29,7 +31,8 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
         CanonicalGameplayAdmissionDecisionReadServiceGrpc
             .CanonicalGameplayAdmissionDecisionReadServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
-  private static final long PUBLISHED_REALM_READ_DEADLINE_SECONDS = 15L;
+  // Two complete publication reads can each make two five-second policy calls, plus World.
+  private static final long PUBLISHED_REALM_READ_DEADLINE_SECONDS = 30L;
   private final String workloadNamespace;
 
   public CanonicalGameplayAdmissionDecisionReadClient(
@@ -78,7 +81,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     RequestEvidence expected =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseRequest(wireRequest);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .getCanonicalGameplayAdmissionDecision(wireRequest);
     try {
@@ -108,7 +111,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
             transitionId, abandonmentId, lease);
     var expected = AccountGameplayAdmissionNeverAdmittedGrpcCodec.parseDecisionRequest(request);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withMaxInboundMessageSize(
                 AccountGameplayAdmissionNeverAdmittedGrpcCodec.MAX_WIRE_BYTES)
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
@@ -122,6 +125,61 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     }
   }
 
+  /** Reads the complete canonical discovery collection; no player admission or World hold. */
+  public CanonicalGameplayAdmissionDecisionReadGrpcCodec.VisiblePublicProductionTargets
+      listVisiblePublicProductionAdmissionTargets(UUID readRequestId) {
+    requireNoAmbientSql("Canonical discovery requires no ambient Account transaction");
+    requirePublishedSourceContext();
+    var expected =
+        new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+            readRequestId, workloadNamespace);
+    var request = CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryRequest(expected);
+    var response =
+        requireAvailableStub()
+            .withMaxInboundMessageSize(
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_DISCOVERY_RESPONSE_WIRE_BYTES)
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .listVisiblePublicProductionAdmissionTargets(request);
+    try {
+      return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+          expected, response);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException(
+          "Game Session returned invalid canonical discovery evidence", malformed);
+    }
+  }
+
+  /**
+   * Resolves missing strict-read selectors from actual current Game Session owner rows. The caller
+   * supplies only its retained target tuple; the result is selection evidence, not admission.
+   */
+  public ResolvedPublishedTarget resolvePublishedRealmAdmissionTarget(
+      RetainedTargetSelector selector) {
+    requireNoAmbientSql("Published target resolution requires no ambient Account transaction");
+    requirePublishedSourceContext();
+    Objects.requireNonNull(selector, "selector");
+    if (!workloadNamespace.equals(selector.targetNamespace())) {
+      throw new IllegalArgumentException(
+          "Published target resolution requires configured namespace");
+    }
+    var request =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(selector);
+    var response =
+        requireAvailableStub()
+            .withMaxInboundMessageSize(
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec
+                    .MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES)
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .resolvePublishedRealmAdmissionTarget(request);
+    try {
+      return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+          selector, response);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException(
+          "Game Session returned invalid current target evidence", malformed);
+    }
+  }
+
   /**
    * Reads the current published route and complete sealed source before Account lease allocation.
    * Selector account identity and expected counters are correlation only, never authorization.
@@ -129,10 +187,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
   public PublishedRealmEvidence readPublishedRealmAdmissionOwner(
       CanonicalGameplayRosterOwnerReadEvidence.Request selector) {
     requireNoAmbientSql("Published realm owner read requires no ambient Account transaction");
-    if (SessionContext.hasAuthenticatedCallerContext() || SessionContext.isInternalService()) {
-      throw new IllegalStateException(
-          "Published realm owner read requires a workload-only caller context");
-    }
+    requirePublishedSourceContext();
     Objects.requireNonNull(selector, "selector");
     if (!workloadNamespace.equals(selector.targetNamespace())) {
       throw new IllegalArgumentException(
@@ -144,7 +199,7 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     var expected =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(wireRequest);
     var response =
-        requireInitializedStub("Gameplay admission decision client is not initialized")
+        requireAvailableStub()
             .withMaxInboundMessageSize(
                 CanonicalGameplayAdmissionDecisionReadGrpcCodec
                     .MAX_PUBLISHED_REALM_RESPONSE_WIRE_BYTES)
@@ -156,6 +211,33 @@ public final class CanonicalGameplayAdmissionDecisionReadClient
     } catch (IllegalArgumentException malformed) {
       throw new IllegalStateException(
           "Game Session returned invalid published realm owner evidence", malformed);
+    }
+  }
+
+  private CanonicalGameplayAdmissionDecisionReadServiceGrpc
+          .CanonicalGameplayAdmissionDecisionReadServiceBlockingStub
+      requireAvailableStub() {
+    try {
+      return requireInitializedStub("Gameplay admission decision client is not initialized");
+    } catch (IllegalStateException lifecycleFailure) {
+      throw new ClientUnavailableException(lifecycleFailure);
+    }
+  }
+
+  /** A source read cannot run before explicit initialization or after this client is closed. */
+  public static final class ClientUnavailableException extends IllegalStateException {
+    public ClientUnavailableException(IllegalStateException cause) {
+      super("Canonical gameplay admission decision client is unavailable", cause);
+    }
+  }
+
+  private static void requirePublishedSourceContext() {
+    if (SessionContext.hasAuthenticatedCallerContext()
+        || SessionContext.isInternalService()
+        || SessionContext.getServiceName() != null
+        || SessionContext.getServiceInstanceId() != null) {
+      throw new IllegalStateException(
+          "Published source reads require workload-only caller context");
     }
   }
 

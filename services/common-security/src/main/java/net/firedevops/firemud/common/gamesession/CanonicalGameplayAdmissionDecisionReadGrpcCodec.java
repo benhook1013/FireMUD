@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.gamesession;
 
 import com.google.protobuf.ByteString;
+import com.google.protobuf.CodedOutputStream;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -8,11 +9,18 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.security.AccountJwtExactValues;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
@@ -20,6 +28,7 @@ import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadGrpcC
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionCandidate;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionDecisionStatus;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionOriginKind;
@@ -31,6 +40,10 @@ import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterOwnerRead
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayRosterOwnerReadResponse;
 import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadRequest;
 import net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadResponse;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsRequest;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsResponse;
+import net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTargetRequest;
+import net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTargetResponse;
 
 /**
  * Closed, purpose-specific wire mapping for Account-only Game Session owner reads.
@@ -42,14 +55,337 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
   public static final int MAX_REQUEST_WIRE_BYTES =
       AccountGameplayAdmissionLeaseEvidence.MAX_EVIDENCE_BYTES + 1024;
   public static final int MAX_RESPONSE_WIRE_BYTES = 256 * 1024;
+  public static final int MAX_DISCOVERY_REQUEST_WIRE_BYTES = 16 * 1024;
+  public static final int MAX_DISCOVERY_RESPONSE_WIRE_BYTES = 4 * 1024 * 1024;
+  public static final int MAX_TARGET_RESOLUTION_REQUEST_WIRE_BYTES = 16 * 1024;
+  public static final int MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES = 64 * 1024;
   public static final int MAX_PUBLISHED_REALM_REQUEST_WIRE_BYTES =
       CanonicalGameplayRosterOwnerReadGrpcCodec.MAX_REQUEST_BYTES + 256;
+  // WorldCanonicalInstanceLifecycleClient and GrpcChannelFactory have no inbound override: the
+  // existing upstream RPC admits at most the ordinary 4 MiB complete Protobuf response. The World
+  // value itself has no intrinsic byte/count bound; this is its current transport budget, not a new
+  // source-content limit. A returned resolver target fits its existing complete 64 KiB response.
   public static final int MAX_PUBLISHED_REALM_RESPONSE_WIRE_BYTES =
-      CanonicalGameplayRosterOwnerReadGrpcCodec.MAX_RESPONSE_BYTES + 1024 * 1024;
+      framedFieldBytes(1, 1)
+          + framedFieldBytes(2, CanonicalGameplayRosterOwnerReadGrpcCodec.MAX_RESPONSE_BYTES)
+          + framedFieldBytes(3, MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES)
+          + framedFieldBytes(4, GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES);
   private static final int SCHEMA_VERSION = 1;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private CanonicalGameplayAdmissionDecisionReadGrpcCodec() {}
+
+  // Schema version is one packed uint32 with a one-byte payload. Each remaining value is one
+  // length-delimited field. Budget the entire admitted upstream World response even though only
+  // its canonical evidence payload is copied, preserving conservative framing headroom.
+  private static int framedFieldBytes(int fieldNumber, int maximumPayloadBytes) {
+    return CodedOutputStream.computeTagSize(fieldNumber)
+        + CodedOutputStream.computeUInt32SizeNoTag(maximumPayloadBytes)
+        + maximumPayloadBytes;
+  }
+
+  /** Workload-only correlation; no player or admission authority is supplied. */
+  public record DiscoveryRequest(UUID readRequestId, String targetNamespace) {
+    public DiscoveryRequest {
+      requireNonNil(readRequestId, "readRequestId");
+      if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+        throw invalid("Canonical discovery namespace required");
+      }
+    }
+  }
+
+  /** Closed complete collection; authenticated transport and owner reads establish provenance. */
+  public static final class VisiblePublicProductionTargets {
+    private final DiscoveryRequest request;
+    private final List<Target> targets;
+
+    private VisiblePublicProductionTargets(DiscoveryRequest request, List<Target> targets) {
+      this.request = request;
+      this.targets = List.copyOf(targets);
+    }
+
+    public DiscoveryRequest request() {
+      return request;
+    }
+
+    public List<Target> targets() {
+      return targets;
+    }
+  }
+
+  public static ListVisiblePublicProductionAdmissionTargetsRequest toDiscoveryRequest(
+      DiscoveryRequest request) {
+    Objects.requireNonNull(request, "request");
+    var wire =
+        ListVisiblePublicProductionAdmissionTargetsRequest.newBuilder()
+            .addSchemaVersion(SCHEMA_VERSION)
+            .addReadRequestUuid(request.readRequestId().toString())
+            .addTargetNamespace(request.targetNamespace())
+            .build();
+    requireWireSize(
+        wire.getSerializedSize(), MAX_DISCOVERY_REQUEST_WIRE_BYTES, "discovery request");
+    return wire;
+  }
+
+  public static DiscoveryRequest parseDiscoveryRequest(
+      ListVisiblePublicProductionAdmissionTargetsRequest request) {
+    Objects.requireNonNull(request, "request");
+    requireWireSize(
+        request.getSerializedSize(), MAX_DISCOVERY_REQUEST_WIRE_BYTES, "discovery request");
+    if (!request.getUnknownFields().asMap().isEmpty()
+        || one(request.getSchemaVersionList(), "discovery schemaVersion") != SCHEMA_VERSION) {
+      throw invalid("Unsupported or unknown discovery request");
+    }
+    return new DiscoveryRequest(
+        uuid(one(request.getReadRequestUuidList(), "readRequestId")),
+        one(request.getTargetNamespaceList(), "targetNamespace"));
+  }
+
+  public static ListVisiblePublicProductionAdmissionTargetsResponse toDiscoveryResponse(
+      DiscoveryRequest request, List<Target> targets) {
+    Objects.requireNonNull(targets, "targets");
+    var response =
+        ListVisiblePublicProductionAdmissionTargetsResponse.newBuilder()
+            .addSchemaVersion(SCHEMA_VERSION)
+            .addRequest(toDiscoveryRequest(request));
+    int encodedSize = response.build().getSerializedSize();
+    for (Target target : targets) {
+      var wire = toTargetEvidence(target);
+      requireWireSize(
+          wire.getSerializedSize(), MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES, "discovery target");
+      encodedSize += framedFieldBytes(3, wire.getSerializedSize());
+      requireWireSize(encodedSize, MAX_DISCOVERY_RESPONSE_WIRE_BYTES, "discovery response");
+      response.addCurrentTargets(wire);
+    }
+    var built = response.build();
+    fromDiscoveryResponse(request, built);
+    return built;
+  }
+
+  public static VisiblePublicProductionTargets fromDiscoveryResponse(
+      DiscoveryRequest expected, ListVisiblePublicProductionAdmissionTargetsResponse response) {
+    Objects.requireNonNull(expected, "expected");
+    Objects.requireNonNull(response, "response");
+    requireWireSize(
+        response.getSerializedSize(), MAX_DISCOVERY_RESPONSE_WIRE_BYTES, "discovery response");
+    if (!response.getUnknownFields().asMap().isEmpty()
+        || one(response.getSchemaVersionList(), "discovery schemaVersion") != SCHEMA_VERSION
+        || !toDiscoveryRequest(expected)
+            .equals(one(response.getRequestList(), "discovery request"))) {
+      throw invalid("Discovery response changed the closed original request");
+    }
+    Set<UUID> tenants = new HashSet<>();
+    Set<String> tenantSlugs = new HashSet<>();
+    Set<UUID> realms = new HashSet<>();
+    List<Target> targets =
+        response.getCurrentTargetsList().stream()
+            .map(
+                wire -> {
+                  requireWireSize(
+                      wire.getSerializedSize(),
+                      MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES,
+                      "discovery target");
+                  Target target = parseTargetEvidence(wire);
+                  if (!expected.targetNamespace().equals(target.targetNamespace())
+                      || !"SHARED".equals(target.playableStateScope())
+                      || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())
+                      || target.ownerProofOutcome() != OwnerProofOutcome.COMMITTED
+                      || target.positiveDurableAbort()
+                      || !tenants.add(target.canonicalTenantId())
+                      || !tenantSlugs.add(target.tenantSlug())
+                      || !realms.add(target.realmId())) {
+                    throw invalid(
+                        "Discovery requires unique current public SHARED PRESEEDED owner targets");
+                  }
+                  return target;
+                })
+            .toList();
+    return new VisiblePublicProductionTargets(expected, targets);
+  }
+
+  /** Comparison selectors only; constructing this value authenticates neither Account nor scope. */
+  public record RetainedTargetSelector(
+      UUID readRequestId,
+      UUID accountId,
+      String targetNamespace,
+      UUID tenantId,
+      String tenantSlug,
+      String worldSlug,
+      UUID realmId,
+      String realmSlug,
+      UUID playableStateNamespaceId,
+      String playableStateScope,
+      UUID gameInstanceId,
+      long catalogRevision,
+      long pointerVersion) {
+    public RetainedTargetSelector {
+      requireNonNil(readRequestId, "readRequestId");
+      requireNonNil(accountId, "accountId");
+      requireNonNil(tenantId, "tenantId");
+      requireNonNil(realmId, "realmId");
+      requireNonNil(playableStateNamespaceId, "playableStateNamespaceId");
+      requireNonNil(gameInstanceId, "gameInstanceId");
+      if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)
+          || !RealmEntryPolicy.isCanonicalSlug(tenantSlug)
+          || !RealmEntryPolicy.isCanonicalSlug(worldSlug)
+          || !RealmEntryPolicy.isCanonicalSlug(realmSlug)
+          || !"SHARED".equals(playableStateScope)) {
+        throw invalid("Exact canonical public SHARED target selectors required");
+      }
+      positiveLong(catalogRevision, "catalogRevision");
+      positiveLong(pointerVersion, "pointerVersion");
+    }
+  }
+
+  /**
+   * Structurally verified resolver result; protected transport establishes its owner provenance.
+   */
+  public static final class ResolvedPublishedTarget {
+    private final RetainedTargetSelector selector;
+    private final Target currentTarget;
+
+    private ResolvedPublishedTarget(RetainedTargetSelector selector, Target currentTarget) {
+      this.selector = selector;
+      this.currentTarget = currentTarget;
+    }
+
+    public RetainedTargetSelector selector() {
+      return selector;
+    }
+
+    public Target currentTarget() {
+      return currentTarget;
+    }
+
+    /** Derives both previously missing selectors exclusively from the returned owner target. */
+    public CanonicalGameplayRosterOwnerReadEvidence.Request strictSelector() {
+      return new CanonicalGameplayRosterOwnerReadEvidence.Request(
+          selector.readRequestId(),
+          selector.accountId(),
+          currentTarget.targetNamespace(),
+          currentTarget.canonicalTenantId(),
+          currentTarget.worldSlug(),
+          currentTarget.realmId(),
+          currentTarget.realmSlug(),
+          currentTarget.playableStateNamespaceId(),
+          currentTarget.playableStateScope(),
+          currentTarget.canonicalGameInstanceId(),
+          currentTarget.canonicalVersionId(),
+          currentTarget.catalogRevision(),
+          currentTarget.pointerVersion(),
+          currentTarget.activeWorldEpoch());
+    }
+  }
+
+  public static ResolvePublishedRealmAdmissionTargetRequest toTargetResolutionRequest(
+      RetainedTargetSelector selector) {
+    Objects.requireNonNull(selector, "selector");
+    var request =
+        ResolvePublishedRealmAdmissionTargetRequest.newBuilder()
+            .addSchemaVersion(SCHEMA_VERSION)
+            .addReadRequestUuid(selector.readRequestId().toString())
+            .addAccountUuid(selector.accountId().toString())
+            .addTargetNamespace(selector.targetNamespace())
+            .addCanonicalTenantUuid(selector.tenantId().toString())
+            .addTenantSlug(selector.tenantSlug())
+            .addWorldSlug(selector.worldSlug())
+            .addRealmUuid(selector.realmId().toString())
+            .addRealmSlug(selector.realmSlug())
+            .addPlayableStateNamespaceUuid(selector.playableStateNamespaceId().toString())
+            .addPlayableStateScope(selector.playableStateScope())
+            .addCanonicalGameInstanceUuid(selector.gameInstanceId().toString())
+            .addCatalogRevision(Long.toString(selector.catalogRevision()))
+            .addPointerVersion(Long.toString(selector.pointerVersion()))
+            .build();
+    requireWireSize(
+        request.getSerializedSize(),
+        MAX_TARGET_RESOLUTION_REQUEST_WIRE_BYTES,
+        "target resolution request");
+    return request;
+  }
+
+  public static RetainedTargetSelector parseTargetResolutionRequest(
+      ResolvePublishedRealmAdmissionTargetRequest request) {
+    Objects.requireNonNull(request, "request");
+    requireWireSize(
+        request.getSerializedSize(),
+        MAX_TARGET_RESOLUTION_REQUEST_WIRE_BYTES,
+        "target resolution request");
+    if (!request.getUnknownFields().asMap().isEmpty()
+        || one(request.getSchemaVersionList(), "resolver schemaVersion") != SCHEMA_VERSION) {
+      throw invalid("Closed schema-1 target resolution request required");
+    }
+    return new RetainedTargetSelector(
+        uuid(one(request.getReadRequestUuidList(), "readRequestId")),
+        uuid(one(request.getAccountUuidList(), "accountId")),
+        one(request.getTargetNamespaceList(), "targetNamespace"),
+        uuid(one(request.getCanonicalTenantUuidList(), "tenantId")),
+        one(request.getTenantSlugList(), "tenantSlug"),
+        one(request.getWorldSlugList(), "worldSlug"),
+        uuid(one(request.getRealmUuidList(), "realmId")),
+        one(request.getRealmSlugList(), "realmSlug"),
+        uuid(one(request.getPlayableStateNamespaceUuidList(), "playableStateNamespaceId")),
+        one(request.getPlayableStateScopeList(), "playableStateScope"),
+        uuid(one(request.getCanonicalGameInstanceUuidList(), "gameInstanceId")),
+        positiveLongDecimal(
+            one(request.getCatalogRevisionList(), "catalogRevision"), "catalogRevision"),
+        positiveLongDecimal(
+            one(request.getPointerVersionList(), "pointerVersion"), "pointerVersion"));
+  }
+
+  public static ResolvePublishedRealmAdmissionTargetResponse toTargetResolutionResponse(
+      RetainedTargetSelector selector, Target target) {
+    var response =
+        ResolvePublishedRealmAdmissionTargetResponse.newBuilder()
+            .addSchemaVersion(SCHEMA_VERSION)
+            .addRequest(toTargetResolutionRequest(selector))
+            .addCurrentTarget(toTargetEvidence(target))
+            .build();
+    fromTargetResolutionResponse(selector, response);
+    return response;
+  }
+
+  public static ResolvedPublishedTarget fromTargetResolutionResponse(
+      RetainedTargetSelector expected, ResolvePublishedRealmAdmissionTargetResponse response) {
+    Objects.requireNonNull(expected, "expected");
+    Objects.requireNonNull(response, "response");
+    requireWireSize(
+        response.getSerializedSize(),
+        MAX_TARGET_RESOLUTION_RESPONSE_WIRE_BYTES,
+        "target resolution response");
+    if (!response.getUnknownFields().asMap().isEmpty()
+        || one(response.getSchemaVersionList(), "resolver schemaVersion") != SCHEMA_VERSION
+        || !toTargetResolutionRequest(expected)
+            .equals(one(response.getRequestList(), "resolver request"))) {
+      throw invalid("Target resolution response changed the exact closed original request");
+    }
+    Target target =
+        parseTargetEvidence(one(response.getCurrentTargetList(), "resolver currentTarget"));
+    requireRetainedTargetMatches(expected, target);
+    return new ResolvedPublishedTarget(expected, target);
+  }
+
+  public static void requireRetainedTargetMatches(RetainedTargetSelector expected, Target current) {
+    Objects.requireNonNull(expected, "expected");
+    Objects.requireNonNull(current, "current");
+    if (!expected.targetNamespace().equals(current.targetNamespace())
+        || !expected.tenantId().equals(current.canonicalTenantId())
+        || !expected.tenantSlug().equals(current.tenantSlug())
+        || !expected.worldSlug().equals(current.worldSlug())
+        || !expected.realmId().equals(current.realmId())
+        || !expected.realmSlug().equals(current.realmSlug())
+        || !expected.playableStateNamespaceId().equals(current.playableStateNamespaceId())
+        || !expected.playableStateScope().equals(current.playableStateScope())
+        || !expected.gameInstanceId().equals(current.canonicalGameInstanceId())
+        || expected.catalogRevision() != current.catalogRevision()
+        || expected.pointerVersion() != current.pointerVersion()
+        || !"PRESEEDED_ONLY".equals(current.characterCreationPolicy())
+        || current.ownerProofOutcome() != OwnerProofOutcome.COMMITTED
+        || current.positiveDurableAbort()) {
+      throw invalid(
+          "Current owner target differs from the exact retained public PRESEEDED_ONLY target");
+    }
+  }
 
   /** Locally retained request identity; construction is restricted to this codec. */
   public static final class RequestEvidence {
@@ -161,14 +497,17 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
     private final CanonicalGameplayRosterOwnerReadEvidence.Request selector;
     private final CanonicalGameplayRosterOwnerReadEvidence sourceEvidence;
     private final Target currentTarget;
+    private final WorldCanonicalInstanceLifecycleEvidence worldLifecycleEvidence;
 
     private PublishedRealmEvidence(
         CanonicalGameplayRosterOwnerReadEvidence.Request selector,
         CanonicalGameplayRosterOwnerReadEvidence sourceEvidence,
-        Target currentTarget) {
+        Target currentTarget,
+        WorldCanonicalInstanceLifecycleEvidence worldLifecycleEvidence) {
       this.selector = selector;
       this.sourceEvidence = sourceEvidence;
       this.currentTarget = currentTarget;
+      this.worldLifecycleEvidence = worldLifecycleEvidence;
     }
 
     public CanonicalGameplayRosterOwnerReadEvidence.Request selector() {
@@ -181,6 +520,10 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
 
     public Target currentTarget() {
       return currentTarget;
+    }
+
+    public WorldCanonicalInstanceLifecycleEvidence worldLifecycleEvidence() {
+      return worldLifecycleEvidence;
     }
   }
 
@@ -324,11 +667,14 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
   public static GetPublishedRealmAdmissionOwnerReadResponse toPublishedRealmResponse(
       PublishedRealmRequest request,
       CanonicalGameplayRosterOwnerReadEvidence sourceEvidence,
-      Target currentTarget) {
+      Target currentTarget,
+      WorldCanonicalInstanceLifecycleEvidence worldLifecycleEvidence) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(sourceEvidence, "sourceEvidence");
     Objects.requireNonNull(currentTarget, "currentTarget");
     requirePublishedTargetMatchesSource(currentTarget, request.selector(), sourceEvidence);
+    requirePublishedWorldLifecycle(
+        request.selector(), currentTarget, sourceEvidence, worldLifecycleEvidence);
     GetCanonicalGameplayRosterOwnerReadResponse sourceResponse =
         CanonicalGameplayRosterOwnerReadGrpcCodec.toResponse(request.selector(), sourceEvidence);
     GetPublishedRealmAdmissionOwnerReadResponse response =
@@ -336,6 +682,7 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
             .addSchemaVersion(SCHEMA_VERSION)
             .addPublishedSource(sourceResponse)
             .addCurrentTarget(toTargetEvidence(currentTarget))
+            .addWorldLifecycleEvidence(ByteString.copyFrom(worldLifecycleEvidence.canonicalBytes()))
             .build();
     requireWireSize(
         response.getSerializedSize(),
@@ -363,8 +710,82 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
             request.selector(), one(response.getPublishedSourceList(), "published source"));
     Target currentTarget =
         parseTargetEvidence(one(response.getCurrentTargetList(), "current target"));
+    WorldCanonicalInstanceLifecycleEvidence lifecycle =
+        WorldCanonicalInstanceLifecycleEvidence.fromStored(
+            one(response.getWorldLifecycleEvidenceList(), "World lifecycle evidence")
+                .toByteArray());
     requirePublishedTargetMatchesSource(currentTarget, request.selector(), sourceEvidence);
-    return new PublishedRealmEvidence(request.selector(), sourceEvidence, currentTarget);
+    requirePublishedWorldLifecycle(request.selector(), currentTarget, sourceEvidence, lifecycle);
+    return new PublishedRealmEvidence(request.selector(), sourceEvidence, currentTarget, lifecycle);
+  }
+
+  private static void requirePublishedWorldLifecycle(
+      CanonicalGameplayRosterOwnerReadEvidence.Request selector,
+      Target target,
+      CanonicalGameplayRosterOwnerReadEvidence source,
+      WorldCanonicalInstanceLifecycleEvidence lifecycle) {
+    Objects.requireNonNull(lifecycle, "Fresh World lifecycle evidence is required");
+    var request = lifecycle.request();
+    var binding = lifecycle.launchBinding();
+    var descriptor = binding.descriptor();
+    var release = binding.releaseAttestation();
+    var published = source.publishedPolicySetEvidence();
+    var terminal =
+        GameDesignPublicationTerminalEvidence.fromStored(published.terminalEvidenceBytes());
+    var content = terminal.releaseContent();
+    var participants =
+        content.participantDigests().stream()
+            .map(
+                participant ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionId() != null,
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigest() != null,
+                        participant.abilitySchemaDigest()))
+            .toList();
+    int attestationSchema =
+        switch (content.attestationSchemaVersion()) {
+          case "v2" -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
+          case "v3" -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+          case "v4" -> AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION;
+          default -> throw invalid("Published release has no supported full attestation schema");
+        };
+    if (!selector.requestUuid().equals(request.readRequestId())
+        || !selector.targetNamespace().equals(request.targetNamespace())
+        || !selector.canonicalTenantUuid().equals(request.canonicalTenantId())
+        || !selector.worldSlug().equals(request.worldSlug())
+        || !selector.canonicalGameInstanceUuid().equals(request.canonicalGameInstanceId())
+        || !selector.playableStateNamespaceUuid().equals(request.playableStateNamespaceId())
+        || !selector.playableStateScope().equals(request.playableStateScope())
+        || !request.publicProduction()
+        || !selector.canonicalVersionUuid().equals(request.canonicalVersionId())
+        || !"ACTIVE".equals(lifecycle.lifecycleStatus())
+        || lifecycle.lifecycleEpoch() != target.activeWorldEpoch()
+        || descriptor.versionId() != target.runtimeVersionId()
+        || !release.canonicalTenantId().equals(target.canonicalTenantId())
+        || !release.canonicalVersionId().equals(target.canonicalVersionId())
+        || !release.worldSlug().equals(target.worldSlug())
+        || !release.commitId().equals(published.sourceCommitId().toString())
+        || !release.publishWorkflowId().equals(published.publishWorkflowId())
+        || !release.manifestHash().equals(published.manifestHash())
+        || release.versionStateEpoch() != published.publicationVersionStateEpoch()
+        || !release.publishedReleaseBundleRef().equals(published.publishedReleaseBundleRef())
+        || release.schemaVersion() != attestationSchema
+        || release.manifestSchemaVersion() != content.manifestSchemaVersion()
+        || !release.artifactDigests().equals(content.artifactDigests())
+        || !release.requiredManifestAssetKeys().equals(content.requiredManifestAssetKeys())
+        || !release.commandDefinitions().equals(content.commandDefinitions())
+        || !release.generationConfigRevision().equals(content.generationConfigRevision())
+        || !release.participantDigests().equals(participants)
+        || !Objects.equals(release.worldStartLocationEvidence(), terminal.worldEvidence())) {
+      throw invalid(
+          "Fresh World ACTIVE lifecycle differs from the exact published target and launch source");
+    }
   }
 
   /**

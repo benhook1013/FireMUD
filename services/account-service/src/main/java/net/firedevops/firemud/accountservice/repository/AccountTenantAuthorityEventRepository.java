@@ -15,6 +15,10 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Typed tenant-authority source, outbox, receipt, and current-checkpoint readback. */
 @Repository
@@ -24,6 +28,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
         "Injected Account repositories and DSLContext are private transaction collaborators.")
 public class AccountTenantAuthorityEventRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
+  private static final JsonMapper SOURCE_JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
 
   private final DSLContext dsl;
   private final AccountAuthorityOutboxRepository authorityOutbox;
@@ -46,6 +55,132 @@ public class AccountTenantAuthorityEventRepository {
     this.billingOutbox = Objects.requireNonNull(billingOutbox);
     this.tenantIdentity = Objects.requireNonNull(tenantIdentity);
     this.generations = Objects.requireNonNull(generations);
+  }
+
+  /** Data-only routing hint over the exact current source; it grants no entitlement authority. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public SourceSelection readCurrentSourceSelection(UUID tenantId) {
+    requireTransaction();
+    requireTenant(tenantId);
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException("Source selection requires a writable Account transaction");
+    }
+    ScopeState authority =
+        generations.read(AccountAuthorityGenerationRepository.AuthorityScope.tenant(tenantId));
+    Record head =
+        dsl.fetchOne(
+            "SELECT * FROM account_tenant_authority_source_records WHERE tenant_uuid = ? FOR SHARE",
+            tenantId);
+    if (head == null) {
+      throw new IllegalStateException("Current tenant source is absent");
+    }
+    long sequence = positive(head, "tenant_billing_sequence");
+    UUID requestId = requiredUuid(head, "last_request_id");
+    UUID eventId = requiredUuid(head, "tenant_billing_event_id");
+    String digest = requiredText(head, "tenant_billing_event_digest");
+    Record billing =
+        dsl.fetchOne(
+            "SELECT e.*, s.last_sequence FROM account_tenant_entitlement_outbox_events e "
+                + "JOIN account_tenant_entitlement_outbox_streams s USING (tenant_uuid) "
+                + "WHERE e.tenant_uuid = ? AND e.tenant_billing_sequence = ? FOR SHARE OF s",
+            tenantId,
+            sequence);
+    if (billing == null
+        || positive(billing, "last_sequence") != sequence
+        || positive(billing, "tenant_billing_sequence") != sequence
+        || !requestId.equals(billing.get("request_id", UUID.class))
+        || !eventId.equals(billing.get("event_id", UUID.class))
+        || !digest.equals(billing.get("event_digest", String.class))) {
+      throw new IllegalStateException("Tenant source differs from the current billing checkpoint");
+    }
+    byte[] payload = billing.get("payload", byte[].class);
+    if (payload == null || payload.length == 0 || payload.length > 32768) {
+      throw new IllegalStateException("Tenant billing payload is absent or oversized");
+    }
+    JsonNode envelope;
+    try {
+      envelope = SOURCE_JSON.readTree(payload);
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException("Tenant billing envelope is unreadable", exception);
+    }
+    if (envelope == null
+        || !tenantId.toString().equals(envelope.path("tenantId").asText())
+        || !requestId.toString().equals(envelope.path("requestId").asText())
+        || !requiredText(head, "last_request_digest")
+            .equals(envelope.path("requestDigest").asText())
+        || !eventId.toString().equals(envelope.path("eventId").asText())
+        || !Long.toString(sequence).equals(envelope.path("tenantBillingSequence").asText())) {
+      throw new IllegalStateException("Tenant billing envelope differs from its exact source head");
+    }
+    SourceKind kind;
+    Event checkpoint;
+    switch (envelope.path("schemaVersion").asText()) {
+      case "account-hosting-subscription-event/v1" -> {
+        kind = SourceKind.PAID_HOSTING;
+        var hosting = AccountHostingSubscriptionLifecycleEvidence.verifyBilling(payload);
+        if (!digest.equals(hosting.digest())) {
+          throw new IllegalStateException(
+              "Hosting billing payload differs from its committed digest");
+        }
+        checkpoint = readHostingCheckpoint(tenantId, requestId);
+        Record receipt =
+            dsl.fetchOne(
+                "SELECT receipt_payload FROM subscription_lifecycle_receipts WHERE request_id = ? AND tenant_id = ?",
+                requestId,
+                tenantId);
+        if (receipt == null
+            || !"SubscriptionStatusChanged".equals(envelope.path("eventType").asText())
+            || !envelope
+                .path("receipt")
+                .equals(SOURCE_JSON.readTree(receipt.get("receipt_payload", byte[].class)))) {
+          throw new IllegalStateException("Hosting envelope differs from its committed receipt");
+        }
+      }
+      case DemoTenantEntitlementEventV1Codec.SCHEMA_VERSION -> {
+        kind = SourceKind.NON_PAID_DEMO;
+        if (!digest.equals(DemoTenantEntitlementEventV1Codec.verify(payload).eventDigest())) {
+          throw new IllegalStateException("Demo billing payload differs from its committed digest");
+        }
+        checkpoint = readCurrentDemoByTenant(tenantId);
+      }
+      default -> throw new IllegalStateException("Tenant billing source family is unknown");
+    }
+    if (authority.generation() != checkpoint.tenantAuthorityGeneration()
+        || authority.sourceVersion() != checkpoint.tenantAuthoritySourceVersion()
+        || !requestId.equals(checkpoint.requestId())
+        || !requiredText(head, "last_request_digest").equals(checkpoint.requestDigest())
+        || positive(head, "current_generation") != checkpoint.tenantAuthorityGeneration()
+        || positive(head, "current_source_version") != checkpoint.tenantAuthoritySourceVersion()
+        || positive(head, "last_outbox_sequence") != checkpoint.outboxSequence()
+        || !requiredText(head, "last_event_id").equals(checkpoint.eventId().toString())
+        || !requiredText(head, "last_event_digest").equals(checkpoint.eventDigest())
+        || sequence != checkpoint.tenantBillingSequence()
+        || !eventId.equals(checkpoint.tenantBillingEventId())
+        || !digest.equals(checkpoint.tenantBillingEventDigest())) {
+      throw new IllegalStateException("Tenant authority changed during source selection");
+    }
+    return new SourceSelection(kind, checkpoint);
+  }
+
+  public enum SourceKind {
+    PAID_HOSTING,
+    NON_PAID_DEMO
+  }
+
+  /** The checkpoint is source identity only; callers still require the owning positive reader. */
+  public record SourceSelection(SourceKind kind, Event checkpoint) {
+    public SourceSelection {
+      Objects.requireNonNull(kind);
+      Objects.requireNonNull(checkpoint);
+    }
+
+    public boolean matches(Event current) {
+      return current != null
+          && checkpoint.tenantId().equals(current.tenantId())
+          && checkpoint.eventId().equals(current.eventId())
+          && checkpoint.eventDigest().equals(current.eventDigest())
+          && java.util.Arrays.equals(checkpoint.payload(), current.payload());
+    }
   }
 
   /** Establishes sequence zero only from the same Account transaction that enrolled the tenant. */
@@ -154,6 +289,161 @@ public class AccountTenantAuthorityEventRepository {
 
   /** Appends one tenant-scoped event after the owner has advanced the exact generation row. */
   @Transactional(propagation = Propagation.MANDATORY)
+  public Event appendHosting(
+      UUID requestId,
+      String requestDigest,
+      FreshTenantCreationEvidence source,
+      ScopeState nextAuthority,
+      long billingSequence,
+      UUID billingEventId,
+      String billingEventDigest) {
+    requireTransaction();
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException("Hosting source requires a writable Account transaction");
+    }
+    UUID tenantId = source.canonicalTenantId();
+    requireExactTenant(tenantId, source, nextAuthority);
+    String key = TenantAuthorityEventV1Codec.streamKey(tenantId);
+    Record head =
+        dsl.fetchOne(
+            "SELECT * FROM account_tenant_authority_source_records WHERE outbox_stream_key = ? FOR UPDATE",
+            key);
+    if (head == null
+        || positive(head, "current_generation") + 1 != nextAuthority.generation()
+        || positive(head, "current_source_version") + 1 != nextAuthority.sourceVersion()) {
+      throw new IllegalStateException(
+          "Hosting source does not extend the exact canonical tenant head");
+    }
+    var stored =
+        authorityOutbox.append(
+            key,
+            requestId.toString(),
+            sequence ->
+                evidence(
+                    TenantAuthorityEventV1Codec.seal(
+                        new TenantAuthorityEventV1Codec.AuthorityRequest(
+                            requestId,
+                            requestDigest,
+                            tenantId,
+                            source.creationRequestId(),
+                            source.requestDigest()),
+                        source,
+                        nextAuthority.generation(),
+                        nextAuthority.sourceVersion(),
+                        sequence,
+                        new TenantAuthorityEventV1Codec.BillingReceipt(
+                            tenantId,
+                            requestId,
+                            requestDigest,
+                            TenantAuthorityEventV1Codec.tenantBillingStreamKey(tenantId),
+                            billingSequence,
+                            billingEventId,
+                            billingEventDigest))));
+    Event event = TenantAuthorityEventV1Codec.verify(stored.payload());
+    if (!event.eventDigest().equals(stored.eventDigest())
+        || !event.eventId().toString().equals(stored.eventId())
+        || !event.requestId().equals(requestId)
+        || !event.sourceEvidence().equals(source)
+        || event.outboxSequence() != nonnegative(head, "last_outbox_sequence") + 1) {
+      throw new IllegalStateException("Hosting authority event differs from its exact source");
+    }
+    if (dsl.execute(
+            "UPDATE account_tenant_authority_source_records SET current_generation = ?, current_source_version = ?, "
+                + "last_outbox_sequence = ?, last_request_id = ?, last_request_digest = ?, last_event_id = ?, last_event_digest = ?, "
+                + "tenant_billing_sequence = ?, tenant_billing_event_id = ?, tenant_billing_event_digest = ? "
+                + "WHERE outbox_stream_key = ? AND current_generation = ? AND current_source_version = ? AND last_outbox_sequence = ?",
+            event.tenantAuthorityGeneration(),
+            event.tenantAuthoritySourceVersion(),
+            event.outboxSequence(),
+            requestId,
+            requestDigest,
+            event.eventId().toString(),
+            event.eventDigest(),
+            billingSequence,
+            billingEventId,
+            billingEventDigest,
+            key,
+            nextAuthority.generation() - 1,
+            nextAuthority.sourceVersion() - 1,
+            event.outboxSequence() - 1)
+        != 1) {
+      throw new IllegalStateException("Hosting source checkpoint CAS rejected");
+    }
+    return event;
+  }
+
+  /** Exact hosting receipt readback; demo receipt interpretation is deliberately not used. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Event readHostingCheckpoint(UUID tenantId, UUID requestId) {
+    requireTransaction();
+    FreshTenantCreationEvidence source = tenantIdentity.read(tenantId).orElseThrow();
+    ScopeState authority =
+        generations.read(AccountAuthorityGenerationRepository.AuthorityScope.tenant(tenantId));
+    Record receipt =
+        dsl.fetchOne(
+            "SELECT r.* FROM subscription_lifecycle_receipts r "
+                + "JOIN subscription_lifecycle_operations o USING (request_id) WHERE r.request_id = ? AND r.tenant_id = ? "
+                + "AND o.state = 'COMMITTED'",
+            requestId,
+            tenantId);
+    Record head =
+        dsl.fetchOne(
+            "SELECT * FROM account_tenant_authority_source_records WHERE tenant_uuid = ? FOR SHARE",
+            tenantId);
+    if (receipt == null
+        || head == null
+        || !requestId.equals(head.get("last_request_id", UUID.class))
+        || !receipt
+            .get("request_digest", String.class)
+            .equals(head.get("last_request_digest", String.class))
+        || authority.generation() != positive(receipt, "authority_generation")
+        || authority.sourceVersion() != positive(receipt, "authority_source_version")
+        || authority.generation() != positive(head, "current_generation")
+        || authority.sourceVersion() != positive(head, "current_source_version")
+        || positive(receipt, "authority_sequence") != positive(head, "last_outbox_sequence")
+        || positive(receipt, "billing_sequence") != positive(head, "tenant_billing_sequence")
+        || !receipt
+            .get("billing_event_id", UUID.class)
+            .equals(head.get("tenant_billing_event_id", UUID.class))
+        || !receipt
+            .get("billing_event_digest", String.class)
+            .equals(head.get("tenant_billing_event_digest", String.class))) {
+      throw new IllegalStateException("Hosting receipt is not the current canonical tenant source");
+    }
+    var stored =
+        authorityOutbox
+            .findEvent(
+                TenantAuthorityEventV1Codec.streamKey(tenantId),
+                positive(receipt, "authority_sequence"))
+            .orElseThrow();
+    Event event = TenantAuthorityEventV1Codec.verify(stored.payload());
+    var checkpoint = authorityOutbox.readCheckpoint(stored.outboxStreamKey()).orElseThrow();
+    if (!event.sourceEvidence().equals(source)
+        || !event.requestId().equals(requestId)
+        || !event.requestDigest().equals(receipt.get("request_digest", String.class))
+        || event.tenantAuthorityGeneration() != authority.generation()
+        || event.tenantAuthoritySourceVersion() != authority.sourceVersion()
+        || event.tenantBillingSequence() != positive(receipt, "billing_sequence")
+        || !event.tenantBillingEventId().equals(receipt.get("billing_event_id", UUID.class))
+        || !event
+            .tenantBillingEventDigest()
+            .equals(receipt.get("billing_event_digest", String.class))
+        || !event.eventId().toString().equals(receipt.get("authority_event_id", String.class))
+        || !event.eventDigest().equals(receipt.get("authority_event_digest", String.class))
+        || !stored.eventId().equals(event.eventId().toString())
+        || !stored.eventDigest().equals(event.eventDigest())
+        || !checkpoint.sourceEventId().equals(stored.eventId())
+        || !checkpoint.sourceEventDigest().equals(stored.eventDigest())
+        || checkpoint.outboxSequence() != stored.outboxSequence()
+        || !stored.eventId().equals(head.get("last_event_id", String.class))
+        || !stored.eventDigest().equals(head.get("last_event_digest", String.class))) {
+      throw new IllegalStateException("Hosting source/outbox/receipt readback is inconsistent");
+    }
+    return event;
+  }
+
+  /** Appends one tenant-scoped event after the owner has advanced the exact generation row. */
+  @Transactional(propagation = Propagation.MANDATORY)
   public Event append(
       DemoTenantEntitlementRequest request,
       FreshTenantCreationEvidence source,
@@ -254,7 +544,8 @@ public class AccountTenantAuthorityEventRepository {
   }
 
   /**
-   * Verifies the exact event and owning committed receipt, without requiring it to remain latest.
+   * Verifies the exact DEMO event and owning committed DEMO receipt, without requiring it to remain
+   * latest. Hosting receipts use readHostingCheckpoint instead.
    */
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
   public Event readCommittedReceipt(
@@ -335,7 +626,10 @@ public class AccountTenantAuthorityEventRepository {
     return event;
   }
 
-  /** Verifies that a current Account generation is represented by the exact latest source event. */
+  /**
+   * Verifies the exact latest DEMO source against its owning DEMO operation. Hosting currentness
+   * uses readHostingCheckpoint through the shared source selector.
+   */
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
   public Event readCurrentCheckpoint(
       UUID tenantId,
@@ -402,8 +696,17 @@ public class AccountTenantAuthorityEventRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public Event readCurrentByTenant(UUID tenantId) {
+    return readCurrentSourceSelection(tenantId).checkpoint();
+  }
+
+  /** DEMO-owned current read; retains the same owner transaction and exact source checks. */
+  Event readCurrentDemoByTenant(UUID tenantId) {
     requireTransaction();
     requireTenant(tenantId);
+    if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "DEMO current source requires a writable Account transaction");
+    }
     Record freshIdentity =
         dsl.fetchOne(
             "SELECT canonical_tenant_id FROM account_fresh_tenant_identity_associations "

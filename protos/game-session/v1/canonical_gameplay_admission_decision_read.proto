@@ -11,6 +11,12 @@ option java_outer_classname = "CanonicalGameplayAdmissionDecisionReadProto";
 // Explicit, manually composed Account-purpose reads. GS requires the exact same-namespace Account
 // workload and returns existing owner evidence without claiming gameplay admission.
 service CanonicalGameplayAdmissionDecisionReadService {
+  // Complete point-in-time discovery from current canonical owners; no admission or World hold.
+  rpc ListVisiblePublicProductionAdmissionTargets(ListVisiblePublicProductionAdmissionTargetsRequest)
+      returns (ListVisiblePublicProductionAdmissionTargetsResponse);
+  // Resolves only missing strict-read selectors from current owner rows; never grants admission.
+  rpc ResolvePublishedRealmAdmissionTarget(ResolvePublishedRealmAdmissionTargetRequest)
+      returns (ResolvePublishedRealmAdmissionTargetResponse);
   rpc GetOriginalNewNeverAdmittedDecision(GetOriginalNewNeverAdmittedDecisionRequest)
       returns (GetOriginalNewNeverAdmittedDecisionResponse);
   rpc GetCanonicalGameplayAdmissionDecision(
@@ -19,6 +25,49 @@ service CanonicalGameplayAdmissionDecisionReadService {
   rpc GetPublishedRealmAdmissionOwnerRead(
       GetPublishedRealmAdmissionOwnerReadRequest)
       returns (GetPublishedRealmAdmissionOwnerReadResponse);
+}
+
+// Closed workload-only discovery correlation. No player credential or guessed target is accepted.
+message ListVisiblePublicProductionAdmissionTargetsRequest {
+  repeated uint32 schema_version = 1;
+  repeated string read_request_uuid = 2;
+  repeated string target_namespace = 3;
+}
+
+// All current visible public SHARED PRESEEDED targets or refusal. An authenticated empty list is
+// valid. The complete serialized response is bounded to exactly 4 MiB; each complete target is
+// bounded to 64 KiB. No truncation or pagination, and no fresh World lifecycle/hold is implied.
+message ListVisiblePublicProductionAdmissionTargetsResponse {
+  repeated uint32 schema_version = 1;
+  repeated ListVisiblePublicProductionAdmissionTargetsRequest request = 2;
+  repeated CanonicalPlayableTargetEvidence current_targets = 3;
+}
+
+// Exact retained public-production target plus read/account correlation. No content-version UUID,
+// World epoch, private storage handle, bearer, or Account-issued scope may be supplied here.
+message ResolvePublishedRealmAdmissionTargetRequest {
+  repeated uint32 schema_version = 1;
+  repeated string read_request_uuid = 2;
+  repeated string account_uuid = 3;
+  repeated string target_namespace = 4;
+  repeated string canonical_tenant_uuid = 5;
+  repeated string tenant_slug = 6;
+  repeated string world_slug = 7;
+  repeated string realm_uuid = 8;
+  repeated string realm_slug = 9;
+  repeated string playable_state_namespace_uuid = 10;
+  repeated string playable_state_scope = 11;
+  repeated string canonical_game_instance_uuid = 12;
+  repeated string catalog_revision = 13;
+  repeated string pointer_version = 14;
+}
+
+// Point-in-time PRESEEDED_ONLY SHARED owner target, including actual version/epoch and committed
+// OPEN proof. This selects a subsequent strict published read and supplies no fresh World lease.
+message ResolvePublishedRealmAdmissionTargetResponse {
+  repeated uint32 schema_version = 1;
+  repeated ResolvePublishedRealmAdmissionTargetRequest request = 2;
+  repeated CanonicalPlayableTargetEvidence current_target = 3;
 }
 
 // Repeated fields preserve wire presence and duplicate evidence for closed receiver validation.
@@ -126,14 +175,17 @@ message CanonicalPlayableTargetEvidence {
   repeated string character_creation_policy = 32;
 }
 
-// Complete current GS target and the existing full source response (owner proof, launch/source,
-// complete published policy set). The existing source response remains independently validated
-// by CanonicalGameplayRosterOwnerReadGrpcCodec. Total bound is below 4 MiB and includes target
-// protobuf headroom; the Account client applies it only to this RPC.
+// Complete current GS target, the existing full publication source, and a mandatory fresh World
+// ACTIVE capture of the same launch. Existing owner codecs independently validate both carried
+// sources. The complete 6,422,545-byte bound includes all three carriers and protobuf framing;
+// oversized complete source refuses rather than dropping evidence.
 message GetPublishedRealmAdmissionOwnerReadResponse {
   repeated uint32 schema_version = 1;
   repeated GetCanonicalGameplayRosterOwnerReadResponse published_source = 2;
   repeated CanonicalPlayableTargetEvidence current_target = 3;
+  // Exact existing WorldCanonicalInstanceLifecycleEvidence canonical bytes. Required once;
+  // ACTIVE and complete request/launch/publication binding must match the same owner target.
+  repeated bytes world_lifecycle_evidence = 4;
 }
 
 // Independently reads the original selected abandonment and actual qualified physical closure.

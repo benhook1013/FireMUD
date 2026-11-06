@@ -5,8 +5,11 @@ import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.Map;
+import java.util.Objects;
 
 /** Helper for generating and verifying JWT tokens. */
 public class JwtUtil {
@@ -26,10 +29,36 @@ public class JwtUtil {
       String subject, long tokenExpirationMillis, Map<String, Object> claims) {
     long now = System.currentTimeMillis();
     return Jwts.builder()
-        .subject(subject)
         .claims(claims)
+        .subject(subject)
         .issuedAt(new Date(now))
         .expiration(new Date(now + tokenExpirationMillis))
+        .signWith(Keys.hmacShaKeyFor(key))
+        .compact();
+  }
+
+  /**
+   * Signs with an owner-selected absolute expiration at JWT NumericDate precision. The issuance
+   * timestamp is sampled once; expiration must be whole-second precision and later than issuance.
+   */
+  public String generateToken(String subject, Instant expiresAt, Map<String, Object> claims) {
+    Objects.requireNonNull(subject, "Token subject required");
+    Objects.requireNonNull(expiresAt, "Absolute token expiration required");
+    Objects.requireNonNull(claims, "Token claims required");
+    if (!expiresAt.equals(expiresAt.truncatedTo(ChronoUnit.SECONDS))) {
+      throw new IllegalArgumentException("Absolute JWT expiration must use whole-second precision");
+    }
+
+    Date issuedAt = new Date(System.currentTimeMillis());
+    Date expiration = Date.from(expiresAt);
+    if (!expiration.after(issuedAt)) {
+      throw new IllegalArgumentException("Absolute JWT expiration must be after issuance");
+    }
+    return Jwts.builder()
+        .claims(claims)
+        .subject(subject)
+        .issuedAt(issuedAt)
+        .expiration(expiration)
         .signWith(Keys.hmacShaKeyFor(key))
         .compact();
   }
