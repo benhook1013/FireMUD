@@ -3939,10 +3939,9 @@ if run_preview_derive_dispatch \
   exit 1
 fi
 grep -Fxq \
-  '::error title=Stale preview head SHA::Supplied head SHA does not equal the current pull request head.' \
+  '::error title=Noncanonical preview head SHA::Expected lowercase hexadecimal input.' \
   "$preview_derive_invalid_error"
-grep -Fxq 'api repos/example/FireMUD/pulls/901' \
-  "${preview_derive_invalid_output}.gh.log"
+test ! -e "${preview_derive_invalid_output}.gh.log"
 
 preview_derive_default_output="$TEMP_DIR/preview-derive-default.output"
 run_preview_derive_dispatch \
