@@ -181,7 +181,9 @@ class WorldCanonicalInstancePreparationServiceTest {
         .hasMessage("Protected current-installation registry is unavailable");
 
     verify(operationInput).requireMatches(input, "test");
-    verifyNoInteractions(repository, verifier);
+    verify(repository).hasRetainedCommittedCandidate(input, operationInput);
+    verifyNoMoreInteractions(repository);
+    verifyNoInteractions(verifier);
   }
 
   @Test

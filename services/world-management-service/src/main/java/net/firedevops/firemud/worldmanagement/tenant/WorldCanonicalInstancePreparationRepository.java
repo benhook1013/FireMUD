@@ -108,6 +108,49 @@ public final class WorldCanonicalInstancePreparationRepository {
   }
 
   /**
+   * Read-only hint used solely to avoid applying fresh-installation preflight to a historical
+   * COMMITTED retry. It is not authenticated replay or execution authority: the unchanged held
+   * verifier and exact participation-bound retained-result read remain mandatory afterward.
+   */
+  public boolean hasRetainedCommittedCandidate(
+      Input input, WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput operation) {
+    Objects.requireNonNull(input, "input");
+    Objects.requireNonNull(operation, "operation");
+    requireNoActiveTransaction("World committed preparation candidate read");
+    String exactInput = inputJson(input);
+    String inputDigest = digest(exactInput.getBytes(StandardCharsets.UTF_8));
+    var evidence = input.gameSessionReadEvidence();
+    return Boolean.TRUE.equals(
+        readTransaction.execute(
+            status -> {
+              applyDatabaseTimeouts();
+              return dsl.fetchExists(
+                  dsl.selectOne()
+                      .from("world_canonical_instance_execution")
+                      .where(
+                          "target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?"
+                              + " AND canonical_game_instance_id=? AND operation_state='COMMITTED'"
+                              + " AND original_post_authorization_tuple=?"
+                              + " AND original_post_authorization_tuple_sha256=?"
+                              + " AND game_session_owner_mutation_id=? AND game_session_owner_attempt_id=?"
+                              + " AND game_session_owner_fence=? AND preparation_input_digest=?"
+                              + " AND preparation_input_json=? AND original_attempt_evidence_bytes IS NOT NULL",
+                          evidence.targetNamespace(),
+                          evidence.canonicalTenantId(),
+                          evidence.controlPlaneRequestId(),
+                          input.canonicalGameInstanceId(),
+                          operation.originalPostAuthorizationTuple(),
+                          HexFormat.of()
+                              .formatHex(sha256(operation.originalPostAuthorizationTuple())),
+                          operation.gameSessionOwnerMutationId(),
+                          operation.gameSessionOwnerAttemptId(),
+                          operation.gameSessionOwnerFence(),
+                          inputDigest,
+                          exactInput));
+            }));
+  }
+
+  /**
    * Reads the immutable result only when the exact typed operation is already COMMITTED. This
    * read-only historical retry does not require a current installation snapshot; all absent,
    * PENDING and ABORTED operations remain on the installation-guarded materialization path.
