@@ -267,11 +267,16 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
             table.equals("world_runtime_installation_registration")
                 ? "artifact_digest"
                 : "required_owners";
+        String truncate = "TRUNCATE " + table;
+        if (table.equals("world_runtime_installation_registration")) {
+          // Registration is FK-referenced by the current pointer and frozen snapshots.
+          truncate += " CASCADE";
+        }
         for (String statement :
             List.of(
                 "UPDATE " + table + " SET " + column + "=" + column,
                 "DELETE FROM " + table,
-                "TRUNCATE " + table)) {
+                truncate)) {
           assertThatThrownBy(() -> f.dsl.execute(statement))
               .hasMessageContaining("Runtime installation and required-owner history is immutable")
               .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("55000"));
