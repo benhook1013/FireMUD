@@ -1434,21 +1434,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return newFixture(redisClient, "latest");
   }
 
-  Fixture newPlayerEntitlementFixture(AccountGameplayDelegationRedisClient redisClient)
-      throws Exception {
-    return newFixture(redisClient, "latest", true);
-  }
-
   private Fixture newFixture(
       AccountGameplayDelegationRedisClient redisClient, String migrationTarget) throws Exception {
-    return newFixture(redisClient, migrationTarget, false);
-  }
-
-  private Fixture newFixture(
-      AccountGameplayDelegationRedisClient redisClient,
-      String migrationTarget,
-      boolean currentScope)
-      throws Exception {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() > 63) throw new IllegalStateException("Generated schema name is too long");
     runOwnedSchemas.add(schema);
@@ -1465,8 +1452,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DataSourceTransactionManager manager = new DataSourceTransactionManager(dataSource);
-    return new Fixture(
-        schema, dataSource, dsl, manager, temporaryDirectory, redisClient, currentScope);
+    return new Fixture(schema, dataSource, dsl, manager, temporaryDirectory, redisClient);
   }
 
   private static int awaitBackendBlockedBy(
@@ -2055,8 +2041,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         DSLContext dsl,
         DataSourceTransactionManager manager,
         Path temporaryDirectory,
-        AccountGameplayDelegationRedisClient redisClient,
-        boolean currentScope)
+        AccountGameplayDelegationRedisClient redisClient)
         throws Exception {
       this.schema = schema;
       this.dataSource = dataSource;
@@ -2126,31 +2111,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       newAccount.setPasswordHash("integration-fixture-password-hash");
       newAccount.setRole("player");
       this.account = transaction.execute(status -> accounts.save(newAccount));
-      var retainedScope = canonicalJoinScope(account.getAccountUuid(), tenantUuid);
-      this.joinScope =
-          currentScope
-              ? new CanonicalJoinScopeV2(
-                  retainedScope.connectScopeId(),
-                  retainedScope.accountId(),
-                  retainedScope.tenantId(),
-                  retainedScope.realmId(),
-                  retainedScope.tenantSlug(),
-                  retainedScope.worldSlug(),
-                  retainedScope.realmSlug(),
-                  retainedScope.playableStateNamespaceId(),
-                  retainedScope.playableStateScope(),
-                  retainedScope.gameInstanceId(),
-                  retainedScope.catalogRevision(),
-                  retainedScope.pointerVersion(),
-                  Instant.now()
-                      .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
-                      .minusSeconds(5)
-                      .toString(),
-                  Instant.now()
-                      .truncatedTo(java.time.temporal.ChronoUnit.SECONDS)
-                      .plusSeconds(120)
-                      .toString())
-              : retainedScope;
+      this.joinScope = canonicalJoinScope(account.getAccountUuid(), tenantUuid);
       establishTenantEntitlementAndMembership(connectScopes);
 
       AccountAuthEvidenceBundleRepository bundles =
@@ -2162,61 +2123,6 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                   sourceEvidence.readCurrentIssuerAccountSources(
                       ACCOUNT_ISSUER, account.getAccountUuid()));
       this.committedCandidate = createCommittedIssuanceCandidate(bundles, redisClient);
-    }
-
-    CanonicalJoinScopeV2 playerEntitlementScope() {
-      return joinScope;
-    }
-
-    void beginPlayerEntitlementLoginRevocation() {
-      var identity = tokenIdentity(committedCandidate);
-      UUID requestId = UUID.randomUUID();
-      transaction.execute(
-          status ->
-              tokenFences.beginRevocationIntent(
-                  identity,
-                  requestId,
-                  AccountGameplayTokenIdentityFenceRepository.revocationDigest(
-                      identity, requestId)));
-    }
-
-    net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner
-        playerEntitlementOwner(CanonicalGameplayAdmissionDecisionReadClient protectedTargets) {
-      var scopes =
-          new AccountConnectScopeRepository(
-              dsl,
-              new AccountTenantIdentityResolver(
-                  mock(ApprovedLegacyTenantAssociationRepository.class), TEST_NAMESPACE),
-              freshTenants);
-      var snapshots =
-          new AccountCanonicalRuntimeMembershipSnapshotRepository(
-              accounts,
-              generations,
-              sourceEvidence,
-              tenantAuthorityEvents,
-              freshTenants,
-              memberships,
-              membershipPairs,
-              membershipRoles,
-              authorityOutbox);
-      return new net.firedevops.firemud.accountservice.service
-          .AccountPlayerAdmissionEntitlementOwner(
-          dsl,
-          accounts,
-          new AccountGameplayAdmissionCallerVerifier(
-              signerFixture.trustedJwksSource(), committedIssuanceOwner, Clock.systemUTC()),
-          issuance,
-          snapshots,
-          scopes,
-          mock(AccountHostingSubscriptionLifecycleRepository.class),
-          mock(
-              net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.class),
-          demoEntitlements,
-          tenantAuthorityEvents,
-          protectedTargets,
-          manager,
-          Clock.systemUTC(),
-          TEST_NAMESPACE);
     }
 
     private void establishTenantEntitlementAndMembership(
