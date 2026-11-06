@@ -189,11 +189,7 @@ class AccountPublicBootstrapWorldsOwnerTest {
   void unreachableGameSessionAuthorityIsAuthUnavailable() {
     for (Status failure :
         new Status[] {
-          Status.UNAVAILABLE,
-          Status.DEADLINE_EXCEEDED,
-          Status.CANCELLED,
-          Status.RESOURCE_EXHAUSTED,
-          Status.ABORTED
+          Status.UNAVAILABLE, Status.DEADLINE_EXCEEDED, Status.CANCELLED, Status.ABORTED
         }) {
       Fixture f = new Fixture();
       when(f.targets.listVisiblePublicProductionAdmissionTargets(any()))
@@ -222,6 +218,9 @@ class AccountPublicBootstrapWorldsOwnerTest {
             new IllegalArgumentException("Unsupported source value"),
             new IllegalStateException(
                 "Malformed source content", Status.UNAVAILABLE.asRuntimeException()),
+            Status.RESOURCE_EXHAUSTED
+                .withDescription("gRPC message exceeds maximum size")
+                .asRuntimeException(),
             Status.INVALID_ARGUMENT.asRuntimeException(),
             Status.FAILED_PRECONDITION.asRuntimeException(),
             Status.UNIMPLEMENTED.asRuntimeException(),
