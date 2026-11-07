@@ -246,23 +246,26 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         utc(prepared.capturedAt),
         utc(prepared.deadline),
         utc(actor.authenticatedAt()));
-    dsl.execute(
-        "INSERT INTO subscription_lifecycle_operations (request_id, creation_request_id, subscription_id, tenant_id, expected_row_version, "
-            + "reserved_row_version, provider_subscription_id, provisioning_attempt_id, request_payload, request_digest, state, row_version, "
-            + "max_attempts, max_stalled_attempts, lease_millis, backoff_millis, observation_age_millis, warning_millis, grace_millis, deadline_at, retry_at, created_at) "
-            + "SELECT ?, creation_request_id, subscription_id, tenant_id, ?, ?, provider_subscription_id, provisioning_attempt_id, ?, ?, 'PENDING', 1, "
-            + "1, 1, lease_millis, backoff_millis, observation_age_millis, warning_millis, grace_millis, ?::timestamptz, ?::timestamptz, ?::timestamptz "
-            + "FROM subscription_lifecycle_operations WHERE request_id = ? AND state = 'BILLING_RECONCILIATION_TERMINAL_FAILURE' AND row_version = ?",
-        request.resolutionRequestId(),
-        request.expectedSubscriptionVersion(),
-        request.expectedSubscriptionVersion() + 1,
-        request.payload(),
-        request.digest(),
-        utc(prepared.deadline),
-        utc(prepared.capturedAt),
-        utc(prepared.capturedAt),
-        request.failedRequestId(),
-        request.expectedFailedOperationVersion());
+    if (dsl.execute(
+            "INSERT INTO subscription_lifecycle_operations (request_id, creation_request_id, subscription_id, tenant_id, expected_row_version, "
+                + "reserved_row_version, provider_subscription_id, provisioning_attempt_id, request_payload, request_digest, state, row_version, "
+                + "max_attempts, max_stalled_attempts, lease_millis, backoff_millis, observation_age_millis, warning_millis, grace_millis, deadline_at, retry_at, created_at) "
+                + "SELECT ?, creation_request_id, subscription_id, tenant_id, ?, ?, provider_subscription_id, provisioning_attempt_id, ?, ?, 'PENDING', 1, "
+                + "1, 1, lease_millis, backoff_millis, observation_age_millis, warning_millis, grace_millis, ?::timestamptz, ?::timestamptz, ?::timestamptz "
+                + "FROM subscription_lifecycle_operations WHERE request_id = ? AND state = 'BILLING_RECONCILIATION_TERMINAL_FAILURE' AND row_version = ?",
+            request.resolutionRequestId(),
+            request.expectedSubscriptionVersion(),
+            request.expectedSubscriptionVersion() + 1,
+            request.payload(),
+            request.digest(),
+            utc(prepared.deadline),
+            utc(prepared.capturedAt),
+            utc(prepared.capturedAt),
+            request.failedRequestId(),
+            request.expectedFailedOperationVersion())
+        != 1) {
+      throw new FenceRejectedException("Terminal resolution exact failed-operation copy rejected");
+    }
     if (dsl.execute(
             "UPDATE subscription SET lifecycle_inflight_request_id = ?, row_version = row_version + 1 "
                 + "WHERE subscription_id = ? AND row_version = ? AND lifecycle_inflight_request_id = ? AND superseded_at IS NULL",

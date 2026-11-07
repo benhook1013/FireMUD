@@ -133,7 +133,12 @@ public final class AccountPlayerAdmissionEntitlementOwner {
           case PAID_HOSTING -> capturePaidSources(request, caller, prepared);
           case NON_PAID_DEMO -> captureDemoSources(request, caller, prepared);
         };
-    evidence.requireCurrentAt(now());
+    try {
+      evidence.requireCurrentAt(now());
+    } catch (IllegalArgumentException expired) {
+      // This final post-commit check only rejects an expired or future source observation.
+      throw unavailable();
+    }
     return evidence;
   }
 
@@ -333,6 +338,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
             .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(request.connectScopeId()))
             .orElseThrow(AccountPlayerAdmissionEntitlementOwner::unavailable);
     if (!"PUBLIC_PRODUCTION".equals(scope.targetClass())
+        || !"SHARED".equals(scope.playableStateScope())
         || scope.tenantProvenance().kind() != TenantProvenanceKind.FRESH_GAME_DESIGN
         || scope.tenantProvenance().legacyTenantId() != null
         || !accountId.equals(scope.accountUuid())
@@ -435,9 +441,15 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         || TransactionSynchronizationManager.isSynchronizationActive()) throw unavailable();
   }
 
-  private static IllegalStateException unavailable() {
-    return new IllegalStateException(
-        "ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable");
+  private static SourceUnavailableException unavailable() {
+    return new SourceUnavailableException();
+  }
+
+  /** Current owner evidence cannot be supplied; not a configuration or codec failure. */
+  public static final class SourceUnavailableException extends IllegalStateException {
+    public SourceUnavailableException() {
+      super("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable");
+    }
   }
 
   private void requireSameHead(Request request, SourceSelection selected) {
@@ -500,13 +512,21 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     var selector = selector(request, scope);
     var resolved = Objects.requireNonNull(targets.resolvePublishedRealmAdmissionTarget(selector));
     if (!selector.equals(resolved.selector())) throw unavailable();
+    requireSupportedTarget(resolved.currentTarget());
     CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
         selector, resolved.currentTarget());
     var result =
         Objects.requireNonNull(targets.readPublishedRealmAdmissionOwner(resolved.strictSelector()));
     if (!resolved.strictSelector().equals(result.selector())
         || !resolved.currentTarget().equals(result.currentTarget())) throw unavailable();
+    requireSupportedTarget(result.currentTarget());
     return result;
+  }
+
+  private static void requireSupportedTarget(
+      CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target target) {
+    if (!"SHARED".equals(target.playableStateScope())
+        || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())) throw unavailable();
   }
 
   private static RuntimePlayerAdmissionEntitlementEvidence capture(
@@ -519,9 +539,10 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       Instant paidReceiptValidUntil) {
     var scope = player.scope();
     var current = target.currentTarget();
+    requireSupportedTarget(current);
     Map<String, Object> binding = new LinkedHashMap<>();
     binding.put("targetClass", "PUBLIC_PRODUCTION");
-    binding.put("characterCreationPolicy", "PRESEEDED_ONLY");
+    binding.put("characterCreationPolicy", current.characterCreationPolicy());
     binding.put("targetNamespace", current.targetNamespace());
     binding.put("tenantId", scope.tenantUuid().toString());
     binding.put("tenantSlug", scope.tenantSlug());

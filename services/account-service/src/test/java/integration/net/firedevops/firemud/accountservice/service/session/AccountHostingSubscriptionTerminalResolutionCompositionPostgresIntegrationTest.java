@@ -210,6 +210,51 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   }
 
   @Test
+  void missingFailedOperationCopyRejectsBeforeCurrentCasAndRollsBackAuditJournalAndOtp()
+      throws Exception {
+    try (var accountOwners = accountOwners()) {
+      var failed = failedHosting(accountOwners);
+      var issued = failed.issued();
+      var hosting = failed.hosting();
+      var challenge = issued.sources().installGlobalOtp(issued.account(), OTP);
+      var before = financialImage(failed);
+      hosting
+          .dsl()
+          .execute(
+              "CREATE FUNCTION suppress_resolution_operation() RETURNS trigger LANGUAGE plpgsql AS $$ "
+                  + "BEGIN RETURN NULL; END; $$");
+      hosting
+          .dsl()
+          .execute(
+              "CREATE TRIGGER suppress_resolution_operation BEFORE INSERT ON subscription_lifecycle_operations "
+                  + "FOR EACH ROW WHEN (NEW.request_id = '"
+                  + failed.input().resolutionRequestId()
+                  + "'::uuid) EXECUTE FUNCTION suppress_resolution_operation()");
+      try {
+        // A controlled row trigger makes INSERT...SELECT affect zero rows despite the locked
+        // original still existing. The exact copy must fail before the current-row CAS.
+        assertThatThrownBy(() -> resolve(failed, issued.account().getEmail(), OTP))
+            .isExactlyInstanceOf(FenceRejectedException.class)
+            .hasMessage("Terminal resolution exact failed-operation copy rejected");
+        assertThat(financialImage(failed)).isEqualTo(before);
+        assertThat(failureImage(failed)).isEqualTo(failed.failureImage());
+        assertThat(issued.sources().challenges.findByAccountId(hosting.accountId()))
+            .contains(challenge);
+      } finally {
+        hosting
+            .dsl()
+            .execute(
+                "DROP TRIGGER suppress_resolution_operation ON subscription_lifecycle_operations");
+        hosting.dsl().execute("DROP FUNCTION suppress_resolution_operation()");
+      }
+      var result = resolve(failed, issued.account().getEmail(), OTP);
+      assertCommittedCancellation(failed, result);
+      assertThat(issued.sources().challenges.findByAccountId(hosting.accountId())).isEmpty();
+      assertThat(failureImage(failed)).isEqualTo(failed.failureImage());
+    }
+  }
+
+  @Test
   void genericAccountAuthorityAdvanceDuringSdkReadMakesSourceUnavailableAndKeepsOtp()
       throws Exception {
     try (var accountOwners = accountOwners()) {

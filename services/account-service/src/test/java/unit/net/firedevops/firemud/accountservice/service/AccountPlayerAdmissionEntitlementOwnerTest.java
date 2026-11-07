@@ -73,6 +73,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -121,6 +123,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     var binding = (Map<?, ?>) value.fields().get("target");
     assertThat(binding.get("realmId")).isEqualTo(f.scope.realmId().toString());
     assertThat(binding.get("pointerVersion")).isEqualTo("3");
+    assertThat(binding.get("playableStateScope")).isEqualTo("SHARED");
+    assertThat(binding.get("characterCreationPolicy")).isEqualTo("PRESEEDED_ONLY");
     assertThat(value.toString()).doesNotContain("controlled-token", f.scope.connectScopeId());
     assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
     verifyNoInteractions(f.hosting, f.observer);
@@ -204,7 +208,8 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     Fixture f = new Fixture(false);
     f.transactions.afterSecondCommit = () -> f.time.set(NOW.plusSeconds(60));
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
-        .hasMessageContaining("expired");
+        .isExactlyInstanceOf(
+            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
     assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
   }
 
@@ -412,6 +417,58 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     verifyNoInteractions(f.demos, f.hosting, f.observer);
   }
 
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"PLAYER_CREATED", "unknown", ""})
+  void unsupportedCurrentPolicyCannotBecomePreseededPlayerEvidence(String policy) throws Exception {
+    Fixture f = new Fixture(false);
+    var resolved = f.targets.resolvePublishedRealmAdmissionTarget(f.request.target());
+    when(resolved.currentTarget().characterCreationPolicy()).thenReturn(policy);
+    doReturn(resolved).when(f.targets).resolvePublishedRealmAdmissionTarget(f.request.target());
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isExactlyInstanceOf(
+            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+
+    org.mockito.Mockito.verify(f.targets, org.mockito.Mockito.never())
+        .readPublishedRealmAdmissionOwner(any());
+    verifyNoInteractions(f.demos, f.hosting, f.observer);
+    assertThat(f.transactions.events).containsExactly("begin", "commit");
+  }
+
+  @Test
+  void isolatedRetainedScopeFailsBeforeProtectedTargetOrEntitlementCapture() throws Exception {
+    Fixture f = new Fixture(false, "ISOLATED");
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isExactlyInstanceOf(
+            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+
+    verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer);
+    assertThat(f.transactions.events).containsExactly("begin", "rollback");
+  }
+
+  @Test
+  void protectedReadCannotReplaceSupportedPolicyBeforeEvidenceCapture() throws Exception {
+    Fixture f = new Fixture(false);
+    var resolved = f.targets.resolvePublishedRealmAdmissionTarget(f.request.target());
+    var original = f.targets.readPublishedRealmAdmissionOwner(resolved.strictSelector());
+    doReturn(resolved).when(f.targets).resolvePublishedRealmAdmissionTarget(f.request.target());
+    when(f.targets.readPublishedRealmAdmissionOwner(resolved.strictSelector()))
+        .thenAnswer(
+            invocation -> {
+              when(original.currentTarget().characterCreationPolicy()).thenReturn("PLAYER_CREATED");
+              return original;
+            });
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isExactlyInstanceOf(
+            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+
+    verifyNoInteractions(f.demos, f.hosting, f.observer);
+    assertThat(f.transactions.events).containsExactly("begin", "commit");
+  }
+
   @Test
   void scopeChangedDuringProtectedTargetReadCannotBindFinalAccountEvidence() throws Exception {
     Fixture f = new Fixture(false);
@@ -568,22 +625,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         new java.util.concurrent.atomic.AtomicReference<>(NOW);
     private final FreshTenantCreationEvidence source = source();
     private final TenantAuthorityEventV1Codec.Event tenantEvent = tenantEvent(source);
-    private final CanonicalJoinScopeV2 scope =
-        new CanonicalJoinScopeV2(
-            "private-bearer-" + UUID.randomUUID(),
-            ACCOUNT,
-            TENANT,
-            UUID.randomUUID(),
-            "tenant",
-            "world",
-            "production",
-            UUID.randomUUID(),
-            "SHARED",
-            UUID.randomUUID(),
-            7,
-            3,
-            NOW.minusSeconds(20).toString(),
-            NOW.plusSeconds(60).toString());
+    private final CanonicalJoinScopeV2 scope;
     private final AccountGameplayDelegationPendingIdentity identity =
         new AccountGameplayDelegationPendingIdentity(
             UUID.randomUUID(),
@@ -622,27 +664,48 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
             1,
             tenantEvent.eventId(),
             tenantEvent.eventDigest());
-    private final Request request =
-        new Request(
-            new CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector(
-                UUID.randomUUID(),
-                ACCOUNT,
-                "prod",
-                TENANT,
-                scope.tenantSlug(),
-                scope.worldSlug(),
-                scope.realmId(),
-                scope.realmSlug(),
-                scope.playableStateNamespaceId(),
-                scope.playableStateScope(),
-                scope.gameInstanceId(),
-                scope.catalogRevision(),
-                scope.pointerVersion()),
-            scope.connectScopeId(),
-            PEER);
+    private final Request request;
     private final AccountPlayerAdmissionEntitlementOwner owner;
 
     private Fixture(boolean exists) throws Exception {
+      this(exists, "SHARED");
+    }
+
+    private Fixture(boolean exists, String stateScope) throws Exception {
+      scope =
+          new CanonicalJoinScopeV2(
+              "private-bearer-" + UUID.randomUUID(),
+              ACCOUNT,
+              TENANT,
+              UUID.randomUUID(),
+              "tenant",
+              "world",
+              "production",
+              UUID.randomUUID(),
+              stateScope,
+              UUID.randomUUID(),
+              7,
+              3,
+              NOW.minusSeconds(20).toString(),
+              NOW.plusSeconds(60).toString());
+      request =
+          new Request(
+              new CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector(
+                  UUID.randomUUID(),
+                  ACCOUNT,
+                  "prod",
+                  TENANT,
+                  scope.tenantSlug(),
+                  scope.worldSlug(),
+                  scope.realmId(),
+                  scope.realmSlug(),
+                  scope.playableStateNamespaceId(),
+                  "SHARED",
+                  scope.gameInstanceId(),
+                  scope.catalogRevision(),
+                  scope.pointerVersion()),
+              scope.connectScopeId(),
+              PEER);
       controlledTarget(targets);
       var dsl = mock(DSLContext.class);
       var connection = mock(Connection.class);

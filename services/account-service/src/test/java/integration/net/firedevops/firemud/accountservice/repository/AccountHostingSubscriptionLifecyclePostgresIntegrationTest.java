@@ -954,12 +954,13 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     Context c = context("1030");
     Fixture f = fixture(c);
     activate(f);
-    Instant cancellation = f.clock().instant().plusSeconds(2);
+    Instant cancellation =
+        Instant.ofEpochSecond(f.clock().instant().plusSeconds(2).getEpochSecond());
     f.transport().json =
         response(f, "active")
             .replace("\"cancel_at\":null", "\"cancel_at\":" + cancellation.getEpochSecond());
     refresh(f);
-    f.clock().advance(Duration.ofSeconds(2));
+    f.clock().advance(Duration.between(f.clock().instant(), cancellation));
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     refresh(f);
