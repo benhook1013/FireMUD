@@ -142,6 +142,28 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
   }
 
   @Test
+  void firstPartyPlayerCreatedTargetRefusesBeforeRpcOrCredentialDisclosure() throws Exception {
+    var context = context();
+    doReturn("PLAYER_CREATED").when(context.resolvedTarget()).characterCreationPolicy();
+    var login = loginCustody();
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    Server server = server("account", calls, observedJwt, observedPeer, context, login.evidence());
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(() -> client.read(context, READ_REQUEST, login, () -> true))
+          .isExactlyInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Exact live LOGIN custody and verified player-admission scope required");
+      assertThat(calls).hasValue(0);
+      assertThat(observedJwt).hasValue(null);
+      assertThat(observedPeer).hasValue(null);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
   void independentReceiverClockMayPrecedeAccountEvaluationWithoutExtendingExpiry()
       throws Exception {
     var context = context();

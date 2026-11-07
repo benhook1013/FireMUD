@@ -168,8 +168,12 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
   /**
    * Final cancellation-only owner mutation. The mandatory callback runs under exact target locks
-   * immediately before writes; callback inputs/outputs alone do not establish Account authority.
-   * The caller must roll back the transaction on every failure, including callback/commit failure.
+   * immediately before writes; callback inputs/outputs alone do not establish Account authority. If
+   * the callback throws an authentication denial, the caller may catch it outside this method and
+   * commit its own failed-login accounting because this method has made no repository writes before
+   * invoking the callback. A repository write added before the callback removes this narrow
+   * exception; all other failures require rollback. Commit failures remain the caller transaction
+   * manager’s responsibility.
    */
   public TransitionResult applyTerminalResolution(
       ResolutionPreparation prepared,
