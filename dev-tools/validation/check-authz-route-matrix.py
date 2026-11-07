@@ -133,6 +133,31 @@ EXPLICIT_NO_JWT_ROUTES = {
     ("account-service", "POST /auth/pending-deletion/recovery/challenge"),
     ("account-service", "POST /auth/pending-deletion/recovery"),
 }
+FIRST_INVOICE_ROUTE_REQUIRED_LIVE_CHECKS = {
+    "GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice": {
+        "current_subscription_owner",
+        "exact_reserved_instrument",
+    },
+    (
+        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/"
+        "reauthenticate"
+    ): {
+        "current_subscription_owner",
+        "exact_reserved_instrument",
+    },
+    (
+        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm"
+    ): {
+        "current_subscription_owner",
+        "exact_reserved_instrument",
+    },
+    (
+        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew"
+    ): {
+        "current_subscription_owner",
+        "exact_reserved_instrument",
+    },
+}
 REQUIRED_FIELD_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 ROUTE_STATUS_VALUES = {
     "current_openapi_operator_surface",
@@ -5456,6 +5481,32 @@ def resolve_unique_route(
     return matches[0]
 
 
+def validate_first_invoice_route_owner_checks(
+    routes: list[Any],
+    errors: list[str],
+    live_checks_cache: LiveChecksCache | None = None,
+    cardinality_errors: set[str] | None = None,
+) -> None:
+    for route_name, required_checks in FIRST_INVOICE_ROUTE_REQUIRED_LIVE_CHECKS.items():
+        route = resolve_unique_route(
+            routes,
+            "account-service",
+            route_name,
+            errors,
+            cardinality_errors,
+        )
+        if route is None:
+            continue
+        label = f"account-service {route_name}"
+        checks = route_live_checks(route, label, errors, live_checks_cache)
+        missing = sorted(required_checks - checks)
+        if missing:
+            append_unique_error(
+                errors,
+                f"{label} is missing required first-invoice owner checks: {missing}",
+            )
+
+
 def applicability_value(
     route: dict[str, Any], key: str, label: str, errors: list[str]
 ) -> Any:
@@ -6217,6 +6268,12 @@ def validate_matrix_document(path: Path) -> tuple[list[str], set[str]]:
     validate_membership_policy(document, errors)
     validate_elevation_bootstrap(document, routes, errors, cardinality_errors)
     validate_entitlement_contract(document, routes, errors, cardinality_errors)
+    validate_first_invoice_route_owner_checks(
+        routes,
+        errors,
+        live_checks_cache,
+        cardinality_errors,
+    )
 
     validate_ws_game_routes(routes, errors, live_checks_cache, cardinality_errors)
     validate_connect_token_revoke_generation_applicability(

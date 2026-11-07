@@ -15,6 +15,25 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "dev-tools/validation/check-authz-route-matrix.py"
 MATRIX = ROOT / "design/architecture/system-architecture-authz-route-matrix.yaml"
+FIRST_INVOICE_OWNER_CHECKS = {
+    "current_subscription_owner",
+    "exact_reserved_instrument",
+}
+EXPECTED_FIRST_INVOICE_ROUTE_CHECKS = {
+    "GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice": (
+        FIRST_INVOICE_OWNER_CHECKS.copy()
+    ),
+    (
+        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/"
+        "reauthenticate"
+    ): FIRST_INVOICE_OWNER_CHECKS.copy(),
+    (
+        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm"
+    ): FIRST_INVOICE_OWNER_CHECKS.copy(),
+    (
+        "POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew"
+    ): FIRST_INVOICE_OWNER_CHECKS.copy(),
+}
 
 
 def load_validator():
@@ -138,6 +157,50 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
 
     def test_current_matrix_passes(self):
         self.assertEqual([], self.validator.validate(MATRIX))
+
+    def test_first_invoice_routes_require_both_owner_checks(self):
+        self.assertEqual(
+            EXPECTED_FIRST_INVOICE_ROUTE_CHECKS,
+            self.validator.FIRST_INVOICE_ROUTE_REQUIRED_LIVE_CHECKS,
+        )
+        for route_name, expected_checks in EXPECTED_FIRST_INVOICE_ROUTE_CHECKS.items():
+            with self.subTest(route=route_name):
+                document = self.validator.yaml.safe_load(
+                    MATRIX.read_text(encoding="utf-8")
+                )
+                route = route_for(document, "account-service", route_name)
+                self.assertEqual(
+                    "target_not_currently_routable", route["route_status"]
+                )
+                self.assertTrue(
+                    expected_checks.issubset(route["required_live_checks"])
+                )
+
+    def test_first_invoice_owner_checks_cannot_be_omitted_or_aliased(self):
+        for route_name, required_checks in EXPECTED_FIRST_INVOICE_ROUTE_CHECKS.items():
+            for required_check in required_checks:
+                with self.subTest(route=route_name, check=required_check):
+                    document = self.validator.yaml.safe_load(
+                        MATRIX.read_text(encoding="utf-8")
+                    )
+                    route = route_for(document, "account-service", route_name)
+                    route["required_live_checks"].remove(required_check)
+                    route["required_live_checks"].append(
+                        "binding_ownership"
+                        if required_check == "current_subscription_owner"
+                        else "explicit_per_subscription_binding"
+                    )
+
+                    errors = validate_document(self.validator, document)
+
+                    self.assertTrue(
+                        any(
+                            f"account-service {route_name} is missing required "
+                            "first-invoice owner checks" in error
+                            for error in errors
+                        ),
+                        errors,
+                    )
 
     def test_moderation_root_contract_declares_receiving_redemption_and_selector(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))

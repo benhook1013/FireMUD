@@ -35,7 +35,6 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Account's existing real primary-authentication producer and creates no token, route or session.
  */
 public final class AccountRecentReauthenticationService {
-  private static final String PURPOSE = AccountRecentReauthenticationPolicy.PURPOSE;
   private final AccountServiceImpl primaryAuthentication;
   private final AccountRepository accounts;
   private final AccountAuthorityGenerationRepository generations;
@@ -109,7 +108,7 @@ public final class AccountRecentReauthenticationService {
                   requireExactRequest(existing, request);
                   return replayAttempt(existing, credentialRequest);
                 }
-                if (!PURPOSE.equals(request.purpose)) {
+                if (!AccountRecentReauthenticationPolicy.supportedPurpose(request.purpose)) {
                   throw conflict();
                 }
 
@@ -123,7 +122,9 @@ public final class AccountRecentReauthenticationService {
                 // Resolve and lock the current policy before primary authentication. Missing policy
                 // therefore cannot consume an OTP or commit a new authentication grant.
                 AccountRecentReauthenticationPolicy.Effective policy =
-                    policyRepository.resolveCurrentForGameCreation();
+                    AccountRecentReauthenticationPolicy.PURPOSE.equals(request.purpose)
+                        ? policyRepository.resolveCurrentForGameCreation()
+                        : policyRepository.resolveCurrentForPurpose(request.purpose);
                 Account account = requireCurrentAccount(request.accountId);
                 String email = EmailCanonicalization.normalize(request.email);
                 if (!email.equals(EmailCanonicalization.normalize(account.getEmail()))) {
@@ -336,7 +337,7 @@ public final class AccountRecentReauthenticationService {
     Objects.requireNonNull(presented, "Typed Account reauthentication evidence is required");
     requireNonNilUuid(expectedAccountId, "expected Account identity");
     requireNonNilUuid(expectedCreationOperationId, "expected creation operation ID");
-    if (!PURPOSE.equals(expectedPurpose)) {
+    if (!AccountRecentReauthenticationPolicy.supportedPurpose(expectedPurpose)) {
       throw conflict();
     }
 
@@ -347,6 +348,22 @@ public final class AccountRecentReauthenticationService {
       throw conflict();
     }
     return evidence;
+  }
+
+  /**
+   * Current billing proof, including a previous exact one-time consumption, never game creation.
+   */
+  public AccountRecentReauthenticationEvidence requireCurrentBillingEvidenceLocked(
+      UUID evidenceId, UUID accountId, UUID operationId) {
+    var retained =
+        evidenceRepository
+            .findByEvidenceId(evidenceId)
+            .orElseThrow(AccountRecentReauthenticationService::unavailable);
+    var exact =
+        lockExactBinding(
+            retained, accountId, AccountRecentReauthenticationPolicy.BILLING_PURPOSE, operationId);
+    requireCurrentEvidence(exact);
+    return exact;
   }
 
   private void requireCurrentEvidence(AccountRecentReauthenticationEvidence evidence) {
@@ -369,7 +386,9 @@ public final class AccountRecentReauthenticationService {
     }
 
     AccountRecentReauthenticationPolicy.Effective policy =
-        policyRepository.resolveCurrentForGameCreation();
+        AccountRecentReauthenticationPolicy.PURPOSE.equals(evidence.purpose())
+            ? policyRepository.resolveCurrentForGameCreation()
+            : policyRepository.resolveCurrentForPurpose(evidence.purpose());
     if (policy.platformVersion() != evidence.platformPolicyVersion()
         || policy.deploymentVersion() != evidence.deploymentPolicyVersion()
         || !policy.effectivePolicyVersion().equals(evidence.effectivePolicyVersion())

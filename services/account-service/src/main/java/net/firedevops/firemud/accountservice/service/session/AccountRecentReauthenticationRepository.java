@@ -36,6 +36,12 @@ public final class AccountRecentReauthenticationRepository {
     lockIdentity("recent-reauth-creation", creationOperationId);
   }
 
+  Optional<AccountRecentReauthenticationEvidence> findByEvidenceId(UUID evidenceId) {
+    requireTransaction();
+    return Optional.ofNullable(
+        map(dsl.fetchOne("SELECT * FROM " + EVIDENCE + " WHERE evidence_id = ?", evidenceId)));
+  }
+
   Optional<AccountRecentReauthenticationEvidence> findByRequest(UUID requestId) {
     requireTransaction();
     return Optional.ofNullable(

@@ -94,16 +94,7 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
   void paidUsesActualReceiptSdkAndAuthorityCheckpointWithFreshEvaluationOfSameSnapshot() {
     Context c = context();
     var f = c.fixture();
-    var claim =
-        f.service().claimProvisioning(f.creation().requestId(), 1, UUID.randomUUID()).claim();
-    var committed =
-        f.service()
-            .reconcile(
-                UUID.randomUUID(),
-                f.creation().requestId(),
-                claim.subscriptionRowVersion(),
-                f.providerId(),
-                claim.attemptId());
+    var committed = f.completeFirstInvoice();
     assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
     int beforeReads = f.transport().reads();
     UUID requestId = UUID.randomUUID();
@@ -149,16 +140,7 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
   void captureRunsInsideFinalWritableTransactionAndFailureRollsBackCapturedSql() {
     Context c = context();
     var f = c.fixture();
-    var claim =
-        f.service().claimProvisioning(f.creation().requestId(), 1, UUID.randomUUID()).claim();
-    var committed =
-        f.service()
-            .reconcile(
-                UUID.randomUUID(),
-                f.creation().requestId(),
-                claim.subscriptionRowVersion(),
-                f.providerId(),
-                claim.attemptId());
+    var committed = f.completeFirstInvoice();
     assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
     String marker = "capture_marker_" + UUID.randomUUID().toString().replace("-", "");
     AtomicInteger captures = new AtomicInteger();
@@ -300,7 +282,7 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration", "classpath:db/migration/saga")
-        .target("1030")
+        .target("1039")
         .load()
         .migrate();
     var f = CanonicalHostingSubscriptionTestFixture.create(source);
