@@ -1,0 +1,129 @@
+"""Independent capacity-admission/1 corpus consumer. Encoding proof, not runtime authority."""
+import base64
+import hashlib
+import json
+from pathlib import Path
+import re
+import unicodedata
+import unittest
+
+MAX = 9223372036854775807
+
+
+def decimal(value):
+    if not isinstance(value, str) or not re.fullmatch(r"0|[1-9][0-9]{0,18}", value):
+        raise ValueError("canonical int64 decimal string required")
+    result = int(value)
+    if result > MAX:
+        raise ValueError("int64 overflow")
+    return result
+
+
+def segment(value):
+    if len(value) > 393216:
+        raise ValueError("segment bound")
+    return str(len(value)).encode("ascii") + b":" + value
+
+
+def value(kind, payload, present=True):
+    return segment(kind.encode("ascii")) + (b"1" if present else b"0") + segment(payload)
+
+
+def string(text):
+    encoded = unicodedata.normalize("NFC", text).encode("utf-8", "strict")
+    if len(encoded) > 360448:
+        raise ValueError("string bound")
+    return value("string", encoded)
+
+
+def number(text):
+    return value("number", str(decimal(text)).encode("ascii"))
+
+
+def obj(fields):
+    return value("object", segment(str(len(fields)).encode("ascii")) + b"".join(
+        segment(key.encode("ascii")) + item for key, item in fields))
+
+
+def shape(values):
+    return obj(list(zip(("activeSessions", "concurrentGameInstances", "storageBytes"),
+                        (number(v) for v in values))))
+
+
+def reject_duplicates(pairs):
+    result = {}
+    for key, item in pairs:
+        if key in result:
+            raise ValueError("duplicate member")
+        result[key] = item
+    return result
+
+
+def evidence(encoded):
+    raw = base64.b64decode(encoded, validate=True)
+    if not 0 < len(raw) <= 262144:
+        raise ValueError("evidence bound")
+    parsed = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=reject_duplicates)
+    canonical = json.dumps(parsed, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if raw != canonical or parsed["schema"] != "account-auth-evidence-bundle/v1" or parsed["variant"] != "TENANT_OPERATION":
+        raise ValueError("exact canonical variant required")
+    tenant = parsed["tenantId"]
+    cutoff = parsed["authorityTuple"]["tenantBillingCutoff"][tenant]
+    points = parsed["outboxCheckpoints"]
+    if len(points) != 1 or any(cutoff[k] != points[0][k] for k in ("outboxStreamKey", "outboxSequence")):
+        raise ValueError("cutoff checkpoint mismatch")
+    return encoded
+
+
+def preimage(request, candidate):
+    context = request["ownerContext"]
+    fields = [
+        ("actionFamilySchemaId", string("capacity-admission")),
+        ("actionFamilySchemaVersion", string("1")),
+        ("scope", obj([(key, string(request[key])) for key in ("tenantId", "requestId", "admissionId")])),
+        ("target", obj([("ownerService", string(request["ownerService"])),
+                        ("targetNamespace", string(request["targetNamespace"])),
+                        ("ownerContext", obj([(key, string(context[key])) for key in
+                                              ("tenantId", "operationId", "lifecycleId", "gameInstanceId", "ownerId")]
+                                             + [("ownerFence", number(context["ownerFence"]))]))])),
+        ("expectedVersion", obj([("admissionAttemptId", string(request["admissionAttemptId"])),
+                                 ("capacityRearmFence", number(request["capacityRearmFence"]))])),
+        ("mutation", obj([("operation", string(candidate.get("operation", request["operation"]))),
+                          ("priorShape", shape(candidate.get("priorShape", request["priorShape"]))),
+                          ("requestedShape", shape(candidate.get("requestedShape", request["requestedShape"]))),
+                          ("accountEvidence", string(evidence(request["canonicalAccountEvidenceBase64"]))),
+                          ("capacityDelta", value("absent", b"", False) if candidate["capacityDelta"] is None
+                           else number(candidate["capacityDelta"]))])),
+        ("auditReason", string("capacity-admission"))]
+    result = segment(b"mutationDigest/v1") + b"".join(segment(key.encode("ascii")) + item for key, item in fields)
+    if len(result) > 524288:
+        raise ValueError("preimage bound")
+    return result
+
+
+class CapacityAdmissionVectors(unittest.TestCase):
+    def test_shared_golden_preimages_and_digests(self):
+        corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
+        digests = []
+        for candidate in corpus["vectors"]:
+            with self.subTest(candidate["name"]):
+                encoded = preimage(corpus["request"], candidate)
+                self.assertEqual(encoded.hex(), candidate["preimageHex"])
+                digest = hashlib.sha256(encoded).hexdigest()
+                self.assertEqual(digest, candidate["sha256"])
+                digests.append(digest)
+        self.assertNotEqual(digests[0], digests[1])
+
+    def test_rejected_delta_candidates_and_checked_addition(self):
+        corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
+        for candidate in corpus["rejected"]:
+            if candidate["name"].startswith("delta-"):
+                with self.subTest(candidate["name"]), self.assertRaises(ValueError):
+                    decimal(candidate["capacityDelta"])
+            if "usage" in candidate:
+                occupied = decimal(candidate["usage"]) + decimal(candidate["held"]) + decimal(candidate["capacityDelta"])
+                self.assertGreater(occupied, MAX)
+
+
+if __name__ == "__main__":
+    unittest.main()
