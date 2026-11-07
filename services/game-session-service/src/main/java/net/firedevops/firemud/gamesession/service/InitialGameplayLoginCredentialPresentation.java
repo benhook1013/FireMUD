@@ -21,6 +21,16 @@ public final class InitialGameplayLoginCredentialPresentation implements AutoClo
   private boolean current = true;
   private boolean requestCreated;
 
+  /** A receiving transport can present credentials only with its genuine authenticated ingress. */
+  public static InitialGameplayLoginCredentialPresentation fromAuthenticatedTcp(
+      net.firedevops.firemud.gamesession.websocket.AuthenticatedDirectTextIngress ingress,
+      String normalizedEmail,
+      char[] ownedSecret) {
+    Objects.requireNonNull(ingress, "Authenticated TCP ingress required");
+    return new InitialGameplayLoginCredentialPresentation(
+        normalizedEmail, ingress.clientAddress(), ownedSecret);
+  }
+
   /** Ownership of {@code ownedSecret} transfers to this presentation. */
   InitialGameplayLoginCredentialPresentation(
       String normalizedEmail, String canonicalClientAddress, char[] ownedSecret) {

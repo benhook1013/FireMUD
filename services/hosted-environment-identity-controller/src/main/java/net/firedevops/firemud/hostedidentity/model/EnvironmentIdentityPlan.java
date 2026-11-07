@@ -46,7 +46,8 @@ public record EnvironmentIdentityPlan(
                 Stream.of(
                     HostedIdentityContract.GRPC_ACCOUNT_ROLE,
                     HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
-                    HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE))
+                    HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+                    HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE))
             .collect(Collectors.toUnmodifiableSet());
     if (!grpcWorkloadIdentityCertificateNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
         || !grpcWorkloadIdentitySecretNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
@@ -141,6 +142,20 @@ public record EnvironmentIdentityPlan(
         HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
   }
 
+  public String grpcGatewayClientCertificateName() {
+    return grpcWorkloadIdentityCertificateNames.get(
+        HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE);
+  }
+
+  public String grpcGatewayClientSecretName() {
+    return grpcWorkloadIdentitySecretNames.get(HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE);
+  }
+
+  public String grpcGatewayClientSourceSecretName() {
+    return grpcWorkloadIdentitySourceSecretNames.get(
+        HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE);
+  }
+
   public String grpcPublicationUriSan(String workload) {
     return grpcWorkloadIdentityUriSan(workload);
   }
@@ -154,6 +169,9 @@ public record EnvironmentIdentityPlan(
   }
 
   public List<String> grpcWorkloadIdentityDnsNames(String workload) {
+    if (HostedIdentityContract.GRPC_GATEWAY_WORKLOAD.equals(workload)) {
+      return List.of();
+    }
     return List.of(
         workload,
         workload + "." + runtimeNamespace,

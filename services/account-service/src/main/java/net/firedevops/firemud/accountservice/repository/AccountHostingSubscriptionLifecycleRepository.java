@@ -1540,6 +1540,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
    * Ends one worker attempt without asserting provider absence or cancellation. Failure keeps the
    * subscription provisioning and its reservation held; even terminal reconciliation failure is
    * unresolved billing work. The caller must commit this result rather than throw it away.
+   *
+   * <p>An exact retained attempt that expires before the absolute deadline returns {@link
+   * Disposition#ATTEMPT_EXPIRED} without changing its work or reservation, leaving recovery to the
+   * next claimant.
    */
   public Disposition deferUnresolved(ProvisioningClaim claim) {
     requireTransaction();

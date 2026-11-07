@@ -109,3 +109,7 @@ Any additional gateway-local caches must explicitly declare whether they are str
   - Spring Cloud Gateway infrastructure.
 
 See [Gateway Architecture](../../system-architecture-gateway.md), [Deployment Environments](../../infrastructure/deployment-environments.md), and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for the shared topology.
+
+## Authenticated TCP Receiving
+
+The [Security Architecture](../../system-architecture-security.md#authenticated-tcp-gateway-to-game-session-receiving) owns the dedicated Gateway-to-Game Session mTLS configuration and custody contract. This receiver requires distinct same-namespace workload leaves and a separately reachable internal TLS port; the ordinary HTTP/WebSocket route and shared legacy TLS leaf cannot supply its authority. Public receiving composes only actual protected LOGIN/lobby source owners. Missing source qualification remains unavailable rather than selecting numeric entitlement or legacy credential fallback. See the [player access tracker](../../../project-management/implementation-tracking/player-access-and-session.md) for current proof and missing provider boundaries.

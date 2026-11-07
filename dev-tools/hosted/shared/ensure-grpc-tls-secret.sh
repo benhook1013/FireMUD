@@ -51,6 +51,7 @@ workloads=(
   account-service
   game-session-service
   social-groups-service
+  spring-cloud-gateway
 )
 
 secret_exists() {
@@ -214,22 +215,35 @@ validate_workload_certificate() {
       exit
     }
   ' | tr -d '[:space:]')"
-  [[ "$extended_key_usage" == 'TLSWebServerAuthentication,TLSWebClientAuthentication' ]] || {
-    echo "workload certificate EKU must be exactly serverAuth/clientAuth: $certificate" >&2
+  local expected_extended_key_usage='TLSWebServerAuthentication,TLSWebClientAuthentication'
+  local expected_eku_description='serverAuth/clientAuth'
+  if [[ "$workload" == spring-cloud-gateway ]]; then
+    expected_extended_key_usage='TLSWebClientAuthentication'
+    expected_eku_description='clientAuth'
+  fi
+  [[ "$extended_key_usage" == "$expected_extended_key_usage" ]] || {
+    echo "workload certificate EKU must be exactly ${expected_eku_description}: $certificate" >&2
     return 1
   }
   if ! san_values="$(openssl x509 -in "$certificate" -noout -ext subjectAltName | awk 'NR > 1 { print }' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"; then
     echo "workload certificate SANs could not be read: $certificate" >&2
     return 1
   fi
-  [[ "$(printf '%s\n' "$san_values" | sed '/^$/d' | wc -l)" -eq 5 ]] || {
-    echo "workload certificate must contain exactly one URI SAN and four DNS SANs: $certificate" >&2
+  local expected_san_count=5
+  if [[ "$workload" == spring-cloud-gateway ]]; then
+    expected_san_count=1
+  fi
+  [[ "$(printf '%s\n' "$san_values" | sed '/^$/d' | wc -l)" -eq "$expected_san_count" ]] || {
+    echo "workload certificate must contain exactly ${expected_san_count} authorized SANs: $certificate" >&2
     return 1
   }
   printf '%s\n' "$san_values" | grep -Fx "URI:${expected_uri}" >/dev/null || {
     echo "workload certificate has the wrong URI SAN: $certificate" >&2
     return 1
   }
+  if [[ "$workload" == spring-cloud-gateway ]]; then
+    return 0
+  fi
   for expected_dns in \
     "$workload" \
     "${workload}.${namespace}" \

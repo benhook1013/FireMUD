@@ -358,11 +358,16 @@ previewStack:
       envFromShared: true
       mountGrpcTls: true
       healthPort: 8080
+      extraEnv:
+        FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED: "true"
+        FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT: "8444"
       ports:
         - port: 8080
           targetPort: 8080
         - port: 6565
           targetPort: 6565
+        - port: 8444
+          targetPort: 8444
     - name: logging-admin-service
       schema: logging_admin_service
       image:
@@ -398,6 +403,8 @@ previewStack:
       mountGrpcTls: true
       mountGatewayWsServerTls: true
       healthPort: 8080
+      extraEnv:
+        FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_AUTHENTICATED_UPSTREAM_URL: "wss://game-session-service.$(FIREMUD_GRPC_WORKLOAD_NAMESPACE).svc.cluster.local:8444/ws/game/tcp"
       ports:
         - port: 80
           targetPort: 8080

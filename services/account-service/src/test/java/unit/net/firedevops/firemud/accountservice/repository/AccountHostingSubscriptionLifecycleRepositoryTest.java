@@ -3,7 +3,9 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
@@ -13,10 +15,15 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReconciliationLimits;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountHostingSubscriptionLifecycleRepositoryTest {
@@ -56,6 +63,53 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
         .isEqualTo(original);
     assertThat(AccountHostingSubscriptionLifecycleRepository.retainedPastDueOrigin(receipt))
         .isEqualTo(original);
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = {0, 1})
+  void expiredExactAttemptBeforeAbsoluteDeadlineLeavesWorkAndReservationUntouched(
+      long secondsAfterExpiry) {
+    Instant expiresAt = Instant.parse("2026-11-07T00:00:10Z");
+    UUID requestId = UUID.randomUUID();
+    UUID attemptId = UUID.randomUUID();
+    var controlledIntents = mock(AccountSubscriptionIntentRepository.class);
+    var controlledRepository =
+        new AccountHostingSubscriptionLifecycleRepository(
+            dsl,
+            controlledIntents,
+            Clock.fixed(expiresAt.plusSeconds(secondsAfterExpiry), ZoneOffset.UTC),
+            limits(3, 2, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
+            new AccountHostingSubscriptionLifecyclePolicy(
+                Duration.ofSeconds(15),
+                new AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming(
+                    Duration.ofSeconds(60), Duration.ofSeconds(120))),
+            "prod",
+            false);
+    var creation = mock(AccountSubscriptionCreationRecord.class);
+    when(creation.requestId()).thenReturn(requestId);
+    var claim = mock(ProvisioningClaim.class);
+    when(claim.creation()).thenReturn(creation);
+    when(claim.attemptId()).thenReturn(attemptId);
+    when(claim.subscriptionRowVersion()).thenReturn(7L);
+    when(claim.claimedAt()).thenReturn(expiresAt.minusSeconds(10));
+    when(claim.expiresAt()).thenReturn(expiresAt);
+    var retainedWork = mock(Record.class);
+    when(retainedWork.get("last_attempt_id", UUID.class)).thenReturn(attemptId);
+    when(retainedWork.get("phase", String.class)).thenReturn("CLAIMED");
+    when(retainedWork.get("deadline_at", OffsetDateTime.class))
+        .thenReturn(expiresAt.plusSeconds(3590).atOffset(ZoneOffset.UTC));
+    String lockedWorkSql =
+        "SELECT * FROM subscription_provisioning_work WHERE request_id = ? FOR UPDATE";
+    when(dsl.fetchOne(lockedWorkSql, requestId)).thenReturn(retainedWork);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThat(controlledRepository.deferUnresolved(claim)).isEqualTo(Disposition.ATTEMPT_EXPIRED);
+
+    // Exactly the owner/retained-work locks are allowed: no SQL writes, intent settlement,
+    // reservation release, or replacement attempt can occur on this return.
+    verify(controlledIntents).lockForProvisioningRecovery(requestId, 7L);
+    verify(dsl).fetchOne(lockedWorkSql, requestId);
+    verifyNoMoreInteractions(controlledIntents, dsl);
   }
 
   @Test

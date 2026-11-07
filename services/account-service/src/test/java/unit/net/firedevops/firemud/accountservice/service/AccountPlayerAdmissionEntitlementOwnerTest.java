@@ -5,15 +5,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.intThat;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.grpc.protobuf.StatusProto;
+import io.grpc.stub.StreamObserver;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLTimeoutException;
@@ -25,7 +31,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 import javax.sql.DataSource;
+import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementResponse;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
@@ -54,8 +62,10 @@ import net.firedevops.firemud.accountservice.repository.AccountSubscriptionInten
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
+import net.firedevops.firemud.accountservice.security.AccountPlayerAdmissionEntitlementWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner.Request;
+import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmissionEntitlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
@@ -65,6 +75,7 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Checkpoint;
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence;
+import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementGrpcCodec;
 import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.publication.PublishedRealmEntryPolicySetEvidence;
@@ -74,6 +85,7 @@ import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -82,9 +94,12 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -513,6 +528,114 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         .hasMessageContaining("controlled target unavailable");
     verifyNoInteractions(f.demos, f.hosting, f.observer);
     assertThat(f.transactions.events).containsExactly("begin", "commit");
+  }
+
+  @ParameterizedTest
+  @MethodSource("protectedTargetFailures")
+  @SuppressWarnings("unchecked")
+  void protectedTargetFailuresKeepTheirClassificationThroughActualOwnerAndReceiver(
+      String stage, RuntimeException failure, io.grpc.Status.Code expected) throws Exception {
+    Fixture f = new Fixture(false);
+    var resolved = f.targets.resolvePublishedRealmAdmissionTarget(f.request.target());
+    // Keep the strict selector stable: the controlled resolver otherwise installs a fresh read.
+    doReturn(resolved).when(f.targets).resolvePublishedRealmAdmissionTarget(f.request.target());
+    if ("resolve".equals(stage)) {
+      doThrow(failure).when(f.targets).resolvePublishedRealmAdmissionTarget(any());
+    } else {
+      doThrow(failure).when(f.targets).readPublishedRealmAdmissionOwner(any());
+    }
+    clearInvocations(f.targets);
+    var direct = assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"));
+    if (expected == io.grpc.Status.Code.UNAVAILABLE) {
+      direct
+          .isExactlyInstanceOf(
+              AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+          .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+          .hasNoCause();
+    } else {
+      direct.isSameAs(failure);
+    }
+    String token = "controlled-token.payload.signature";
+    var caller = f.callers.verifyPresentedCompactToken("controlled-token");
+    when(f.callers.verifyPresentedCompactToken(token)).thenReturn(caller);
+    try (var guards =
+        mockConstruction(
+            AccountPlayerAdmissionEntitlementWorkloadGuard.class,
+            (guard, context) ->
+                when(guard.requireAuthenticatedGameSessionCaller()).thenReturn(PEER))) {
+      var receiver = new AccountPlayerAdmissionEntitlementGrpcService(f.owner, "prod");
+      StreamObserver<ReadPlayerAdmissionEntitlementResponse> observer = mock(StreamObserver.class);
+      receiver.readPlayerAdmissionEntitlement(
+          RuntimePlayerAdmissionEntitlementGrpcCodec.toRequest(
+              new RuntimePlayerAdmissionEntitlementGrpcCodec.Request(
+                  f.request.target(), f.request.connectScopeId()),
+              token),
+          observer);
+      var refused = ArgumentCaptor.forClass(Throwable.class);
+      verify(observer).onError(refused.capture());
+      var status = StatusProto.fromThrowable(refused.getValue());
+      assertThat(status).isNotNull();
+      assertThat(status.getCode()).isEqualTo(expected.value());
+      String message = "Player-admission entitlement evidence is unavailable";
+      assertThat(status.getMessage()).isEqualTo(message);
+      assertThat(status.getDetailsCount()).isOne();
+      assertThat(status.getDetails(0).unpack(ErrorDetail.class))
+          .isEqualTo(ErrorDetail.newBuilder().setCode(expected.name()).setMessage(message).build());
+      assertThat(refused.getValue()).hasNoCause();
+      assertThat(status.toString())
+          .doesNotContain(token, f.scope.connectScopeId(), "private target detail");
+      verify(observer, never()).onNext(any());
+      verify(observer, never()).onCompleted();
+    }
+    verify(f.targets, times(2)).resolvePublishedRealmAdmissionTarget(f.request.target());
+    if ("strict".equals(stage)) {
+      verify(f.targets, times(2)).readPublishedRealmAdmissionOwner(resolved.strictSelector());
+    } else {
+      verify(f.targets, never()).readPublishedRealmAdmissionOwner(any());
+    }
+    verifyNoInteractions(f.demos, f.hosting, f.observer);
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
+  }
+
+  private static Stream<Arguments> protectedTargetFailures() {
+    return Stream.of("resolve", "strict")
+        .flatMap(
+            stage -> {
+              Stream<RuntimeException> outages =
+                  Stream.of(
+                      new CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException(
+                          new IllegalStateException("private target detail")),
+                      io.grpc.Status.UNAVAILABLE
+                          .withDescription("private target detail")
+                          .asRuntimeException(),
+                      io.grpc.Status.DEADLINE_EXCEEDED
+                          .withDescription("private target detail")
+                          .asRuntimeException(),
+                      io.grpc.Status.CANCELLED
+                          .withDescription("private target detail")
+                          .asRuntimeException(),
+                      io.grpc.Status.ABORTED
+                          .withDescription("private target detail")
+                          .asRuntimeException());
+              Stream<RuntimeException> unexpected =
+                  Stream.of(
+                      io.grpc.Status.INVALID_ARGUMENT
+                          .withDescription("private target detail")
+                          .asRuntimeException(),
+                      io.grpc.Status.FAILED_PRECONDITION
+                          .withDescription("private target detail")
+                          .asRuntimeException(),
+                      new IllegalArgumentException("private target detail"),
+                      new IllegalStateException(
+                          "Game Session returned invalid current target evidence",
+                          new IllegalArgumentException("private target detail")),
+                      new NullPointerException("private target detail"));
+              return Stream.concat(
+                  outages.map(
+                      failure -> Arguments.of(stage, failure, io.grpc.Status.Code.UNAVAILABLE)),
+                  unexpected.map(
+                      failure -> Arguments.of(stage, failure, io.grpc.Status.Code.INTERNAL)));
+            });
   }
 
   @Test

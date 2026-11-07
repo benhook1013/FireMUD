@@ -68,3 +68,7 @@ The source-only Control-UI issuance preparation reads the configured margin thro
 ## Proto Files
 
 The gRPC schemas for this service live in [`protos/account/v1`](../../../../protos/account/v1). Use `./gradlew generateProto` to regenerate Java stubs when the definitions change.
+
+## Canonical Gameplay LOGIN Receiving
+
+Canonical credential envelopes and exact-original retirement share the existing AccountService registration through `AccountGameplayAuthenticateReceiver`. `CanonicalGameplayRuntimeConfiguration` composes that receiver only over the actual committed issuance, response recovery and token-registry owner graph. The dedicated LOGIN request-digest mount is `firemud.account.gameplay-login.request-digest-keyring-path`; its protected mounted-key contract remains owned by the Account authentication design. Missing protected source owners or keys do not select legacy Authenticate. Source-bearing requests fail unavailable when their canonical receiver is absent. This composition does not provision keys, qualify Redis maintenance exclusion or activate gameplay admission.

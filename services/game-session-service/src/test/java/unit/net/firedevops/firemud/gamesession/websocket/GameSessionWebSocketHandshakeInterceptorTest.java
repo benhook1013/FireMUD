@@ -1,8 +1,12 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import java.security.cert.X509Certificate;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
@@ -82,20 +86,24 @@ class GameSessionWebSocketHandshakeInterceptorTest {
   }
 
   @Test
-  void preservesCanonicalProxyConnectionIdOnlyForTrustedProxyMode() {
+  void preservesCanonicalProxyConnectionIdOnlyForAuthenticatedGatewayOnDedicatedListener()
+      throws Exception {
     String proxyConnectionId = "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814";
-    MockHttpServletRequest servlet = new MockHttpServletRequest("GET", "/ws/game");
-    servlet.addHeader(
-        GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_HEADER, "trusted_tcp_proxy");
-    servlet.addHeader(
-        GameSessionWebSocketHandshakeInterceptor.PROXY_CONNECTION_HEADER, proxyConnectionId);
+    MockHttpServletRequest servlet =
+        authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
     Map<String, Object> attributes = new HashMap<>();
 
-    interceptor.beforeHandshake(
-        new ServletServerHttpRequest(servlet),
-        new ServletServerHttpResponse(new MockHttpServletResponse()),
-        null,
-        attributes);
+    boolean accepted =
+        new GameSessionWebSocketHandshakeInterceptor(true, 8444, "test")
+            .beforeHandshake(
+                new ServletServerHttpRequest(servlet),
+                new ServletServerHttpResponse(new MockHttpServletResponse()),
+                null,
+                attributes);
+
+    assertThat(accepted).isTrue();
+    assertThat(attributes.get(AuthenticatedDirectTextIngress.ATTRIBUTE))
+        .isInstanceOf(AuthenticatedDirectTextIngress.class);
 
     ObservedDirectTextTransport observed =
         (ObservedDirectTextTransport)
@@ -105,6 +113,81 @@ class GameSessionWebSocketHandshakeInterceptorTest {
     assertThat(observed.transportSessionId())
         .isEqualTo(attributes.get(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR));
     assertThat(observed.transportSessionId()).isNotEqualTo(proxyConnectionId);
+  }
+
+  @Test
+  void canonicalizesLiteralIpv6WithoutAddressResolution() throws Exception {
+    var request = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    request.removeHeader("X-Client-IP");
+    request.addHeader("X-Client-IP", "2001:db8::7");
+    Map<String, Object> attributes = new HashMap<>();
+    assertThat(
+            new GameSessionWebSocketHandshakeInterceptor(true, 8444, "test")
+                .beforeHandshake(
+                    new ServletServerHttpRequest(request),
+                    new ServletServerHttpResponse(new MockHttpServletResponse()),
+                    null,
+                    attributes))
+        .isTrue();
+    var ingress =
+        (AuthenticatedDirectTextIngress) attributes.get(AuthenticatedDirectTextIngress.ATTRIBUTE);
+    assertThat(ingress.clientAddress()).isEqualTo("2001:db8:0:0:0:0:0:7");
+  }
+
+  @Test
+  void rejectsSpoofedHeadersWrongWorkloadsNamespacesAndPublicListener() throws Exception {
+    for (String peer :
+        List.of(
+            "spiffe://firemud/ns/test/sa/account-service",
+            "spiffe://firemud/ns/other/sa/spring-cloud-gateway")) {
+      var request = authenticatedRequest(peer);
+      assertRejected(request);
+    }
+    var plain = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    plain.setSecure(false);
+    assertRejected(plain);
+    var publicPort = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    publicPort.setLocalPort(8080);
+    assertRejected(publicPort);
+    var duplicate = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    duplicate.addHeader("X-Client-IP", "198.51.100.9");
+    assertRejected(duplicate);
+    var duplicateMode = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    duplicateMode.addHeader("X-Firemud-Connection-Mode", "first_party_web");
+    assertRejected(duplicateMode);
+  }
+
+  private void assertRejected(MockHttpServletRequest request) {
+    var attributes = new HashMap<String, Object>();
+    var response = new MockHttpServletResponse();
+    assertThat(
+            new GameSessionWebSocketHandshakeInterceptor(true, 8444, "test")
+                .beforeHandshake(
+                    new ServletServerHttpRequest(request),
+                    new ServletServerHttpResponse(response),
+                    null,
+                    attributes))
+        .isFalse();
+    assertThat(response.getStatus()).isEqualTo(403);
+    assertThat(attributes)
+        .doesNotContainKeys(
+            AuthenticatedDirectTextIngress.ATTRIBUTE,
+            GameSessionWebSocketHandshakeInterceptor.OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR);
+  }
+
+  private static MockHttpServletRequest authenticatedRequest(String peer) throws Exception {
+    var request = new MockHttpServletRequest("GET", "/ws/game/tcp");
+    request.setSecure(true);
+    request.setLocalPort(8444);
+    var certificate = mock(X509Certificate.class);
+    when(certificate.getExtendedKeyUsage()).thenReturn(List.of("1.3.6.1.5.5.7.3.2"));
+    when(certificate.getSubjectAlternativeNames()).thenReturn(List.of(List.of(6, peer)));
+    request.setAttribute(
+        "jakarta.servlet.request.X509Certificate", new X509Certificate[] {certificate});
+    request.addHeader("X-Client-IP", "203.0.113.7");
+    request.addHeader("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
+    request.addHeader("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814");
+    return request;
   }
 
   @Test
