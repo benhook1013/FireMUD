@@ -90,6 +90,23 @@ class AccountPublicBootstrapWorldsOwnerTest {
   }
 
   @Test
+  void mixedPublicCreationPoliciesBothParticipateInCompleteWorldDiscovery() {
+    Fixture f = new Fixture();
+    var seeded = target(TENANT_A, "tenant-a", "seeded", "Seeded", 1);
+    var created = target(TENANT_B, "tenant-b", "created", "Created", 1, "PLAYER_CREATED");
+    f.stubTargetReads(List.of(seeded, created), List.of(created, seeded));
+    when(f.entitlements.evaluate(TENANT_A))
+        .thenReturn(evaluation(TENANT_A, true, NOW.plusSeconds(30)));
+    when(f.entitlements.evaluate(TENANT_B))
+        .thenReturn(evaluation(TENANT_B, true, NOW.plusSeconds(30)));
+    assertThat(f.owner.listWorlds(TOKEN))
+        .containsExactly(
+            new BootstrapWorldDto("created", "Created"), new BootstrapWorldDto("seeded", "Seeded"));
+    verify(f.entitlements, times(1)).evaluate(TENANT_A);
+    verify(f.entitlements, times(1)).evaluate(TENANT_B);
+  }
+
+  @Test
   void denialFiltersGameplayUnavailableTenantButDoesNotRequireJoinEligibility() {
     Fixture f = new Fixture();
     Target denied = target(TENANT_A, "tenant-a", "closed", "Closed", 1);
@@ -386,6 +403,16 @@ class AccountPublicBootstrapWorldsOwnerTest {
 
   private static Target target(
       UUID tenantId, String tenantSlug, String worldSlug, String displayName, long pointerVersion) {
+    return target(tenantId, tenantSlug, worldSlug, displayName, pointerVersion, "PRESEEDED_ONLY");
+  }
+
+  private static Target target(
+      UUID tenantId,
+      String tenantSlug,
+      String worldSlug,
+      String displayName,
+      long pointerVersion,
+      String creationPolicy) {
     String suffix = tenantId.toString();
     return new Target(
         "prod",
@@ -425,7 +452,7 @@ class AccountPublicBootstrapWorldsOwnerTest {
         OwnerProofOutcome.COMMITTED,
         false,
         NOW,
-        "PRESEEDED_ONLY");
+        creationPolicy);
   }
 
   private static Account account(long id) {

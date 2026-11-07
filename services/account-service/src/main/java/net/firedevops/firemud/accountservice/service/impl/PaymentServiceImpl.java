@@ -10,7 +10,6 @@ import net.firedevops.firemud.accountservice.entity.PaymentTransaction;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
-import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import net.firedevops.firemud.accountservice.service.PaymentService;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
@@ -23,7 +22,6 @@ public class PaymentServiceImpl implements PaymentService {
   private final AccountRepository accountRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
   private final PaymentTransactionRepository paymentTransactionRepository;
-  private final SubscriptionRepository subscriptionRepository;
   private final StripeClient stripeClient;
 
   @SuppressFBWarnings(
@@ -33,12 +31,10 @@ public class PaymentServiceImpl implements PaymentService {
       AccountRepository accountRepository,
       AccountTenantMembershipRepository accountTenantMembershipRepository,
       PaymentTransactionRepository paymentTransactionRepository,
-      SubscriptionRepository subscriptionRepository,
       StripeClient stripeClient) {
     this.accountRepository = accountRepository;
     this.accountTenantMembershipRepository = accountTenantMembershipRepository;
     this.paymentTransactionRepository = paymentTransactionRepository;
-    this.subscriptionRepository = subscriptionRepository;
     this.stripeClient = stripeClient;
   }
 

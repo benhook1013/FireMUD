@@ -260,6 +260,8 @@ public class AccountServiceImpl implements AccountService {
     this.joinTransactionTemplate = new TransactionTemplate(transactionManager);
     this.joinTransactionTemplate.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.joinTransactionTemplate.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    this.joinTransactionTemplate.setReadOnly(false);
     this.passwordResetOwnerTransaction = new TransactionTemplate(transactionManager);
     this.passwordResetOwnerTransaction.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
