@@ -237,7 +237,8 @@ class HostedIdentityScopeServiceTest {
             "pr-42-grpc-automation-scripting-service",
             "pr-42-grpc-account-service",
             "pr-42-grpc-game-session-service",
-            "pr-42-grpc-social-groups-service"),
+            "pr-42-grpc-social-groups-service",
+            "pr-42-grpc-spring-cloud-gateway"),
         HostedIdentityScopeService.requiredCertificateNames(plan));
   }
 

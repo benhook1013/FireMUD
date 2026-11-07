@@ -244,6 +244,23 @@ gateway_deployment = named("Deployment", "spring-cloud-gateway")
 proxy_deployment = named("Deployment", "tcp-proxy-service")
 gateway, gateway_env = env_map(gateway_deployment)
 proxy, proxy_env = env_map(proxy_deployment)
+_, session_env = env_map(named("Deployment", "game-session-service"))
+if session_env.get("FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED") != "true" or session_env.get("FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT") != "8444":
+    raise SystemExit("Game Session must enable its dedicated authenticated gameplay listener on 8444")
+if gateway_env.get("FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_AUTHENTICATED_UPSTREAM_URL") != "wss://game-session-service.$(FIREMUD_GRPC_WORKLOAD_NAMESPACE).svc.cluster.local:8444/ws/game/tcp":
+    raise SystemExit("Gateway must route authenticated TCP provenance only over the dedicated Game Session mTLS path")
+session_ports = named("Service", "game-session-service")["spec"]["ports"]
+if {"port": 8444, "name": "tcp-8444", "targetPort": 8444, "protocol": "TCP"} not in session_ports:
+    raise SystemExit("Game Session Service must expose the dedicated 8444 mTLS connector")
+if named("NetworkPolicy", "game-session-authenticated-gameplay-ingress")["spec"] != {
+    "podSelector": {"matchLabels": {"app": "game-session-service"}},
+    "policyTypes": ["Ingress"],
+    "ingress": [{
+        "from": [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}],
+        "ports": [{"protocol": "TCP", "port": 8444}],
+    }],
+}:
+    raise SystemExit("Dedicated Game Session gameplay ingress must be limited to Gateway pods")
 if proxy_deployment["spec"].get("strategy") != {"type": "Recreate"}:
     raise SystemExit("preview TCP Proxy Deployment must use the Recreate strategy")
 postgres_deployment = named("Deployment", "postgres")
@@ -509,6 +526,10 @@ if gateway_egress_policy != {
             ],
         },
         {
+            "to": [{"podSelector": {"matchLabels": {"app": "game-session-service"}}}],
+            "ports": [{"protocol": "TCP", "port": 8444}],
+        },
+        {
             "to": [{
                 "podSelector": {
                     "matchExpressions": [{
@@ -537,7 +558,7 @@ if gateway_egress_policy != {
     ],
 }:
     raise SystemExit(
-        "Gateway egress policy must allow only DNS, canonical HTTP routes, Redis cache, and OTEL"
+        "Gateway egress policy must allow only DNS, authenticated gameplay TLS, canonical HTTP routes, Redis cache, and OTEL"
     )
 proxy_policy = named("NetworkPolicy", "tcp-proxy-service-egress")["spec"]
 proxy_gateway_rules = [

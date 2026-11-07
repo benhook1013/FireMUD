@@ -64,11 +64,13 @@
 {{- $managedTelnetEnv := list "TCP_PROXY_TELNET_MODE" "TCP_PROXY_TLS_ENABLED" "TCP_PROXY_TLS_CERT" "TCP_PROXY_TLS_KEY" }}
 {{- $managedGatewayWsServerEnv := list "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED" "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TLS_CLIENT_CA_PATH" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_ENVIRONMENT" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_PROFILE" "FIREMUD_GATEWAY_TCP_PROXY_TRUST_URI_SAN" }}
 {{- $managedGatewayWsClientEnv := list "GATEWAY_WS_URL" "FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_WS_CA_CERT_PATH" }}
+{{- $managedGameplayClientEnv := list "FIREMUD_GRPC_WORKLOAD_NAMESPACE" "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH" "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH" "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH" }}
 {{- $grpcWorkloadNames := include "firemud.grpcWorkloadNames" . | fromJsonArray }}
 {{- range $service := .Values.previewStack.services }}
 {{- $serviceType := default "ClusterIP" $service.serviceType }}
 {{- $usesGrpcWorkloadIdentity := has $service.name $grpcWorkloadNames }}
 {{- $mountGrpcTrustBundle := and $service.mountGrpcTls $usesGrpcWorkloadIdentity }}
+{{- $mountGameplayClientTls := and (eq $service.name "spring-cloud-gateway") $service.mountGrpcTls }}
 {{- $publicTelnetService := and (eq $service.name "tcp-proxy-service") (or (eq $serviceType "NodePort") (eq $serviceType "LoadBalancer")) }}
 {{- $telnetPort := "" }}
 {{- if and $publicTelnetService $telnetTlsEnabled (not $service.mountTelnetTls) }}
@@ -108,6 +110,9 @@
 {{- end }}
 {{- if and $mountGatewayWsServerTls (has $key $managedGatewayWsServerEnv) }}
 {{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Gateway WebSocket server TLS environment" $service.name $key) }}
+{{- end }}
+{{- if and $mountGameplayClientTls (has $key $managedGameplayClientEnv) }}
+{{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Gateway gameplay client TLS environment" $service.name $key) }}
 {{- end }}
 {{- if and $mountGatewayWsClientTls (has $key $managedGatewayWsClientEnv) }}
 {{- fail (printf "previewStack.services.%s.extraEnv key %s collides with the managed Gateway WebSocket client TLS environment" $service.name $key) }}
@@ -188,7 +193,7 @@ spec:
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
-            {{- if or $usesGrpcWorkloadIdentity (eq $service.name "logging-admin-service") }}
+            {{- if or $usesGrpcWorkloadIdentity (eq $service.name "logging-admin-service") $mountGameplayClientTls }}
             - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -204,6 +209,9 @@ spec:
             {{- else }}
 {{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
+            {{- end }}
+            {{- if $mountGameplayClientTls }}
+{{ include "firemud.gatewayGameplayClientEnv" $ | nindent 12 }}
             {{- end }}
             {{- range $key, $value := $service.extraEnv }}
             - name: {{ $key }}
@@ -231,6 +239,14 @@ spec:
             {{- if $service.mountGrpcTls }}
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            {{- end }}
+            {{- if $mountGameplayClientTls }}
+            - name: gameplay-client-tls
+              mountPath: /gameplay-client-tls
+              readOnly: true
+            - name: gameplay-client-trust
+              mountPath: /gameplay-client-trust
               readOnly: true
             {{- end }}
             {{- if $mountGrpcTrustBundle }}
@@ -310,6 +326,22 @@ spec:
               - key: tls.key
                 path: tls.key
             {{- end }}
+        {{- end }}
+        {{- if $mountGameplayClientTls }}
+        - name: gameplay-client-tls
+          secret:
+            secretName: firemud-grpc-spring-cloud-gateway
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: gameplay-client-trust
+          secret:
+            secretName: {{ include "firemud.grpcSecretName" $ }}
+            items:
+              - key: ca.crt
+                path: ca.crt
         {{- end }}
         {{- if $mountGrpcTrustBundle }}
         - name: grpc-trust

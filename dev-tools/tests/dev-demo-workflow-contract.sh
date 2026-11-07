@@ -85,6 +85,7 @@ for required in \
   '  account-service' \
   '  game-session-service' \
   '  social-groups-service' \
+  '  spring-cloud-gateway' \
   '  automation-scripting-service'; do
   contains_literal "$standalone_grpc_tls" "$required"
 done
@@ -1752,6 +1753,7 @@ for required in (
     'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt',
     'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt',
     'firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-spring-cloud-gateway|grpc-spring-cloud-gateway|tls.crt,tls.key,ca.crt',
     '    game-design-service',
     '    world-management-service',
     '    entity-management-service',

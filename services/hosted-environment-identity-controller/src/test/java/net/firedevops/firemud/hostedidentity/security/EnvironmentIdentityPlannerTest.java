@@ -82,6 +82,18 @@ class EnvironmentIdentityPlannerTest {
     assertEquals(
         plan.grpcSocialGroupsSecretName(),
         plan.secretName(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE));
+    assertEquals("pr-42-grpc-spring-cloud-gateway", plan.grpcGatewayClientCertificateName());
+    assertEquals("pr-42-grpc-spring-cloud-gateway", plan.grpcGatewayClientSourceSecretName());
+    assertEquals("firemud-grpc-spring-cloud-gateway", plan.grpcGatewayClientSecretName());
+    assertEquals(9, plan.grpcWorkloadIdentitySecretNames().size());
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/spring-cloud-gateway",
+        plan.grpcWorkloadIdentityUriSan(HostedIdentityContract.GRPC_GATEWAY_WORKLOAD));
+    assertEquals(
+        List.of(), plan.grpcWorkloadIdentityDnsNames(HostedIdentityContract.GRPC_GATEWAY_WORKLOAD));
+    assertEquals(
+        plan.grpcGatewayClientSecretName(),
+        plan.secretName(HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE));
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       assertEquals("pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
       assertEquals("firemud-grpc-" + workload, plan.grpcPublicationSecretName(workload));
