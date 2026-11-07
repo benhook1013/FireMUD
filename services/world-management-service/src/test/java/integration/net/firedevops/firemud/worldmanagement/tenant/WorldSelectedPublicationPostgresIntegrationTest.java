@@ -583,6 +583,78 @@ class WorldSelectedPublicationPostgresIntegrationTest {
     }
   }
 
+  /**
+   * Actual retained PUBLISHED owner setup with controlled upstream evidence, no runtime authority.
+   */
+  static PrivateFreshPublished privateFreshPublished(
+      DSLContext dsl, DataSourceTransactionManager transactions) throws Exception {
+    return privateFreshPublished(dsl, transactions, false);
+  }
+
+  static PrivateFreshPublished privateFreshPublished(
+      DSLContext dsl, DataSourceTransactionManager transactions, boolean includeSpawnBinding)
+      throws Exception {
+    var write = new TransactionTemplate(transactions);
+    write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    var intake = new WorldAuthoredSourceIntakeRepository(dsl);
+    var versions = new WorldAuthoredVersionIdentityRepository(dsl);
+    var fence = new WorldDesignPublicationFenceRepository(dsl, intake);
+    var mapper = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
+    var topology = new WorldDraftTopologyCommitRepository(dsl, fence, mapper);
+    var applications = new WorldDraftGraphApplicationRepository(dsl, fence, mapper);
+    var service =
+        new WorldDraftGraphApplicationService(
+            applications,
+            transactions,
+            operation -> new WorldDraftGraphApplicationService.CommitOrderProof(operation));
+    var owner = createOwner(intake, versions, write, "private-fresh");
+    var plan = topologyPlan(owner, true, PlanFault.NONE, includeSpawnBinding);
+    service.apply(application(plan));
+    var publication = publicationBinding(plan);
+    var fixture = freezeFixture(dsl, intake, fence, topology, applications, transactions, owner);
+    var peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service",
+            NAMESPACE,
+            "game-design-service");
+    var authenticated = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    var acknowledged =
+        authenticated.call(() -> fixture.freezeService().begin(freezeRequest(publication)));
+    var freeze =
+        WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+            freezeRequest(publication),
+            WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledged));
+    var inventory = authenticated.call(() -> fixture.inventoryReadService().read(freeze));
+    var source =
+        fixture
+            .selectorRepository()
+            .readCommitted(selectorRequest(plan, acknowledged))
+            .orElseThrow();
+    var world = publishedStartLocationEvidence(source);
+    var operation = new GameDesignPublicationOperationBinding(publication, world, inventory);
+    var terminal = publishedTerminal(operation, world);
+    var client = mock(GameDesignPublicationTerminalClient.class);
+    when(client.read(any()))
+        .thenAnswer(
+            invocation ->
+                new GameDesignPublicationTerminalReadEvidence.ReadResult(
+                    invocation.getArgument(0),
+                    GameDesignPublicationTerminalReadEvidence.Status.PUBLISHED,
+                    Optional.of(terminal)));
+    var terminalService =
+        WorldPublicationTerminalService.authenticated(
+            new WorldPublicationTerminalRepository(dsl, transactions), client, NAMESPACE);
+    authenticated.call(
+        () -> terminalService.complete(operation.canonicalBytes(), terminal.canonicalBytes()));
+    return new PrivateFreshPublished(owner.intake(), source.frozenTopology(), terminal);
+  }
+
+  record PrivateFreshPublished(
+      WorldAuthoredSourceIntakeReceipt intake,
+      WorldCanonicalFrozenTopology frozen,
+      GameDesignPublicationTerminalEvidence terminal) {}
+
   private static FreezeFixture freezeFixture(
       DSLContext dsl,
       WorldAuthoredSourceIntakeRepository intakeRepository,
@@ -898,6 +970,12 @@ class WorldSelectedPublicationPostgresIntegrationTest {
 
   private static WorldDraftTopologyCommitPlan topologyPlan(
       OwnerFixture owner, boolean omitGenerationRule, PlanFault fault) throws Exception {
+    return topologyPlan(owner, omitGenerationRule, fault, true);
+  }
+
+  private static WorldDraftTopologyCommitPlan topologyPlan(
+      OwnerFixture owner, boolean omitGenerationRule, PlanFault fault, boolean includeSpawnBinding)
+      throws Exception {
     UUID commitId = UUID.randomUUID();
     UUID regionId = UUID.randomUUID();
     UUID zoneId = UUID.randomUUID();
@@ -971,20 +1049,22 @@ class WorldSelectedPublicationPostgresIntegrationTest {
                   GenerationRuleDesignMutation.newBuilder().setName("rule").setValue("fixed"))
               .build());
     }
-    mutations.add(
-        mutation(
-                commitId,
-                UUID.randomUUID(),
-                regionId,
-                WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING)
-            .setWorldEntitySpawnBinding(
-                WorldEntitySpawnBindingDesignMutation.newBuilder()
-                    .setRoomId(firstRoomId.toString())
-                    .setEntityTemplateType(
-                        EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC)
-                    .setEntityTemplateId(entityTemplateId.toString())
-                    .setSpawnCount(2))
-            .build());
+    if (includeSpawnBinding) {
+      mutations.add(
+          mutation(
+                  commitId,
+                  UUID.randomUUID(),
+                  regionId,
+                  WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING)
+              .setWorldEntitySpawnBinding(
+                  WorldEntitySpawnBindingDesignMutation.newBuilder()
+                      .setRoomId(firstRoomId.toString())
+                      .setEntityTemplateType(
+                          EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC)
+                      .setEntityTemplateId(entityTemplateId.toString())
+                      .setSpawnCount(2))
+              .build());
+    }
 
     WorldFreshGraphDeclaration declaration =
         declaration(

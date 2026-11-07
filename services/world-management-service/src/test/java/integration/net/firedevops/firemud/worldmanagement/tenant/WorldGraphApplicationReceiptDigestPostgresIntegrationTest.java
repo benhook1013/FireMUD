@@ -194,14 +194,22 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       fresh.validate();
       assertThat(fresh.info().pending()).isEmpty();
 
-      Flyway probeCurrent = flyway(probeSource, probeSchema, null, worldLocation, sagaLocation);
+      // Predicate-only CTAS clones deliberately lack real owner keys. Keep this controlled
+      // probe at its catalog frontier; fresh and upgraded real schemas advance through V1050.
+      Flyway probeCurrent =
+          flyway(
+              probeSource,
+              probeSchema,
+              MigrationVersion.fromVersion("1048"),
+              worldLocation,
+              sagaLocation);
       probeCurrent.migrate();
       probeCurrent.validate();
       assertThat(probeCurrent.info().pending()).isEmpty();
 
-      assertThat(latestVersion(upgradeDsl)).isEqualTo("1048");
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1050");
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
-      assertThat(latestVersion(probeDsl)).isEqualTo(latestVersion(upgradeDsl));
+      assertThat(latestVersion(probeDsl)).isEqualTo("1048");
       assertThat(migrationHistory(upgradeDsl, "1012")).isEqualTo(history1012Before);
       assertThat(migrationHistory(upgradeDsl, "1014")).isEqualTo(history1014Before);
       assertThat(migrationHistory(upgradeDsl, "1042.11")).isEqualTo(history104211Before);
