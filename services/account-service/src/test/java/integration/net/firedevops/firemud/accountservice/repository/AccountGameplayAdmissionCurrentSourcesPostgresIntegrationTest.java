@@ -391,7 +391,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
             });
     var observed = prepared.observeOutsideSql();
     var before = paid.caller().sourceAndIssuanceImage();
-    assertThatThrownBy(() -> paid.read(observed)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> paid.read(observed))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "membership source tenantAuthorityGeneration current equality does not match its bound evidence");
     assertThatThrownBy(
             () ->
                 new AccountGameplayAdmissionOriginalCommitExecutor(paid.caller().dataSource)
@@ -401,7 +404,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                         TEST_NAMESPACE,
                         paid.caller().committedCandidate,
                         paid.prepare().observeOutsideSql()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "membership source tenantAuthorityGeneration current equality does not match its bound evidence");
     assertThat(paid.caller().readLeaseOperation(lease).evidence().canonicalJson())
         .isEqualTo(lease.canonicalJson());
     assertThat(paid.caller().readLeaseOperation(lease).state())
@@ -542,7 +547,9 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       assertThatThrownBy(
               () ->
                   paid.read(paid.prepare().observeOutsideSql()).requireMatchesOriginalLease(lease))
-          .isInstanceOf(IllegalStateException.class);
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage(
+              "membership source tenantAuthorityGeneration current equality does not match its bound evidence");
     } finally {
       release.countDown();
       executor.shutdown();
