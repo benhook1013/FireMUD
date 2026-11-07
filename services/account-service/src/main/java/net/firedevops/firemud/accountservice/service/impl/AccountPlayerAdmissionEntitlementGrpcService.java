@@ -102,6 +102,9 @@ public final class AccountPlayerAdmissionEntitlementGrpcService
               request.target(), request.connectScopeId(), authenticatedCaller);
       var evidence = owner.evaluate(sourceRequest, presented.initialLoginJwt());
       response = RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, evidence);
+    } catch (AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException rejectedTarget) {
+      fail(observer, Status.FAILED_PRECONDITION);
+      return;
     } catch (AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException
         | AccountGameplayAdmissionCallerVerifier.CallerUnavailableException
         | AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException
