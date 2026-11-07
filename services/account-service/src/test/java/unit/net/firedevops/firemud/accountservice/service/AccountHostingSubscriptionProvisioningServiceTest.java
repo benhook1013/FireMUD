@@ -15,6 +15,8 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
@@ -77,6 +79,31 @@ class AccountHostingSubscriptionProvisioningServiceTest {
         (AccountHostingSubscriptionProvisioningService.Pending)
             service.provision(claim, UUID.randomUUID(), UUID.randomUUID());
     assertThat(result.disposition()).isEqualTo(Disposition.WAITING);
+    assertThat(transactions.commits).isEqualTo(3);
+    verifyNoInteractions(lifecycle);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"DISPATCH_LEASE_EXPIRED", "PROVIDER_OUTCOME_UNKNOWN"})
+  void expiredAttemptReturnsTypedPendingWithoutStartingLifecycle(String providerReason) {
+    ProviderDispatch prepared = mock(ProviderDispatch.class);
+    ProviderDispatch readback = mock(ProviderDispatch.class);
+    when(readback.claim()).thenReturn(claim);
+    when(repository.prepareProviderDispatch(any(), any())).thenReturn(prepared);
+    when(repository.readProviderDispatch(prepared)).thenReturn(readback);
+    var providerResult = new StripeHostingSubscriptionProvisioner.Pending(providerReason, null);
+    when(provider.provision(readback)).thenReturn(providerResult);
+    when(repository.deferUnresolved(claim))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return Disposition.ATTEMPT_EXPIRED;
+            });
+
+    assertThat(service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
+        .isEqualTo(
+            new AccountHostingSubscriptionProvisioningService.Pending(
+                Disposition.ATTEMPT_EXPIRED, providerResult));
     assertThat(transactions.commits).isEqualTo(3);
     verifyNoInteractions(lifecycle);
   }

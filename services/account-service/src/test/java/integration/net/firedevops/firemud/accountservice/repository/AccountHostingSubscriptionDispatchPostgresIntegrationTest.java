@@ -155,6 +155,44 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
+  void expiredExactAttemptReturnsTypedPendingWithoutMutationAndStaleReplacementStillRefuses() {
+    Fixture f = fixture("1032");
+    var original = claim(f, 1);
+    prepareAndRead(f, original);
+    f.clock().advance(Duration.ofSeconds(11));
+    var before = new java.util.LinkedHashMap<String, List<Map<String, Object>>>();
+    for (String table :
+        List.of(
+            "subscription",
+            "subscription_provisioning_work",
+            "subscription_provisioning_attempts",
+            "subscription_instrument_reservations")) {
+      before.put(
+          table,
+          f.dsl()
+              .fetch("SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM " + table + " t")
+              .intoMaps());
+    }
+    Disposition expired = f.tx().execute(status -> f.owner().deferUnresolved(original));
+    assertThat(expired).isEqualTo(Disposition.ATTEMPT_EXPIRED);
+    for (var entry : before.entrySet()) {
+      assertThat(
+              f.dsl()
+                  .fetch(
+                      "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM "
+                          + entry.getKey()
+                          + " t")
+                  .intoMaps())
+          .isEqualTo(entry.getValue());
+    }
+    var replacement = claim(f, original.subscriptionRowVersion());
+    assertThat(replacement.attemptId()).isNotEqualTo(original.attemptId());
+    assertThatThrownBy(() -> f.tx().execute(status -> f.owner().deferUnresolved(original)))
+        .hasMessageContaining("stale worker");
+    assertThat(f.transport().creates).isZero();
+  }
+
+  @Test
   void recoveredUndispatchedAttemptMayOwnFirstDispatchButReplayAndExpiredReadbackCannot() {
     Fixture f = fixture("1032");
     var first = claim(f, 1);

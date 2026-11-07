@@ -1136,7 +1136,12 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                       assertThat(TransactionSynchronizationManager.isActualTransactionActive())
                           .isTrue();
                       assertThat(target.billingOwnerAccountId())
-                          .isEqualTo(f.request.actorAccountId());
+                          .isEqualTo(
+                              c.intents()
+                                  .findCreation(f.request.creationRequestId())
+                                  .orElseThrow()
+                                  .owner()
+                                  .accountUuid());
                       assertThat(target.currentSubscriptionVersion())
                           .isEqualTo(f.request.expectedSubscriptionVersion());
                       callbacks.incrementAndGet();

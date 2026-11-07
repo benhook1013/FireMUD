@@ -138,6 +138,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return new ResolutionPreparation(
           request,
           binding,
+          original.owner().accountUuid(),
           currentVersion,
           now(),
           now(),
@@ -159,7 +160,8 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         earlier(
             captured.plus(limits.lease()),
             captured.plusMillis(failed.get("observation_age_millis", Long.class)));
-    return new ResolutionPreparation(request, binding, currentVersion, captured, deadline, null);
+    return new ResolutionPreparation(
+        request, binding, original.owner().accountUuid(), currentVersion, captured, deadline, null);
   }
 
   /**
@@ -200,7 +202,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     var actor =
         Objects.requireNonNull(
             authorization.requireAuthorized(
-                new LockedTarget(request, request.actorAccountId(), locked.currentVersion)));
+                new LockedTarget(request, locked.billingOwnerAccountId, locked.currentVersion)));
     Instant authenticated = now();
     if (!request.actorAccountId().equals(actor.actorAccountId())
         || !request.controlUiIssuanceOperationId().equals(actor.controlUiIssuanceOperationId())
@@ -307,6 +309,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
   public static final class ResolutionPreparation {
     private final Request request;
     private final ExpectedBinding binding;
+    private final UUID billingOwnerAccountId;
     private final long currentVersion;
     private final Instant capturedAt;
     private final Instant deadline;
@@ -315,12 +318,14 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     private ResolutionPreparation(
         Request request,
         ExpectedBinding binding,
+        UUID billingOwnerAccountId,
         long currentVersion,
         Instant capturedAt,
         Instant deadline,
         TransitionResult replay) {
       this.request = request;
       this.binding = binding;
+      this.billingOwnerAccountId = billingOwnerAccountId;
       this.currentVersion = currentVersion;
       this.capturedAt = capturedAt;
       this.deadline = deadline;
@@ -1557,7 +1562,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return fail(work, "ABSOLUTE_DEADLINE", now).disposition();
     }
     if (!now.isBefore(claim.expiresAt())) {
-      throw new FenceRejectedException("Expired attempt cannot record provider completion");
+      // The exact retained attempt expired without a provider completion. Leave its work and
+      // reservation untouched for the next claimant rather than treating normal expiry as a fault.
+      return Disposition.ATTEMPT_EXPIRED;
     }
     if (work.get("attempt_count", Integer.class) >= work.get("max_attempts", Integer.class)) {
       return fail(work, "ATTEMPT_BUDGET", now).disposition();

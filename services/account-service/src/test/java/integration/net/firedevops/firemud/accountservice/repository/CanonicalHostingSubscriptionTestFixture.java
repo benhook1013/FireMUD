@@ -173,17 +173,19 @@ public final class CanonicalHostingSubscriptionTestFixture {
                     .retainIntent(accountUuid, UUID.randomUUID(), UUID.randomUUID())
                     .customer());
     var customer =
-        in(
-            transaction,
-            () ->
-                customers.recordObservation(
-                    accountUuid,
-                    pendingCustomer.customerProvisioningRequestId(),
-                    1,
-                    UUID.randomUUID(),
-                    AccountBillingCustomerRecord.Observation.CONFIRMED,
-                    "cus_" + row,
-                    DIGEST));
+        pendingCustomer.state() == AccountBillingCustomerRecord.State.CONFIRMED
+            ? pendingCustomer
+            : in(
+                transaction,
+                () ->
+                    customers.recordObservation(
+                        accountUuid,
+                        pendingCustomer.customerProvisioningRequestId(),
+                        pendingCustomer.rowVersion(),
+                        UUID.randomUUID(),
+                        AccountBillingCustomerRecord.Observation.CONFIRMED,
+                        "cus_" + row,
+                        DIGEST));
     var instrument =
         in(
             transaction,
