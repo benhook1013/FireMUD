@@ -100,7 +100,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   }
 
   @Test
-  void discoveryExcludesValidPlayerCreatedTargetsOnBothReads() {
+  void discoveryReturnsCompletePlayerCreatedAndMixedPolicyCollectionsOnBothReads() {
     var preseeded = discoveryTarget("first", "First world");
     var created = discoveryTarget("second", "Created world", "PLAYER_CREATED");
     for (var initial : List.of(List.of(preseeded, created), List.of(created))) {
@@ -121,9 +121,15 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
               CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
                   discoveryRequest()),
               captured.getValue());
-      assertThat(result.targets()).hasSize(initial.size() - 1);
+      assertThat(result.targets()).hasSize(initial.size());
       assertThat(result.targets())
-          .allMatch(target -> target.characterCreationPolicy().equals("PRESEEDED_ONLY"));
+          .extracting(
+              target -> target.canonicalTenantId(), target -> target.characterCreationPolicy())
+          .containsExactlyInAnyOrderElementsOf(
+              initial.stream()
+                  .map(
+                      target -> tuple(target.canonicalTenantId(), target.characterCreationPolicy()))
+                  .toList());
       verify(routes, times(2)).readVisiblePublicProductionTargets();
     }
   }
@@ -357,7 +363,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   }
 
   private static CanonicalPlayableTarget discoveryTarget(
-      String slug, String displayName, String policy) {
+      String slug, String displayName, String creationPolicy) {
     UUID tenant = UUID.nameUUIDFromBytes(("tenant-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID realm = UUID.nameUUIDFromBytes(("realm-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID namespace = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -417,7 +423,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
         CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
         false,
         Instant.parse("2026-10-25T00:00:00Z"),
-        policy);
+        creationPolicy);
   }
 
   @Test

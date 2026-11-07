@@ -1,5 +1,6 @@
 package unit.net.firedevops.firemud.accountservice.dto;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -73,6 +74,14 @@ class CanonicalJoinScopeV2Test {
     assertNotEquals(
         AccountJoinDigest.scopeV2(scope), AccountJoinDigest.scopeV2(alternateTimestamp));
     assertNotEquals(AccountJoinDigest.scopeV2(scope), AccountJoinDigest.scopeV2(alternateSelector));
+  }
+
+  @Test
+  void redactsBearerFromDiagnosticStringWithoutChangingItsWireAccessor() {
+    CanonicalJoinScopeV2 scope = scope();
+
+    assertEquals("connect-scope-42", scope.connectScopeId());
+    assertThat(scope.toString()).contains("<redacted>").doesNotContain(scope.connectScopeId());
   }
 
   private static Class<?> componentType(RecordComponent[] components, String name) {

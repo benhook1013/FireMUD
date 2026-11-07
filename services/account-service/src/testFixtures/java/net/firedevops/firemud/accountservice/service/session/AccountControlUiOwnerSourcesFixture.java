@@ -98,6 +98,7 @@ final class AccountControlUiOwnerSourcesFixture {
   final Account account;
   final AccountRepository accounts;
   final UUID tenant;
+  final FreshTenantCreationEvidence creationEvidence;
   final UUID request = UUID.randomUUID(), callerContext = UUID.randomUUID();
   final AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary =
       new AtomicReference<>(testBoundary("test-production"));
@@ -107,6 +108,7 @@ final class AccountControlUiOwnerSourcesFixture {
   final AccountControlUiAuthority authority;
   final AccountControlUiIssuanceService service;
   final DataSourceTransactionManager manager;
+  private final com.zaxxer.hikari.HikariDataSource compositionPool;
   private final DriverManagerDataSource migrationSource;
   private final String migrationSchema;
   final DraftAuthorizationFenceRepository fences;
@@ -147,6 +149,48 @@ final class AccountControlUiOwnerSourcesFixture {
       UUID tenant,
       String migrationTarget)
       throws Exception {
+    this(jdbcUrl, username, password, root, installNegativeIssuer, tenant, migrationTarget, false);
+  }
+
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget,
+      boolean ownedCompositionConnections)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        root,
+        installNegativeIssuer,
+        tenant,
+        migrationTarget,
+        ownedCompositionConnections,
+        defaultCreation(tenant));
+  }
+
+  /** Shared immutable provenance must be supplied before any Account association is created. */
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence)
+      throws Exception {
+    this.creationEvidence = Objects.requireNonNull(creationEvidence, "creationEvidence");
+    if (!creationEvidence.canonicalTenantId().equals(tenant)) {
+      throw new IllegalArgumentException(
+          "Shared creation evidence must identify the Account tenant");
+    }
     if (migrationTarget != null && !HISTORICAL_MIGRATION_TARGETS.contains(migrationTarget)) {
       throw new IllegalArgumentException(
           "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read, 1009 selected-owner predecessor, or 1010 selected-publication closure predecessor is supported");
@@ -160,278 +204,297 @@ final class AccountControlUiOwnerSourcesFixture {
     var migrations = migrationConfiguration();
     if (migrationTarget != null) migrations.target(migrationTarget);
     migrations.load().migrate();
-    manager = new DataSourceTransactionManager(dataSource);
-    transactions = new TransactionTemplate(manager);
-    transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    var generations = new AccountAuthorityGenerationRepository(dsl);
-    var outbox = new AccountAuthorityOutboxRepository(dsl);
-    var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
-    accounts = new AccountRepository(dsl, sourceEvidence);
-    restrictionBirths = new AccountPlatformRestrictionBirthRepository(dsl);
-    restrictionOperations =
-        new AccountPlatformRestrictionOperationRepository(
-            dsl, generations, outbox, sourceEvidence, restrictionBirths);
-    account =
-        tx(
-            () -> {
-              Account candidate = new Account();
-              String suffix = UUID.randomUUID().toString();
-              candidate.setUsername("owner-" + suffix);
-              candidate.setEmail(suffix + "@example.test");
-              candidate.setPasswordHash(hash("test-only-disabled-password"));
-              candidate.setLoginAuthModes("EMAIL_OTP");
-              return accounts.save(candidate);
-            });
-    var creator = testCreation(account.getAccountUuid(), tenant);
-    var fresh = new FreshTenantIdentityAssociationRepository(dsl, NAMESPACE);
-    tx(
-        () -> {
-          fresh.importVerified(creator.creationEvidence());
-          generations.initializeTenantIfAbsent(tenant);
-          return null;
-        });
-    var pairs = new AccountMembershipPairAuthorityRepository(dsl);
-    var memberships = new AccountTenantMembershipRepository(dsl, accounts, fresh, pairs);
-    var roles = new AccountTenantMembershipRoleSnapshotRepository(dsl);
-    var bootstrapOperations = new AccountTenantCreationBootstrapOperationRepository(dsl);
-    var reader =
-        new AccountCreatorMembershipSourceReader(
-            accounts,
-            new AccountJoinOperationRepository(dsl),
-            memberships,
-            pairs,
-            roles,
-            fresh,
-            generations,
-            outbox,
-            sourceEvidence,
-            bootstrapOperations);
-    var beans = new StaticListableBeanFactory();
-    AccountTenantCreationBootstrapAuthorizationSource externalBootstrap =
-        (actual, mutation) -> {
-          if (!creator.equals(actual)
-              || !TransactionSynchronizationManager.isActualTransactionActive()) {
-            throw new IllegalStateException("Exact test-only external bootstrap fixture required");
-          }
-          return mutation.get();
-        };
-    beans.addBean("testOnlyBootstrapAuthority", externalBootstrap);
-    var bootstrap =
-        new AccountTenantCreationBootstrapService(
-            accounts,
-            fresh,
-            reader,
-            pairs,
-            memberships,
-            roles,
-            outbox,
-            new AccountAuditOutboxRepository(dsl),
-            bootstrapOperations,
-            beans.getBeanProvider(AccountTenantCreationBootstrapAuthorizationSource.class));
-    tx(() -> bootstrap.bootstrap(creator));
-    var party =
-        new IndividualCreatorPartySource(
-            UUID.randomUUID(),
-            account.getAccountUuid(),
-            VerificationStatus.VERIFIED,
-            1L,
-            "test-only-policy",
-            1L,
-            "test-only-verification",
-            1L,
-            1L);
-    insertTestParty(dsl, party);
-    var parties = new IndividualCreatorPartyRepository(dsl, fresh, bootstrapOperations);
-    tx(() -> parties.associateFresh(UUID.randomUUID(), creator, party));
-    fences = new DraftAuthorizationFenceRepository(dsl);
-    Map<UUID, AccountHostedTermsService.PublicationEvidence> publications = new HashMap<>();
-    Map<UUID, AccountHostedTermsService.AcceptanceAction> actions = new HashMap<>();
-    Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindings = new HashMap<>();
-    terms =
-        new AccountHostedTermsService(
-            manager,
-            new HostedTermsRepository(dsl),
-            parties,
-            fences,
-            id -> externalFixture(publications, id),
-            id -> externalFixture(actions, id),
-            new HostedTermsEnvironmentBindingRepository(dsl),
-            id -> externalFixture(bindings, id),
-            () -> {
-              requireOutsideTransaction();
-              return boundary.get();
-            });
-    UUID publication = UUID.randomUUID();
-    publications.put(
-        publication,
-        new AccountHostedTermsService.PublicationEvidence(
-            UUID.randomUUID(),
-            "Test-only Operator",
-            1L,
-            bytes("Test-only initial terms"),
-            HostedTermsCatalogVersion.Materiality.INITIAL,
-            null,
-            null,
-            "test-only-publication-audit",
-            1L,
-            "test-only-notice",
-            1L,
-            Instant.now().minusSeconds(30).truncatedTo(ChronoUnit.MICROS)));
-    var catalog = terms.publish(publication).candidate();
-    UUID action = UUID.randomUUID();
-    actions.put(
-        action,
-        new AccountHostedTermsService.AcceptanceAction(
-            action,
-            true,
-            account.getAccountUuid(),
-            party.creatorPartyId(),
-            catalog.hostedScopeId(),
-            catalog.versionId(),
-            catalog.documentDigest(),
-            catalog.operatorLegalIdentity(),
-            catalog.operatorIdentityVersion(),
-            "test-only-affirmative-action",
-            1L,
-            OffsetDateTime.now(ZoneOffset.UTC)));
-    terms.accept(action);
-    UUID binding = UUID.randomUUID();
-    bindings.put(
-        binding,
-        new HostedTermsEnvironmentBinding.PublicationEvidence(
-            "test-production",
-            catalog.hostedScopeId(),
-            catalog.operatorLegalIdentity(),
-            catalog.operatorIdentityVersion(),
-            catalog.versionId(),
-            catalog.sourceVersion(),
-            "test-only-environment-publisher",
-            "test-only-environment-publication/" + binding,
-            null,
-            null));
-    terms.publishEnvironmentBinding(binding);
-    authority =
-        new AccountControlUiAuthority(
-            new AccountDraftSourceCompositionService(
-                dsl, parties, bootstrap, terms, sourceEvidence),
-            accounts,
-            sourceEvidence,
-            restrictionOperations,
-            dsl);
-    challenges = new AccountEmailLoginChallengeRepository(dsl);
-    tx(
-        () -> {
-          var challenge = new AccountEmailLoginChallenge();
-          var now = LocalDateTime.now().withNano(0);
-          challenge.setAccountId(account.getId());
-          challenge.setCodeHash(hash(OTP));
-          challenge.setExpiresAt(now.plusMinutes(5));
-          challenge.setResendAvailableAt(now.plusMinutes(1));
-          challenge.setCreatedAt(now);
-          challenge.setUpdatedAt(now);
-          return challenges.save(challenge);
-        });
-    var primaryTarget =
-        new AccountServiceImpl(
-            accounts,
-            generations,
-            sourceEvidence,
-            outbox,
-            mock(
-                net.firedevops.firemud.accountservice.repository
-                    .AccountPasswordResetOperationRepository.class),
-            mock(
-                net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository
-                    .class),
-            mock(
-                net.firedevops.firemud.accountservice.repository
-                    .AccountSecurityStateOperationRepository.class),
-            mock(
-                net.firedevops.firemud.accountservice.service
-                    .AccountPasswordResetDraftSourceChangeRepository.class),
-            mock(AccountAuditOutboxRepository.class),
-            mock(
-                net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository
-                    .class),
-            mock(AccountJoinOperationRepository.class),
-            challenges,
-            null, // Realm grants are not used by primary authentication.
-            null, // Tenant memberships are not used by primary authentication.
-            Mappers.getMapper(AccountMapper.class),
-            null, // Profiles are not used by primary authentication.
-            null, // Profile mapper is not used by primary authentication.
-            null, // Payment transactions are not used by primary authentication.
-            null, // Subscriptions are not used by primary authentication.
-            null, // External identities are not used by primary authentication.
-            null, // Password reset tokens are not used by primary authentication.
-            null, // Email verification tokens are not used by primary authentication.
-            null, // Notifications are not used by primary authentication.
-            null, // Email delivery is not used by primary authentication.
-            null, // Mail properties are not used by primary authentication.
-            null, // Token properties are not used by primary authentication.
-            null, // JWT auth properties are not used by primary authentication.
-            null, // Game Session client is not used by primary authentication.
-            null, // Entity Management client is not used by primary authentication.
-            null, // JWT utility is not used by primary authentication.
-            null, // Session service is not used by primary authentication.
-            manager);
-    // Exercise the real MANDATORY interceptor: noRollbackFor must not poison the owner callback.
-    var primaryProxy = new ProxyFactory(primaryTarget);
-    primaryProxy.setProxyTargetClass(true);
-    primaryProxy.addAdvice(
-        new TransactionInterceptor(manager, new AnnotationTransactionAttributeSource()));
-    primary = (AccountServiceImpl) primaryProxy.getProxy();
-    if (!installNegativeIssuer) {
-      service = null;
-      return;
+    compositionPool = ownedCompositionConnections ? new com.zaxxer.hikari.HikariDataSource() : null;
+    try {
+      if (compositionPool != null) {
+        compositionPool.setPoolName("account-composition-" + schema);
+        compositionPool.setDataSource(dataSource);
+        compositionPool.setMaximumPoolSize(8);
+        compositionPool.setMinimumIdle(0);
+      }
+      javax.sql.DataSource ownerSource = compositionPool == null ? dataSource : compositionPool;
+      manager = new DataSourceTransactionManager(ownerSource);
+      transactions = new TransactionTemplate(manager);
+      transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+      dsl = DSL.using(new TransactionAwareDataSourceProxy(ownerSource), SQLDialect.POSTGRES);
+      var generations = new AccountAuthorityGenerationRepository(dsl);
+      var outbox = new AccountAuthorityOutboxRepository(dsl);
+      var sourceEvidence = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+      accounts = new AccountRepository(dsl, sourceEvidence);
+      restrictionBirths = new AccountPlatformRestrictionBirthRepository(dsl);
+      restrictionOperations =
+          new AccountPlatformRestrictionOperationRepository(
+              dsl, generations, outbox, sourceEvidence, restrictionBirths);
+      account =
+          tx(
+              () -> {
+                Account candidate = new Account();
+                String suffix = UUID.randomUUID().toString();
+                candidate.setUsername("owner-" + suffix);
+                candidate.setEmail(suffix + "@example.test");
+                candidate.setPasswordHash(hash("test-only-disabled-password"));
+                candidate.setLoginAuthModes("EMAIL_OTP");
+                return accounts.save(candidate);
+              });
+      var creator = testCreation(account.getAccountUuid(), creationEvidence);
+      var fresh =
+          new FreshTenantIdentityAssociationRepository(dsl, creationEvidence.targetNamespace());
+      tx(
+          () -> {
+            fresh.importVerified(creator.creationEvidence());
+            generations.initializeTenantIfAbsent(tenant);
+            return null;
+          });
+      var pairs = new AccountMembershipPairAuthorityRepository(dsl);
+      var memberships = new AccountTenantMembershipRepository(dsl, accounts, fresh, pairs);
+      var roles = new AccountTenantMembershipRoleSnapshotRepository(dsl);
+      var bootstrapOperations = new AccountTenantCreationBootstrapOperationRepository(dsl);
+      var reader =
+          new AccountCreatorMembershipSourceReader(
+              accounts,
+              new AccountJoinOperationRepository(dsl),
+              memberships,
+              pairs,
+              roles,
+              fresh,
+              generations,
+              outbox,
+              sourceEvidence,
+              bootstrapOperations);
+      var beans = new StaticListableBeanFactory();
+      AccountTenantCreationBootstrapAuthorizationSource externalBootstrap =
+          (actual, mutation) -> {
+            if (!creator.equals(actual)
+                || !TransactionSynchronizationManager.isActualTransactionActive()) {
+              throw new IllegalStateException(
+                  "Exact test-only external bootstrap fixture required");
+            }
+            return mutation.get();
+          };
+      beans.addBean("testOnlyBootstrapAuthority", externalBootstrap);
+      var bootstrap =
+          new AccountTenantCreationBootstrapService(
+              accounts,
+              fresh,
+              reader,
+              pairs,
+              memberships,
+              roles,
+              outbox,
+              new AccountAuditOutboxRepository(dsl),
+              bootstrapOperations,
+              beans.getBeanProvider(AccountTenantCreationBootstrapAuthorizationSource.class));
+      tx(() -> bootstrap.bootstrap(creator));
+      var party =
+          new IndividualCreatorPartySource(
+              UUID.randomUUID(),
+              account.getAccountUuid(),
+              VerificationStatus.VERIFIED,
+              1L,
+              "test-only-policy",
+              1L,
+              "test-only-verification",
+              1L,
+              1L);
+      insertTestParty(dsl, party);
+      var parties = new IndividualCreatorPartyRepository(dsl, fresh, bootstrapOperations);
+      tx(() -> parties.associateFresh(UUID.randomUUID(), creator, party));
+      fences = new DraftAuthorizationFenceRepository(dsl);
+      Map<UUID, AccountHostedTermsService.PublicationEvidence> publications = new HashMap<>();
+      Map<UUID, AccountHostedTermsService.AcceptanceAction> actions = new HashMap<>();
+      Map<UUID, HostedTermsEnvironmentBinding.PublicationEvidence> bindings = new HashMap<>();
+      terms =
+          new AccountHostedTermsService(
+              manager,
+              new HostedTermsRepository(dsl),
+              parties,
+              fences,
+              id -> externalFixture(publications, id),
+              id -> externalFixture(actions, id),
+              new HostedTermsEnvironmentBindingRepository(dsl),
+              id -> externalFixture(bindings, id),
+              () -> {
+                requireOutsideTransaction();
+                return boundary.get();
+              });
+      UUID publication = UUID.randomUUID();
+      publications.put(
+          publication,
+          new AccountHostedTermsService.PublicationEvidence(
+              UUID.randomUUID(),
+              "Test-only Operator",
+              1L,
+              bytes("Test-only initial terms"),
+              HostedTermsCatalogVersion.Materiality.INITIAL,
+              null,
+              null,
+              "test-only-publication-audit",
+              1L,
+              "test-only-notice",
+              1L,
+              Instant.now().minusSeconds(30).truncatedTo(ChronoUnit.MICROS)));
+      var catalog = terms.publish(publication).candidate();
+      UUID action = UUID.randomUUID();
+      actions.put(
+          action,
+          new AccountHostedTermsService.AcceptanceAction(
+              action,
+              true,
+              account.getAccountUuid(),
+              party.creatorPartyId(),
+              catalog.hostedScopeId(),
+              catalog.versionId(),
+              catalog.documentDigest(),
+              catalog.operatorLegalIdentity(),
+              catalog.operatorIdentityVersion(),
+              "test-only-affirmative-action",
+              1L,
+              OffsetDateTime.now(ZoneOffset.UTC)));
+      terms.accept(action);
+      UUID binding = UUID.randomUUID();
+      bindings.put(
+          binding,
+          new HostedTermsEnvironmentBinding.PublicationEvidence(
+              "test-production",
+              catalog.hostedScopeId(),
+              catalog.operatorLegalIdentity(),
+              catalog.operatorIdentityVersion(),
+              catalog.versionId(),
+              catalog.sourceVersion(),
+              "test-only-environment-publisher",
+              "test-only-environment-publication/" + binding,
+              null,
+              null));
+      terms.publishEnvironmentBinding(binding);
+      authority =
+          new AccountControlUiAuthority(
+              new AccountDraftSourceCompositionService(
+                  dsl, parties, bootstrap, terms, sourceEvidence),
+              accounts,
+              sourceEvidence,
+              restrictionOperations,
+              dsl);
+      challenges = new AccountEmailLoginChallengeRepository(dsl);
+      tx(
+          () -> {
+            var challenge = new AccountEmailLoginChallenge();
+            var now = LocalDateTime.now().withNano(0);
+            challenge.setAccountId(account.getId());
+            challenge.setCodeHash(hash(OTP));
+            challenge.setExpiresAt(now.plusMinutes(5));
+            challenge.setResendAvailableAt(now.plusMinutes(1));
+            challenge.setCreatedAt(now);
+            challenge.setUpdatedAt(now);
+            return challenges.save(challenge);
+          });
+      var primaryTarget =
+          new AccountServiceImpl(
+              accounts,
+              generations,
+              sourceEvidence,
+              outbox,
+              mock(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountPasswordResetOperationRepository.class),
+              mock(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountLogoutAllOperationRepository.class),
+              mock(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountSecurityStateOperationRepository.class),
+              mock(
+                  net.firedevops.firemud.accountservice.service
+                      .AccountPasswordResetDraftSourceChangeRepository.class),
+              mock(AccountAuditOutboxRepository.class),
+              mock(
+                  net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository
+                      .class),
+              mock(AccountJoinOperationRepository.class),
+              challenges,
+              null, // Realm grants are not used by primary authentication.
+              null, // Tenant memberships are not used by primary authentication.
+              Mappers.getMapper(AccountMapper.class),
+              null, // Profiles are not used by primary authentication.
+              null, // Profile mapper is not used by primary authentication.
+              null, // Payment transactions are not used by primary authentication.
+              null, // Subscriptions are not used by primary authentication.
+              null, // External identities are not used by primary authentication.
+              null, // Password reset tokens are not used by primary authentication.
+              null, // Email verification tokens are not used by primary authentication.
+              null, // Notifications are not used by primary authentication.
+              null, // Email delivery is not used by primary authentication.
+              null, // Mail properties are not used by primary authentication.
+              null, // Token properties are not used by primary authentication.
+              null, // JWT auth properties are not used by primary authentication.
+              null, // Game Session client is not used by primary authentication.
+              null, // Entity Management client is not used by primary authentication.
+              null, // JWT utility is not used by primary authentication.
+              null, // Session service is not used by primary authentication.
+              manager);
+      // Exercise the real MANDATORY interceptor: noRollbackFor must not poison the owner callback.
+      var primaryProxy = new ProxyFactory(primaryTarget);
+      primaryProxy.setProxyTargetClass(true);
+      primaryProxy.addAdvice(
+          new TransactionInterceptor(manager, new AnnotationTransactionAttributeSource()));
+      primary = (AccountServiceImpl) primaryProxy.getProxy();
+      if (!installNegativeIssuer) {
+        service = null;
+        return;
+      }
+      var signerFixture = new AccountControlUiSignerFixture(this, root);
+      signerFixture.prepareInitialPrepublication();
+      var signer = signerFixture.signer;
+      var operations = new AccountControlUiIssuanceRepository(dsl);
+      var crypto =
+          new AccountControlUiResponseCryptography(
+              new AccountControlUiKeyring(root.resolve("custody")), Clock.systemUTC());
+      var registry =
+          new AccountControlUiCoordination(
+              () -> {
+                coordinationCalls.incrementAndGet();
+                throw new IllegalStateException("No physical Redis fixture in this negative proof");
+              },
+              new AcknowledgementRequirements(1, 1, 1000),
+              RedisScriptCatalog.fromContributions(List.of()));
+      var publicSource =
+          new AccountJwtJwksTrustedSource(
+              signerFixture.client,
+              signerFixture.trust,
+              signerFixture.desired,
+              signerFixture.publication,
+              manager);
+      var actors =
+          new AccountControlUiActorService(
+              operations,
+              authority,
+              signer,
+              registry,
+              publicSource,
+              fences,
+              manager,
+              Clock.systemUTC());
+      service =
+          new AccountControlUiIssuanceService(
+              primary,
+              operations,
+              authority,
+              fences,
+              signer,
+              crypto,
+              registry,
+              actors,
+              manager,
+              Clock.systemUTC(),
+              300_000L,
+              CALLER);
+    } catch (Exception | Error failure) {
+      try {
+        closeOwnedConnections();
+      } catch (RuntimeException | Error cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
+      throw failure;
     }
-    var signerFixture = new AccountControlUiSignerFixture(this, root);
-    signerFixture.prepareInitialPrepublication();
-    var signer = signerFixture.signer;
-    var operations = new AccountControlUiIssuanceRepository(dsl);
-    var crypto =
-        new AccountControlUiResponseCryptography(
-            new AccountControlUiKeyring(root.resolve("custody")), Clock.systemUTC());
-    var registry =
-        new AccountControlUiCoordination(
-            () -> {
-              coordinationCalls.incrementAndGet();
-              throw new IllegalStateException("No physical Redis fixture in this negative proof");
-            },
-            new AcknowledgementRequirements(1, 1, 1000),
-            RedisScriptCatalog.fromContributions(List.of()));
-    var publicSource =
-        new AccountJwtJwksTrustedSource(
-            signerFixture.client,
-            signerFixture.trust,
-            signerFixture.desired,
-            signerFixture.publication,
-            manager);
-    var actors =
-        new AccountControlUiActorService(
-            operations,
-            authority,
-            signer,
-            registry,
-            publicSource,
-            fences,
-            manager,
-            Clock.systemUTC());
-    service =
-        new AccountControlUiIssuanceService(
-            primary,
-            operations,
-            authority,
-            fences,
-            signer,
-            crypto,
-            registry,
-            actors,
-            manager,
-            Clock.systemUTC(),
-            300_000L,
-            CALLER);
   }
 
   AccountControlUiIssuanceService.Request request(String secret) {
@@ -640,26 +703,28 @@ final class AccountControlUiOwnerSourcesFixture {
     assertThat(coordinationCalls).hasValue(0);
   }
 
-  private static FreshTenantCreatorEvidence testCreation(UUID account, UUID tenant) {
-    UUID request = UUID.randomUUID(),
-        operation = UUID.randomUUID(),
-        authorization = UUID.randomUUID();
+  static FreshTenantCreationEvidence defaultCreation(UUID tenant) {
+    UUID request = UUID.randomUUID(), operation = UUID.randomUUID();
     String key = "test-only-game-row-17";
     String digest =
         GameTenantCreationDigest.requestDigest(NAMESPACE, request, key, "Test game", null);
-    var creation =
-        new FreshTenantCreationEvidence(
-            1,
-            NAMESPACE,
-            request,
-            operation,
-            digest,
-            tenant,
-            17L,
-            key,
-            "NEW_GAME_ROW",
-            GameTenantCreationDigest.evidenceDigest(
-                NAMESPACE, request, operation, digest, tenant, 17L, key, "NEW_GAME_ROW"));
+    return new FreshTenantCreationEvidence(
+        1,
+        NAMESPACE,
+        request,
+        operation,
+        digest,
+        tenant,
+        17L,
+        key,
+        "NEW_GAME_ROW",
+        GameTenantCreationDigest.evidenceDigest(
+            NAMESPACE, request, operation, digest, tenant, 17L, key, "NEW_GAME_ROW"));
+  }
+
+  private static FreshTenantCreatorEvidence testCreation(
+      UUID account, FreshTenantCreationEvidence creation) {
+    UUID authorization = UUID.randomUUID();
     String authorizationDigest = "sha256:" + "8".repeat(64);
     return new FreshTenantCreatorEvidence(
         1,
@@ -740,6 +805,10 @@ final class AccountControlUiOwnerSourcesFixture {
     } finally {
       argon.wipeArray(secret);
     }
+  }
+
+  void closeOwnedConnections() {
+    if (compositionPool != null) compositionPool.close();
   }
 
   /** Applies only the remaining real migrations, without rewriting retained fixture rows. */

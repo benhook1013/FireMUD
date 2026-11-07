@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.client;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Customer;
 import com.stripe.model.PaymentMethod;
+import com.stripe.net.RequestOptions;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -77,11 +78,17 @@ public final class StripeBillingPrerequisiteObserver {
    * not-found response) remains unresolved with its original cause; it never proves absence.
    */
   public Result observe(ExpectedBinding expected) {
+    return observe(expected, RequestOptions.getDefault());
+  }
+
+  // The held hosting provisioner supplies its validated finite transport policy for both reads.
+  Result observe(ExpectedBinding expected, RequestOptions requestOptions) {
     Objects.requireNonNull(expected, "expected binding is required");
+    Objects.requireNonNull(requestOptions, "request options are required");
     Instant readStartedAt = clock.instant();
     Customer customer;
     try {
-      customer = stripeClient.customers().retrieve(expected.providerCustomerId());
+      customer = stripeClient.customers().retrieve(expected.providerCustomerId(), requestOptions);
     } catch (StripeException providerFailure) {
       return unresolved(expected, readStartedAt, clock.instant(), providerFailure);
     }
@@ -101,7 +108,10 @@ public final class StripeBillingPrerequisiteObserver {
 
     PaymentMethod paymentMethod;
     try {
-      paymentMethod = stripeClient.paymentMethods().retrieve(expected.providerPaymentMethodId());
+      paymentMethod =
+          stripeClient
+              .paymentMethods()
+              .retrieve(expected.providerPaymentMethodId(), requestOptions);
     } catch (StripeException providerFailure) {
       return unresolved(expected, readStartedAt, clock.instant(), providerFailure);
     }

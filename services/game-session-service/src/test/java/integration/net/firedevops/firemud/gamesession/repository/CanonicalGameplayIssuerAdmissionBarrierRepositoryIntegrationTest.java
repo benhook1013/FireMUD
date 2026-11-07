@@ -46,8 +46,11 @@ import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBinding
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -230,36 +233,81 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
     UUID operationId = state.fixture().originalOperationId();
     var first = state.repository().readPreparedInitializer(operationId);
     var second = state.repository().readPreparedInitializer(operationId);
-    CountDownLatch start = new CountDownLatch(1);
+    assertThat(first.assignment()).isNotNull();
+    assertThat(second.assignment()).isNull();
+    CountDownLatch retainedMappingLocked = new CountDownLatch(1);
+    CountDownLatch assignmentLockAttempted = new CountDownLatch(1);
+    var retainedClaimListener =
+        new DefaultExecuteListener() {
+          @Override
+          public void executeEnd(ExecuteContext context) {
+            String sql = context.sql();
+            if (sql != null
+                && sql.contains("FROM game_session_canonical_tenant_gameplay_tag")
+                && sql.endsWith("FOR SHARE")) {
+              retainedMappingLocked.countDown();
+              try {
+                if (!assignmentLockAttempted.await(10, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Controlled assignment lock attempt timed out");
+                }
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Controlled claim gate interrupted", interrupted);
+              }
+            }
+          }
+        };
+    var assignmentListener =
+        new DefaultExecuteListener() {
+          @Override
+          public void executeStart(ExecuteContext context) {
+            String sql = context.sql();
+            if (sql != null
+                && sql.endsWith("FOR UPDATE")
+                && (sql.contains("FROM game_session_canonical_binding_inventory_clock")
+                    || sql.contains("FROM game_session_canonical_tenant_gameplay_tag"))) {
+              // With the owner lock order this waits on the clock before taking source locks.
+              // Without it, this reaches the tag only after locking transition/inventory, while
+              // the retained claim owns the tag and still needs the transition: a real deadlock.
+              assignmentLockAttempted.countDown();
+            }
+          }
+        };
+    DSLContext dsl = state.fixture().dsl();
+    var retainedDsl =
+        DSL.using(
+            dsl.configuration().derive(new DefaultExecuteListenerProvider(retainedClaimListener)));
+    var assignmentDsl =
+        DSL.using(
+            dsl.configuration().derive(new DefaultExecuteListenerProvider(assignmentListener)));
+    String namespace = state.fixture().target().targetNamespace();
+    var retainedRepository =
+        new CanonicalGameplayIssuerAdmissionBarrierRepository(
+            retainedDsl,
+            new CanonicalGameplayTenantGameplayTagRepository(dsl, namespace, 1),
+            state.sourceReader());
+    var assignmentRepository =
+        new CanonicalGameplayIssuerAdmissionBarrierRepository(
+            dsl,
+            new CanonicalGameplayTenantGameplayTagRepository(assignmentDsl, namespace, 1),
+            state.sourceReader());
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
-      var firstClaim =
-          executor.submit(
-              () -> {
-                if (!start.await(10, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Controlled claim start timed out");
-                }
-                return state.repository().claimFirstCreatePermit(first);
-              });
-      var secondClaim =
-          executor.submit(
-              () -> {
-                if (!start.await(10, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Controlled claim start timed out");
-                }
-                return state.repository().claimFirstCreatePermit(second);
-              });
-      start.countDown();
-      assertThat(
-              List.of(firstClaim.get(10, TimeUnit.SECONDS), secondClaim.get(10, TimeUnit.SECONDS)))
-          .containsExactlyInAnyOrder(true, false);
+      var secondClaim = executor.submit(() -> retainedRepository.claimFirstCreatePermit(second));
+      assertThat(retainedMappingLocked.await(10, TimeUnit.SECONDS)).isTrue();
+      var firstClaim = executor.submit(() -> assignmentRepository.claimFirstCreatePermit(first));
+      assertThat(assignmentLockAttempted.await(10, TimeUnit.SECONDS))
+          .as("Assignment claim must reach its lock attempt before the retained claim can finish")
+          .isTrue();
+      assertThat(secondClaim.get(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(firstClaim.get(10, TimeUnit.SECONDS)).isFalse();
       assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
       assertThatThrownBy(() -> state.owner().initializeAndRead(operationId))
           .isInstanceOf(IllegalStateException.class);
       assertThat(countReceipt(state, operationId)).isZero();
       assertThat(administratorCommands.exists(bytes(first.key()))).isZero();
     } finally {
-      start.countDown();
+      assignmentLockAttempted.countDown();
       executor.shutdownNow();
     }
   }

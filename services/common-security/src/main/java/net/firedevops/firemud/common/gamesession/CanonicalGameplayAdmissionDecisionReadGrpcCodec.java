@@ -188,14 +188,15 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcCodec {
                   Target target = parseTargetEvidence(wire);
                   if (!expected.targetNamespace().equals(target.targetNamespace())
                       || !"SHARED".equals(target.playableStateScope())
-                      || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())
+                      || !("PRESEEDED_ONLY".equals(target.characterCreationPolicy())
+                          || "PLAYER_CREATED".equals(target.characterCreationPolicy()))
                       || target.ownerProofOutcome() != OwnerProofOutcome.COMMITTED
                       || target.positiveDurableAbort()
                       || !tenants.add(target.canonicalTenantId())
                       || !tenantSlugs.add(target.tenantSlug())
                       || !realms.add(target.realmId())) {
                     throw invalid(
-                        "Discovery requires unique current public SHARED PRESEEDED owner targets");
+                        "Discovery requires unique current public SHARED owner targets with a supported creation policy");
                   }
                   return target;
                 })

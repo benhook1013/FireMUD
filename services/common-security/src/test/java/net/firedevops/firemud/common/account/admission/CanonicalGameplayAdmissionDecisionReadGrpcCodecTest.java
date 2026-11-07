@@ -97,6 +97,24 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
   }
 
   @Test
+  void discoveryCarriesBothSupportedPublicCreationPoliciesWithoutChangingTargetEvidence() {
+    for (String policy : List.of("PRESEEDED_ONLY", "PLAYER_CREATED")) {
+      var current = target(lease(), policy);
+      var request =
+          new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+              DECISION_ID, current.targetNamespace());
+      var response =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+              request, List.of(current));
+      assertThat(
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                      request, response)
+                  .targets())
+          .containsExactly(current);
+    }
+  }
+
+  @Test
   void discoveryRejectsOpenRequestShapeAndChangedResponseCorrelation() {
     var request =
         new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(DECISION_ID, "test");
@@ -168,8 +186,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
                 .setCurrentTargets(0, wire.toBuilder().setPlayableStateScope(0, "ISOLATED"))
                 .build(),
             response.toBuilder()
-                .setCurrentTargets(
-                    0, wire.toBuilder().setCharacterCreationPolicy(0, "PLAYER_CREATED"))
+                .setCurrentTargets(0, wire.toBuilder().setCharacterCreationPolicy(0, "UNSUPPORTED"))
                 .build(),
             response.toBuilder()
                 .setCurrentTargets(0, wire.toBuilder().clearCanonicalGameInstanceUuid())

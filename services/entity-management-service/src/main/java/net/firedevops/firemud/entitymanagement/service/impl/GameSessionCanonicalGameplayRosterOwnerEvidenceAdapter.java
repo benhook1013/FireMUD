@@ -60,7 +60,18 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
   public CanonicalGameplayRosterOwnerEvidence resolveCurrentTarget(
       CanonicalGameplayRosterReadRequest request) {
     Objects.requireNonNull(request, "request");
-    CanonicalGameplayRosterTarget expected = request.expectedTarget();
+    return resolveCurrentTarget(
+        request.requestUuid(), request.canonicalAccountUuid(), request.expectedTarget());
+  }
+
+  /** Non-admitting current source read, without inventing an original selection or session. */
+  public CanonicalGameplayRosterOwnerEvidence resolveCurrentTarget(
+      java.util.UUID requestUuid,
+      java.util.UUID canonicalAccountUuid,
+      CanonicalGameplayRosterTarget expected) {
+    Objects.requireNonNull(requestUuid, "requestUuid");
+    Objects.requireNonNull(canonicalAccountUuid, "canonicalAccountUuid");
+    Objects.requireNonNull(expected, "expected");
     if (expected.playableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
         || expected.entryPolicy() != CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY) {
       throw new UnsupportedOperationException(
@@ -69,8 +80,8 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
 
     CanonicalGameplayRosterOwnerReadEvidence.Request ownerReadRequest =
         new CanonicalGameplayRosterOwnerReadEvidence.Request(
-            request.requestUuid(),
-            request.canonicalAccountUuid(),
+            requestUuid,
+            canonicalAccountUuid,
             workloadNamespace,
             expected.tenantUuid(),
             expected.worldSlug(),
@@ -95,7 +106,7 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
     }
 
     try {
-      return mapCompleteEvidence(request, ownerReadRequest, evidence);
+      return mapCompleteEvidence(ownerReadRequest, evidence);
     } catch (RuntimeException invalid) {
       if (invalid instanceof OwnerEvidenceUnavailableException unavailable) {
         throw unavailable;
@@ -105,11 +116,9 @@ public final class GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter
   }
 
   private CanonicalGameplayRosterOwnerEvidence mapCompleteEvidence(
-      CanonicalGameplayRosterReadRequest request,
       CanonicalGameplayRosterOwnerReadEvidence.Request ownerReadRequest,
       CanonicalGameplayRosterOwnerReadEvidence evidence) {
-    if (!request.requestUuid().equals(evidence.request().requestUuid())
-        || !request.canonicalAccountUuid().equals(evidence.request().canonicalAccountUuid())) {
+    if (!ownerReadRequest.equals(evidence.request())) {
       throw new IllegalArgumentException("Game Session evidence changed request/account binding");
     }
     GameSessionCanonicalInitialAdmissionOwnerProof proof = evidence.gameSessionOwnerProof();

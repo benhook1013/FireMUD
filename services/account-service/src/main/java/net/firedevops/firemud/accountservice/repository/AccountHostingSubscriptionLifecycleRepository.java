@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -17,6 +18,9 @@ import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObs
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ObservedSubscription;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.Status;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionTerminalResolution.Authorization;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionTerminalResolution.LockedTarget;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionTerminalResolution.Request;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import org.jooq.DSLContext;
@@ -71,6 +75,283 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     tenantEvents =
         new AccountTenantAuthorityEventRepository(
             dsl, new AccountAuthorityOutboxRepository(dsl), billing, tenantIdentity, generations);
+  }
+
+  /** Locked read capture only. No journal, intent, audit or fence changes precede final auth. */
+  public ResolutionPreparation prepareTerminalResolution(Request request) {
+    requireTransaction();
+    Objects.requireNonNull(request);
+    var original = intents.findCreation(request.creationRequestId()).orElseThrow();
+    if (!request.tenantId().equals(original.tenantId())
+        || !request.subscriptionId().equals(original.subscriptionId())
+        || !request.actorAccountId().equals(original.owner().accountUuid())) {
+      throw new FenceRejectedException("Exact same-owner terminal lifecycle target rejected");
+    }
+    Record journal =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_lifecycle_terminal_resolutions WHERE resolution_request_id = ? FOR UPDATE",
+            request.resolutionRequestId());
+    // Exact committed-result disclosure belongs to the original authenticated actor. It must not
+    // select a successor subscription or require the canceled predecessor to remain current.
+    // Only a new mutation takes today's current-row/owner/instrument fence, in its original order.
+    long currentVersion;
+    if (journal == null) {
+      var observedCurrent = intents.findCurrentByTenant(original.tenantId()).orElseThrow();
+      currentVersion =
+          intents.lockForLifecycle(original.requestId(), observedCurrent.rowVersion()).rowVersion();
+    } else {
+      currentVersion = journal.get("result_row_version", Long.class);
+    }
+    Record failed = operationForUpdate(request.failedRequestId());
+    if (!request.creationRequestId().equals(failed.get("creation_request_id", UUID.class))
+        || !request.subscriptionId().equals(failed.get("subscription_id", UUID.class))
+        || !"BILLING_RECONCILIATION_TERMINAL_FAILURE".equals(failed.get("state", String.class))
+        || request.expectedFailedOperationVersion() != failed.get("row_version", Long.class)) {
+      throw new FenceRejectedException("Exact same-owner terminal lifecycle target rejected");
+    }
+    ExpectedBinding binding =
+        expected(original, failed.get("provider_subscription_id", String.class));
+    if (journal != null) {
+      if (!request.digest().equals(journal.get("request_digest", String.class))
+          || !Arrays.equals(request.payload(), journal.get("request_payload", byte[].class))) {
+        throw new FenceRejectedException("IDEMPOTENCY_CONFLICT: terminal resolution tuple changed");
+      }
+      Record receipt =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT * FROM subscription_lifecycle_receipts WHERE request_id = ?",
+                  request.resolutionRequestId()));
+      if (!"COMMITTED".equals(journal.get("state", String.class))
+          || !"canceled".equals(receipt.get("status", String.class))
+          || !journal
+              .get("receipt_digest", String.class)
+              .equals(receipt.get("receipt_digest", String.class))) {
+        throw new FenceRejectedException("Terminal resolution receipt readback differs");
+      }
+      new AccountAuditOutboxRepository(dsl)
+          .findCanonicalTenantEnvelopeForUpdate(request.auditEventId())
+          .filter(
+              audit ->
+                  request.digest().equals(audit.payloadDigest())
+                      && "HOSTING_SUBSCRIPTION_TERMINAL_RESOLVED".equals(audit.eventType())
+                      && request.tenantId().equals(audit.tenantUuid()))
+          .orElseThrow(
+              () -> new FenceRejectedException("Terminal resolution audit readback differs"));
+      return new ResolutionPreparation(
+          request,
+          binding,
+          original.owner().accountUuid(),
+          currentVersion,
+          now(),
+          now(),
+          new TransitionResult(
+              request.resolutionRequestId(),
+              Outcome.COMMITTED,
+              journal.get("result_row_version", Long.class),
+              null));
+    }
+    if (request.expectedSubscriptionVersion() != currentVersion
+        || !request
+            .failedRequestId()
+            .equals(
+                links(request.subscriptionId()).get("lifecycle_inflight_request_id", UUID.class))) {
+      throw new FenceRejectedException("Terminal resolution lost its exact failed current fence");
+    }
+    Instant captured = now();
+    Instant deadline =
+        earlier(
+            captured.plus(limits.lease()),
+            captured.plusMillis(failed.get("observation_age_millis", Long.class)));
+    return new ResolutionPreparation(
+        request, binding, original.owner().accountUuid(), currentVersion, captured, deadline, null);
+  }
+
+  /**
+   * Final cancellation-only owner mutation. The mandatory callback runs under exact target locks
+   * immediately before writes; callback inputs/outputs alone do not establish Account authority. If
+   * the callback throws an authentication denial, the caller may catch it outside this method and
+   * commit its own failed-login accounting because this method has made no repository writes before
+   * invoking the callback. A repository write added before the callback removes this narrow
+   * exception; all other failures require rollback. Commit failures remain the caller transaction
+   * manager’s responsibility.
+   */
+  public TransitionResult applyTerminalResolution(
+      ResolutionPreparation prepared,
+      StripeHostingSubscriptionObserver.Result result,
+      Authorization authorization) {
+    requireTransaction();
+    Objects.requireNonNull(prepared);
+    Objects.requireNonNull(authorization, "Explicit final Account authorization callback required");
+    Request request = prepared.request;
+    ResolutionPreparation locked = prepareTerminalResolution(request);
+    Instant evaluated = now();
+    if (locked.replay == null) {
+      if (prepared.replay != null
+          || !prepared.binding.equals(locked.binding)
+          || evaluated.isBefore(prepared.capturedAt)
+          || !evaluated.isBefore(prepared.deadline)
+          || !(result instanceof ObservedSubscription observed)
+          || !observed.providerStatusIsCanceled()
+          || observed.readStartedAt().isBefore(prepared.capturedAt)
+          || observed.observedAt().isAfter(evaluated)) {
+        throw new FenceRejectedException(
+            "Fresh exact canceled SDK evidence required for resolution");
+      }
+      requireObservedBinding(prepared.binding, observed);
+      Record failed = operationForUpdate(request.failedRequestId());
+      var decision = retainedPolicy(failed).evaluate(observed, evaluated, null);
+      if (!decision.resolved() || decision.status() != Status.CANCELED) {
+        throw new FenceRejectedException("Terminal cancellation evidence expired or is unresolved");
+      }
+    }
+    Instant authenticationStarted = now();
+    var actor =
+        Objects.requireNonNull(
+            authorization.requireAuthorized(
+                new LockedTarget(request, locked.billingOwnerAccountId, locked.currentVersion)));
+    Instant authenticated = now();
+    if (!request.actorAccountId().equals(actor.actorAccountId())
+        || !request.controlUiIssuanceOperationId().equals(actor.controlUiIssuanceOperationId())
+        || !request.controlUiTokenHash().equals(actor.controlUiTokenHash())
+        || actor.authenticatedAt().isBefore(authenticationStarted)
+        || actor.authenticatedAt().isAfter(authenticated)) {
+      throw new FenceRejectedException(
+          "Final primary-authentication source differs from exact actor");
+    }
+    if (locked.replay != null) return locked.replay;
+    if (!authenticated.isBefore(prepared.deadline)) {
+      throw new FenceRejectedException("Terminal resolution capture expired during authorization");
+    }
+    new AccountAuditOutboxRepository(dsl)
+        .appendCanonicalTenant(
+            request.auditEventId(),
+            request.tenantId().toString(),
+            "HOSTING_SUBSCRIPTION_TERMINAL_RESOLVED",
+            new String(request.payload(), StandardCharsets.UTF_8));
+    UUID attemptId = UUID.randomUUID();
+    dsl.execute(
+        "INSERT INTO subscription_lifecycle_terminal_resolutions (resolution_request_id, failed_request_id, creation_request_id, "
+            + "subscription_id, tenant_id, expected_failed_version, expected_subscription_version, actor_account_id, "
+            + "control_ui_issuance_operation_id, control_ui_token_hash, audit_event_id, audit_reason, request_payload, request_digest, "
+            + "attempt_id, captured_at, expires_at, authenticated_at, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz, ?::timestamptz, 'PREPARED')",
+        request.resolutionRequestId(),
+        request.failedRequestId(),
+        request.creationRequestId(),
+        request.subscriptionId(),
+        request.tenantId(),
+        request.expectedFailedOperationVersion(),
+        request.expectedSubscriptionVersion(),
+        request.actorAccountId(),
+        request.controlUiIssuanceOperationId(),
+        request.controlUiTokenHash(),
+        request.auditEventId(),
+        request.auditReason(),
+        request.payload(),
+        request.digest(),
+        attemptId,
+        utc(prepared.capturedAt),
+        utc(prepared.deadline),
+        utc(actor.authenticatedAt()));
+    if (dsl.execute(
+            "INSERT INTO subscription_lifecycle_operations (request_id, creation_request_id, subscription_id, tenant_id, expected_row_version, "
+                + "reserved_row_version, provider_subscription_id, provisioning_attempt_id, request_payload, request_digest, state, row_version, "
+                + "max_attempts, max_stalled_attempts, lease_millis, backoff_millis, observation_age_millis, warning_millis, grace_millis, deadline_at, retry_at, created_at) "
+                + "SELECT ?, creation_request_id, subscription_id, tenant_id, ?, ?, provider_subscription_id, provisioning_attempt_id, ?, ?, 'PENDING', 1, "
+                + "1, 1, lease_millis, backoff_millis, observation_age_millis, warning_millis, grace_millis, ?::timestamptz, ?::timestamptz, ?::timestamptz "
+                + "FROM subscription_lifecycle_operations WHERE request_id = ? AND state = 'BILLING_RECONCILIATION_TERMINAL_FAILURE' AND row_version = ?",
+            request.resolutionRequestId(),
+            request.expectedSubscriptionVersion(),
+            request.expectedSubscriptionVersion() + 1,
+            request.payload(),
+            request.digest(),
+            utc(prepared.deadline),
+            utc(prepared.capturedAt),
+            utc(prepared.capturedAt),
+            request.failedRequestId(),
+            request.expectedFailedOperationVersion())
+        != 1) {
+      throw new FenceRejectedException("Terminal resolution exact failed-operation copy rejected");
+    }
+    if (dsl.execute(
+            "UPDATE subscription SET lifecycle_inflight_request_id = ?, row_version = row_version + 1 "
+                + "WHERE subscription_id = ? AND row_version = ? AND lifecycle_inflight_request_id = ? AND superseded_at IS NULL",
+            request.resolutionRequestId(),
+            request.subscriptionId(),
+            request.expectedSubscriptionVersion(),
+            request.failedRequestId())
+        != 1) {
+      throw new FenceRejectedException("Terminal resolution expected-current CAS rejected");
+    }
+    dsl.execute(
+        "INSERT INTO subscription_lifecycle_attempts (attempt_id, request_id, attempt_number, started_at, expires_at) VALUES (?, ?, 1, ?::timestamptz, ?::timestamptz)",
+        attemptId,
+        request.resolutionRequestId(),
+        utc(prepared.capturedAt),
+        utc(prepared.deadline));
+    dsl.execute(
+        "UPDATE subscription_lifecycle_operations SET attempt_count = 1, last_attempt_id = ?, row_version = row_version + 1 WHERE request_id = ?",
+        attemptId,
+        request.resolutionRequestId());
+    TransitionResult committed =
+        apply(
+            new Preparation(
+                request.resolutionRequestId(),
+                attemptId,
+                prepared.binding,
+                Outcome.READY,
+                null,
+                request.expectedSubscriptionVersion() + 1),
+            result);
+    if (committed.outcome() != Outcome.COMMITTED)
+      throw new FenceRejectedException("Cancellation resolution did not commit");
+    dsl.execute(
+        "UPDATE subscription_lifecycle_terminal_resolutions SET state = 'COMMITTED', result_row_version = ?, "
+            + "receipt_digest = (SELECT receipt_digest FROM subscription_lifecycle_receipts WHERE request_id = ?), committed_at = ?::timestamptz "
+            + "WHERE resolution_request_id = ? AND state = 'PREPARED'",
+        committed.committedRowVersion(),
+        request.resolutionRequestId(),
+        utc(now()),
+        request.resolutionRequestId());
+    return committed;
+  }
+
+  public static final class ResolutionPreparation {
+    private final Request request;
+    private final ExpectedBinding binding;
+    private final UUID billingOwnerAccountId;
+    private final long currentVersion;
+    private final Instant capturedAt;
+    private final Instant deadline;
+    private final TransitionResult replay;
+
+    private ResolutionPreparation(
+        Request request,
+        ExpectedBinding binding,
+        UUID billingOwnerAccountId,
+        long currentVersion,
+        Instant capturedAt,
+        Instant deadline,
+        TransitionResult replay) {
+      this.request = request;
+      this.binding = binding;
+      this.billingOwnerAccountId = billingOwnerAccountId;
+      this.currentVersion = currentVersion;
+      this.capturedAt = capturedAt;
+      this.deadline = deadline;
+      this.replay = replay;
+    }
+
+    public Request request() {
+      return request;
+    }
+
+    public ExpectedBinding binding() {
+      return binding;
+    }
+
+    public TransitionResult replayResult() {
+      return replay;
+    }
   }
 
   /**
@@ -1038,8 +1319,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
   /**
    * Inserts a separate immutable provider-dispatch boundary after revalidating the exact live
-   * private worker claim. Only a new first-attempt insertion may carry initial-call permission.
-   * Preexisting unknown migration guards and all replayed/recovered attempts reconcile only.
+   * private worker claim. Only a newly inserted first-dispatch receipt may carry initial-call
+   * permission, even if an earlier worker attempt expired without dispatching. Preexisting unknown
+   * migration guards and all replayed dispatches reconcile only.
    */
   public ProviderDispatch prepareProviderDispatch(ProvisioningClaim supplied, UUID dispatchId) {
     requireTransaction();
@@ -1064,7 +1346,6 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     requireDispatchBinding(retained, receipt);
     boolean initial =
         inserted == 1
-            && retained.attemptNumber() == 1
             && "FIRST_DISPATCH".equals(receipt.classification())
             && retained.attemptId().equals(receipt.firstAttemptId());
     return providerDispatch(retained, receipt, initial, false, transactionId());
@@ -1265,6 +1546,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
    * Ends one worker attempt without asserting provider absence or cancellation. Failure keeps the
    * subscription provisioning and its reservation held; even terminal reconciliation failure is
    * unresolved billing work. The caller must commit this result rather than throw it away.
+   *
+   * <p>An exact retained attempt that expires before the absolute deadline returns {@link
+   * Disposition#ATTEMPT_EXPIRED} without changing its work or reservation, leaving recovery to the
+   * next claimant.
    */
   public Disposition deferUnresolved(ProvisioningClaim claim) {
     requireTransaction();
@@ -1290,7 +1575,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return fail(work, "ABSOLUTE_DEADLINE", now).disposition();
     }
     if (!now.isBefore(claim.expiresAt())) {
-      throw new FenceRejectedException("Expired attempt cannot record provider completion");
+      // The exact retained attempt expired without a provider completion. Leave its work and
+      // reservation untouched for the next claimant rather than treating normal expiry as a fault.
+      return Disposition.ATTEMPT_EXPIRED;
     }
     if (work.get("attempt_count", Integer.class) >= work.get("max_attempts", Integer.class)) {
       return fail(work, "ATTEMPT_BUDGET", now).disposition();
@@ -1389,7 +1676,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
   public record ClaimResult(Disposition disposition, ProvisioningClaim claim) {}
 
   /**
-   * Private construction prevents mistaking caller-supplied status/version booleans for a claim.
+   * Private construction prevents mistaking caller-supplied status/version booleans for a claim. A
+   * claim's attempt number never grants or denies provider creation. Only an independently read
+   * ProviderDispatch carries initial-call permission from the retained first-dispatch receipt.
    */
   public static final class ProvisioningClaim {
     private final AccountSubscriptionCreationRecord creation;
@@ -1436,10 +1725,6 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
     public Instant expiresAt() {
       return expiresAt;
-    }
-
-    public boolean reconciliationRequiredBeforeCreate() {
-      return attemptNumber > 1;
     }
   }
 

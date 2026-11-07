@@ -86,9 +86,15 @@ public final class AccountGameplayAdmissionCallerVerifier {
           currentIssuanceOwner.requireCurrentActiveCommittedCandidateByJti(tokenJti);
       requireExactCandidate(compactJwt, verified, candidate);
       return new VerifiedCaller(candidate);
-    } catch (RuntimeException failure) {
-      // Do not preserve exception text or causes that could expose credential or parser details.
+    } catch (CallerUnavailableException
+        | AccountAsymmetricJwtVerifier.VerificationException
+        | AccountAsymmetricJwtVerifier.VerificationUnavailableException
+        | AccountPublicJwksCache.SourceUnavailableException
+        | AccountGameplayDelegationCommittedIssuanceOwner.OwnerUnavailableException refused) {
       throw unavailable();
+    } catch (RuntimeException unexpected) {
+      // Preserve fault classification without exposing credential, parser or source details.
+      throw new IllegalStateException("Account gameplay caller verification failed");
     }
   }
 
@@ -181,8 +187,15 @@ public final class AccountGameplayAdmissionCallerVerifier {
     }
   }
 
-  private static IllegalStateException unavailable() {
-    return new IllegalStateException("Account gameplay caller verification is unavailable");
+  private static CallerUnavailableException unavailable() {
+    return new CallerUnavailableException();
+  }
+
+  /** Sanitized refusal to provide a verified current LOGIN caller to admission owners. */
+  public static final class CallerUnavailableException extends IllegalStateException {
+    public CallerUnavailableException() {
+      super("Account gameplay caller verification is unavailable");
+    }
   }
 
   /**
