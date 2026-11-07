@@ -1,10 +1,12 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import com.google.protobuf.Any;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.TlsServerCredentials;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Objects;
@@ -14,10 +16,13 @@ import net.firedevops.firemud.account.v1.AccountPlayerAdmissionEntitlementReadSe
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementRequest;
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementResponse;
 import net.firedevops.firemud.accountservice.security.AccountPlayerAdmissionEntitlementWorkloadGuard;
+import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
+import net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementGrpcCodec;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -96,10 +101,17 @@ public final class AccountPlayerAdmissionEntitlementGrpcService
               request.target(), request.connectScopeId(), authenticatedCaller);
       var evidence = owner.evaluate(sourceRequest, presented.initialLoginJwt());
       response = RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, evidence);
-    } catch (RuntimeException unavailableSource) {
-      // No positive evidence, alternate source, or exception details escape an unavailable
-      // evaluation.
+    } catch (AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException
+        | AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException
+        | DemoTenantEntitlementException
+        | org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException
+        | org.springframework.transaction.TransactionException unavailableSource) {
       fail(observer, Status.UNAVAILABLE);
+      return;
+    } catch (RuntimeException internalFailure) {
+      // Unexpected, configuration and codec faults are not retryable source outages.
+      fail(observer, Status.INTERNAL);
       return;
     }
     try {
@@ -112,9 +124,18 @@ public final class AccountPlayerAdmissionEntitlementGrpcService
   }
 
   private static void fail(StreamObserver<?> observer, Status status) {
+    String message = "Player-admission entitlement evidence is unavailable";
     observer.onError(
-        Status.fromCode(status.getCode())
-            .withDescription("Player-admission entitlement evidence is unavailable")
-            .asRuntimeException());
+        StatusProto.toStatusRuntimeException(
+            com.google.rpc.Status.newBuilder()
+                .setCode(status.getCode().value())
+                .setMessage(message)
+                .addDetails(
+                    Any.pack(
+                        ErrorDetail.newBuilder()
+                            .setCode(status.getCode().name())
+                            .setMessage(message)
+                            .build()))
+                .build()));
   }
 }
