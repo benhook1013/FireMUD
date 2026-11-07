@@ -297,6 +297,36 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
   }
 
   @Test
+  void blockedAccountSourceReadIsCancelledWithinOwnerTransactionBudget() throws Exception {
+    Fixture f = fixture(false);
+    try (Connection blocker = f.dataSource.getConnection()) {
+      blocker.setAutoCommit(false);
+      try (var lock =
+          blocker.prepareStatement(
+              "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE")) {
+        lock.setObject(1, f.account.getAccountUuid());
+        lock.executeQuery().close();
+        // No database-side lock/statement timeout is installed. The actual transaction-aware
+        // jOOQ connection must propagate the owner's five-second JDBC query timeout.
+        assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .satisfies(
+                failure -> {
+                  Throwable cause = failure;
+                  while (cause.getCause() != null) cause = cause.getCause();
+                  assertThat(cause).isInstanceOf(SQLException.class);
+                  assertThat(((SQLException) cause).getSQLState()).isEqualTo("57014");
+                });
+      } finally {
+        blocker.rollback();
+      }
+    }
+    // Cancellation rolls back the owner transaction and does not damage a later current read.
+    assertThat(f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN).fields())
+        .containsEntry("variant", "PLAYER_ADMISSION");
+  }
+
+  @Test
   void captureHoldsActualAccountWriterLockAndFailureBeforeCommitExposesNoValue() {
     Fixture f = fixture(false);
     AtomicBoolean competingWriterRefused = new AtomicBoolean();

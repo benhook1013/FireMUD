@@ -4,10 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import io.grpc.Server;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -181,12 +186,13 @@ class AccountPlayerAdmissionCommittedLoginCompositionIntegrationTest {
         when(context.accountId()).thenReturn(scope.accountId().toString());
         when(context.connectScopeId()).thenReturn(scope.connectScopeId());
         when(context.resolvedTarget()).thenReturn(target);
+        // This per-fixture spy counts entry into the real receiver; it replaces no authority.
+        var receiver = spy(new AccountPlayerAdmissionEntitlementGrpcService(owner, NAMESPACE));
         Server server =
-            new AccountPlayerAdmissionEntitlementGrpcService(owner, NAMESPACE)
-                .createUnregisteredServer(
-                    "127.0.0.1:0",
-                    pki.keyManagerFactory(pki.identity("account")),
-                    pki.trustManagerFactory());
+            receiver.createUnregisteredServer(
+                "127.0.0.1:0",
+                pki.keyManagerFactory(pki.identity("account")),
+                pki.trustManagerFactory());
         server.start();
         var endpoints = new ServiceEndpointsProperties();
         endpoints.setAccountService("localhost:" + server.getPort());
@@ -208,15 +214,32 @@ class AccountPlayerAdmissionCommittedLoginCompositionIntegrationTest {
           assertThat(receivedSources.get("callerTokenSha256")).isEqualTo(initial.tokenSha256());
           assertThat(receivedSources.get("callerTokenJti"))
               .isEqualTo(initial.tokenJti().toString());
+          verify(receiver).readPlayerAdmissionEntitlement(any(), any());
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> false))
-              .isInstanceOf(RuntimeException.class);
+              .isExactlyInstanceOf(StatusRuntimeException.class)
+              .hasMessage("CANCELLED: Account player-admission entitlement read did not complete")
+              .satisfies(
+                  failure ->
+                      assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                          .isEqualTo(Status.Code.CANCELLED));
+          verify(receiver).readPlayerAdmissionEntitlement(any(), any());
           // Retaining valid signature bytes and local custody is insufficient after Account moves.
+          // The caller verifier currently reports that loss as an untyped failure, so the actual
+          // receiver returns INTERNAL rather than the typed source-outage UNAVAILABLE status.
           f.beginPlayerEntitlementLoginRevocation();
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> true))
-              .isInstanceOf(RuntimeException.class);
+              .isExactlyInstanceOf(StatusRuntimeException.class)
+              .hasMessage("INTERNAL: Account player-admission entitlement read did not complete")
+              .satisfies(
+                  failure ->
+                      assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                          .isEqualTo(Status.Code.INTERNAL));
+          verify(receiver, times(2)).readPlayerAdmissionEntitlement(any(), any());
           login.close();
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> true))
-              .isInstanceOf(RuntimeException.class);
+              .isExactlyInstanceOf(IllegalStateException.class)
+              .hasMessage("Canonical LOGIN private result is closed");
+          verify(receiver, times(2)).readPlayerAdmissionEntitlement(any(), any());
         } finally {
           server.shutdownNow();
           assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();

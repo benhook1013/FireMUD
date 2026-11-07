@@ -115,6 +115,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
     transaction.setReadOnly(false);
+    transaction.setTimeout(5);
   }
 
   /** Selects the sole current Account-owned billing source; callers cannot select a family. */
