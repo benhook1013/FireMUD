@@ -330,6 +330,18 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .containsExactlyEntriesOf(Map.of(f.tenantId.toString(), "2"));
     assertThat(value.membershipSource().membershipAuthorityGeneration()).isEqualTo("1");
     assertThat(value.membershipSource().gameplayAdmissionAllowed()).isTrue();
+    var retained =
+        f.dsl.fetchOne(
+            "SELECT canonical_evidence, snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+            value.fields().get("evaluationIdentity"));
+    assertThat(retained).isNotNull();
+    assertThat(retained.get("canonical_evidence", byte[].class)).isEqualTo(value.canonicalBytes());
+    assertThat(retained.get("snapshot_identity", String.class))
+        .isEqualTo(value.fields().get("snapshotIdentity"));
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
+    // This old fixture tenant was imported before creator completion. Eligibility evaluation
+    // never invents an empty capacity baseline for it.
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
     var binding = (Map<?, ?>) value.fields().get("target");
     assertThat(binding.get("realmId")).isEqualTo(f.scope.realmId().toString());
     assertThat(binding.get("playableStateNamespaceId"))
@@ -412,6 +424,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
         .hasMessageContaining("controlled final source commit refusal");
     assertThat(competingWriterRefused.get()).isTrue();
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_evaluations"))).isZero();
     var unlocked =
         f.transaction.execute(
             status -> f.accounts.findByAccountUuidForUpdate(f.account.getAccountUuid()));
