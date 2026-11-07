@@ -4904,13 +4904,14 @@ def allows_shared_namespace_identity(service, env):
         "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
         "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
     }
-    if service == "logging-admin-service":
+    if service in {"logging-admin-service", "spring-cloud-gateway"}:
         return namespace_identity == expected_namespace_identity
     return namespace_identity is None
 
 
-# The exact downward-API namespace identity is valid only for Logging & Admin
-# among shared transports; every other shared service must reject this shape.
+# Logging & Admin and Gateway's separate gameplay client need the exact downward-API
+# namespace identity while their gRPC transports retain the shared secret and paths.
+# Every other shared service must reject this shape.
 negative_shared_namespace_fixture = {
     "FIREMUD_GRPC_WORKLOAD_NAMESPACE": {
         "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
@@ -4918,10 +4919,23 @@ negative_shared_namespace_fixture = {
     }
 }
 for service in shared_services:
-    if service != "logging-admin-service" and allows_shared_namespace_identity(
-        service, negative_shared_namespace_fixture
+    if (
+        service not in {"logging-admin-service", "spring-cloud-gateway"}
+        and allows_shared_namespace_identity(service, negative_shared_namespace_fixture)
     ):
         fail(f"shared namespace identity fixture unexpectedly accepted for {service}")
+for service in ("logging-admin-service", "spring-cloud-gateway"):
+    for invalid_identity in (
+        {"name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE", "value": "literal-namespace"},
+        {
+            "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+            "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
+        },
+    ):
+        if allows_shared_namespace_identity(
+            service, {"FIREMUD_GRPC_WORKLOAD_NAMESPACE": invalid_identity}
+        ):
+            fail(f"shared namespace identity fixture accepted malformed identity for {service}")
 
 
 def assert_distinct_workload_service(service, deployment_map, source):
@@ -5008,7 +5022,7 @@ for service in shared_services:
         container, service, "/tls/client.crt", "/tls/client.key", "/tls/ca.crt"
     )
     env = env_map(container, service)
-    if service == "logging-admin-service":
+    if service in {"logging-admin-service", "spring-cloud-gateway"}:
         if not allows_shared_namespace_identity(service, env):
             fail(
                 f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
