@@ -342,6 +342,7 @@ paths:
         required: true
         schema: {type: string, format: uuid}
     get:
+      summary: Retrieve the exact retained first invoice for its current billing owner
       operationId: getHostingFirstInvoice
       x-runtime-status: held_unregistered
       description: Current HTTPS control-ui billing owner only. No-store exact existing first invoice; never a client secret.
@@ -375,6 +376,7 @@ paths:
         required: true
         schema: {type: string, format: uuid}
     post:
+      summary: Reauthenticate the current billing owner for first-invoice payment
       operationId: reauthenticateHostingFirstInvoice
       x-runtime-status: held_unregistered
       description: Actual ordinary primary authentication for HOSTING_FIRST_INVOICE_PAYMENT. No gameplay or game-creation proof accepted.
@@ -410,6 +412,7 @@ paths:
         required: true
         schema: {type: string, format: uuid}
     post:
+      summary: Confirm explicit consent for the retained first-invoice payment
       operationId: confirmHostingFirstInvoice
       x-runtime-status: held_unregistered
       description: Exact explicit consent and one durable existing-intent command; repeat requests reconcile read-only and never create or confirm another payment.
@@ -449,6 +452,7 @@ paths:
         required: true
         schema: {type: string, format: uuid}
     post:
+      summary: Renew authorization for the same first-invoice payment operation
       operationId: renewHostingFirstInvoiceAuthorization
       x-runtime-status: held_unregistered
       description: Fresh primary reauthentication and explicit unchanged consent renew authorization on the original operation. A prior durable command claim is never resent.

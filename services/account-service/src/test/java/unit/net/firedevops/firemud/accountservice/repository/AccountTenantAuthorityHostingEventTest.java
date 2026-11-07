@@ -52,6 +52,8 @@ class AccountTenantAuthorityHostingEventTest {
 
   @Test
   void lifecycleEmitsExactBillingIdentityConsumedByCanonicalTenantCodec() throws Exception {
+    UUID subscriptionId = UUID.fromString("55555555-5555-4555-8555-555555555555");
+    UUID paidReceiptId = UUID.fromString("66666666-6666-4666-8666-666666666666");
     DSLContext dsl = mock(DSLContext.class);
     AccountSubscriptionIntentRepository intents = mock(AccountSubscriptionIntentRepository.class);
     Record operation = mock(Record.class);
@@ -59,7 +61,7 @@ class AccountTenantAuthorityHostingEventTest {
     when(operation.get("request_id", UUID.class)).thenReturn(REQUEST_ID);
     when(operation.get("request_digest", String.class)).thenReturn(REQUEST_DIGEST);
     when(operation.get("creation_request_id", UUID.class)).thenReturn(CREATION_ID);
-    when(operation.get("reserved_row_version", Long.class)).thenReturn(1L);
+    when(operation.get("reserved_row_version", Long.class)).thenReturn(6L);
     when(operation.get("last_attempt_id", UUID.class)).thenReturn(ATTEMPT_ID);
     when(operation.get("provider_subscription_id", String.class)).thenReturn("sub_exact");
     when(operation.get("deadline_at", OffsetDateTime.class))
@@ -74,6 +76,15 @@ class AccountTenantAuthorityHostingEventTest {
         .thenReturn(NOW.plusSeconds(10).atOffset(ZoneOffset.UTC));
     Record links = mock(Record.class);
     when(links.get("lifecycle_inflight_request_id", UUID.class)).thenReturn(REQUEST_ID);
+    when(links.get("current_receipt_request_id", UUID.class)).thenReturn(paidReceiptId);
+    Record paidReceipt = mock(Record.class);
+    when(paidReceipt.get("request_id", UUID.class)).thenReturn(paidReceiptId);
+    when(paidReceipt.get("subscription_id", UUID.class)).thenReturn(subscriptionId);
+    when(paidReceipt.get("subscription_row_version", Long.class)).thenReturn(5L);
+    when(paidReceipt.get("status", String.class)).thenReturn("active");
+    when(paidReceipt.get("provider_subscription_id", String.class)).thenReturn("sub_exact");
+    Record paidCompletion = mock(Record.class);
+    when(paidCompletion.get("subscription_id", UUID.class)).thenReturn(subscriptionId);
     Record sourceHead = mock(Record.class);
     when(sourceHead.get("current_generation", Long.class)).thenReturn(4L);
     when(sourceHead.get("current_source_version", Long.class)).thenReturn(4L);
@@ -89,6 +100,18 @@ class AccountTenantAuthorityHostingEventTest {
               }
               if (sql.contains("FROM subscription_lifecycle_attempts")) {
                 return attempt;
+              }
+              if (sql.equals(
+                  "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?")) {
+                assertThat((Object[]) invocation.getRawArguments()[1])
+                    .containsExactly(subscriptionId);
+                return paidCompletion;
+              }
+              if (sql.equals(
+                  "SELECT * FROM subscription_lifecycle_receipts WHERE request_id = ?")) {
+                assertThat((Object[]) invocation.getRawArguments()[1])
+                    .containsExactly(paidReceiptId);
+                return paidReceipt;
               }
               if (sql.contains("FROM subscription WHERE")) {
                 return links;
@@ -114,7 +137,6 @@ class AccountTenantAuthorityHostingEventTest {
               return 1;
             });
 
-    UUID subscriptionId = UUID.fromString("55555555-5555-4555-8555-555555555555");
     var owner = new OwnerFence(ATTEMPT_ID, 1L, ATTEMPT_ID);
     var quote = new AccountHostingPlanQuote("basic", "price_exact", 1L, 3L, 2L, 4096L);
     var original =
@@ -147,18 +169,37 @@ class AccountTenantAuthorityHostingEventTest {
             ATTEMPT_ID,
             "cus_exact",
             CREATION_ID,
-            1L,
-            "pending",
-            null,
+            6L,
+            "active",
+            "sub_exact",
             null,
             null,
             null);
     when(intents.findCreation(CREATION_ID)).thenReturn(Optional.of(original));
-    when(intents.lockForLifecycle(CREATION_ID, 1L)).thenReturn(current);
+    when(intents.lockForLifecycle(CREATION_ID, 6L)).thenReturn(current);
+    var history =
+        new AccountSubscriptionProviderHistoryRecord(
+            "sub_exact",
+            subscriptionId,
+            "SUBSCRIPTION_PROVISIONING",
+            CREATION_ID,
+            original.subscriptionProvisioningRequestId(),
+            "canonical",
+            NOW.minusSeconds(60),
+            REQUEST_DIGEST,
+            NOW.minusSeconds(60));
+    when(intents.lookupProviderId("sub_exact"))
+        .thenReturn(
+            new AccountSubscriptionIntentRepository.ProviderLookup(
+                AccountSubscriptionIntentRepository.MappingDisposition.CURRENT_MAPPING,
+                Optional.of(history),
+                Optional.empty()));
     Preparation prepared = mock(Preparation.class);
     when(prepared.requestId()).thenReturn(REQUEST_ID);
     when(prepared.attemptId()).thenReturn(ATTEMPT_ID);
-    // Provider observation and upstream authority are controlled inputs; event encoding is real.
+    // Reconcile an already-paid active subscription with exact retained mapping/completion.
+    // Storage/provider inputs are controlled and execution stops before the receipt insert;
+    // this proves real event encoding, not initial-payment qualification or a durable commit.
     ObservedSubscription observed = mock(ObservedSubscription.class, Answers.RETURNS_DEEP_STUBS);
     when(observed.providerSubscriptionId()).thenReturn("sub_exact");
     when(observed.providerCustomerId()).thenReturn("cus_exact");

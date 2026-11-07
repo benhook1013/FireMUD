@@ -355,26 +355,30 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .contains("V1036__hosting_subscription_terminal_resolution.sql")
         .doesNotContain(
             "V1037__canonical_join_failure_and_attempt_diagnostics.sql",
-            "V1038__canonical_join_existing_membership_terminal.sql");
+            "V1038__canonical_join_existing_membership_terminal.sql",
+            "V1039__hosting_first_invoice_completion.sql");
 
     Flyway current = accountFlyway(dataSource, schema, null);
     current.migrate();
     current.validate();
     assertThat(current.info().current().getVersion())
-        .isEqualTo(MigrationVersion.fromVersion("1038"));
+        .isEqualTo(MigrationVersion.fromVersion("1039"));
 
     List<Map<String, Object>> upgradedHistory = flywayHistory(setupDsl);
-    assertThat(upgradedHistory).hasSize(parentHistory.size() + 2);
+    assertThat(upgradedHistory).hasSize(parentHistory.size() + 3);
     assertThat(upgradedHistory.subList(0, parentHistory.size()))
         .containsExactlyElementsOf(parentHistory);
     List<Map<String, Object>> addedHistory =
         upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
-    assertThat(addedHistory).extracting(row -> row.get("version")).containsExactly("1037", "1038");
+    assertThat(addedHistory)
+        .extracting(row -> row.get("version"))
+        .containsExactly("1037", "1038", "1039");
     assertThat(addedHistory)
         .extracting(row -> row.get("script"))
         .containsExactly(
             "V1037__canonical_join_failure_and_attempt_diagnostics.sql",
-            "V1038__canonical_join_existing_membership_terminal.sql");
+            "V1038__canonical_join_existing_membership_terminal.sql",
+            "V1039__hosting_first_invoice_completion.sql");
     assertThat(addedHistory)
         .allSatisfy(
             row -> {

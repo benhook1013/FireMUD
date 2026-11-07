@@ -345,6 +345,9 @@ required_live_check_vocabulary:
   - csrf
   # Live Account-owned generation reread for control-plane authority.
   - current_account_generation
+  # Account-owned first-invoice recovery re-reads the exact subscription owner and held instrument.
+  - current_subscription_owner
+  - exact_reserved_instrument
   - current_account_roles
   - current_automation_policy
   - current_global_role

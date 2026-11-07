@@ -400,6 +400,48 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER first_invoice_completion BEFORE INSERT ON subscription_first_invoice_completions FOR EACH ROW EXECUTE FUNCTION account_first_invoice_completion_guard();
+-- The original provisioning claim and a later signed first-invoice fulfillment are distinct
+-- operations. Neither a provider read nor a NULL provisioning attempt is completion evidence.
+CREATE OR REPLACE FUNCTION account_subscription_provisioning_confirmed_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE work subscription_provisioning_work%ROWTYPE;
+BEGIN
+    SELECT * INTO STRICT work FROM subscription_provisioning_work WHERE request_id = NEW.request_id;
+    IF work.phase = 'CONFIRMED' AND NOT EXISTS (
+        SELECT 1 FROM subscription_lifecycle_operations operation
+        JOIN subscription_lifecycle_receipts receipt USING (request_id, subscription_id)
+        WHERE operation.creation_request_id = work.request_id AND operation.subscription_id = work.subscription_id
+            AND operation.provisioning_attempt_id = work.last_attempt_id AND operation.state = 'COMMITTED')
+        AND NOT EXISTS (
+            SELECT 1 FROM subscription_first_invoices invoice
+            JOIN subscription_first_invoice_confirmations consent
+                ON consent.subscription_id = invoice.subscription_id AND consent.tuple_digest = invoice.tuple_digest
+            JOIN subscription_first_invoice_success_evidence success
+                ON (success.request_id, success.subscription_id, success.tuple_digest)
+                    = (consent.request_id, consent.subscription_id, consent.tuple_digest)
+            JOIN subscription_first_invoice_completions completion
+                ON (completion.request_id, completion.subscription_id, completion.lifecycle_request_id,
+                    completion.tuple_digest, completion.audit_event_id)
+                    = (consent.request_id, consent.subscription_id, consent.lifecycle_request_id,
+                        consent.tuple_digest, consent.audit_event_id)
+            JOIN subscription_lifecycle_operations operation
+                ON operation.request_id = completion.lifecycle_request_id
+                    AND operation.subscription_id = completion.subscription_id
+            JOIN subscription_lifecycle_receipts receipt
+                ON receipt.request_id = operation.request_id AND receipt.subscription_id = operation.subscription_id
+            WHERE invoice.creation_request_id = work.request_id AND invoice.subscription_id = work.subscription_id
+                AND operation.creation_request_id = work.request_id AND operation.state = 'COMMITTED'
+                AND operation.provisioning_attempt_id IS NULL
+                AND operation.provider_subscription_id = invoice.provider_subscription_id
+                AND receipt.provider_subscription_id = invoice.provider_subscription_id
+                AND receipt.status IN ('trialing','active','past_due','grace')
+                AND receipt.receipt_digest = completion.receipt_digest
+                AND completion.committed_transaction_id = receipt.committed_transaction_id
+                AND completion.committed_transaction_id = txid_current()) THEN
+        RAISE EXCEPTION 'Provisioning confirmation lacks its exact lifecycle receipt' USING ERRCODE = '23514';
+    END IF;
+    RETURN NULL;
+END;
+$$;
 ALTER TABLE subscription_provisioning_work DROP CONSTRAINT subscription_provisioning_work_phase_check;
 ALTER TABLE subscription_provisioning_work ADD CONSTRAINT subscription_provisioning_work_phase_check
     CHECK (phase IN ('RECONCILING','CLAIMED','AWAITING_PAYMENT','CONFIRMED','BILLING_RECONCILIATION_TERMINAL_FAILURE'));

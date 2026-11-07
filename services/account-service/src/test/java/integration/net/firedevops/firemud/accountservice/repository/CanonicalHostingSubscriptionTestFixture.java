@@ -313,7 +313,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
             dsl, new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox));
     var account = new Account();
     String suffix = UUID.randomUUID().toString();
-    account.setUsername("hosting-first-invoice-" + suffix);
+    account.setUsername("hosting-fi-" + suffix);
     account.setEmail(suffix + "@example.test");
     char[] password = BILLING_PASSWORD.toCharArray();
     var argon = Argon2Factory.create();

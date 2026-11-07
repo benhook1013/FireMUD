@@ -187,6 +187,100 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void confirmedWorkRejectsMissingOrMismatchedFirstInvoiceCompletionAndRollsBackFulfillment() {
+    for (String fault : List.of("missing", "tuple", "receipt", "transaction")) {
+      Context c = context("1039");
+      Fixture f = fixture(c);
+      var claim = paidClaim(f);
+      var prepared =
+          in(
+              c,
+              () ->
+                  f.owner()
+                      .prepare(
+                          claim.lifecycleRequestId(),
+                          f.creation().requestId(),
+                          claim.expectedRowVersion(),
+                          f.providerId(),
+                          null));
+      var sdk = f.observer().observe(prepared.binding());
+      List<String> before = firstInvoiceImage(c);
+      // PostgreSQL orders same-kind triggers by name. This fault runs after the genuine
+      // first_invoice_completion validator, changing only otherwise schema-valid evidence.
+      // All production validators, foreign keys and deferred guards remain enabled.
+      String mutation =
+          switch (fault) {
+            case "missing" -> "RETURN NULL;";
+            case "tuple" ->
+                "NEW.tuple_digest := 'sha256:' || repeat(CASE WHEN NEW.tuple_digest = 'sha256:' || repeat('b', 64) THEN 'c' ELSE 'b' END, 64);";
+            case "receipt" ->
+                "NEW.receipt_digest := 'sha256:' || repeat(CASE WHEN NEW.receipt_digest = 'sha256:' || repeat('b', 64) THEN 'c' ELSE 'b' END, 64);";
+            case "transaction" ->
+                "NEW.committed_transaction_id := NEW.committed_transaction_id + 1;";
+            default -> throw new AssertionError("Unknown completion fault: " + fault);
+          };
+      c.setup()
+          .execute(
+              "CREATE FUNCTION reject_exact_first_invoice_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN "
+                  + mutation
+                  + " RETURN NEW; END; $$");
+      c.setup()
+          .execute(
+              "CREATE TRIGGER zz_first_invoice_completion_fault BEFORE INSERT ON subscription_first_invoice_completions FOR EACH ROW EXECUTE FUNCTION reject_exact_first_invoice_completion()");
+      AtomicInteger applied = new AtomicInteger();
+      assertSqlState(
+          "23514",
+          "Provisioning confirmation lacks its exact lifecycle receipt",
+          () ->
+              in(
+                  c,
+                  () -> {
+                    var result = f.owner().apply(prepared, sdk);
+                    assertThat(result.outcome()).isEqualTo(Outcome.COMMITTED);
+                    assertThat(c.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts")))
+                        .isOne();
+                    assertThat(
+                            c.dsl()
+                                .fetchCount(DSL.table("account_tenant_entitlement_outbox_events")))
+                        .isOne();
+                    assertThat(c.dsl().fetchCount(DSL.table("account_authority_outbox_events")))
+                        .isOne();
+                    applied.incrementAndGet();
+                    return result;
+                  }));
+      assertThat(applied).as(fault).hasValue(1);
+      assertThat(firstInvoiceImage(c)).as(fault).isEqualTo(before);
+      assertThat(
+              one(
+                      c,
+                      "SELECT phase FROM subscription_provisioning_work WHERE request_id = ?",
+                      f.creation().requestId())
+                  .get("phase", String.class))
+          .isEqualTo("AWAITING_PAYMENT");
+    }
+  }
+
+  @Test
+  void originalProvisioningClaimStillCannotConfirmWithoutItsExactLifecycleReceipt() {
+    Context c = context("1039");
+    Fixture f = fixture(c);
+    claim(f);
+    List<String> before = firstInvoiceImage(c);
+    assertSqlState(
+        "23514",
+        "Provisioning confirmation lacks its exact lifecycle receipt",
+        () ->
+            in(
+                c,
+                () ->
+                    c.dsl()
+                        .execute(
+                            "UPDATE subscription_provisioning_work SET phase = 'CONFIRMED', row_version = row_version + 1 WHERE request_id = ?",
+                            f.creation().requestId())));
+    assertThat(firstInvoiceImage(c)).isEqualTo(before);
+  }
+
+  @Test
   void providerActiveOrTrialingWithoutFirstInvoiceConsentCannotCreateHostingAuthority() {
     for (String status : List.of("active", "trialing")) {
       Context c = context("1039");
@@ -1890,6 +1984,33 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     return List.copyOf(image);
   }
 
+  private static List<String> firstInvoiceImage(Context c) {
+    List<String> image = new ArrayList<>(resolutionImage(c));
+    for (String table :
+        List.of(
+            "subscription_provisioning_work",
+            "subscription_provisioning_attempts",
+            "subscription_first_invoices",
+            "subscription_first_invoice_confirmations",
+            "subscription_first_invoice_dispatches",
+            "subscription_first_invoice_authorizations",
+            "subscription_first_invoice_command_claims",
+            "subscription_first_invoice_success_evidence",
+            "subscription_first_invoice_completions",
+            "account_tenant_entitlement_outbox_streams",
+            "account_authority_outbox_streams",
+            "account_authority_outbox_events")) {
+      image.add(
+          one(
+                  c,
+                  "SELECT coalesce(jsonb_agg(to_jsonb(value) ORDER BY to_jsonb(value)::text)::text, '[]') FROM "
+                      + table
+                      + " value")
+              .get(0, String.class));
+    }
+    return List.copyOf(image);
+  }
+
   /** Controlled authorization callback only; no genuine actor/primary-authentication claim. */
   private record FailedResolution(
       Fixture fixture, Request request, String failureImage, long auditRowsBefore) {}
@@ -2171,12 +2292,19 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   private static void assertSqlState(String state, Runnable body) {
+    assertSqlState(state, null, body);
+  }
+
+  private static void assertSqlState(String state, String diagnostic, Runnable body) {
     assertThatThrownBy(body::run)
         .satisfies(
             failure -> {
               for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
                 if (cause instanceof SQLException sql) {
                   assertThat(sql.getSQLState()).isEqualTo(state);
+                  if (diagnostic != null) {
+                    assertThat(sql.getMessage()).contains(diagnostic);
+                  }
                   return;
                 }
               }
