@@ -100,7 +100,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
   }
 
   @Test
-  void discoveryExcludesValidPlayerCreatedTargetsOnBothReads() {
+  void discoveryReturnsCompletePlayerCreatedAndMixedPolicyCollectionsOnBothReads() {
     var preseeded = discoveryTarget("first", "First world");
     var created = discoveryTarget("second", "Created world", "PLAYER_CREATED");
     for (var initial : List.of(List.of(preseeded, created), List.of(created))) {
@@ -121,9 +121,15 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
               CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
                   discoveryRequest()),
               captured.getValue());
-      assertThat(result.targets()).hasSize(initial.size() - 1);
+      assertThat(result.targets()).hasSize(initial.size());
       assertThat(result.targets())
-          .allMatch(target -> target.characterCreationPolicy().equals("PRESEEDED_ONLY"));
+          .extracting(
+              target -> target.canonicalTenantId(), target -> target.characterCreationPolicy())
+          .containsExactlyInAnyOrderElementsOf(
+              initial.stream()
+                  .map(
+                      target -> tuple(target.canonicalTenantId(), target.characterCreationPolicy()))
+                  .toList());
       verify(routes, times(2)).readVisiblePublicProductionTargets();
     }
   }
@@ -352,12 +358,37 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
     verify(observer, never()).onCompleted();
   }
 
+  @Test
+  void discoveryReturnsCompleteMixedPolicyTargetsWithStableIndependentReread() {
+    var seeded = discoveryTarget("seeded", "Seeded world");
+    var created = discoveryTarget("created", "Created world", "PLAYER_CREATED");
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets())
+        .thenReturn(List.of(seeded, created), List.of(created, seeded));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    var captured =
+        ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+    verify(observer).onNext(captured.capture());
+    var request =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(discoveryRequest());
+    assertThat(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                    request, captured.getValue())
+                .targets())
+        .extracting(target -> target.characterCreationPolicy())
+        .containsExactly("PLAYER_CREATED", "PRESEEDED_ONLY");
+    verify(routes, times(2)).readVisiblePublicProductionTargets();
+    verify(observer).onCompleted();
+  }
+
   private static CanonicalPlayableTarget discoveryTarget(String slug, String displayName) {
     return discoveryTarget(slug, displayName, "PRESEEDED_ONLY");
   }
 
   private static CanonicalPlayableTarget discoveryTarget(
-      String slug, String displayName, String policy) {
+      String slug, String displayName, String creationPolicy) {
     UUID tenant = UUID.nameUUIDFromBytes(("tenant-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID realm = UUID.nameUUIDFromBytes(("realm-" + slug).getBytes(StandardCharsets.UTF_8));
     UUID namespace = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
@@ -417,7 +448,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
         CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
         false,
         Instant.parse("2026-10-25T00:00:00Z"),
-        policy);
+        creationPolicy);
   }
 
   @Test

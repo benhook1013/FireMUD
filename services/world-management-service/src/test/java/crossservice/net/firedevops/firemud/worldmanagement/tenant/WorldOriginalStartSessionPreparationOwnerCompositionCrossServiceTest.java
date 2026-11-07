@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.Empty;
 import com.google.protobuf.util.JsonFormat;
-import com.zaxxer.hikari.HikariDataSource;
 import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import io.grpc.BindableService;
 import io.grpc.CallOptions;
@@ -592,8 +591,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 REDIS.getHost(),
                 REDIS.getMappedPort(6379),
                 proofDirectory.resolve("account"),
-                tenant,
-                true);
+                tenant);
         var world = database(WORLD, "world-management-service", true);
         var gs = database(GS, "game-session-service", true)) {
       var issuer =
@@ -2338,9 +2336,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var provider =
         (org.jooq.impl.DataSourceConnectionProvider) dsl.configuration().connectionProvider();
     var proxy = (TransactionAwareDataSourceProxy) provider.dataSource();
-    var target = Objects.requireNonNull(proxy.getTargetDataSource());
-    // Concurrency/fence probes retain independent physical connections outside the owner pool.
-    return target instanceof HikariDataSource pool ? pool.getDataSource() : target;
+    return Objects.requireNonNull(proxy.getTargetDataSource());
   }
 
   private static SQLException findSqlException(Throwable failure) {
@@ -4775,73 +4771,47 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
           .setTransactionalLock(false);
     }
-    HikariDataSource pool = null;
-    try {
-      migrations.load().migrate();
-      if ("world-management-service".equals(service) || "game-session-service".equals(service)) {
-        pool = new HikariDataSource();
-        pool.setPoolName("world-fixture-" + schema);
-        pool.setDataSource(source);
-        pool.setMaximumPoolSize(4);
-        pool.setMinimumIdle(0);
-      }
-      javax.sql.DataSource ownerSource = pool == null ? source : pool;
-      var manager = new DataSourceTransactionManager(ownerSource);
-      var write = new TransactionTemplate(manager);
-      write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-      write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-      var dsl = DSL.using(new TransactionAwareDataSourceProxy(ownerSource), SQLDialect.POSTGRES);
-      WorldRuntimeInstallationRegistry installation = null;
-      if ("world-management-service".equals(service)) {
-        // This is a stipulated one-workload installation solely for this receiving-owner proof.
-        // Real Account/GS/mTLS behavior remains exercised independently; none supplies global
-        // installed membership, deployment completeness or production source custody.
-        byte[] artifact = controlledInstallationArtifact(schema);
-        installation =
-            new WorldRuntimeInstallationRegistry(
-                dsl,
-                manager,
-                schema,
-                NAMESPACE,
-                () ->
-                    new WorldRuntimeInstallationRegistry.HeldInstallation() {
-                      private boolean closed;
+    migrations.load().migrate();
+    var manager = new DataSourceTransactionManager(source);
+    var write = new TransactionTemplate(manager);
+    write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    WorldRuntimeInstallationRegistry installation = null;
+    if ("world-management-service".equals(service)) {
+      // This is a stipulated one-workload installation solely for this receiving-owner proof.
+      // Real Account/GS/mTLS behavior remains exercised independently; none supplies global
+      // installed membership, deployment completeness or production source custody.
+      byte[] artifact = controlledInstallationArtifact(schema);
+      installation =
+          new WorldRuntimeInstallationRegistry(
+              dsl,
+              manager,
+              schema,
+              NAMESPACE,
+              () ->
+                  new WorldRuntimeInstallationRegistry.HeldInstallation() {
+                    private boolean closed;
 
-                      @Override
-                      public byte[] exactArtifactBytes() {
-                        return artifact.clone();
-                      }
+                    @Override
+                    public byte[] exactArtifactBytes() {
+                      return artifact.clone();
+                    }
 
-                      @Override
-                      public void requireCurrent() {
-                        if (closed)
-                          throw new IllegalStateException("Synthetic installation hold is closed");
-                      }
+                    @Override
+                    public void requireCurrent() {
+                      if (closed)
+                        throw new IllegalStateException("Synthetic installation hold is closed");
+                    }
 
-                      @Override
-                      public void close() {
-                        closed = true;
-                      }
-                    });
-        installation.register();
-      }
-      return new Database(schema, dsl, manager, write, installation, pool);
-    } catch (RuntimeException | Error failure) {
-      try {
-        DSL.using(source, SQLDialect.POSTGRES)
-            .execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
-      } catch (RuntimeException | Error cleanupFailure) {
-        failure.addSuppressed(cleanupFailure);
-      }
-      if (pool != null) {
-        try {
-          pool.close();
-        } catch (RuntimeException | Error cleanupFailure) {
-          failure.addSuppressed(cleanupFailure);
-        }
-      }
-      throw failure;
+                    @Override
+                    public void close() {
+                      closed = true;
+                    }
+                  });
+      installation.register();
     }
+    return new Database(schema, dsl, manager, write, installation);
   }
 
   private static WorldRuntimeInstallationRegistry.Registration advanceInstallationRegistry(
@@ -4941,14 +4911,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       DSLContext dsl,
       DataSourceTransactionManager manager,
       TransactionTemplate write,
-      WorldRuntimeInstallationRegistry installationRegistry,
-      HikariDataSource pool)
+      WorldRuntimeInstallationRegistry installationRegistry)
       implements AutoCloseable {
     @Override
     public void close() {
-      try (HikariDataSource ownedPool = pool) {
-        dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
-      }
+      dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     }
   }
 

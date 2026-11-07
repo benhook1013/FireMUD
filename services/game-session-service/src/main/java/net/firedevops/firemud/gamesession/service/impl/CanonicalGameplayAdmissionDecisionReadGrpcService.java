@@ -131,10 +131,10 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
     }
     final ListVisiblePublicProductionAdmissionTargetsResponse response;
     try {
-      var before = readPreseededDiscoveryTargets();
+      var before = readDiscoveryTargets();
       // Validate the complete first read before treating it as an expected collection.
       CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(parsed, before);
-      var after = readPreseededDiscoveryTargets();
+      var after = readDiscoveryTargets();
       response = CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(parsed, after);
       if (!new HashSet<>(before).equals(new HashSet<>(after))) {
         fail(observer, Status.FAILED_PRECONDITION);
@@ -196,13 +196,13 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
     sendSource(observer, response);
   }
 
-  private List<Target> readPreseededDiscoveryTargets() {
+  private List<Target> readDiscoveryTargets() {
     var selected = new ArrayList<Target>();
     var tenants = new HashSet<UUID>();
     var tenantSlugs = new HashSet<String>();
     var realms = new HashSet<UUID>();
     for (var route : routeReader.readVisiblePublicProductionTargets()) {
-      // Qualify every source before filtering, so an excluded policy cannot hide bad authority.
+      // Qualify the complete collection before returning either supported discovery policy.
       var target =
           CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetEvidence(
               CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetEvidence(toTarget(route)));
@@ -215,11 +215,11 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
           || !realms.add(target.realmId())) {
         throw new IllegalArgumentException("Discovery source has invalid or duplicate authority");
       }
-      if ("PRESEEDED_ONLY".equals(target.characterCreationPolicy())) {
-        selected.add(target);
-      } else if (!"PLAYER_CREATED".equals(target.characterCreationPolicy())) {
+      if (!"PRESEEDED_ONLY".equals(target.characterCreationPolicy())
+          && !"PLAYER_CREATED".equals(target.characterCreationPolicy())) {
         throw new IllegalArgumentException("Discovery source has unsupported character policy");
       }
+      selected.add(target);
     }
     return List.copyOf(selected);
   }

@@ -39,7 +39,6 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.GameplayLoginReplayState;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
-import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner;
@@ -109,6 +108,8 @@ class AccountGameplayPrimaryCredentialVerifierTest {
                   .AccountPasswordResetDraftSourceChangeRepository.class),
           mock(net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository.class),
           mock(
+              net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository.class),
+          mock(
               net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository
                   .class),
           challenges,
@@ -123,7 +124,7 @@ class AccountGameplayPrimaryCredentialVerifierTest {
           mock(net.firedevops.firemud.accountservice.repository.ProfileRepository.class),
           mock(net.firedevops.firemud.accountservice.mapper.ProfileMapper.class),
           mock(net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository.class),
-          org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
+          mock(net.firedevops.firemud.accountservice.repository.SubscriptionRepository.class),
           mock(net.firedevops.firemud.accountservice.repository.ExternalAccountRepository.class),
           mock(net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository.class),
           mock(
@@ -134,6 +135,8 @@ class AccountGameplayPrimaryCredentialVerifierTest {
           mock(net.firedevops.firemud.accountservice.config.MailProperties.class),
           mock(net.firedevops.firemud.accountservice.config.AccountTokenProperties.class),
           mock(net.firedevops.firemud.common.security.JwtAuthProperties.class),
+          mock(net.firedevops.firemud.accountservice.client.GameSessionClient.class),
+          mock(net.firedevops.firemud.accountservice.client.EntityManagementClient.class),
           jwt,
           sessions,
           transactions);

@@ -56,7 +56,6 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBoo
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
-import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
@@ -99,6 +98,7 @@ final class AccountControlUiOwnerSourcesFixture {
   final Account account;
   final AccountRepository accounts;
   final UUID tenant;
+  final FreshTenantCreationEvidence creationEvidence;
   final UUID request = UUID.randomUUID(), callerContext = UUID.randomUUID();
   final AtomicReference<HostedTermsEnvironmentBinding.CurrentEnvironmentBoundary> boundary =
       new AtomicReference<>(testBoundary("test-production"));
@@ -162,6 +162,35 @@ final class AccountControlUiOwnerSourcesFixture {
       String migrationTarget,
       boolean ownedCompositionConnections)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        root,
+        installNegativeIssuer,
+        tenant,
+        migrationTarget,
+        ownedCompositionConnections,
+        defaultCreation(tenant));
+  }
+
+  /** Shared immutable provenance must be supplied before any Account association is created. */
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence)
+      throws Exception {
+    this.creationEvidence = Objects.requireNonNull(creationEvidence, "creationEvidence");
+    if (!creationEvidence.canonicalTenantId().equals(tenant)) {
+      throw new IllegalArgumentException(
+          "Shared creation evidence must identify the Account tenant");
+    }
     if (migrationTarget != null && !HISTORICAL_MIGRATION_TARGETS.contains(migrationTarget)) {
       throw new IllegalArgumentException(
           "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read, 1009 selected-owner predecessor, or 1010 selected-publication closure predecessor is supported");
@@ -207,8 +236,9 @@ final class AccountControlUiOwnerSourcesFixture {
                 candidate.setLoginAuthModes("EMAIL_OTP");
                 return accounts.save(candidate);
               });
-      var creator = testCreation(account.getAccountUuid(), tenant);
-      var fresh = new FreshTenantIdentityAssociationRepository(dsl, NAMESPACE);
+      var creator = testCreation(account.getAccountUuid(), creationEvidence);
+      var fresh =
+          new FreshTenantIdentityAssociationRepository(dsl, creationEvidence.targetNamespace());
       tx(
           () -> {
             fresh.importVerified(creator.creationEvidence());
@@ -376,6 +406,9 @@ final class AccountControlUiOwnerSourcesFixture {
                   net.firedevops.firemud.accountservice.service
                       .AccountPasswordResetDraftSourceChangeRepository.class),
               mock(AccountAuditOutboxRepository.class),
+              mock(
+                  net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository
+                      .class),
               mock(AccountJoinOperationRepository.class),
               challenges,
               null, // Realm grants are not used by primary authentication.
@@ -384,8 +417,7 @@ final class AccountControlUiOwnerSourcesFixture {
               null, // Profiles are not used by primary authentication.
               null, // Profile mapper is not used by primary authentication.
               null, // Payment transactions are not used by primary authentication.
-              // Retained evidence is not read by primary authentication.
-              org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
+              null, // Subscriptions are not used by primary authentication.
               null, // External identities are not used by primary authentication.
               null, // Password reset tokens are not used by primary authentication.
               null, // Email verification tokens are not used by primary authentication.
@@ -394,6 +426,8 @@ final class AccountControlUiOwnerSourcesFixture {
               null, // Mail properties are not used by primary authentication.
               null, // Token properties are not used by primary authentication.
               null, // JWT auth properties are not used by primary authentication.
+              null, // Game Session client is not used by primary authentication.
+              null, // Entity Management client is not used by primary authentication.
               null, // JWT utility is not used by primary authentication.
               null, // Session service is not used by primary authentication.
               manager);
@@ -669,26 +703,28 @@ final class AccountControlUiOwnerSourcesFixture {
     assertThat(coordinationCalls).hasValue(0);
   }
 
-  private static FreshTenantCreatorEvidence testCreation(UUID account, UUID tenant) {
-    UUID request = UUID.randomUUID(),
-        operation = UUID.randomUUID(),
-        authorization = UUID.randomUUID();
+  static FreshTenantCreationEvidence defaultCreation(UUID tenant) {
+    UUID request = UUID.randomUUID(), operation = UUID.randomUUID();
     String key = "test-only-game-row-17";
     String digest =
         GameTenantCreationDigest.requestDigest(NAMESPACE, request, key, "Test game", null);
-    var creation =
-        new FreshTenantCreationEvidence(
-            1,
-            NAMESPACE,
-            request,
-            operation,
-            digest,
-            tenant,
-            17L,
-            key,
-            "NEW_GAME_ROW",
-            GameTenantCreationDigest.evidenceDigest(
-                NAMESPACE, request, operation, digest, tenant, 17L, key, "NEW_GAME_ROW"));
+    return new FreshTenantCreationEvidence(
+        1,
+        NAMESPACE,
+        request,
+        operation,
+        digest,
+        tenant,
+        17L,
+        key,
+        "NEW_GAME_ROW",
+        GameTenantCreationDigest.evidenceDigest(
+            NAMESPACE, request, operation, digest, tenant, 17L, key, "NEW_GAME_ROW"));
+  }
+
+  private static FreshTenantCreatorEvidence testCreation(
+      UUID account, FreshTenantCreationEvidence creation) {
+    UUID authorization = UUID.randomUUID();
     String authorizationDigest = "sha256:" + "8".repeat(64);
     return new FreshTenantCreatorEvidence(
         1,

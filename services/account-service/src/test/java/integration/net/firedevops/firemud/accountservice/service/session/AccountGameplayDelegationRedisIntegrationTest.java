@@ -70,7 +70,6 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
-import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjection;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -2508,6 +2507,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
         null,
         null,
         null,
+        null,
         challenges,
         null,
         null,
@@ -2515,7 +2515,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
         null,
         null,
         null,
-        org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
+        null,
+        null,
+        null,
         null,
         null,
         null,
@@ -3114,6 +3116,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
             logoutAllOperations,
             securityStateOperations,
             sourceChanges,
+            null, // audit outbox
             null, // connect scopes
             null, // join operations
             null, // email login challenges
@@ -3123,12 +3126,13 @@ class AccountGameplayDelegationRedisIntegrationTest {
             null, // profiles
             null, // profile mapper
             null, // payment transactions
-            // retained subscription evidence
-            org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
+            null, // subscriptions
             null, // external account identities
             resetTokens,
             null, // email verification tokens
             null, // notifications
+            null,
+            null,
             null,
             null,
             null,

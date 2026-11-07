@@ -123,6 +123,7 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
                 .AccountSecurityStateOperationRepository(dsl),
             new net.firedevops.firemud.accountservice.service
                 .AccountPasswordResetDraftSourceChangeRepository(dsl),
+            null, // audit outbox
             null,
             null,
             null,
@@ -136,6 +137,8 @@ class AccountAuthoritySourceEvidencePersistenceIntegrationTest {
             null,
             resetTokens,
             null, // verification token repository
+            null,
+            null,
             null,
             null,
             null,
