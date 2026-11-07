@@ -87,6 +87,29 @@ class StripeBillingPrerequisiteObserverTest {
   }
 
   @Test
+  void propagatesCallerTransportOptionsToBothStripeReads() {
+    ControlledStripeTransport transport =
+        new ControlledStripeTransport(customerResponse(), paymentMethodResponse());
+    RequestOptions options =
+        RequestOptions.builder()
+            .setConnectTimeout(1_234)
+            .setReadTimeout(5_678)
+            .setMaxNetworkRetries(2)
+            .build();
+
+    observer(transport, fixedClock()).observe(expected(), options);
+
+    assertEquals(2, transport.requestOptions().size());
+    assertTrue(transport.requestOptions().stream().allMatch(received -> received == options));
+    assertEquals(1_234, transport.requestOptions().get(0).getConnectTimeout());
+    assertEquals(5_678, transport.requestOptions().get(0).getReadTimeout());
+    assertEquals(2, transport.requestOptions().get(0).getMaxNetworkRetries());
+    assertEquals(1_234, transport.requestOptions().get(1).getConnectTimeout());
+    assertEquals(5_678, transport.requestOptions().get(1).getReadTimeout());
+    assertEquals(2, transport.requestOptions().get(1).getMaxNetworkRetries());
+  }
+
+  @Test
   void rejectsDeletedMismatchedModeAndWrongCustomerObjectsOrIDs() {
     assertInvalid(
         customerResponse().replace("\"deleted\":false,", "\"deleted\":true,"),
@@ -397,6 +420,7 @@ class StripeBillingPrerequisiteObserverTest {
     private final java.util.ArrayList<String> paths = new java.util.ArrayList<>();
     private final java.util.ArrayList<RequestMethod> methods = new java.util.ArrayList<>();
     private final java.util.ArrayList<Map<String, Object>> parameters = new java.util.ArrayList<>();
+    private final java.util.ArrayList<RequestOptions> requestOptions = new java.util.ArrayList<>();
 
     private ControlledStripeTransport(String customerResponse, String paymentMethodResponse) {
       this(customerResponse, paymentMethodResponse, null, null);
@@ -434,6 +458,7 @@ class StripeBillingPrerequisiteObserverTest {
       paths.add(requestPath);
       methods.add(requestMethod);
       parameters.add(params == null ? Map.of() : Map.copyOf(params));
+      requestOptions.add(options);
       if (requestPath.equals(failurePath)) {
         throw failure;
       }
@@ -470,6 +495,10 @@ class StripeBillingPrerequisiteObserverTest {
 
     private List<Map<String, Object>> parameters() {
       return List.copyOf(parameters);
+    }
+
+    private List<RequestOptions> requestOptions() {
+      return List.copyOf(requestOptions);
     }
   }
 }

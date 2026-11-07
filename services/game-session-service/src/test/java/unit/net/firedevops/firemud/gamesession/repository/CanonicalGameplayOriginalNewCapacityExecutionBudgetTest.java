@@ -1,0 +1,420 @@
+package net.firedevops.firemud.gamesession.repository;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import io.grpc.Context;
+import io.lettuce.core.RedisClient;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
+import org.jooq.ConnectionProvider;
+import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultConfiguration;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+/** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
+class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
+  private static final Clock CLOCK = Clock.systemUTC();
+
+  @Test
+  void actualOwnerReadReturnsAtDeadlineAndLateAcquisitionNeverExecutes() throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    RedisClient redis = mock();
+    CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              awaitUninterruptibly(release);
+              return connection;
+            });
+    DSLContext dsl = source(provider);
+    var owner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            dsl,
+            redis,
+            RedisScriptCatalog.fromContributions(
+                List.of(new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution())),
+            CLOCK,
+            new CanonicalGameplayTenantGameplayTagRepository(dsl, "prod", 1));
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var reservation =
+        new TenantCapacityAdmission.Result(
+            request.identity(),
+            request.admissionAttemptId(),
+            request.capacityRearmFence(),
+            request.mutationDigest(),
+            UUID.randomUUID(),
+            1,
+            request.evidence().expiresAt(),
+            TenantCapacityAdmission.State.RESERVED,
+            request.evidence().snapshotIdentity(),
+            request.evidence().evaluationIdentity());
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    long started = System.nanoTime();
+    try {
+      assertThatThrownBy(
+              () ->
+                  Context.current()
+                      .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
+                      .call(() -> owner.readExact(request, reservation)))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
+      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      verifyNoInteractions(connection, redis);
+      release.countDown();
+      verify(provider, timeout(2000)).release(connection);
+      verifyNoInteractions(connection, redis);
+      assertThat(dsl.configuration().connectionProvider()).isSameAs(provider);
+    } finally {
+      release.countDown();
+      scheduler.shutdownNow();
+    }
+  }
+
+  @Test
+  void activeStatementCancellationFinishesBeforePoolReturn() throws Exception {
+    ConnectionProvider provider = mock();
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(provider.acquire()).thenReturn(connection);
+    CountDownLatch executing = new CountDownLatch(1), finishExecution = new CountDownLatch(1);
+    CountDownLatch cancelling = new CountDownLatch(1), finishCancellation = new CountDownLatch(1);
+    AtomicBoolean returned = new AtomicBoolean();
+    when(statement.execute())
+        .thenAnswer(
+            invocation -> {
+              executing.countDown();
+              awaitUninterruptibly(finishExecution);
+              return true;
+            });
+    doAnswer(
+            invocation -> {
+              assertThat(returned).isFalse();
+              cancelling.countDown();
+              awaitUninterruptibly(finishCancellation);
+              assertThat(returned).isFalse();
+              return null;
+            })
+        .when(statement)
+        .cancel();
+    doAnswer(
+            invocation -> {
+              returned.set(true);
+              return null;
+            })
+        .when(provider)
+        .release(connection);
+    // Initialize the fixture DSL before starting the execution/cancellation budget.
+    DSLContext dsl = source(provider);
+    long started = System.nanoTime();
+    try {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      CLOCK, CLOCK.millis() + 2000, budget -> execute(budget.sql(dsl))))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
+      assertThat(executing.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThat(cancelling.await(1, TimeUnit.SECONDS)).isTrue();
+      finishExecution.countDown();
+      verify(provider, never()).release(connection);
+      finishCancellation.countDown();
+      verify(provider, timeout(2000)).release(connection);
+      verify(statement).cancel();
+      verify(statement).setQueryTimeout(anyInt());
+    } finally {
+      finishExecution.countDown();
+      finishCancellation.countDown();
+    }
+  }
+
+  @Test
+  void cancellationAfterPoolReturnCannotCancelAReusedConnectionStatement() throws Exception {
+    ConnectionProvider provider = mock();
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(provider.acquire()).thenReturn(connection);
+    when(statement.execute()).thenReturn(true);
+    CountDownLatch returned = new CountDownLatch(1), finish = new CountDownLatch(1);
+    doAnswer(
+            invocation -> {
+              returned.countDown();
+              return null;
+            })
+        .when(provider)
+        .release(connection);
+    try {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      CLOCK,
+                      CLOCK.millis() + 200,
+                      budget -> {
+                        execute(budget.sql(source(provider)));
+                        awaitUninterruptibly(finish);
+                        return true;
+                      }))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(returned.await(1, TimeUnit.SECONDS)).isTrue();
+      verify(statement, never()).cancel();
+    } finally {
+      finish.countDown();
+    }
+  }
+
+  @Test
+  void blockedAcquisitionsKeepAllFourSlotsAfterCallerTimeoutAndRejectWithoutQueueing()
+      throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    CountDownLatch entered = new CountDownLatch(maximum), release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              awaitUninterruptibly(release);
+              return connection;
+            });
+    DSLContext source = source(provider);
+    var callers = new ArrayList<CompletableFuture<Void>>();
+    try {
+      for (int index = 0; index < maximum; index++)
+        callers.add(
+            CompletableFuture.runAsync(
+                () ->
+                    assertThatThrownBy(
+                            () ->
+                                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                                    CLOCK,
+                                    CLOCK.millis() + 300,
+                                    budget -> execute(budget.sql(source))))
+                        .isInstanceOf(IllegalStateException.class)));
+      assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+      CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      CLOCK, CLOCK.millis() + 1000, budget -> execute(budget.sql(source))))
+          .isInstanceOf(IllegalStateException.class);
+      verify(provider, org.mockito.Mockito.times(maximum)).acquire();
+      verifyNoInteractions(connection);
+    } finally {
+      release.countDown();
+      verify(provider, timeout(2000).times(maximum)).release(connection);
+    }
+  }
+
+  @Test
+  void explicitDeadlineIsOneBudgetAcrossQueriesWithoutGrpcContext() throws Exception {
+    ConnectionProvider provider = mock();
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(provider.acquire()).thenReturn(connection);
+    AtomicInteger executions = new AtomicInteger();
+    CountDownLatch second = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(statement.execute())
+        .thenAnswer(
+            invocation -> {
+              if (executions.incrementAndGet() == 1)
+                assertThat(new CountDownLatch(1).await(80, TimeUnit.MILLISECONDS)).isFalse();
+              else {
+                second.countDown();
+                awaitUninterruptibly(release);
+              }
+              return true;
+            });
+    long started = System.nanoTime();
+    try {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      CLOCK,
+                      CLOCK.millis() + 250,
+                      budget -> {
+                        var sql = budget.sql(source(provider));
+                        execute(sql);
+                        return execute(sql);
+                      }))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(second.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(1500);
+      verify(statement, timeout(1000)).cancel();
+    } finally {
+      release.countDown();
+    }
+  }
+
+  @Test
+  void expiredExplicitBudgetDoesNotAcquireAndTagRebindingPreservesPrivateConfiguration() {
+    ConnectionProvider provider = mock();
+    DSLContext original = source(provider);
+    DSLContext operation = mock();
+    var tags = new CanonicalGameplayTenantGameplayTagRepository(original, "capacity-test", 7);
+    var rebound = tags.withCapacityExecutionDsl(operation);
+    assertThat(ReflectionTestUtils.getField(rebound, "dsl")).isSameAs(operation);
+    assertThat(ReflectionTestUtils.getField(rebound, "workloadNamespace"))
+        .isEqualTo("capacity-test");
+    assertThat(ReflectionTestUtils.getField(rebound, "allocationVersion")).isEqualTo(7);
+    assertThat(ReflectionTestUtils.getField(tags, "dsl")).isSameAs(original);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                    CLOCK, CLOCK.millis() - 1, budget -> execute(budget.sql(original))))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(provider, operation);
+  }
+
+  @Test
+  void cancellationWorkerStartupFailureRetainsOnlyActualOutstandingResources() throws Exception {
+    ConnectionProvider provider = mock();
+    PreparedStatement statement = mock();
+    Connection connection = preparedConnection(statement);
+    when(provider.acquire()).thenReturn(connection);
+    CountDownLatch entered = new CountDownLatch(1), finish = new CountDownLatch(1);
+    AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
+        new AtomicReference<>();
+    when(statement.execute())
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              awaitUninterruptibly(finish);
+              return true;
+            });
+    try {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      CLOCK,
+                      CLOCK.millis() + 200,
+                      budget -> {
+                        captured.set(budget);
+                        return execute(budget.sql(source(provider)));
+                      },
+                      ignored -> {
+                        throw new java.util.concurrent.RejectedExecutionException(
+                            "Controlled startup refusal");
+                      }))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      verify(statement, never()).cancel();
+      verify(provider, never()).release(connection);
+      assertThat(ReflectionTestUtils.getField(captured.get(), "cancellationDone")).isEqualTo(true);
+      finish.countDown();
+      verify(provider, timeout(2000)).release(connection);
+      assertNoOwnedConnections(captured.get());
+      for (int index = 0;
+          index < 2 * CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+          index++) {
+        boolean admitted =
+            CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                CLOCK, Long.MAX_VALUE, budget -> true);
+        assertThat(admitted).isTrue();
+      }
+    } finally {
+      finish.countDown();
+    }
+  }
+
+  @Test
+  void exceptionalCallbackDrainsAnAcquiredConnectionBeforeReleasingItsResourcePermit() {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    when(provider.acquire()).thenReturn(connection);
+    AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
+        new AtomicReference<>();
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                    CLOCK,
+                    Long.MAX_VALUE,
+                    budget -> {
+                      captured.set(budget);
+                      budget.sql(source(provider)).configuration().connectionProvider().acquire();
+                      throw new IllegalStateException(
+                          "Controlled exception before ordinary provider release");
+                    }))
+        .isInstanceOf(IllegalStateException.class);
+    verify(provider).release(connection);
+    assertNoOwnedConnections(captured.get());
+  }
+
+  private static void assertNoOwnedConnections(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    Object monitor =
+        java.util.Objects.requireNonNull(ReflectionTestUtils.getField(budget, "resources"));
+    synchronized (monitor) {
+      assertThat((java.util.Map<?, ?>) ReflectionTestUtils.getField(budget, "connections"))
+          .isEmpty();
+      assertThat((AtomicInteger) ReflectionTestUtils.getField(budget, "outstandingConnections"))
+          .hasValue(0);
+    }
+  }
+
+  /** A controlled JDBC answer, without invoking a resource-creating method during stubbing. */
+  private static Connection preparedConnection(PreparedStatement statement) {
+    return mock(
+        Connection.class,
+        invocation -> {
+          if (invocation.getMethod().getName().equals("prepareStatement")) {
+            assertThat(invocation.getArgument(0, String.class)).isEqualTo("controlled");
+            return statement;
+          }
+          return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
+        });
+  }
+
+  private static DSLContext source(ConnectionProvider provider) {
+    return DSL.using(new DefaultConfiguration().set(SQLDialect.POSTGRES).set(provider));
+  }
+
+  private static boolean execute(DSLContext sql) {
+    return sql.connectionResult(
+        connection -> {
+          try (var statement = connection.prepareStatement("controlled")) {
+            return statement.execute();
+          }
+        });
+  }
+
+  private static void awaitUninterruptibly(CountDownLatch latch) {
+    boolean interrupted = false;
+    for (; ; ) {
+      try {
+        latch.await();
+        break;
+      } catch (InterruptedException ignored) {
+        interrupted = true;
+      }
+    }
+    if (interrupted) Thread.currentThread().interrupt();
+  }
+}

@@ -7,11 +7,13 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalFinalAdmissionConfirmation;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -33,6 +35,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
   private final CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier;
   private final CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis;
   private final Clock clock;
+  private final AccountTenantCapacityClient capacityClient;
+  private final CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution;
 
   CanonicalGameplayOriginalNewFinalAdmissionCoordinator(
       CanonicalGameplayBindingInventoryRepository inventory,
@@ -43,6 +47,36 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier,
       CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis,
       Clock clock) {
+    this.capacityClient = null;
+    this.capacityExecution = null;
+    this.inventory = Objects.requireNonNull(inventory, "Game Session inventory is required");
+    this.accountClient = Objects.requireNonNull(accountClient, "Account lease client is required");
+    this.accountBarrier =
+        Objects.requireNonNull(accountBarrier, "Account INITIAL owner is required");
+    this.issuerBarrier =
+        Objects.requireNonNull(issuerBarrier, "Issuer admission owner is required");
+    this.regionBridge = Objects.requireNonNull(regionBridge, "Region bridge owner is required");
+    this.credentialVerifier =
+        Objects.requireNonNull(credentialVerifier, "Bound credential verifier is required");
+    this.finalRedis = Objects.requireNonNull(finalRedis, "Final admission Redis owner is required");
+    this.clock = Objects.requireNonNull(clock, "Clock is required");
+  }
+
+  CanonicalGameplayOriginalNewFinalAdmissionCoordinator(
+      CanonicalGameplayBindingInventoryRepository inventory,
+      AccountGameplayAdmissionLeaseClient accountClient,
+      CanonicalGameplayAccountInitialBarrierRedisOwner accountBarrier,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner issuerBarrier,
+      CanonicalGameplayRegionBindingBridgeOwner regionBridge,
+      CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier,
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis,
+      Clock clock,
+      AccountTenantCapacityClient capacityClient,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution) {
+    this.capacityClient =
+        Objects.requireNonNull(capacityClient, "Account capacity client is required");
+    this.capacityExecution =
+        Objects.requireNonNull(capacityExecution, "Capacity execution owner is required");
     this.inventory = Objects.requireNonNull(inventory, "Game Session inventory is required");
     this.accountClient = Objects.requireNonNull(accountClient, "Account lease client is required");
     this.accountBarrier =
@@ -66,7 +100,20 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation,
       long canonicalSessionDurationMillis,
       long absoluteDeadlineMillis) {
+    throw unavailable();
+  }
+
+  FinalAdmissionResult completeOriginalNew(
+      CanonicalGameplayAdmissionDecision originalDecision,
+      String originalLoginJwt,
+      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation,
+      long canonicalSessionDurationMillis,
+      long absoluteDeadlineMillis,
+      TenantCapacityAdmission.Request capacityRequest) {
     requireNoAmbientSql();
+    if (capacityClient == null || capacityExecution == null) throw unavailable();
+    if (capacityRequest == null) throw unavailable();
+    capacityRequest.requireCommittable();
     Objects.requireNonNull(originalDecision, "Original Account decision is required");
     Objects.requireNonNull(
         privateRegionInstallation, "This owner's private region grant is required");
@@ -129,63 +176,81 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           source = afterCredential;
           requireDeadline(absoluteDeadlineMillis);
 
-          try (CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback finalReadback =
-              finalRedis.finalizeOriginalNewOnce(
-                  source,
-                  template,
-                  requireAccountOpen(beforeFinalCas.accountOpen, source.candidate()),
-                  beforeFinalCas.issuerOpen,
-                  absoluteDeadlineMillis)) {
-            requireFinalReadback(source, finalReadback, credential, canonicalSessionDurationMillis);
-            Currentness afterFinalCas = currentness(source, privateRegionInstallation);
-            requireSameCurrentness(beforeFinalCas, afterFinalCas);
+          // This is the actual final owner boundary, after all original player evidence and
+          // credential/currentness checks. The Account commitment is never a quota preflight.
+          var reservation = capacityClient.commit(capacityRequest);
+          var execution =
+              capacityExecution.bind(source, capacityRequest, reservation, absoluteDeadlineMillis);
+          try (var boundTemplate = template.bindCapacityExecution(execution)) {
+            capacityExecution.authorize(
+                source,
+                boundTemplate,
+                beforeFinalCas.accountOpen,
+                beforeFinalCas.issuerOpen,
+                execution,
+                absoluteDeadlineMillis);
+            requireDeadline(absoluteDeadlineMillis);
+            try (CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback finalReadback =
+                finalRedis.finalizeOriginalNewOnce(
+                    source,
+                    boundTemplate,
+                    requireAccountOpen(beforeFinalCas.accountOpen, source.candidate()),
+                    beforeFinalCas.issuerOpen,
+                    execution,
+                    absoluteDeadlineMillis)) {
+              requireFinalReadback(
+                  source, finalReadback, credential, canonicalSessionDurationMillis);
+              Currentness afterFinalCas = currentness(source, privateRegionInstallation);
+              requireSameCurrentness(beforeFinalCas, afterFinalCas);
 
-            boolean committedByThisAttempt =
-                source.transitionStatus()
-                    == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL;
-            if (committedByThisAttempt) {
-              inventory.commitOriginalNewFinalAdmission(finalReadback);
+              boolean committedByThisAttempt =
+                  source.transitionStatus()
+                      == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL;
+              if (committedByThisAttempt) {
+                inventory.commitOriginalNewFinalAdmission(finalReadback);
+                CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+                    committedSource = readSameSource(source, originalDecision, true);
+                if (committedSource.transitionStatus()
+                    != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED) {
+                  throw unavailable();
+                }
+                source = committedSource;
+              }
+
+              CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionReceipt
+                  finalReceipt =
+                      source
+                          .finalReceipt()
+                          .orElseThrow(
+                              CanonicalGameplayOriginalNewFinalAdmissionCoordinator::unavailable);
+              requireReadbackMatchesReceipt(finalReadback, finalReceipt);
+              capacityExecution.retainCommitted(finalReadback, absoluteDeadlineMillis);
+              Currentness beforeConfirmation = currentness(source, privateRegionInstallation);
+              requireSameCurrentness(afterFinalCas, beforeConfirmation, committedByThisAttempt);
+
+              requireDeadline(absoluteDeadlineMillis);
+              OriginalFinalAdmissionConfirmation confirmation =
+                  accountClient.confirmOriginalNewGameplayAdmission(
+                      originalLoginJwt, originalLeaseBytes);
+              requireConfirmation(source, confirmation, credential, originalDecision);
+
               CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
-                  committedSource = readSameSource(source, originalDecision, true);
-              if (committedSource.transitionStatus()
-                  != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED) {
+                  afterConfirmation = readSameSource(source, originalDecision, false);
+              Currentness afterConfirmationCurrentness =
+                  currentness(afterConfirmation, privateRegionInstallation);
+              requireSameCurrentness(beforeConfirmation, afterConfirmationCurrentness);
+              source = afterConfirmation;
+              if (recoveredConfirmation != null
+                  && !sameConfirmation(recoveredConfirmation, confirmation)) {
                 throw unavailable();
               }
-              source = committedSource;
+              return new FinalAdmissionResult(
+                  source.candidate().bindingDecisionId(),
+                  finalReadback.admissionAtMillis(),
+                  finalReadback.continuityExpiresAtMillis(),
+                  finalReadback.canonicalSessionDurationMillis(),
+                  finalReadback.finalSessionSha256());
             }
-
-            CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionReceipt
-                finalReceipt =
-                    source
-                        .finalReceipt()
-                        .orElseThrow(
-                            CanonicalGameplayOriginalNewFinalAdmissionCoordinator::unavailable);
-            requireReadbackMatchesReceipt(finalReadback, finalReceipt);
-            Currentness beforeConfirmation = currentness(source, privateRegionInstallation);
-            requireSameCurrentness(afterFinalCas, beforeConfirmation, committedByThisAttempt);
-
-            requireDeadline(absoluteDeadlineMillis);
-            OriginalFinalAdmissionConfirmation confirmation =
-                accountClient.confirmOriginalNewGameplayAdmission(
-                    originalLoginJwt, originalLeaseBytes);
-            requireConfirmation(source, confirmation, credential, originalDecision);
-
-            CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
-                afterConfirmation = readSameSource(source, originalDecision, false);
-            Currentness afterConfirmationCurrentness =
-                currentness(afterConfirmation, privateRegionInstallation);
-            requireSameCurrentness(beforeConfirmation, afterConfirmationCurrentness);
-            source = afterConfirmation;
-            if (recoveredConfirmation != null
-                && !sameConfirmation(recoveredConfirmation, confirmation)) {
-              throw unavailable();
-            }
-            return new FinalAdmissionResult(
-                source.candidate().bindingDecisionId(),
-                finalReadback.admissionAtMillis(),
-                finalReadback.continuityExpiresAtMillis(),
-                finalReadback.canonicalSessionDurationMillis(),
-                finalReadback.finalSessionSha256());
           }
         }
       }

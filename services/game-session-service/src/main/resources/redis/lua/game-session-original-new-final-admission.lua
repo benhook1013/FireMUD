@@ -1,6 +1,6 @@
--- Final original-NEW controller boundary. All six keys share the persisted tenant slot.
+-- Final original-NEW controller boundary. All seven keys share the persisted tenant slot.
 -- The two OPEN barriers are checked only. The only write replaces the exact non-admitting
--- session candidate; all three already-installed tenant indexes must remain exact and persistent.
+-- session candidate and its capacity outcome; all three installed tenant indexes remain exact.
 local admissionPlaceholder = '__ORIGINAL_NEW_ADMISSION_AT_MS__'
 local continuityPlaceholder = '__ORIGINAL_NEW_CONTINUITY_EXPIRES_AT_MS__'
 local accountNames = {'schema', 'accountId', 'tenantId', 'playableStateNamespaceId',
@@ -15,7 +15,7 @@ local sessionNames = {'schemaVersion', 'admissionState', 'originalCandidate', 'b
   'accountIndexState', 'issuerIndexState', 'regionBridgeState', 'admissionAt', 'authTokenHash',
   'authTokenIssuedAt', 'authTokenExpiresAt', 'tokenGeneration', 'issuanceFence', 'rebindHandle',
   'continuityBindingExpiresAt', 'membershipBaseline', 'authorityTuple', 'outboxCheckpoints',
-  'canonicalSessionDurationMillis'}
+  'canonicalSessionDurationMillis', 'capacityExecutionDigest'}
 local function uuid(value)
   return type(value) == 'string' and #value == 36 and value == string.lower(value)
     and value ~= '00000000-0000-0000-0000-000000000000'
@@ -61,7 +61,21 @@ local function decode(bytes, maximum)
   if not ok or type(value) ~= 'table' then return nil end
   return value
 end
-if #KEYS ~= 6 or #ARGV ~= 16 then return -2 end
+if #KEYS ~= 7 or #ARGV ~= 19 then return -2 end
+local capacityBytes, action, capacityDigest = ARGV[17], ARGV[18], ARGV[19]
+if action ~= 'FINAL' and action ~= 'INSTALL' and action ~= 'CLOSE' then return -2 end
+local capacity = decode(capacityBytes, 1048576)
+if not capacity or capacity.schema ~= 'gs-original-new-capacity-execution/v1'
+    or type(capacityDigest) ~= 'string' or #capacityDigest ~= 71
+    or not string.match(capacityDigest, '^sha256:[0-9a-f]+$')
+    or not uuid(capacity.requestId) or not uuid(capacity.admissionId)
+    or not uuid(capacity.admissionAttemptId) or not uuid(capacity.reservationId)
+    or type(capacity.selectedOwnerId) ~= 'string' or #capacity.selectedOwnerId < 1 or #capacity.selectedOwnerId > 120
+    or not uuid(capacity.transitionId)
+    or not positive(capacity.capacityRearmFence) or not positive(capacity.reservationFence)
+    or not positive(capacity.selectedOwnerFence) then return -2 end
+local capacityExpiry = exactNumber(capacity.expiresAtMillis)
+if not capacityExpiry then return -2 end
 local tenantId, accountId, namespaceId, characterId = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
 local gameInstanceId, sessionId, generation, tag = ARGV[5], ARGV[6], ARGV[7], ARGV[8]
 local candidateBytes, characterBytes, templateBytes = ARGV[9], ARGV[10], ARGV[11]
@@ -79,7 +93,30 @@ if KEYS[1] ~= prefix .. slot .. ':' .. gameInstanceId .. ':' .. sessionId
     or KEYS[3] ~= prefix .. 'index:account-tenant:' .. slot .. ':' .. accountId
     or KEYS[4] ~= prefix .. 'index:tenant:' .. slot
     or KEYS[5] ~= prefix .. 'account-admission:' .. slot .. ':' .. accountId .. ':' .. namespaceId
-    or KEYS[6] ~= prefix .. 'issuer-admission:' .. slot .. ':firemud-account-service:' .. tenantId .. ':' .. namespaceId then return -2 end
+    or KEYS[6] ~= prefix .. 'issuer-admission:' .. slot .. ':firemud-account-service:' .. tenantId .. ':' .. namespaceId
+    or KEYS[7] ~= prefix .. 'capacity-execution:' .. slot .. ':' .. capacity.admissionAttemptId
+    or capacity.tenantId ~= tenantId then return -2 end
+-- Closure uses retained SQL attempt/candidate identity, not a fresh credential or OPEN grant.
+-- It remains available after process restart/credential expiry and never infers from absence.
+if action == 'CLOSE' then
+  if redis.call('TYPE', KEYS[7]).ok ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
+      or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
+      or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
+  local state = redis.call('HGET', KEYS[7], 'state')
+  if state == 'CLOSED' and redis.call('HLEN', KEYS[7]) == 3 then return 4 end
+  if state == 'COMMITTED' and redis.call('HLEN', KEYS[7]) == 6 then return 2 end
+  if state ~= 'AUTHORIZED' or redis.call('HLEN', KEYS[7]) ~= 3
+      or redis.call('TYPE', KEYS[1]).ok ~= 'string' or redis.call('PTTL', KEYS[1]) ~= -1
+      or redis.call('GET', KEYS[1]) ~= candidateBytes
+      or redis.call('TYPE', KEYS[2]).ok ~= 'string' or redis.call('PTTL', KEYS[2]) ~= -1
+      or redis.call('GET', KEYS[2]) ~= characterBytes
+      or redis.call('TYPE', KEYS[3]).ok ~= 'set' or redis.call('PTTL', KEYS[3]) ~= -1
+      or redis.call('SISMEMBER', KEYS[3], sessionId) ~= 1
+      or redis.call('TYPE', KEYS[4]).ok ~= 'set' or redis.call('PTTL', KEYS[4]) ~= -1
+      or redis.call('SISMEMBER', KEYS[4], sessionId) ~= 1 then return -1 end
+  redis.call('HSET', KEYS[7], 'state', 'CLOSED')
+  return 4
+end
 local candidate = decode(candidateBytes, 524288)
 local template = decode(templateBytes, 1048576)
 local account = decode(ARGV[13], 16384)
@@ -94,6 +131,7 @@ if not candidate or candidate.purpose ~= 'original-new-non-admitting-candidate/v
     or template.accountIndexState ~= 'ACKNOWLEDGED' or template.issuerIndexState ~= 'ACKNOWLEDGED'
     or template.regionBridgeState ~= 'ACKNOWLEDGED'
     or template.canonicalSessionDurationMillis ~= ARGV[12]
+    or template.capacityExecutionDigest ~= capacityDigest
     or not equal(template.originalCandidate, candidate, 0)
     or type(candidate.binding) ~= 'table' or type(candidate.transition) ~= 'table'
     or type(candidate.leaseEvidence) ~= 'table'
@@ -102,6 +140,7 @@ if not candidate or candidate.purpose ~= 'original-new-non-admitting-candidate/v
     or candidate.binding.gameInstanceId ~= gameInstanceId or candidate.binding.sessionId ~= sessionId
     or candidate.binding.issuerId ~= 'firemud-account-service'
     or candidate.transition.bindingGeneration ~= generation
+    or candidate.bindingDecisionId ~= capacity.transitionId
     or not equal(template.authorityTuple, candidate.leaseEvidence.authorityTuple, 0)
     or not equal(template.membershipBaseline, candidate.leaseEvidence.membershipBaseline, 0)
     or not equal(template.outboxCheckpoints, candidate.leaseEvidence.outboxCheckpoints, 0)
@@ -149,7 +188,23 @@ if not seconds or not micros or seconds < 1 or seconds ~= math.floor(seconds)
     or micros < 0 or micros >= 1000000 or micros ~= math.floor(micros) then return -1 end
 local now = seconds * 1000 + math.floor(micros / 1000)
 if now <= 0 or now >= deadline or now > 9007199254740991 - math.max(duration, 5000) then return -1 end
+local capacityType = redis.call('TYPE', KEYS[7]).ok
+if action == 'INSTALL' and capacityType == 'none' then
+  if now >= capacityExpiry or redis.call('GET', KEYS[1]) ~= candidateBytes then return -1 end
+  redis.call('HSET', KEYS[7], 'binding', capacityBytes, 'digest', capacityDigest, 'state', 'AUTHORIZED')
+  return 3
+end
+if capacityType ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
+    or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
+    or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
+local capacityState = redis.call('HGET', KEYS[7], 'state')
+if capacityState == 'CLOSED' then return 4 end
+if capacityState ~= 'AUTHORIZED' and capacityState ~= 'COMMITTED' then return -1 end
+if (capacityState == 'AUTHORIZED' and redis.call('HLEN', KEYS[7]) ~= 3)
+    or (capacityState == 'COMMITTED' and redis.call('HLEN', KEYS[7]) ~= 6) then return -1 end
+if action == 'INSTALL' then return 3 end
 local observed = redis.call('GET', KEYS[1])
+
 if observed ~= candidateBytes then
   -- Exact replay is read-only and retains the original controller times.
   local finalized = decode(observed, 1048576)
@@ -159,10 +214,14 @@ if observed ~= candidateBytes then
   if not admissionAt or admissionAt > 9007199254740991 - duration or not continuity
       or continuity ~= admissionAt + duration then return -1 end
   finalized.admissionAt, finalized.continuityBindingExpiresAt = admissionPlaceholder, continuityPlaceholder
-  if not equal(finalized, template, 0) then return -1 end
+  if not equal(finalized, template, 0) or capacityState ~= 'COMMITTED'
+      or redis.call('HGET', KEYS[7], 'sessionSha1') ~= redis.sha1hex(observed)
+      or redis.call('HGET', KEYS[7], 'admissionAt') ~= string.format('%.0f', admissionAt)
+      or redis.call('HGET', KEYS[7], 'continuityExpiresAt') ~= string.format('%.0f', continuity) then return -1 end
   return 2
 end
-if now >= leaseExpiry or now >= expiresAt * 1000
+if capacityState ~= 'AUTHORIZED' or now >= capacityExpiry
+    or now >= leaseExpiry or now >= expiresAt * 1000
     or issuedAt * 1000 > now + 5000 then return -1 end
 local admissionCount, continuityCount
 local finalBytes
@@ -172,4 +231,6 @@ finalBytes, continuityCount = string.gsub(finalBytes, '"continuityBindingExpires
   '"continuityBindingExpiresAt":"' .. string.format('%.0f', now + duration) .. '"')
 if admissionCount ~= 1 or continuityCount ~= 1 then return -2 end
 redis.call('SET', KEYS[1], finalBytes)
+redis.call('HSET', KEYS[7], 'state', 'COMMITTED', 'sessionSha1', redis.sha1hex(finalBytes),
+  'admissionAt', string.format('%.0f', now), 'continuityExpiresAt', string.format('%.0f', now + duration))
 return 1

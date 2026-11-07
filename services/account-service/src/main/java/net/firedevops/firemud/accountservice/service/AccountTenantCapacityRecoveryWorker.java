@@ -26,8 +26,8 @@ import org.jooq.Record;
 /**
  * Unregistered Account reservation recovery. Only this owner mutates reservation outcomes. Its
  * protected selected-owner read client is a required dependency, not an automatically registered
- * source or a caller-supplied attestation. There is deliberately no runtime implementation until
- * selected owners expose exact durable activation-CAS readback. No timeout synthesizes no-commit.
+ * source or a caller-supplied attestation. Original-NEW Game Session has a bounded exact reader;
+ * World lifecycle and other action families remain unsupported. No timeout synthesizes no-commit.
  */
 @SuppressFBWarnings(value = "EI_EXPOSE_REP2", justification = "Private owner/source collaborators.")
 public final class AccountTenantCapacityRecoveryWorker {

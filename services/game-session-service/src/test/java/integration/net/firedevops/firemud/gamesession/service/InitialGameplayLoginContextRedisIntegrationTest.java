@@ -62,31 +62,47 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GameplayLoginSourceContext;
 import net.firedevops.firemud.account.v1.GameplayLoginTransportClass;
 import net.firedevops.firemud.account.v1.InitialGameplayLoginTokenWitness;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
+import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayLoginAccountClient;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.RealmView;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog.WorldView;
+import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.Disposition;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.ProofKind;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginJournalSnapshot;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
+import net.firedevops.firemud.gamesession.repository.DirectTextAuthenticatedLobbyRepository;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.AcknowledgementPolicy;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.Profile;
+import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyCustody;
+import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
+import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -101,6 +117,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -109,7 +126,9 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Physical standalone AOF primary/replica, scoped ACL and PostgreSQL journal proof. Fresh PENDING
- * records are seeded exclusively by the test administrator: no trusted producer is established.
+ * records use administrator seeding or the actual unregistered LOGIN owner in named compositions;
+ * no trusted ingress producer is established. Lobby routing, transport and Account scope replies
+ * remain controlled, without authenticated ingress or reset/replacement qualification.
  * Qualification is stipulated by the controlled external-authority fixture, including exclusion
  * through Account continuation; this is not genuine restore/promotion qualification, Cluster, TLS,
  * deployed custody, authenticated Account transport or LOGIN activation proof. ACK-loss injection
@@ -174,6 +193,7 @@ class InitialGameplayLoginContextRedisIntegrationTest {
   private StatefulRedisConnection<byte[], byte[]> adminConnection;
   private RedisCommands<byte[], byte[]> admin;
   private String schema;
+  private DriverManagerDataSource journalDataSource;
   private InitialGameplayLoginCoordinationJournalRepository journal;
 
   @BeforeAll
@@ -859,6 +879,363 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         .containsExactly(InitialGameplayLoginContextState.pending(newContext).encode());
   }
 
+  @Test
+  void installedOwnerBorrowsGenuineResultIntoRetainedNonAdmittingLobbyScope() throws Exception {
+    var fixture = installedLobbyFixture(() -> {});
+    try (var installed = fixture.installed()) {
+      var scope = fixture.realms();
+      var original = installed.coordinates();
+      assertThat(fixture.repository().readCommittedScope(scope).encode())
+          .containsExactly(scope.encode());
+      assertThat(scope.original()).isEqualTo(original);
+      assertThat(scope.evidence()).isEqualTo(fixture.result().evidence());
+      assertThat(scope.transport()).isEqualTo(fixture.transport());
+      assertThat(admin.get(key(original)))
+          .containsExactly(
+              InitialGameplayLoginContextState.installed(original, fixture.result()).encode());
+      assertThat(journal.readCommitted(original).orElseThrow().verifiedWitness())
+          .contains(witness(fixture.result()));
+      byte[] token = fixture.result().compactJwtBytes();
+      try {
+        assertThat(containsSequence(scope.encode(), token)).isFalse();
+        assertThat(containsSequence(admin.get(key(original)), token)).isFalse();
+        assertThat(new String(scope.encode(), StandardCharsets.UTF_8))
+            .doesNotContain("fixture-transient-secret");
+      } finally {
+        Arrays.fill(token, (byte) 0);
+      }
+      assertThat(installed.status())
+          .isEqualTo(InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING);
+    }
+    assertThatThrownBy(() -> fixture.result().compactJwtBytes())
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void actualInstalledBorrowExcludesCleanupUntilLobbyReadbackAndRefusesLaterBorrow()
+      throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var closing = new CountDownLatch(1);
+    var fixture =
+        installedLobbyFixture(
+            () -> {
+              entered.countDown();
+              awaitLobby(release);
+            });
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var borrowing = executor.submit(fixture::realms);
+      try {
+        assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+        var closed =
+            executor.submit(
+                () -> {
+                  closing.countDown();
+                  fixture.installed().close();
+                });
+        assertThat(closing.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> closed.get(100, TimeUnit.MILLISECONDS))
+            .isInstanceOf(TimeoutException.class);
+        release.countDown();
+        var scope = borrowing.get(15, TimeUnit.SECONDS);
+        closed.get(15, TimeUnit.SECONDS);
+        assertThat(fixture.repository().readCommittedScope(scope).encode())
+            .containsExactly(scope.encode());
+        assertThat(
+                journal.readCommitted(fixture.installed().coordinates()).orElseThrow().abandoned())
+            .isTrue();
+        assertThat(admin.get(key(fixture.installed().coordinates())))
+            .containsExactly(
+                InitialGameplayLoginContextState.closed(fixture.installed().coordinates())
+                    .encode());
+        assertThat(
+                journal
+                    .readCommitted(fixture.installed().coordinates())
+                    .orElseThrow()
+                    .frozenRetirementRequest())
+            .contains(
+                InitialGameplayLoginJournalSnapshot.request(
+                    fixture.installed().coordinates(), witness(fixture.result())));
+        assertThat(fixture.installed().custodyLossCleanup()).isPresent();
+        assertThatThrownBy(fixture::realms).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> fixture.result().compactJwtBytes())
+            .isInstanceOf(IllegalStateException.class);
+        verify(fixture.lobbyAccount()).issueDirectTextConnectScope(any(), any());
+      } finally {
+        release.countDown();
+      }
+    } finally {
+      fixture.installed().close();
+    }
+  }
+
+  @Test
+  void sqlRowThenResultReadProgressesWhileBorrowWaitsForRowAndCloseDrains() throws Exception {
+    var fixture = installedLobbyFixture(() -> {});
+    var scope = fixture.realms();
+    var rowLocked = new CountDownLatch(1);
+    var borrowEntered = new CountDownLatch(1);
+    var readResult = new CountDownLatch(1);
+    var closing = new CountDownLatch(1);
+    var transaction = new TransactionTemplate(new DataSourceTransactionManager(journalDataSource));
+    transaction.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+    try (var executor = Executors.newFixedThreadPool(3)) {
+      var rowOwner =
+          executor.submit(
+              () ->
+                  transaction.execute(
+                      status -> {
+                        fixture
+                            .repository()
+                            .verifyOriginal(fixture.installed().coordinates(), fixture.result());
+                        rowLocked.countDown();
+                        awaitLobby(readResult);
+                        // This is the actual repository ordering: original SQL row, then live
+                        // result bytes.
+                        scope.requireCurrent(
+                            fixture.installed().coordinates(),
+                            fixture.result(),
+                            fixture.transport(),
+                            CLOCK);
+                        // Neither drain waiting nor cleanup may hold the Outcome monitor across SQL
+                        // work.
+                        assertThat(fixture.installed().custodyLossCleanup()).isEmpty();
+                        return true;
+                      }));
+      try {
+        boolean locked = rowLocked.await(10, TimeUnit.SECONDS);
+        if (!locked) rowOwner.get(1, TimeUnit.SECONDS); // Surface an early owner failure.
+        assertThat(locked).isTrue();
+        var borrowing =
+            executor.submit(
+                () ->
+                    fixture
+                        .installed()
+                        .withOwnedPrivateResult(
+                            result -> {
+                              assertThat(result).isSameAs(fixture.result());
+                              borrowEntered.countDown();
+                              return transaction.execute(
+                                  status -> {
+                                    DSL.using(
+                                            new TransactionAwareDataSourceProxy(journalDataSource),
+                                            SQLDialect.POSTGRES)
+                                        .execute("SET LOCAL lock_timeout = '5s'");
+                                    return fixture
+                                        .repository()
+                                        .current(
+                                            fixture.installed().coordinates(),
+                                            result,
+                                            fixture.transport(),
+                                            CLOCK);
+                                  });
+                            }));
+        assertThat(borrowEntered.await(10, TimeUnit.SECONDS)).isTrue();
+        var closed =
+            executor.submit(
+                () -> {
+                  closing.countDown();
+                  fixture.installed().close();
+                });
+        assertThat(closing.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> closed.get(100, TimeUnit.MILLISECONDS))
+            .isInstanceOf(TimeoutException.class);
+        readResult.countDown();
+        assertThat(rowOwner.get(15, TimeUnit.SECONDS)).isTrue();
+        assertThat(borrowing.get(15, TimeUnit.SECONDS).encode()).containsExactly(scope.encode());
+        closed.get(15, TimeUnit.SECONDS);
+        assertThat(
+                journal.readCommitted(fixture.installed().coordinates()).orElseThrow().abandoned())
+            .isTrue();
+      } finally {
+        readResult.countDown();
+      }
+    } finally {
+      fixture.installed().close();
+    }
+  }
+
+  /**
+   * Actual LOGIN installation and lobby storage, with controlled Account, routing and transport.
+   */
+  private LobbyFixture installedLobbyFixture(Runnable duringScopeCall) throws Exception {
+    var contexts =
+        client(
+            new TracedProvider(writer),
+            new ControlledAuthority(),
+            new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000));
+    var account = mock(CanonicalGameplayLoginAccountClient.class);
+    var cleanup = cleanup(contexts, account);
+    var result = new AtomicReference<CanonicalGameplayLoginResult>();
+    when(account.retireInitialGameplayLogin(any()))
+        .thenAnswer(
+            call -> {
+              var request =
+                  call.getArgument(
+                      0, net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.class);
+              return new InitialGameplayLoginDisposalResult(
+                  UUID.fromString(request.getRequestId()),
+                  UUID.fromString(request.getCallerContextId()),
+                  UUID.randomUUID(),
+                  Disposition.PENDING,
+                  ProofKind.NONE);
+            });
+    when(account.authenticate(any(AuthenticateRequest.class), any()))
+        .thenAnswer(
+            call -> {
+              var value =
+                  validatedResult(
+                      call.getArgument(0, AuthenticateRequest.class), UUID.randomUUID());
+              result.set(value);
+              return value;
+            });
+    var installed =
+        new InitialGameplayLoginOwner(contexts, cleanup, account)
+            .receive(
+                new InitialGameplayLoginCredentialPresentation(
+                    "player@example.test",
+                    "203.0.113.10",
+                    "fixture-transient-secret".toCharArray()));
+    ownedKeys.add(
+        InitialGameplayLoginContextRedisKeys.contextKey(installed.coordinates().callerContextId()));
+    assertThat(installed.status())
+        .isEqualTo(InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING);
+    var target = lobbyTarget();
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(target));
+    when(routes.readCurrentTarget(target)).thenReturn(target);
+    var world =
+        new WorldView(
+            target.worldSlug(),
+            target.worldDisplayName(),
+            List.of(
+                new RealmView(
+                    target.realmSlug(),
+                    target.realmDisplayName(),
+                    target.gameSessionTenantId(),
+                    target.gameInstanceId(),
+                    target.pointerVersion(),
+                    true,
+                    true,
+                    false,
+                    target.playableStateScope(),
+                    target.characterCreationPolicy(),
+                    target.catalogRevision(),
+                    target.realmId(),
+                    target.playableStateNamespaceId())));
+    var selection =
+        new DirectTextWorldSelectionService(
+            GameplayWorldCatalog.forWorldSupplier(() -> List.of(world)), routes, CLOCK);
+    var repository =
+        new DirectTextAuthenticatedLobbyRepository(
+            DSL.using(new TransactionAwareDataSourceProxy(journalDataSource), SQLDialect.POSTGRES));
+    var lobbyAccount = mock(AccountClient.class);
+    when(lobbyAccount.issueDirectTextConnectScope(any(), any()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              duringScopeCall.run();
+              return IssueDirectTextConnectScopeResponse.newBuilder()
+                  .setConnectScopeId("controlled-scope")
+                  .setEvaluatedAt(CLOCK.instant().minusSeconds(1).toString())
+                  .setConnectScopeExpiresAt(CLOCK.instant().plusSeconds(60).toString())
+                  .build();
+            });
+    return new LobbyFixture(
+        installed,
+        result.get(),
+        new ObservedDirectTextTransport("00042", UUID.randomUUID()),
+        new DirectTextAuthenticatedLobbyOwner(
+            repository,
+            selection,
+            lobbyAccount,
+            new DataSourceTransactionManager(journalDataSource),
+            CLOCK),
+        repository,
+        selection,
+        lobbyAccount);
+  }
+
+  /**
+   * Transport is deliberately controlled; this fixture is not an authenticated ingress producer.
+   */
+  private record LobbyFixture(
+      InitialGameplayLoginOwner.Outcome installed,
+      CanonicalGameplayLoginResult result,
+      ObservedDirectTextTransport transport,
+      DirectTextAuthenticatedLobbyOwner lobby,
+      DirectTextAuthenticatedLobbyRepository repository,
+      DirectTextWorldSelectionService selection,
+      AccountClient lobbyAccount) {
+    DirectTextAuthenticatedLobbyScope realms() {
+      return installed.withOwnedPrivateResult(
+          borrowed -> {
+            assertThat(borrowed).isSameAs(result);
+            var custody =
+                new DirectTextAuthenticatedLobbyCustody() {
+                  @Override
+                  public <T> T withCurrent(
+                      InitialGameplayLoginAttemptCoordinates original,
+                      CanonicalGameplayLoginResult candidate,
+                      Function<ObservedDirectTextTransport, T> action) {
+                    assertThat(original).isEqualTo(installed.coordinates());
+                    assertThat(candidate).isSameAs(borrowed);
+                    return action.apply(transport);
+                  }
+                };
+            return lobby.realms(
+                installed.coordinates(), borrowed, custody, selection.browse().orElseThrow(), "1");
+          });
+    }
+  }
+
+  private static void awaitLobby(CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS))
+        throw new IllegalStateException("Controlled lobby gate timed out");
+    } catch (InterruptedException failure) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Controlled lobby gate interrupted", failure);
+    }
+  }
+
+  private static CanonicalPlayableTarget lobbyTarget() {
+    return new CanonicalPlayableTarget(
+        "gameplay",
+        "studio",
+        UUID.randomUUID(),
+        "forest",
+        "Forest",
+        UUID.randomUUID(),
+        "public",
+        "Live",
+        101,
+        202,
+        UUID.randomUUID(),
+        "SHARED",
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        303,
+        1,
+        7,
+        "d".repeat(64),
+        82,
+        "original-open",
+        "a".repeat(64),
+        OriginKind.NO_PRIOR_POINTER,
+        null,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "sha256:" + "c".repeat(64),
+        27,
+        "sha256:" + "f".repeat(64),
+        Outcome.COMMITTED,
+        false,
+        CLOCK.instant().minusSeconds(1),
+        "ALLOW_NEW");
+  }
+
   private InitialGameplayLoginCleanupOwner cleanup(
       InitialGameplayLoginContextRedisClient client, CanonicalGameplayLoginAccountClient account) {
     schema = "gs_context_" + UUID.randomUUID().toString().replace("-", "");
@@ -866,6 +1243,7 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     dataSource.setSchema(schema);
+    journalDataSource = dataSource;
     CanonicalGameplayIssuerTestFixtures.migrateSchema(
         dataSource,
         schema,

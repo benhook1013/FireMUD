@@ -370,6 +370,21 @@ class AccountClientTest {
   }
 
   @Test
+  void joinPreservesAlreadyActiveNonAdmittingReceipt() throws Exception {
+    var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    var expected =
+        joinSuccess("ALREADY_ACTIVE", true).toBuilder().setGameplayAdmissionAllowed(false).build();
+    when(fixture.initialStub().joinPublicProductionMembership(any())).thenReturn(expected);
+
+    assertThat(join(fixture.client(), directTextContext())).isSameAs(expected);
+    assertThat(expected.getReplayed()).isTrue();
+    verify(fixture.initialStub()).joinPublicProductionMembership(any());
+    verify(fixture.retryStub(), never()).joinPublicProductionMembership(any());
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
   void joinDoesNotAcceptJoinedOutcomeWithoutAdmissionFlag() throws Exception {
     var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
     when(fixture.initialStub().joinPublicProductionMembership(any()))

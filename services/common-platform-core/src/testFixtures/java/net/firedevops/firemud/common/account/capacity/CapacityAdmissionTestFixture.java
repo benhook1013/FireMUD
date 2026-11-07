@@ -55,6 +55,42 @@ public final class CapacityAdmissionTestFixture {
         .withDigest();
   }
 
+  /** Controlled complete content for a native owner component fixture, not Account authority. */
+  public static TenantCapacityAdmission.Request playerRequestFor(
+      TenantCapacityAdmission.PlayerContext player,
+      UUID admission,
+      UUID attempt,
+      String namespace,
+      Map<String, Object> target,
+      Instant at) {
+    Map<String, Object> source = new LinkedHashMap<>(sources());
+    source.put("callerTokenExpiresAt", at.plusSeconds(90).toString());
+    var evidence =
+        RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+            player.requestId(),
+            TenantCapacityAdmission.expectedWorkload(
+                namespace, TenantCapacityAdmission.Owner.GAME_SESSION),
+            "controlled-scope",
+            membership(player.accountId(), player.tenantId(), player.requestId()),
+            target,
+            facts(),
+            source,
+            at);
+    return new TenantCapacityAdmission.Request(
+            new TenantCapacityAdmission.Identity(player.tenantId(), player.requestId(), admission),
+            attempt,
+            1,
+            namespace,
+            player,
+            TenantCapacityAdmission.Operation.CAPACITY_CREATING,
+            new TenantCapacityAdmission.Shape(0, 0, 0),
+            new TenantCapacityAdmission.Shape(1, 0, 0),
+            TenantCapacityAdmission.Evidence.player(evidence),
+            1L,
+            null)
+        .withDigest();
+  }
+
   public static TenantCapacityAdmission.Request worldRequest(Long delta) {
     String tenant = TENANT.toString();
     String stream = "account:auth-authority:v1:tenant/" + tenant;
@@ -216,32 +252,47 @@ public final class CapacityAdmissionTestFixture {
   }
 
   private static Snapshot membership() {
+    return membership(ACCOUNT, TENANT, REQUEST);
+  }
+
+  private static Snapshot membership(UUID account, UUID tenantId, UUID requestId) {
     String requestDigest =
-        GameTenantCreationDigest.requestDigest("prod", REQUEST, "world", "World", null);
+        GameTenantCreationDigest.requestDigest("prod", requestId, "world", "World", null);
     var source =
         new FreshTenantCreationEvidence(
             1,
             "prod",
-            REQUEST,
-            REQUEST,
+            requestId,
+            requestId,
             requestDigest,
-            TENANT,
+            tenantId,
             17,
             "world",
             "NEW_GAME_ROW",
             GameTenantCreationDigest.evidenceDigest(
-                "prod", REQUEST, REQUEST, requestDigest, TENANT, 17, "world", "NEW_GAME_ROW"));
+                "prod",
+                requestId,
+                requestId,
+                requestDigest,
+                tenantId,
+                17,
+                "world",
+                "NEW_GAME_ROW"));
     var request =
         new TenantAuthorityEventV1Codec.AuthorityRequest(
-            REQUEST, "sha256:" + HASH, TENANT, source.creationRequestId(), source.requestDigest());
+            requestId,
+            "sha256:" + HASH,
+            tenantId,
+            source.creationRequestId(),
+            source.requestDigest());
     var billing =
         new TenantAuthorityEventV1Codec.BillingReceipt(
-            TENANT,
-            REQUEST,
+            tenantId,
+            requestId,
             "sha256:" + HASH,
-            TenantAuthorityEventV1Codec.tenantBillingStreamKey(TENANT),
+            TenantAuthorityEventV1Codec.tenantBillingStreamKey(tenantId),
             1,
-            TenantAuthorityEventV1Codec.tenantBillingEventId(REQUEST),
+            TenantAuthorityEventV1Codec.tenantBillingEventId(requestId),
             "sha256:" + HASH);
     var event = TenantAuthorityEventV1Codec.seal(request, source, 2, 2, 1, billing);
     String prefix = MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX;
@@ -249,30 +300,30 @@ public final class CapacityAdmissionTestFixture {
         new AuthorityTuple(
             "1",
             "1",
-            Map.of(TENANT.toString(), "2"),
-            Map.of(TENANT.toString(), "1"),
+            Map.of(tenantId.toString(), "2"),
+            Map.of(tenantId.toString(), "1"),
             List.of(),
             Optional.empty(),
             Optional.of(
                 Map.of(
-                    TENANT.toString(),
+                    tenantId.toString(),
                     new TenantBillingCutoff("2", "1", event.outboxStreamKey(), "1"))));
     return new Snapshot(
         "firemud-account-service",
-        ACCOUNT.toString(),
-        TENANT.toString(),
+        account.toString(),
+        tenantId.toString(),
         false,
         "MISSING",
         false,
-        Map.of(TENANT.toString(), "1"),
+        Map.of(tenantId.toString(), "1"),
         "1",
         List.of(),
         tuple,
         "1",
         List.of(
-            new Checkpoint(prefix + "account/" + ACCOUNT, "0"),
+            new Checkpoint(prefix + "account/" + account, "0"),
             new Checkpoint(prefix + "issuer/firemud-account-service", "0"),
-            new Checkpoint(prefix + "membership/" + ACCOUNT + "/" + TENANT, "0"),
+            new Checkpoint(prefix + "membership/" + account + "/" + tenantId, "0"),
             new Checkpoint(event.outboxStreamKey(), "1")),
         List.of(
             new SourceEvidence(

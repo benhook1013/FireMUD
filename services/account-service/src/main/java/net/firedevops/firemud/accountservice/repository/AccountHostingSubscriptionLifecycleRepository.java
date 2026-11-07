@@ -168,8 +168,12 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
   /**
    * Final cancellation-only owner mutation. The mandatory callback runs under exact target locks
-   * immediately before writes; callback inputs/outputs alone do not establish Account authority.
-   * The caller must roll back the transaction on every failure, including callback/commit failure.
+   * immediately before writes; callback inputs/outputs alone do not establish Account authority. If
+   * the callback throws an authentication denial, the caller may catch it outside this method and
+   * commit its own failed-login accounting because this method has made no repository writes before
+   * invoking the callback. A repository write added before the callback removes this narrow
+   * exception; all other failures require rollback. Commit failures remain the caller transaction
+   * manager’s responsibility.
    */
   public TransitionResult applyTerminalResolution(
       ResolutionPreparation prepared,
@@ -1211,7 +1215,14 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     }
     long versionToLock =
         prior == null ? expectedRowVersion : prior.get("claimed_row_version", Long.class);
-    var current = intents.lockForProvisioningRecovery(requestId, versionToLock);
+    AccountSubscriptionCurrentRecord current;
+    try {
+      current = intents.lockForProvisioningRecovery(requestId, versionToLock);
+    } catch (FenceRejectedException refused) {
+      // A later wallet observation may prevent any further dispatch. Only already retained work
+      // can use the local settlement fence, and this path never returns a provider-capable claim.
+      return recoverUndispatchableWork(requestId, versionToLock, prior);
+    }
     var original = intents.findCreation(requestId).orElseThrow();
     Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
     if (now.isBefore(original.createdAt())) {
@@ -1311,6 +1322,49 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         dsl.fetchOne(
             "SELECT * FROM subscription_provisioning_attempts WHERE attempt_id = ?", attemptId);
     return new ClaimResult(Disposition.CLAIMED, claim(original, Objects.requireNonNull(attempt)));
+  }
+
+  private ClaimResult recoverUndispatchableWork(UUID requestId, long version, Record prior) {
+    var current = intents.lockForProvisioningSettlement(requestId, version);
+    Record work = workForUpdate(requestId);
+    requireUnmappedProvisioningWork(current, work);
+    if (prior != null
+        && !prior.get("attempt_id", UUID.class).equals(work.get("last_attempt_id", UUID.class))) {
+      return new ClaimResult(Disposition.ATTEMPT_EXPIRED, null);
+    }
+    Record retained =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_provisioning_attempts WHERE attempt_id = ?",
+            work.get("last_attempt_id", UUID.class));
+    Instant now = now();
+    if (retained == null || now.isBefore(instant(retained, "claimed_at"))) {
+      throw new FenceRejectedException("Exact retained provisioning attempt is absent or future");
+    }
+    if ("BILLING_RECONCILIATION_TERMINAL_FAILURE".equals(work.get("phase", String.class))) {
+      return new ClaimResult(Disposition.TERMINAL_FAILURE, null);
+    }
+    if (!now.isBefore(instant(work, "deadline_at"))) {
+      return fail(work, "ABSOLUTE_DEADLINE", now);
+    }
+    if (work.get("attempt_count", Integer.class) >= work.get("max_attempts", Integer.class)) {
+      return fail(work, "ATTEMPT_BUDGET", now);
+    }
+    if (work.get("attempt_count", Integer.class)
+        >= work.get("max_stalled_attempts", Integer.class)) {
+      return fail(work, "STALLED_WITHOUT_COMMITTED_PROGRESS", now);
+    }
+    return new ClaimResult(Disposition.WAITING, null);
+  }
+
+  private void requireUnmappedProvisioningWork(
+      AccountSubscriptionCurrentRecord current, Record work) {
+    if (!current.subscriptionId().equals(work.get("subscription_id", UUID.class))
+        || !Objects.equals(current.rowVersion(), work.get("subscription_row_version", Long.class))
+        || work.get("last_attempt_id") == null
+        || current.providerSubscriptionId() != null
+        || links(current.subscriptionId()).get("lifecycle_inflight_request_id") != null) {
+      throw new FenceRejectedException("Exact unmapped retained provisioning work fence rejected");
+    }
   }
 
   /**
@@ -1550,9 +1604,27 @@ public final class AccountHostingSubscriptionLifecycleRepository {
   public Disposition deferUnresolved(ProvisioningClaim claim) {
     requireTransaction();
     Objects.requireNonNull(claim);
-    intents.lockForProvisioningRecovery(
-        claim.creation().requestId(), claim.subscriptionRowVersion());
+    var current =
+        intents.lockForProvisioningSettlement(
+            claim.creation().requestId(), claim.subscriptionRowVersion());
     Record work = workForUpdate(claim.creation().requestId());
+    requireUnmappedProvisioningWork(current, work);
+    Record retained =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_provisioning_attempts WHERE attempt_id = ?",
+            claim.attemptId());
+    if (retained == null
+        || !claim
+            .creation()
+            .equals(intents.findCreation(claim.creation().requestId()).orElseThrow())
+        || !claim.creation().requestId().equals(retained.get("request_id", UUID.class))
+        || !claim.creation().subscriptionId().equals(retained.get("subscription_id", UUID.class))
+        || claim.attemptNumber() != retained.get("attempt_number", Integer.class)
+        || claim.subscriptionRowVersion() != retained.get("claimed_row_version", Long.class)
+        || !claim.claimedAt().equals(instant(retained, "claimed_at"))
+        || !claim.expiresAt().equals(instant(retained, "expires_at"))) {
+      throw new FenceRejectedException("Exact retained provisioning settlement claim rejected");
+    }
     Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
     if (now.isBefore(claim.claimedAt())) {
       throw new FenceRejectedException("Provisioning clock predates its retained claim");
@@ -1564,11 +1636,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     if ("BILLING_RECONCILIATION_TERMINAL_FAILURE".equals(phase)) {
       return Disposition.TERMINAL_FAILURE;
     }
-    if ("RECONCILING".equals(phase)) {
-      return Disposition.WAITING;
-    }
     if (!now.isBefore(instant(work, "deadline_at"))) {
       return fail(work, "ABSOLUTE_DEADLINE", now).disposition();
+    }
+    if ("RECONCILING".equals(phase)) {
+      return Disposition.WAITING;
     }
     if (!now.isBefore(claim.expiresAt())) {
       // The exact retained attempt expired without a provider completion. Leave its work and

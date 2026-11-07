@@ -76,7 +76,10 @@ public class EnvironmentIdentityPlanner {
                 HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD),
             Map.entry(
                 HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
-                HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD))) {
+                HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD),
+            Map.entry(
+                HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE,
+                HostedIdentityContract.GRPC_GATEWAY_WORKLOAD))) {
       String role = workloadIdentity.getKey();
       String workload = workloadIdentity.getValue();
       String certificateAndSourceName = materialPrefix + "-grpc-" + workload;

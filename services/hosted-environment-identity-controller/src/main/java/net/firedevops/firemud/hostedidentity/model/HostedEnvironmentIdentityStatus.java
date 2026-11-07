@@ -17,6 +17,7 @@ public class HostedEnvironmentIdentityStatus {
   private RoleStatus grpcAccountService;
   private RoleStatus grpcGameSessionService;
   private RoleStatus grpcSocialGroupsService;
+  private RoleStatus grpcGatewayClient;
   private Map<String, RoleStatus> grpcPublication;
   private RuntimeProfile profile;
 
@@ -111,6 +112,14 @@ public class HostedEnvironmentIdentityStatus {
 
   public void setGrpcSocialGroupsService(RoleStatus grpcSocialGroupsService) {
     this.grpcSocialGroupsService = copyRole(grpcSocialGroupsService);
+  }
+
+  public RoleStatus getGrpcGatewayClient() {
+    return copyRole(grpcGatewayClient);
+  }
+
+  public void setGrpcGatewayClient(RoleStatus grpcGatewayClient) {
+    this.grpcGatewayClient = copyRole(grpcGatewayClient);
   }
 
   public Map<String, RoleStatus> getGrpcPublication() {

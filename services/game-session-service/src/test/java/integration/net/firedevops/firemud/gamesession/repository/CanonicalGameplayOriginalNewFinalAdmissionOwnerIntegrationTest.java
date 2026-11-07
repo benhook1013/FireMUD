@@ -77,6 +77,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   private CanonicalGameplayAdmissionDecision decision;
   private CanonicalGameplayOriginalNewCandidateRedisOwner.Installation installation;
   private RedisScriptCatalog catalog;
+  private net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
+      controlledCapacity;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -156,6 +158,248 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         if (administrator != null) administrator.shutdown(Duration.ZERO, Duration.ofSeconds(2));
       }
     }
+  }
+
+  @Test
+  void missingExecutionCannotBeReinstalledFromTheRetainedSqlDispatchOrUsedAsNoCommit()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    String key =
+        "session:game:capacity-execution:{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + controlledCapacity.request().admissionAttemptId();
+    admin.del(ascii(key));
+    String rows = sqlImage();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(controlledCapacity)) {
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .authorize(
+                          source,
+                          template,
+                          controlledAccountOpen(),
+                          issuerOpen(),
+                          controlledCapacity,
+                          deadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(admin.type(ascii(key))).isEqualTo("none");
+    assertThat(admin.get(ascii(installation.sessionKey())))
+        .containsExactly(source.candidate().canonicalBytes());
+    assertThat(sqlImage()).isEqualTo(rows);
+  }
+
+  @Test
+  void recreatedCapacityOwnerClosesExactAttemptAndRejectsDelayedFinalCas() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    capacityOwner()
+        .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var proof =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(proof.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    assertThat(proof.currentOwnerFence())
+        .isGreaterThanOrEqualTo(controlledCapacity.selectedOwnerFence());
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template()) {
+      assertThatThrownBy(
+              () ->
+                  finalOwner()
+                      .finalizeOriginalNewOnce(
+                          source, template, controlledAccountOpen(), issuerOpen(), deadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    assertThat(
+            admin.get(
+                ascii(
+                    CanonicalGameplaySessionRedisKeys.session(
+                        assignment, source.candidate().bindingIdentity().bindingRef()))))
+        .containsExactly(source.candidate().canonicalBytes());
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(proof.canonicalReadback());
+  }
+
+  @Test
+  void retainedClosedProofSurvivesControlledServingRemovalAndStillRejectsDelayedFinal()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    capacityOwner()
+        .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var retained =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    // Controlled physical retirement only. The existing genuine never-admitted owner accepts
+    // untouched PREPARED attempts, not this already-acknowledged PROVISIONAL candidate.
+    controlledRemoveServingKeys(source, assignment);
+    var replay =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(replay.canonicalReadback()).containsExactly(retained.canonicalReadback());
+    assertThat(replay.currentOwnerId()).isEqualTo(retained.currentOwnerId());
+    assertThat(replay.currentOwnerFence()).isEqualTo(retained.currentOwnerFence());
+    assertThat(replay.execution().selectedOwnerFence())
+        .isEqualTo(controlledCapacity.selectedOwnerFence());
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template()) {
+      assertThatThrownBy(
+              () ->
+                  finalOwner()
+                      .finalizeOriginalNewOnce(source, template, account, issuer, deadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(admin.hget(ascii(capacityKey(assignment)), ascii("state")))
+        .containsExactly(ascii("CLOSED"));
+    assertThat(admin.type(ascii(installation.sessionKey()))).isEqualTo("none");
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
+  }
+
+  @Test
+  void retainedClosedProofRequiresItsExactTombstoneAndReservationFence() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    capacityOwner()
+        .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var original = controlledCapacity.reservation();
+    var changedFence =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result(
+            original.identity(),
+            original.admissionAttemptId(),
+            original.capacityRearmFence(),
+            original.mutationDigest(),
+            original.reservationId(),
+            original.reservationFence() + 1,
+            original.expiresAt(),
+            original.state(),
+            original.snapshotIdentity(),
+            original.evaluationIdentity());
+    assertThatThrownBy(() -> capacityOwner().readExact(controlledCapacity.request(), changedFence))
+        .isInstanceOf(IllegalStateException.class);
+    String rows = sqlImage();
+    admin.del(ascii(capacityKey(assignment)));
+    assertThatThrownBy(() -> capacityOwner().readExact(controlledCapacity.request(), original))
+        .isInstanceOf(IllegalStateException.class);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var raw = credential.template();
+        var bound = raw.bindCapacityExecution(controlledCapacity)) {
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .authorize(
+                          source,
+                          bound,
+                          controlledAccountOpen(),
+                          issuerOpen(),
+                          controlledCapacity,
+                          deadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
+    assertThat(sqlImage()).isEqualTo(rows);
+  }
+
+  @Test
+  void closedExecutionRejectsContradictoryFinalSqlReceiptWithoutLosingItsRetainedProof()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    capacityOwner()
+        .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var retained =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    String rows = sqlImage();
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "UPDATE game_session_canonical_binding_transition SET original_new_final_session_sha256 = ?, original_new_capacity_execution_digest = ?, original_new_admission_at_ms = ?, original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ? WHERE transition_id = ?",
+                        "a".repeat(64),
+                        controlledCapacity.digest(),
+                        CLOCK.millis(),
+                        CLOCK.millis() + 1000,
+                        1000L,
+                        fixture.transitionId()))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
+  }
+
+  @Test
+  void physicalClosureBeforeSqlProofRetentionRemainsIndeterminateEvenAfterServingRemoval()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    assertThat(
+            new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                    ownerClient, catalog, CLOCK, tags)
+                .closeCapacityExecutionOnce(controlledCapacity, source.candidate(), assignment))
+        .isEqualTo(4);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    controlledRemoveServingKeys(source, assignment);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                    controlledCapacity.digest())
+                .get(0, String.class))
+        .isEqualTo("AUTHORIZED");
   }
 
   @Test
@@ -1054,6 +1298,46 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             sources.entity);
     assertThat(region.owner().bridge(region.installation()).obligation())
         .isEqualTo(region.acknowledgement().obligation());
+    // Explicit controlled Account content for this native owner component proof. The separate
+    // Account composition traverses actual evaluation/commit and is the complete capacity path.
+    if (controlledCapacity == null) {
+      var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+      var controlled =
+          CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacity(source, CLOCK);
+      var binding = source.candidate().bindingIdentity();
+      String selectedOwner =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT owner_instance_id FROM game_session_region_runtime_status WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
+                  binding.tenantId(),
+                  binding.gameInstanceId(),
+                  binding.regionId())
+              .get(0, String.class);
+      controlledCapacity =
+          new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+              controlled.request(),
+              controlled.reservation(),
+              controlled.transitionId(),
+              controlled.candidateDigest(),
+              selectedOwner,
+              controlled.selectedOwnerFence());
+      try (var credential =
+              new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+          var raw = credential.template();
+          var bound = raw.bindCapacityExecution(controlledCapacity)) {
+        capacityOwner()
+            .authorize(
+                source,
+                bound,
+                controlledAccountOpen(),
+                issuerOpen(),
+                controlledCapacity,
+                deadline());
+      } catch (Exception failure) {
+        throw new IllegalStateException(failure);
+      }
+    }
   }
 
   private CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
@@ -1136,9 +1420,54 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         ownerClient, catalog, repository, tags);
   }
 
-  private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalOwner() {
-    return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-        ownerClient, catalog, CLOCK, tags);
+  private CanonicalGameplayOriginalNewCapacityExecutionOwner capacityOwner() {
+    return new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+        fixture.dsl(), ownerClient, catalog, CLOCK, tags);
+  }
+
+  private String capacityKey(CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {
+    return "session:game:capacity-execution:{"
+        + assignment.tenantGameplayTag()
+        + "}:"
+        + controlledCapacity.request().admissionAttemptId();
+  }
+
+  private void controlledRemoveServingKeys(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {
+    var binding = source.candidate().bindingIdentity();
+    admin.del(
+        ascii(CanonicalGameplaySessionRedisKeys.session(assignment, binding.bindingRef())),
+        ascii(CanonicalGameplaySessionRedisKeys.characterIndex(assignment, binding.bindingRef())));
+    admin.srem(
+        ascii(
+            CanonicalGameplaySessionRedisKeys.accountTenantIndex(assignment, binding.bindingRef())),
+        ascii(binding.sessionId()));
+    admin.srem(
+        ascii(CanonicalGameplaySessionRedisKeys.tenantIndex(assignment, binding.bindingRef())),
+        ascii(binding.sessionId()));
+  }
+
+  private ControlledCapacityFinalOwner finalOwner() {
+    return new ControlledCapacityFinalOwner();
+  }
+
+  private final class ControlledCapacityFinalOwner {
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback finalizeOriginalNewOnce(
+        CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+        CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+        CanonicalGameplayAccountInitialOpenProof.CurrentOpen account,
+        CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuer,
+        long deadline) {
+      if (controlledCapacity == null)
+        throw new IllegalStateException(
+            "Controlled capacity must be prepared by the native bridge fixture");
+      try (var bound = template.bindCapacityExecution(controlledCapacity)) {
+        return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                ownerClient, catalog, CLOCK, tags)
+            .finalizeOriginalNewOnce(source, bound, account, issuer, controlledCapacity, deadline);
+      }
+    }
   }
 
   private CanonicalGameplayOriginalNewFinalAdmissionReadRepository reader() {
@@ -1178,7 +1507,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             "game_session_canonical_account_coverage_control",
             "game_session_canonical_tenant_gameplay_tag",
             "game_session_canonical_issuer_admission_initializer",
-            "game_session_canonical_issuer_admission_initializer_receipt")) {
+            "game_session_canonical_issuer_admission_initializer_receipt",
+            "game_session_original_new_capacity_execution")) {
       rows.put(
           table,
           fixture

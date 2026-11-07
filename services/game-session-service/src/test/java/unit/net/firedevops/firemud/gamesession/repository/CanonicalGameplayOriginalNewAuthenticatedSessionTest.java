@@ -341,8 +341,52 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
 
   private static CanonicalGameplayOriginalNewAuthenticatedSession.Template template(
       Fixture fixture) {
-    return CanonicalGameplayOriginalNewAuthenticatedSession.template(
-        fixture.candidate, fixture.credential, fixture.verifier, SESSION_DURATION_MILLIS);
+    var original =
+        net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture.playerRequest();
+    var request =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity(
+                    original.identity().tenantId(),
+                    original.identity().requestId(),
+                    fixture.candidate.bindingDecisionId()),
+                original.admissionAttemptId(),
+                original.capacityRearmFence(),
+                original.targetNamespace(),
+                original.context(),
+                original.operation(),
+                original.priorShape(),
+                original.requestedShape(),
+                original.evidence(),
+                original.capacityDelta(),
+                null)
+            .withDigest();
+    var reservation =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result(
+            request.identity(),
+            request.admissionAttemptId(),
+            1,
+            request.mutationDigest(),
+            request.admissionAttemptId(),
+            1,
+            request.evidence().expiresAt(),
+            net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.RESERVED,
+            request.evidence().snapshotIdentity(),
+            request.evidence().evaluationIdentity());
+    var execution =
+        new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+            request,
+            reservation,
+            fixture.candidate.bindingDecisionId(),
+            "sha256:"
+                + net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
+                    .sha256(fixture.candidate.canonicalBytes()),
+            "controlled-owner",
+            1);
+    try (var raw =
+        CanonicalGameplayOriginalNewAuthenticatedSession.template(
+            fixture.candidate, fixture.credential, fixture.verifier, SESSION_DURATION_MILLIS)) {
+      return raw.bindCapacityExecution(execution);
+    }
   }
 
   private static void assertDenied(byte[] bytes) {
