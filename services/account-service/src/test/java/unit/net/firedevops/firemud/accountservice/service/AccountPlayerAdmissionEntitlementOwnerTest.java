@@ -50,6 +50,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCurrentRecord;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
@@ -212,6 +213,61 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     order.verify(f.observer).observe(fence.binding());
     order.verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
     order.verify(f.hosting).readCurrent(fence, observed);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"prepare", "current"})
+  void paidReadFenceRefusalsBecomeSanitizedUnavailableWithoutDemoFallback(String stage)
+      throws Exception {
+    Fixture f = new Fixture(true);
+    when(f.sources.readCurrentSourceSelection(TENANT))
+        .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
+    when(f.observer.observe(fence.binding())).thenReturn(observed);
+    var refusal = new FenceRejectedException("private paid read detail");
+    if ("prepare".equals(stage)) {
+      when(f.hosting.prepareCurrentRead(TENANT)).thenThrow(refusal);
+    } else {
+      when(f.hosting.readCurrent(fence, observed)).thenThrow(refusal);
+    }
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isExactlyInstanceOf(
+            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+        .hasNoCause();
+    assertThat(f.transactions.events).endsWith("rollback");
+    verifyNoInteractions(f.demos);
+    if ("prepare".equals(stage)) {
+      verifyNoInteractions(f.observer, f.targets);
+    } else {
+      verify(f.hosting).readCurrent(fence, observed);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"prepare", "current"})
+  void unrelatedPaidReadFaultsRemainUnexpectedForInternalClassification(String stage)
+      throws Exception {
+    Fixture f = new Fixture(true);
+    when(f.sources.readCurrentSourceSelection(TENANT))
+        .thenReturn(new SourceSelection(SourceKind.PAID_HOSTING, f.tenantEvent));
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(f.hosting.prepareCurrentRead(TENANT)).thenReturn(fence);
+    when(f.observer.observe(fence.binding())).thenReturn(observed);
+    var unexpected = new IllegalArgumentException("private unexpected paid read detail");
+    if ("prepare".equals(stage)) {
+      when(f.hosting.prepareCurrentRead(TENANT)).thenThrow(unexpected);
+    } else {
+      when(f.hosting.readCurrent(fence, observed)).thenThrow(unexpected);
+    }
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token")).isSameAs(unexpected);
+    assertThat(f.transactions.events).endsWith("rollback");
+    verifyNoInteractions(f.demos);
   }
 
   @Test

@@ -24,6 +24,7 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
@@ -145,7 +146,15 @@ public final class AccountPlayerAdmissionEntitlementOwner {
 
   private RuntimePlayerAdmissionEntitlementEvidence capturePaidSources(
       Request request, VerifiedCaller caller, Prepared prepared) {
-    var fence = inSourceTransaction(() -> hosting.prepareCurrentRead(request.tenantId()));
+    var fence =
+        inSourceTransaction(
+            () -> {
+              try {
+                return hosting.prepareCurrentRead(request.tenantId());
+              } catch (FenceRejectedException rejected) {
+                throw unavailable();
+              }
+            });
     requireNoAmbientTransaction();
     var observation = observer.observe(fence.binding());
     PublishedRealmEvidence target = readProtectedTarget(request, prepared.player().scope());
@@ -154,7 +163,12 @@ public final class AccountPlayerAdmissionEntitlementOwner {
           CurrentPlayer player = readCurrentPlayer(request, caller);
           if (!prepared.player().scope().equals(player.scope())) throw unavailable();
           requireSameHead(request, prepared.selection());
-          var receipt = hosting.readCurrent(fence, observation);
+          final AccountHostingSubscriptionCurrentReceipt receipt;
+          try {
+            receipt = hosting.readCurrent(fence, observation);
+          } catch (FenceRejectedException rejected) {
+            throw unavailable();
+          }
           Instant evaluatedAt = now();
           requireFreshReceipt(request, receipt, evaluatedAt);
           var event = receipt.tenantAuthorityEvent();

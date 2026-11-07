@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.security.AccountPlayerAdmissionEnti
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
 import net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementGrpcCodec;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
@@ -102,6 +103,7 @@ public final class AccountPlayerAdmissionEntitlementGrpcService
       var evidence = owner.evaluate(sourceRequest, presented.initialLoginJwt());
       response = RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, evidence);
     } catch (AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException
+        | AccountGameplayAdmissionCallerVerifier.CallerUnavailableException
         | AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException
         | DemoTenantEntitlementException
         | org.jooq.exception.DataAccessException

@@ -7,21 +7,36 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 import com.google.protobuf.UnknownFieldSet;
+import io.grpc.Attributes;
+import io.grpc.Grpc;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.Status;
+import io.grpc.stub.StreamObserver;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.UUID;
+import javax.net.ssl.SSLSession;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.entitymanagement.bootstrap.AccountBootstrapRosterActorProjection;
 import net.firedevops.firemud.entitymanagement.bootstrap.AccountBootstrapRosterFixture;
+import net.firedevops.firemud.entitymanagement.bootstrap.AccountBootstrapRosterPeerInterceptor;
 import net.firedevops.firemud.entitymanagement.bootstrap.AccountBootstrapRosterReadContract;
+import net.firedevops.firemud.entitymanagement.bootstrap.AccountBootstrapRosterReadGrpcService;
 import net.firedevops.firemud.entitymanagement.bootstrap.AccountBootstrapRosterReadService;
 import net.firedevops.firemud.entitymanagement.client.GameSessionCanonicalGameplayRosterOwnerReadClient;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidencePort.OwnerEvidenceUnavailableException;
 import net.firedevops.firemud.entitymanagement.service.impl.GameSessionCanonicalGameplayRosterOwnerEvidenceAdapter;
 import net.firedevops.firemud.entitymanagement.v1.AccountBootstrapRosterActor;
+import net.firedevops.firemud.entitymanagement.v1.AccountBootstrapRosterReadRequest;
 import net.firedevops.firemud.entitymanagement.v1.AccountBootstrapRosterReadResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
@@ -190,6 +205,108 @@ class AccountBootstrapRosterReadServiceTest {
               () -> AccountBootstrapRosterReadContract.requireResponse(f.request(), invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void receiverKeepsMalformedRequestsInvalidWithoutCallingService() throws Exception {
+    var f = AccountBootstrapRosterFixture.create();
+    var service = mock(AccountBootstrapRosterReadService.class);
+    var receiver =
+        new AccountBootstrapRosterReadGrpcService(service, AccountBootstrapRosterFixture.NAMESPACE);
+    StreamObserver<AccountBootstrapRosterReadResponse> observer = mock(StreamObserver.class);
+
+    withControlledAccountPeer(
+        () ->
+            receiver.readAccountBootstrapRoster(
+                f.request().toBuilder().setCanonicalAccountUuid("malformed").build(), observer));
+
+    assertReceiverFailure(observer, Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void receiverClassifiesStoredProjectionAndResponseValidationFailuresAsInternal()
+      throws Exception {
+    for (boolean invalidProjection : List.of(false, true)) {
+      var f = AccountBootstrapRosterFixture.create();
+      var client = mock(GameSessionCanonicalGameplayRosterOwnerReadClient.class);
+      var repository = mock(CharacterRepository.class);
+      when(client.getCanonicalGameplayRosterOwnerRead(any())).thenReturn(f.evidence());
+      if (invalidProjection) {
+        when(repository.readAccountBootstrapRoster(any(), any()))
+            .thenAnswer(
+                ignored ->
+                    List.of(
+                        new AccountBootstrapRosterActorProjection(
+                            UUID.randomUUID(), "Persisted Actor", -1)));
+      } else {
+        var actor =
+            new AccountBootstrapRosterActorProjection(UUID.randomUUID(), "Persisted Actor", 0);
+        // The valid persisted rows form an invalid response because actor identity repeats.
+        when(repository.readAccountBootstrapRoster(any(), any())).thenReturn(List.of(actor, actor));
+      }
+      var receiver =
+          new AccountBootstrapRosterReadGrpcService(
+              service(client, repository), AccountBootstrapRosterFixture.NAMESPACE);
+      StreamObserver<AccountBootstrapRosterReadResponse> observer = mock(StreamObserver.class);
+
+      withControlledAccountPeer(() -> receiver.readAccountBootstrapRoster(f.request(), observer));
+
+      assertReceiverFailure(observer, Status.Code.INTERNAL);
+      verify(repository).readAccountBootstrapRoster(any(), eq(f.target()));
+    }
+  }
+
+  private static void assertReceiverFailure(
+      StreamObserver<AccountBootstrapRosterReadResponse> observer, Status.Code expected) {
+    var failure = ArgumentCaptor.forClass(Throwable.class);
+    verify(observer).onError(failure.capture());
+    assertThat(Status.fromThrowable(failure.getValue()).getCode()).isEqualTo(expected);
+    assertThat(failure.getValue())
+        .hasMessage(expected.name() + ": Account bootstrap roster read refused")
+        .hasNoCause();
+    verify(observer, never()).onNext(any());
+    verify(observer, never()).onCompleted();
+  }
+
+  /** Controlled peer context for status mapping only; this is not physical mTLS proof. */
+  @SuppressWarnings("unchecked")
+  private static void withControlledAccountPeer(Runnable action) throws Exception {
+    ServerCall<AccountBootstrapRosterReadRequest, AccountBootstrapRosterReadResponse> call =
+        mock(ServerCall.class);
+    MethodDescriptor<AccountBootstrapRosterReadRequest, AccountBootstrapRosterReadResponse>
+        descriptor = mock(MethodDescriptor.class);
+    when(descriptor.getFullMethodName())
+        .thenReturn(AccountBootstrapRosterPeerInterceptor.METHOD_NAME);
+    when(call.getMethodDescriptor()).thenReturn(descriptor);
+    X509Certificate leaf = mock(X509Certificate.class);
+    when(leaf.getSubjectAlternativeNames())
+        .thenReturn(
+            List.of(
+                List.of(
+                    6,
+                    "spiffe://firemud/ns/"
+                        + AccountBootstrapRosterFixture.NAMESPACE
+                        + "/sa/account-service")));
+    SSLSession session = mock(SSLSession.class);
+    when(session.getPeerCertificates()).thenReturn(new Certificate[] {leaf});
+    when(call.getAttributes())
+        .thenReturn(Attributes.newBuilder().set(Grpc.TRANSPORT_ATTR_SSL_SESSION, session).build());
+    ServerCallHandler<AccountBootstrapRosterReadRequest, AccountBootstrapRosterReadResponse> next =
+        mock(ServerCallHandler.class);
+    when(next.startCall(any(), any()))
+        .thenAnswer(
+            ignored -> {
+              action.run();
+              return new ServerCall.Listener<AccountBootstrapRosterReadRequest>() {};
+            });
+
+    new AccountBootstrapRosterPeerInterceptor(AccountBootstrapRosterFixture.NAMESPACE)
+        .interceptCall(call, new Metadata(), next);
+
+    verify(next).startCall(any(), any());
   }
 
   private static AccountBootstrapRosterReadService service(
