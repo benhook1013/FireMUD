@@ -548,6 +548,17 @@ if guard["env"] != {
 }:
     raise SystemExit("Terminal guard must consume native Actions outcomes, never command-written outputs")
 Path(sys.argv[2] + ".guard").write_text(guard["with"]["script"])
+marker = next(step for step in steps if step.get("name") == "Known PR 3390 PLAY failure with successful authenticated cleanup")
+for clause in (
+    "always()", "github.event_name == 'pull_request'", "github.repository == 'benhook1013/FireMUD'",
+    "github.event.pull_request.number == 3390", "needs.image-meta.outputs.runtime_smoke_required == 'true'",
+    "steps.runtime-smoke.outcome == 'failure'", "steps.runtime-cleanup.outcome == 'success'",
+    "steps.runtime-smoke.outputs.known_play_failure == 'direct-backend-play-entitlement-unavailable-after-login'",
+):
+    if clause not in marker["if"]:
+        raise SystemExit(f"Temporary PLAY marker lacks fail-closed clause: {clause}")
+Path(sys.argv[2] + ".marker").write_text(marker["if"])
+Path(sys.argv[2] + ".producer").write_bytes((root / ".github/workflows/runtime-images.yml").read_bytes())
 Path(sys.argv[2]).write_text(script)
 PY
 
@@ -3356,3 +3367,97 @@ PY_PUBLISH
 done
 
 echo "Required-gate status producer contract checks passed"
+
+# Exercise the temporary failed-producer verifier separately: passing producer
+# proof above is unchanged and remains the only runtime qualification path.
+node - "$smoke_clock_fixture" <<'NODE'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const script = fs.readFileSync(process.argv[2], "utf8");
+const bytes = fs.readFileSync(process.argv[2] + ".producer");
+const start = script.indexOf("async function verifyKnownPlayFailure(");
+const end = script.indexOf("// Commit objects", start);
+const fn = script.slice(start, end);
+const workflowPath = ".github/workflows/runtime-images.yml";
+const repositoryName = "benhook1013/FireMUD";
+const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
+const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const headSha = "a".repeat(40), baseSha = "b".repeat(40), mergeSha = "c".repeat(40);
+const identity = {headSha, baseSha, mergeSha};
+const run = {id: 99, run_attempt: 2, event: "pull_request"};
+const failures = ["Run credential-free full-stack smoke", "Require successful runtime smoke and authenticated cleanup"];
+const step = (name, conclusion) => ({name, conclusion, status: "completed"});
+const source = {...run, status: "completed", conclusion: "failure", path: workflowPath,
+  repository: {full_name: repositoryName}, workflow_id: 7, head_repository: {full_name: repositoryName}, head_sha: headSha,
+  display_title: `Build Runtime Images secure-pr-artifact pr-3390 base-${baseSha} head-${headSha} merge-${mergeSha} mode-required`};
+const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name: canonicalSmokeJobName,
+  status: "completed", conclusion: "failure", check_run_url: `https://api.github.com/repos/${repositoryName}/check-runs/123`,
+  steps: [...failures.map(name => step(name, "failure")), step("Stop smoke stack", "success"),
+    step("Known PR 3390 PLAY failure with successful authenticated cleanup", "success"),
+    step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
+async function verify(mutate = () => {}) {
+  const data = structuredClone({pr: "3390", run, identity, source, candidate, jobs: [candidate], latest: {...source},
+    definition: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}});
+  mutate(data);
+  const github = {request: async () => ({data: data.source}), paginate: async () => data.jobs,
+    rest: {actions: {getWorkflow: async () => ({data: {id: 7, path: workflowPath, name: "Build Runtime Images"}}),
+      getWorkflowRun: async () => ({data: data.latest})}, repos: {getContent: async () => ({data: data.definition})}}};
+  return new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
+    "canonicalRuntimeWorkflowSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+    `${fn}; return verifyKnownPlayFailure(data.run, data.candidate, data.identity);`)(
+      github, data.pr, repositoryName, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
+      value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
+      {payload: {pull_request: {head: {repo: {full_name: repositoryName}}}}}, "benhook1013", "FireMUD", require, data);
+}
+const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
+const markerValues = {
+  "github.event_name": "pull_request", "github.repository": repositoryName,
+  "github.event.pull_request.number": 3390, "needs.image-meta.outputs.runtime_smoke_required": "true",
+  "steps.runtime-smoke.outcome": "failure", "steps.runtime-smoke.outputs.known_play_failure": "direct-backend-play-entitlement-unavailable-after-login",
+  "steps.runtime-cleanup.outcome": "success",
+};
+function markerAccepted(overrides = {}) {
+  let expression = markerExpression.replace("always()", "true");
+  for (const [key, value] of Object.entries({...markerValues, ...overrides})) {
+    expression = expression.replaceAll(key, JSON.stringify(value));
+  }
+  return new Function(`return (${expression});`)();
+}
+(async () => {
+  assert.equal(markerAccepted(), true);
+  for (const overrides of [
+    {"steps.runtime-smoke.outputs.known_play_failure": ""},
+    {"steps.runtime-smoke.outputs.known_play_failure": "malformed"},
+    {"steps.runtime-smoke.outcome": "success"},
+    {"steps.runtime-cleanup.outcome": "failure"},
+    {"steps.runtime-cleanup.outcome": "skipped"},
+    {"needs.image-meta.outputs.runtime_smoke_required": "false"},
+    {"github.event.pull_request.number": 3391},
+    {"github.event_name": "repository_dispatch"},
+  ]) assert.equal(markerAccepted(overrides), false);
+  assert.equal(await verify(), true);
+  for (const mutate of [
+    d => {d.pr = "3391";},
+    d => {d.identity.baseSha = "d".repeat(40);},
+    d => {d.identity.headSha = "d".repeat(40);},
+    d => {d.identity.mergeSha = "d".repeat(40);},
+    d => {d.run.event = "repository_dispatch";},
+    d => {d.source.run_attempt = 1;},
+    d => {d.latest.run_attempt = 3; assert.equal(d.source.run_attempt, 2);},
+    d => {d.latest.conclusion = "success"; assert.equal(d.source.conclusion, "failure");},
+    d => {d.source.path = ".github/workflows/spoof.yml";},
+    d => {d.source.repository.full_name = "attacker/FireMUD";},
+    d => {d.definition.content = Buffer.from("spoof").toString("base64"); d.definition.size = 5;},
+    d => {d.jobs.push({...d.candidate, id: 124});},
+    d => {d.jobs.push({id: 2, status: "completed", conclusion: "failure"});},
+    d => {d.jobs[0].steps.push(step("Unrelated failure", "failure"));},
+    d => {d.jobs[0].steps.find(s => s.name === "Stop smoke stack").conclusion = "failure";},
+    d => {d.jobs[0].steps.find(s => s.name.startsWith("Known PR")).conclusion = "skipped";},
+    d => {d.jobs[0].steps = d.jobs[0].steps.filter(s => !s.name.startsWith("Known PR"));},
+    d => {d.jobs[0].steps.find(s => s.name.startsWith("Export fixed")).conclusion = "success";},
+    d => {d.jobs[0].steps = d.jobs[0].steps.filter(s => !s.name.startsWith("Export fixed"));},
+    d => {d.source.conclusion = "success";},
+  ]) assert.equal(await verify(mutate), false, mutate.toString());
+  console.log("Temporary PR 3390 PLAY exception positive and negative contracts passed.");
+})().catch(error => {console.error(error); process.exitCode = 1;});
+NODE

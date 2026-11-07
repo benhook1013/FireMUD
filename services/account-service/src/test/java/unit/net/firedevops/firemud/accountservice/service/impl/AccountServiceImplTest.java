@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -1155,6 +1156,82 @@ class AccountServiceImplTest {
     assertEquals(
         "CONNECT_SCOPE_INVALID",
         assertThrows(AuthenticationException.class, f::browserJoin).getCode());
+    verifyNoInteractions(f.terminal);
+  }
+
+  @Test
+  void canonicalJoinReturnsCommittedReceiptWhenScopeExpiresAfterCommit() {
+    var f = canonicalJoinFixture();
+    var committed = new AtomicBoolean();
+    var clock = org.mockito.Mockito.mock(Clock.class);
+    when(clock.instant())
+        .thenAnswer(
+            invocation ->
+                Instant.parse(f.scope.evaluatedAt()).plusSeconds(committed.get() ? 120 : 1));
+    f.compose(clock);
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (f.joined.get()) committed.set(true);
+              return null;
+            })
+        .when(transactionManager)
+        .commit(org.mockito.ArgumentMatchers.any());
+
+    var result = f.browserJoin();
+
+    assertTrue(committed.get());
+    assertTrue(result.success());
+    assertEquals("JOINED", result.outcomeCode());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finishCanonicalFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"AUTH_UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE", "ADMISSION_POINTER_UNAVAILABLE"})
+  void canonicalJoinPreservesTypedFailureWhenRecordingFails(String code) {
+    var f = canonicalJoinFixture();
+    var primary = new AuthenticationException(code, "controlled primary source failure");
+    var recording =
+        new org.springframework.dao.DataAccessResourceFailureException(
+            "controlled recording failure");
+    org.mockito.Mockito.doThrow(primary)
+        .when(f.targets)
+        .resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.doThrow(recording)
+        .when(accountJoinOperationRepository)
+        .recordCanonicalAttemptFailure(f.requestId, f.scope, f.binding, "UNAVAILABLE", code);
+
+    var failure = assertThrows(AuthenticationException.class, f::browserJoin);
+
+    assertSame(primary, failure);
+    assertEquals(code, failure.getCode());
+    assertArrayEquals(new Throwable[] {recording}, failure.getSuppressed());
+    verifyNoInteractions(f.terminal);
+  }
+
+  @Test
+  void canonicalJoinPreservesRetryableMappingAndCauseWhenRecordingFails() {
+    var f = canonicalJoinFixture();
+    var primary = new IllegalStateException("controlled primary source failure");
+    var recording = new AuthenticationException("ACCOUNT_LOCKED", "controlled recording refusal");
+    org.mockito.Mockito.doThrow(primary)
+        .when(f.sources)
+        .readCurrentSourceSelection(f.scope.tenantId());
+    org.mockito.Mockito.doThrow(recording)
+        .when(accountJoinOperationRepository)
+        .recordCanonicalAttemptFailure(
+            f.requestId, f.scope, f.binding, "UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE");
+
+    var failure = assertThrows(AuthenticationException.class, f::browserJoin);
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", failure.getCode());
+    assertSame(primary, failure.getCause());
+    assertArrayEquals(new Throwable[] {recording}, primary.getSuppressed());
     verifyNoInteractions(f.terminal);
   }
 

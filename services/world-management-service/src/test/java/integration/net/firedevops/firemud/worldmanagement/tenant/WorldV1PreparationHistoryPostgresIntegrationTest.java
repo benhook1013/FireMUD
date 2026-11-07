@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.util.JsonFormat;
+import com.zaxxer.hikari.HikariDataSource;
+import io.grpc.Context;
+import io.grpc.Deadline;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -17,6 +22,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -49,6 +58,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
+import org.jooq.ConnectionProvider;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -75,6 +85,165 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @ParameterizedTest
+  @CsvSource({"false", "true"})
+  @org.junit.jupiter.api.Timeout(120)
+  void frozenHistoryDeadlineAndCancellationReleaseActualPostgresQueryWithoutRuntimeWrites(
+      boolean explicitCancellation) throws Exception {
+    String schema = "world_frozen_deadline_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    migration(source, schema, "1025").migrate();
+    var sql = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var write = new TransactionTemplate(new DataSourceTransactionManager(source));
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    // Retain a genuine guarded graph at its supported predecessor, then exercise today's reader
+    // against today's schema. No forged frozen row or new publication authority is introduced.
+    var history = frozenHistory(sql, write);
+    migration(source, schema, null).migrate();
+    var request = history.frozen().request().freeze();
+    var queries = originalQueries(sql, true);
+    queries.putAll(
+        originalQueries(
+            sql,
+            List.of(
+                "world_private_fresh_operation",
+                "world_private_instance_association",
+                "world_private_fresh_terminal",
+                "world_private_fresh_execution_manifest")));
+    var before = rows(sql, queries);
+    assertThat(sql.fetchCount(DSL.table("world_instance"))).isZero();
+    assertThat(sql.fetchCount(DSL.table("world_private_fresh_operation"))).isZero();
+
+    try (var pool = new HikariDataSource();
+        var blocker = source.getConnection();
+        var callers = Executors.newSingleThreadExecutor(Thread.ofVirtual().factory());
+        var timer = Executors.newSingleThreadScheduledExecutor()) {
+      pool.setJdbcUrl(postgres.getJdbcUrl());
+      pool.setUsername(postgres.getUsername());
+      pool.setPassword(postgres.getPassword());
+      pool.setSchema(schema);
+      pool.setMinimumIdle(0);
+      pool.setMaximumPoolSize(1);
+      int backend;
+      try (var connection = pool.getConnection()) {
+        backend =
+            DSL.using(connection).fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class);
+      }
+      var pooled = DSL.using(pool, SQLDialect.POSTGRES);
+      var delegate = pooled.configuration().connectionProvider();
+      var fence =
+          new WorldDesignPublicationFenceRepository(
+              pooled, new WorldAuthoredSourceIntakeRepository(pooled));
+      var topology = new WorldDraftTopologyCommitRepository(pooled, fence, new ObjectMapper());
+      var digest =
+          new net.firedevops.firemud.worldmanagement.service.impl.WorldDraftDesignDigestServiceImpl(
+              new net.firedevops.firemud.worldmanagement.repository.RegionRepository(pooled),
+              new net.firedevops.firemud.worldmanagement.repository.ZoneRepository(pooled),
+              new net.firedevops.firemud.worldmanagement.repository.RoomRepository(pooled),
+              new net.firedevops.firemud.worldmanagement.repository.RoomExitRepository(pooled),
+              new net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository(
+                  pooled),
+              new net.firedevops.firemud.worldmanagement.repository
+                  .WorldEntitySpawnBindingRepository(pooled));
+      var reader =
+          new WorldCanonicalFrozenTopologyRepository(
+              pooled, new WorldAuthoredGraphSnapshotRepository(pooled), topology, digest);
+      assertThat(reader.readCommitted(request).orElseThrow().resultBytes())
+          .containsExactly(history.frozen().resultBytes());
+      // The unbounded historical API above has returned its connection. Observe only this read.
+      var readReleased = new CountDownLatch(1);
+      var boundedDsl =
+          DSL.using(
+              pooled
+                  .configuration()
+                  .derive(
+                      new ConnectionProvider() {
+                        @Override
+                        public java.sql.Connection acquire() {
+                          return delegate.acquire();
+                        }
+
+                        @Override
+                        public void release(java.sql.Connection connection) {
+                          delegate.release(connection);
+                          readReleased.countDown();
+                        }
+                      }));
+      var boundedReader =
+          new WorldCanonicalFrozenTopologyRepository(
+              boundedDsl, new WorldAuthoredGraphSnapshotRepository(pooled), topology, digest);
+      blocker.setAutoCommit(false);
+      try (var lock = blocker.createStatement()) {
+        lock.execute(
+            "LOCK TABLE " + schema + ".world_canonical_frozen_topology IN ACCESS EXCLUSIVE MODE");
+      }
+      try (var context =
+          explicitCancellation
+              ? Context.current().withCancellation()
+              : Context.current().withDeadlineAfter(3, TimeUnit.SECONDS, timer)) {
+        var pending =
+            callers.submit(
+                () ->
+                    context.call(
+                        () ->
+                            boundedReader.readCommitted(
+                                request, Deadline.after(30, TimeUnit.SECONDS))));
+        try {
+          var lockBudget = Deadline.after(2, TimeUnit.SECONDS);
+          while (!"Lock"
+              .equals(
+                  sql.fetchSingle(
+                          "SELECT wait_event_type FROM pg_stat_activity WHERE pid=?", backend)
+                      .get(0, String.class))) {
+            if (lockBudget.isExpired())
+              throw new AssertionError(
+                  "Frozen topology query never waited on the actual PostgreSQL lock");
+            Thread.sleep(10);
+          }
+          if (explicitCancellation) context.cancel(null);
+          assertThatThrownBy(() -> pending.get(5, TimeUnit.SECONDS))
+              .isInstanceOfSatisfying(
+                  ExecutionException.class,
+                  failure ->
+                      assertThat(failure.getCause())
+                          .isInstanceOfSatisfying(
+                              StatusRuntimeException.class,
+                              refusal -> {
+                                if (explicitCancellation) {
+                                  assertThat(refusal.getStatus().getCode())
+                                      .isEqualTo(Status.Code.CANCELLED);
+                                } else {
+                                  assertThat(refusal.getStatus().getCode())
+                                      .isIn(Status.Code.CANCELLED, Status.Code.DEADLINE_EXCEEDED);
+                                }
+                              }));
+          // The table lock remains held. Returning the only pool connection proves the driver
+          // stopped its blocked statement rather than merely abandoning the caller's future.
+          assertThat(readReleased.await(5, TimeUnit.SECONDS)).isTrue();
+          try (var reused = pool.getConnection()) {
+            var probe = DSL.using(reused);
+            assertThat(probe.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class))
+                .isEqualTo(backend);
+            assertThat(probe.fetchSingle("SELECT 1").get(0, Integer.class)).isEqualTo(1);
+          }
+        } finally {
+          context.cancel(null);
+          blocker.rollback();
+        }
+      }
+      assertThat(
+              reader
+                  .readCommitted(request, Deadline.after(5, TimeUnit.SECONDS))
+                  .orElseThrow()
+                  .resultBytes())
+          .containsExactly(history.frozen().resultBytes());
+      assertThat(rows(sql, queries)).isEqualTo(before);
+    }
+  }
 
   @ParameterizedTest
   @CsvSource({"1,false", "2,false", "2,true"})

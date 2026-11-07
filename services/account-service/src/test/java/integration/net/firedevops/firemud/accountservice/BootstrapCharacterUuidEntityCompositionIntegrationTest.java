@@ -222,6 +222,7 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
   }
 
   @org.junit.jupiter.api.Test
+  @org.springframework.test.annotation.DirtiesContext
   void bootstrapCharactersUseCanonicalOwnersAndPersistedLevelsAcrossHttpAndTwoMtlsReads()
       throws Exception {
     var entity = requireEntityRuntime();

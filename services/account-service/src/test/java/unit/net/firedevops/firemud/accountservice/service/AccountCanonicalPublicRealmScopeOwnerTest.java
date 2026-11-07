@@ -125,7 +125,15 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
                 "AUTH_UNAVAILABLE",
                 () ->
                     f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
-    verifyNoInteractions(f.scopes, f.sessions, f.targets, f.entitlements);
+    verifyNoInteractions(
+        f.accounts,
+        f.memberships,
+        f.tenants,
+        f.heads,
+        f.scopes,
+        f.sessions,
+        f.targets,
+        f.entitlements);
   }
 
   @Test

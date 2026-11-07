@@ -41,7 +41,9 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksS
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 class AccountJwtJwksTrustedSourceTest {
@@ -254,6 +256,25 @@ class AccountJwtJwksTrustedSourceTest {
         .isInstanceOf(SourceUnavailableException.class)
         .hasNoCause();
     verify(fixture.configMapClient, never()).observe();
+  }
+
+  @Test
+  void treatsDatabaseAndTransactionFailuresAsRetryableSourceUnavailability() {
+    List<RuntimeException> failures =
+        List.of(
+            new org.jooq.exception.DataAccessException("database unavailable"),
+            new DataAccessResourceFailureException("database unavailable"),
+            new TransactionException("transaction unavailable") {});
+
+    for (RuntimeException failure : failures) {
+      Fixture fixture = new Fixture();
+      when(fixture.desiredStateRepository.readEnrollmentState(fixture.binding.accountBinding()))
+          .thenThrow(failure);
+
+      assertThatThrownBy(fixture.source::sourceIdentity)
+          .isInstanceOf(SourceUnavailableException.class)
+          .hasNoCause();
+    }
   }
 
   @Test

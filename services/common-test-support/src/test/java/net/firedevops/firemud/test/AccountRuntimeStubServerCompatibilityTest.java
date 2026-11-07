@@ -18,6 +18,8 @@ import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class AccountRuntimeStubServerCompatibilityTest {
   private static final String REALM_ID = "8a1df0f1-1b57-465e-9c4b-bb34f8153d31";
@@ -309,12 +311,69 @@ class AccountRuntimeStubServerCompatibilityTest {
     }
   }
 
-  @Test
-  void alreadyActiveNonAdmittingJoinReturnsMembershipReceiptWithoutGrantingAdmission()
+  @ParameterizedTest
+  @ValueSource(strings = {"MISSING", "INACTIVE"})
+  void joinedTransitionAdvancesVersionAndRepeatedActiveResultPreservesIt(String lifecycle)
       throws Exception {
+    var clock = Clock.fixed(Instant.parse("2026-10-30T12:34:56Z"), ZoneOffset.UTC);
+    try (var server = new AccountRuntimeStubServer(0, clock)) {
+      server.mapAccountId("demo@example.com", 7L);
+      long previousVersion = "MISSING".equals(lifecycle) ? 1L : 3L;
+      if ("MISSING".equals(lifecycle)) server.setMembershipExists(false);
+      else server.setMembershipInactive();
+      server.setMembershipVersion(previousVersion);
+      server.setAllowPublicJoin(false);
+      String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+      var scopeRequest = validConnectScopeRequest(accountUuid);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        var scope = stub.issueDirectTextConnectScope(scopeRequest);
+        var request =
+            JoinPublicProductionMembershipRequest.newBuilder()
+                .setPlayerContext(scopeRequest.getPlayerContext())
+                .setConnectScopeId(scope.getConnectScopeId())
+                .setRequestId("join-request-1")
+                .build();
+        var before = stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11"));
+        var denied = stub.joinPublicProductionMembership(request);
+        assertThat(denied.getSuccess()).isFalse();
+        assertThat(denied.getOutcomeCode()).isEqualTo("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+        assertThat(stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11")))
+            .isEqualTo(before);
+
+        server.setAllowPublicJoin(true);
+        var joined = stub.joinPublicProductionMembership(request);
+        assertThat(joined.getSuccess()).isTrue();
+        assertThat(joined.getOutcomeCode()).isEqualTo("JOINED");
+        assertThat(joined.getMembershipVersion()).isEqualTo(previousVersion + 1L);
+        assertThat(joined.getGameplayAdmissionAllowed()).isTrue();
+        var after = stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11"));
+        assertThat(after.getMembershipVersion()).isEqualTo(joined.getMembershipVersion());
+        assertThat(after.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+
+        server.setAllowPublicJoin(false);
+        var repeated = stub.joinPublicProductionMembership(request);
+        assertThat(repeated.getSuccess()).isTrue();
+        assertThat(repeated.getOutcomeCode()).isEqualTo("ALREADY_ACTIVE");
+        assertThat(repeated.getMembershipVersion()).isEqualTo(joined.getMembershipVersion());
+        assertThat(stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11")))
+            .isEqualTo(after);
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void alreadyActiveNonAdmittingJoinReturnsMembershipReceiptWithoutGrantingAdmission(
+      boolean allowPublicJoin) throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       server.mapAccountId("demo@example.com", 7L);
       server.denyGameplayAdmission();
+      server.setAllowPublicJoin(allowPublicJoin);
       String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
       var scopeRequest = validConnectScopeRequest(accountUuid);
       ManagedChannel channel =

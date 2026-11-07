@@ -62,8 +62,10 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFence
 import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -87,6 +89,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Native PostgreSQL PREPARING-only World owner proof with controlled upstream wire inputs.
@@ -1069,11 +1072,45 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .isEqualTo(originalRows.get(entry.getKey()));
 
-      // Create and materialize a controlled schema-3 fixture through the existing World owners at
-      // the V1041 checkpoint, then preserve that real fixture while advancing to V1042.8.
+      // The current producer includes the nullable V1049 private-operation field. Replay the
+      // exact V1041 request shape here, without changing the installed exact-row SQL guard.
+      // All other owner operations still use real PostgreSQL, and current-schema tests retain
+      // the unadapted producer. This is controlled historical-request proof, not current wiring.
+      AtomicInteger historicalRequests = new AtomicInteger();
+      DSLContext historicalFixtureConnection =
+          DSL.using(
+              connection
+                  .configuration()
+                  .derive(
+                      new DefaultExecuteListener() {
+                        @Override
+                        public void bindEnd(ExecuteContext context) {
+                          if (!"SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)"
+                              .equals(context.sql())) return;
+                          ObjectNode row =
+                              (ObjectNode)
+                                  objectMapper.readTree(
+                                      (String)
+                                          Objects.requireNonNull(context.query())
+                                              .getBindValues()
+                                              .getFirst());
+                          assertThat(row.has("private_fresh_operation_id")).isTrue();
+                          assertThat(row.get("private_fresh_operation_id").isNull()).isTrue();
+                          row.remove("private_fresh_operation_id");
+                          try {
+                            Objects.requireNonNull(context.statement())
+                                .setString(1, objectMapper.writeValueAsString(row));
+                          } catch (java.sql.SQLException exception) {
+                            throw new IllegalStateException(
+                                "Cannot bind controlled V1041 fixture request", exception);
+                          }
+                          historicalRequests.incrementAndGet();
+                        }
+                      }));
+      // Materialize through the real World owners at V1041, then retain rows and xmin on upgrade.
       var fixtureAssociations =
           new WorldCanonicalInstanceAssociationRepository(
-              connection,
+              historicalFixtureConnection,
               new WorldCompleteLaunchBindingRepository(connection),
               sourceOwner,
               versionOwner);
@@ -1103,6 +1140,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                     evidence, fixtureRequest, intake, version);
               });
       assertThat(allocatedFixture).isNotNull();
+      assertThat(historicalRequests).hasValue(1);
       var fixtureAssociation =
           fixtureAssociations.readRunOwnedFixtureAssociation(evidence, fixtureRequest);
       var fixturePlan = RunOwnedWorldFixedPresetResources.plan(fixtureAssociation, intake, version);
@@ -1460,9 +1498,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       }
       assertThat(
               connection
-                  .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_epoch")
-                  .get(0, Long.class))
-          .isEqualTo(3L);
+                  .fetch(
+                      "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
+                  .getValues(0, Long.class))
+          .as("V1046 through V1050 install five consecutive catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L);
       assertThat(
               connection
                   .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
@@ -1478,8 +1518,53 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .isNotNull()
             .isEmpty();
       }
+      for (String addedPrivateTable :
+          List.of(
+              "world_private_fresh_operation",
+              "world_private_instance_association",
+              "world_private_fresh_terminal",
+              "world_private_fresh_execution_manifest")) {
+        assertThat(retainedRowsAtDefaultFrontierOriginalColumns.remove(addedPrivateTable))
+            .as("new additive private FRESH table %s is installed and empty", addedPrivateTable)
+            .isNotNull()
+            .isEmpty();
+      }
+      for (String extendedTable :
+          List.of("world_instance", "world_canonical_instance_topology_identity")) {
+        assertThat(
+                connection
+                    .fetchSingle(
+                        "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+                            + "WHERE table_schema = ? AND table_name = ? "
+                            + "AND column_name = 'private_fresh_operation_id'",
+                        schema,
+                        extendedTable)
+                    .intoArray())
+            .as(
+                "the V1049 private-operation column on %s is nullable without a default",
+                extendedTable)
+            .containsExactly("uuid", "YES", null);
+        assertThat(
+                connection
+                    .fetch(
+                        "SELECT private_fresh_operation_id FROM " + DSL.name(schema, extendedTable))
+                    .getValues(0, UUID.class))
+            .as("retained %s rows have no backfilled private operation", extendedTable)
+            .isNotEmpty()
+            .containsOnlyNulls();
+        // Only the explicitly asserted additive NULL column is omitted from the old-row image.
+        retainedRowsAtDefaultFrontierOriginalColumns.put(
+            extendedTable,
+            connection
+                .fetch(
+                    "SELECT (to_jsonb(retained) - 'private_fresh_operation_id')::text "
+                        + "|| ':xmin=' || retained.xmin::text FROM "
+                        + DSL.name(schema, extendedTable)
+                        + " retained ORDER BY 1")
+                .getValues(0, String.class));
+      }
       assertThat(retainedRowsAtDefaultFrontierOriginalColumns)
-          .as("all retained original row values and xmin from V1042.8 through the V1042.11 repairs")
+          .as("all retained original row values and xmin from V1042.8 through the default frontier")
           .isEqualTo(retainedRowsAt10428);
       var retainedRowsAtDefaultFrontier = new LinkedHashMap<>(allRows(connection));
       retainedRowsAtDefaultFrontier.remove(HISTORY);
@@ -1620,7 +1705,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(allRows(connection).get("world_instance"))
           .as(
               "fixture row remains byte-for-byte and xmin stable after denied lifecycle metadata writes")
-          .isEqualTo(retainedRowsAt10428.get("world_instance"));
+          .isEqualTo(retainedRowsAtDefaultFrontier.get("world_instance"));
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(
@@ -1975,6 +2060,23 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     allocationAssociation.put("private_game_instance_key", rejectedPrivateKey);
     allocationAssociation.put("canonical_game_instance_id", rejectedCanonicalId);
     allocationAssociation.put("control_plane_request_id", rejectedOperationId);
+
+    assertThat(allocationWorld).containsEntry("private_fresh_operation_id", null);
+    Map<String, Object> incompleteAllocationWorld = new LinkedHashMap<>(allocationWorld);
+    incompleteAllocationWorld.remove("private_fresh_operation_id");
+    assertSqlState(
+        () ->
+            ownerTransaction()
+                .executeWithoutResult(
+                    status ->
+                        dsl.fetchSingle(
+                            "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
+                            json(incompleteAllocationWorld),
+                            json(allocationAssociation))),
+        "P0001",
+        "Fixture allocation requires complete exact owner row values");
+    assertThat(resourceCount()).isEqualTo(before);
+    assertNoPendingManifests(rejectedWorldId);
 
     Map<String, Object> changedAllocationWorld = new LinkedHashMap<>(allocationWorld);
     changedAllocationWorld.put("game_session_tenant_id", gs.gameSessionTenantId() + 1);
@@ -3180,6 +3282,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1046");
     versions.add("1047");
     versions.add("1048");
+    versions.add("1049");
+    versions.add("1050");
     return List.copyOf(versions);
   }
 

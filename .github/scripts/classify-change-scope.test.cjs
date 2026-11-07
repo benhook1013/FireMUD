@@ -56,6 +56,29 @@ test("known service and shared-module documentation selects no heavy module proo
   }
 });
 
+test("Markdown packaged under known service source retains module proof", () => {
+  for (const [path, module, service] of [
+    ["services/account-service/src/main/resources/content/README.md", "account-service", "account-service"],
+    ["services/account-service/src/test/resources/fixtures/README.md", "account-service", "account-service"],
+  ]) {
+    const result = classifyChangeScope([path]);
+
+    assert.equal(result.runAll, false, path);
+    assert.equal(result.lightweightOnly, false, path);
+    assert.equal(result.docsChanged, true, path);
+    assert.deepEqual(result.affectedModules, [module], path);
+    assert.deepEqual(result.affectedServices, service ? [service] : [], path);
+    assert.deepEqual(result.bootableModules, service ? [service] : [], path);
+  }
+
+  const sharedPath = "services/common-platform-core/src/main/resources/schema/README.md";
+  const sharedResult = classifyChangeScope([sharedPath]);
+  assert.equal(sharedResult.runAll, true, sharedPath);
+  assert.equal(sharedResult.lightweightOnly, false, sharedPath);
+  assert.equal(sharedResult.docsChanged, true, sharedPath);
+  assert.deepEqual(sharedResult.affectedModules, ALL_MODULES, sharedPath);
+});
+
 test("service documentation does not add modules to a cumulative runtime diff", async () => {
   const result = await classifyGithubFiles([
     "services/common-platform-core/README.md",
