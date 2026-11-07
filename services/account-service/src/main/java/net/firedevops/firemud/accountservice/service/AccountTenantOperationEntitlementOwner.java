@@ -61,6 +61,9 @@ public final class AccountTenantOperationEntitlementOwner {
             .uri();
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+    transaction.setReadOnly(false);
+    transaction.setTimeout(5);
   }
 
   public RuntimeTenantOperationEntitlementEvidence evaluatePaid(Request request) {

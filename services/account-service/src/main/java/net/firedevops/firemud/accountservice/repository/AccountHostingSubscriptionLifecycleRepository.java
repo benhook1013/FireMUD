@@ -82,6 +82,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     requireTransaction();
     Objects.requireNonNull(request);
     var original = intents.findCreation(request.creationRequestId()).orElseThrow();
+    if (!request.tenantId().equals(original.tenantId())
+        || !request.subscriptionId().equals(original.subscriptionId())
+        || !request.actorAccountId().equals(original.owner().accountUuid())) {
+      throw new FenceRejectedException("Exact same-owner terminal lifecycle target rejected");
+    }
     Record journal =
         dsl.fetchOne(
             "SELECT * FROM subscription_lifecycle_terminal_resolutions WHERE resolution_request_id = ? FOR UPDATE",
@@ -98,10 +103,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       currentVersion = journal.get("result_row_version", Long.class);
     }
     Record failed = operationForUpdate(request.failedRequestId());
-    if (!request.tenantId().equals(original.tenantId())
-        || !request.subscriptionId().equals(original.subscriptionId())
-        || !request.actorAccountId().equals(original.owner().accountUuid())
-        || !request.creationRequestId().equals(failed.get("creation_request_id", UUID.class))
+    if (!request.creationRequestId().equals(failed.get("creation_request_id", UUID.class))
         || !request.subscriptionId().equals(failed.get("subscription_id", UUID.class))
         || !"BILLING_RECONCILIATION_TERMINAL_FAILURE".equals(failed.get("state", String.class))
         || request.expectedFailedOperationVersion() != failed.get("row_version", Long.class)) {
