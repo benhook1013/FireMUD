@@ -8,6 +8,7 @@ import com.stripe.param.SubscriptionCreateParams;
 import com.stripe.param.SubscriptionSearchParams;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
@@ -22,6 +23,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public final class StripeHostingSubscriptionProvisioner {
   private final com.stripe.StripeClient stripe;
   private final Clock clock;
+  private final RequestOptions requestOptions;
   private final StripeHostingSubscriptionObserver observer;
   private final StripeBillingPrerequisiteObserver prerequisites;
 
@@ -30,10 +32,21 @@ public final class StripeHostingSubscriptionProvisioner {
       justification =
           "Injected SDK/repository collaborators remain private; copying would break owner composition.")
   public StripeHostingSubscriptionProvisioner(
-      com.stripe.StripeClient stripe, Clock clock, boolean expectedLivemode) {
+      com.stripe.StripeClient stripe,
+      Clock clock,
+      boolean expectedLivemode,
+      Duration connectTimeout,
+      Duration readTimeout) {
     this.stripe = Objects.requireNonNull(stripe);
     this.clock = Objects.requireNonNull(clock);
-    observer = new StripeHostingSubscriptionObserver(stripe, clock);
+    observer = new StripeHostingSubscriptionObserver(stripe, clock, connectTimeout, readTimeout);
+    // The observer validates positive whole-millisecond SDK limits before this conversion.
+    requestOptions =
+        RequestOptions.builder()
+            .setConnectTimeout(Math.toIntExact(connectTimeout.toMillis()))
+            .setReadTimeout(Math.toIntExact(readTimeout.toMillis()))
+            .setMaxNetworkRetries(0)
+            .build();
     prerequisites = new StripeBillingPrerequisiteObserver(stripe, clock, expectedLivemode);
   }
 
@@ -56,7 +69,8 @@ public final class StripeHostingSubscriptionProvisioner {
                 creation.customerProvisioningRequestId(),
                 dispatch.customerProviderIdempotencyId(),
                 creation.providerCustomerId(),
-                dispatch.providerPaymentMethodId()));
+                dispatch.providerPaymentMethodId()),
+            requestOptions);
     if (!(prerequisite instanceof StripeBillingPrerequisiteObserver.ObservedBillingPrerequisites)) {
       return new Pending("PROVIDER_PREREQUISITES_UNRESOLVED", null);
     }
@@ -85,7 +99,9 @@ public final class StripeHostingSubscriptionProvisioner {
       StripeSearchResult<Subscription> matches =
           stripe
               .subscriptions()
-              .search(SubscriptionSearchParams.builder().setQuery(query).setLimit(2L).build());
+              .search(
+                  SubscriptionSearchParams.builder().setQuery(query).setLimit(2L).build(),
+                  requestOptions);
       if (matches == null
           || matches.getData() == null
           || !Boolean.FALSE.equals(matches.getHasMore())
@@ -118,9 +134,9 @@ public final class StripeHostingSubscriptionProvisioner {
                                 .build())
                         .putAllMetadata(metadata)
                         .build(),
-                    RequestOptions.builder()
+                    requestOptions
+                        .toBuilderFullCopy()
                         .setIdempotencyKey(creation.subscriptionProvisioningRequestId().toString())
-                        .setMaxNetworkRetries(0)
                         .build());
       } else {
         candidate = matches.getData().getFirst();

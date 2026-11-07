@@ -15,6 +15,7 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.Status;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.TransitionResult;
@@ -209,7 +210,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   }
 
   @Test
-  void realAccountAuthorityAdvanceDuringSdkReadRejectsBeforeMutationAndKeepsOtp() throws Exception {
+  void genericAccountAuthorityAdvanceDuringSdkReadMakesSourceUnavailableAndKeepsOtp()
+      throws Exception {
     try (var accountOwners = accountOwners()) {
       var failed = failedHosting(accountOwners);
       var issued = failed.issued();
@@ -236,10 +238,13 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
                                     .findById(hosting.accountId())
                                     .orElseThrow();
                             account.setRole("admin");
+                            // Generic authority events lack the closed operation receipt required
+                            // by current-source readback, so this advance must fail closed there.
                             return issued.sources().accounts.save(account);
                           }));
       assertThatThrownBy(() -> resolve(failed, issued.account().getEmail(), OTP))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(SourceEvidenceUnavailableException.class)
+          .hasMessage("Account authority source evidence is unavailable or inconsistent");
       var authorityAfter =
           issued
               .sources()

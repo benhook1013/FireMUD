@@ -435,7 +435,6 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
             Status.UNAVAILABLE.asRuntimeException(),
             Status.DEADLINE_EXCEEDED.asRuntimeException(),
             Status.CANCELLED.asRuntimeException(),
-            Status.RESOURCE_EXHAUSTED.asRuntimeException(),
             Status.ABORTED.asRuntimeException())) {
       Fixture f = new Fixture(300000L);
       doThrow(failure).when(f.targets).listVisiblePublicProductionAdmissionTargets(any());
@@ -455,6 +454,9 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
             new IllegalArgumentException("Unsupported source value"),
             new IllegalStateException(
                 "Malformed source content", Status.UNAVAILABLE.asRuntimeException()),
+            Status.RESOURCE_EXHAUSTED
+                .withDescription("gRPC message exceeds maximum size")
+                .asRuntimeException(),
             Status.INVALID_ARGUMENT.asRuntimeException(),
             Status.FAILED_PRECONDITION.asRuntimeException(),
             Status.UNIMPLEMENTED.asRuntimeException(),

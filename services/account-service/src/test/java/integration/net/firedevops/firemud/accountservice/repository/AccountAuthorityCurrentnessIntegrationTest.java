@@ -102,7 +102,7 @@ class AccountAuthorityCurrentnessIntegrationTest {
         .isEqualTo(initial.tenantAuthorityEvent().payload());
 
     fixture.clock().advance(Duration.ofSeconds(1));
-    fixture.providerStatus("past_due");
+    fixture.providerStatus("canceled");
     UUID changedRequest = UUID.randomUUID();
     var changedCommit =
         fixture
@@ -115,7 +115,7 @@ class AccountAuthorityCurrentnessIntegrationTest {
                 null);
     assertThat(changedCommit.outcome()).isEqualTo(Outcome.COMMITTED);
     var changed = fixture.service().readCurrent(fixture.tenantId());
-    assertThat(changed.rawProviderStatus()).isEqualTo("past_due");
+    assertThat(changed.rawProviderStatus()).isEqualTo("canceled");
     assertThat(changed.entitlementVersion()).isGreaterThan(initial.entitlementVersion());
     assertThat(changed.tenantBillingSequence()).isGreaterThan(initial.tenantBillingSequence());
     assertThat(changed.tenantAuthorityEvent().tenantAuthorityGeneration())

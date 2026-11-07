@@ -4,9 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReconciliationLimits;
@@ -37,6 +41,21 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
   void clearTransactionState() {
     TransactionSynchronizationManager.setActualTransactionActive(false);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+  }
+
+  @Test
+  void recoveryOriginIsOnlyRetainedEpisodeHistoryAndMissingHistoryStaysUnresolved() {
+    assertThat(AccountHostingSubscriptionLifecycleRepository.retainedPastDueOrigin(null)).isNull();
+    var receipt = mock(org.jooq.Record.class);
+    assertThat(AccountHostingSubscriptionLifecycleRepository.retainedPastDueOrigin(receipt))
+        .isNull();
+    Instant original = Instant.parse("2026-05-05T00:00:00Z");
+    when(receipt.get("past_due_since", OffsetDateTime.class))
+        .thenReturn(original.atOffset(ZoneOffset.UTC));
+    assertThat(AccountHostingSubscriptionLifecycleRepository.retainedPastDueOrigin(receipt))
+        .isEqualTo(original);
+    assertThat(AccountHostingSubscriptionLifecycleRepository.retainedPastDueOrigin(receipt))
+        .isEqualTo(original);
   }
 
   @Test

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -390,6 +391,96 @@ class CanonicalGameplayAdmissionPublishedReadGrpcServiceTest {
               : Status.Code.FAILED_PRECONDITION);
       verify(f.published, times(1)).readCurrent(selector);
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "absent",
+        "namespace",
+        "tenant",
+        "realm",
+        "world",
+        "instance-uuid",
+        "state-namespace",
+        "state-scope",
+        "non-production",
+        "stopped",
+        "version",
+        "instance-id",
+        "runtime-version",
+        "numeric-tenant",
+        "changed-after"
+      })
+  void strictReadRefusesAbsentMismatchedOrChangedLaunchAuthority(String change) {
+    Fixture f = new Fixture();
+    var request = GetPublishedRealmAdmissionOwnerReadRequest.getDefaultInstance();
+    var parsed = mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmRequest.class);
+    var selector = strictSelector(f.selector);
+    when(parsed.selector()).thenReturn(selector);
+    f.configureStrictRoute(selector);
+    var launch =
+        f.launches
+            .readForInitialAdmission(
+                "test", TENANT, selector.realmUuid(), selector.canonicalGameInstanceUuid())
+            .orElseThrow();
+    var association = launch.association();
+    switch (change) {
+      case "absent" ->
+          when(f.launches.readForInitialAdmission(
+                  "test", TENANT, selector.realmUuid(), selector.canonicalGameInstanceUuid()))
+              .thenReturn(Optional.empty());
+      case "namespace" -> when(association.targetNamespace()).thenReturn("other");
+      case "tenant" -> when(association.canonicalTenantId()).thenReturn(UUID.randomUUID());
+      case "realm" -> when(launch.realmId()).thenReturn(UUID.randomUUID());
+      case "world" -> when(association.worldSlug()).thenReturn("other");
+      case "instance-uuid" -> when(association.gameInstanceUuid()).thenReturn(UUID.randomUUID());
+      case "state-namespace" ->
+          when(association.playableStateNamespaceId()).thenReturn(UUID.randomUUID());
+      case "state-scope" ->
+          when(association.playableStateScope()).thenReturn(RealmEntryPolicy.StateScope.ISOLATED);
+      case "non-production" -> when(association.publicProduction()).thenReturn(false);
+      case "stopped" ->
+          when(association.currentGameInstanceStatus())
+              .thenReturn(CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STOPPED);
+      case "version" -> when(launch.canonicalVersionId()).thenReturn(UUID.randomUUID());
+      case "instance-id" -> when(launch.gameInstanceId()).thenReturn(72L);
+      case "runtime-version" -> when(launch.runtimeVersionId()).thenReturn(10L);
+      case "numeric-tenant" -> when(association.gameSessionTenantId()).thenReturn(12L);
+      case "changed-after" -> {
+        var changed = mock(CanonicalInitialAdmissionLaunchTarget.class);
+        when(association.currentRowVersion()).thenReturn(1L);
+        var changedAssociation =
+            mock(CanonicalGameInstanceLaunchAssociation.class, delegatesTo(association));
+        when(changedAssociation.currentRowVersion()).thenReturn(2L);
+        when(changed.association()).thenReturn(changedAssociation);
+        doReturn(launch.realmId()).when(changed).realmId();
+        doReturn(launch.canonicalVersionId()).when(changed).canonicalVersionId();
+        doReturn(launch.gameInstanceId()).when(changed).gameInstanceId();
+        doReturn(launch.runtimeVersionId()).when(changed).runtimeVersionId();
+        when(f.launches.readForInitialAdmission(
+                "test", TENANT, selector.realmUuid(), selector.canonicalGameInstanceUuid()))
+            .thenReturn(Optional.of(launch), Optional.of(changed));
+      }
+      default -> throw new AssertionError(change);
+    }
+    try (var codec = mockStatic(CanonicalGameplayAdmissionDecisionReadGrpcCodec.class)) {
+      codec
+          .when(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+                      request))
+          .thenReturn(parsed);
+      f.service.getPublishedRealmAdmissionOwnerRead(request, f.publishedObserver);
+    }
+    assertFailure(f.publishedObserver, Status.Code.FAILED_PRECONDITION);
+    if ("changed-after".equals(change)) {
+      verify(f.world).read(any());
+      verify(f.published, times(2)).readCurrent(selector);
+    } else {
+      verifyNoInteractions(f.world, f.published);
+    }
+    verifyNoInteractions(f.inventory);
   }
 
   @Test

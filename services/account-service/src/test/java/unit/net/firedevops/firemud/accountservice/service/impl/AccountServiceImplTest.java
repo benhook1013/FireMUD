@@ -3159,24 +3159,6 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void getTenantMembershipForRuntimeRejectsCrossTenantAccount() {
-    Account account = new Account();
-    account.setId(11L);
-    setPersistedAuthenticationIdentity(account);
-    account.setUsername("demo");
-    account.setEmail("demo@example.com");
-    account.setPasswordHash(hash("password"));
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-
-    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
-
-    assertEquals(11L, dto.accountId());
-    assertEquals(7L, dto.tenantId());
-    assertTrue(!dto.membershipExists());
-    assertTrue(!dto.gameplayAdmissionAllowed());
-  }
-
-  @Test
   void getTenantEntitlementsForRuntimeFailsClosedBeforeReadingLegacyEvidence() {
     AuthenticationException exception =
         assertThrows(

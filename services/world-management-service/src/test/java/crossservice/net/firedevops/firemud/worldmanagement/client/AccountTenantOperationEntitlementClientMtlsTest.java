@@ -77,8 +77,34 @@ class AccountTenantOperationEntitlementClientMtlsTest {
         assertThat(read.request()).isEqualTo(paid);
         assertThat(read.evidence()).isEqualTo(evidence(paid));
         assertThat(client.read(demo).evidence()).isEqualTo(evidence(demo));
-        doThrow(new IllegalStateException("source unavailable")).when(owner).evaluatePaid(any());
+        doThrow(
+                new AccountTenantOperationEntitlementOwner.SourceUnavailableException(
+                    "private source detail"))
+            .when(owner)
+            .evaluatePaid(any());
         assertStatus(() -> client.read(paid), Status.Code.UNAVAILABLE);
+        for (RuntimeException failure :
+            new RuntimeException[] {
+              new IllegalArgumentException("private namespace mismatch"),
+              new NullPointerException("private codec failure")
+            }) {
+          doThrow(failure).when(owner).evaluatePaid(any());
+          assertThatThrownBy(() -> client.read(paid))
+              .satisfies(
+                  thrown -> {
+                    assertThat(Status.fromThrowable(thrown).getCode())
+                        .isEqualTo(Status.Code.INTERNAL);
+                    var details = io.grpc.protobuf.StatusProto.fromThrowable(thrown);
+                    assertThat(details).isNotNull();
+                    assertThat(details.getDetailsCount()).isEqualTo(1);
+                    var detail =
+                        details
+                            .getDetails(0)
+                            .unpack(net.firedevops.firemud.shared.v1.ErrorDetail.class);
+                    assertThat(detail.getCode()).isEqualTo("INTERNAL");
+                    assertThat(detail.getMessage()).doesNotContain("private");
+                  });
+        }
         verify(owner, org.mockito.Mockito.times(1)).evaluateDemo(any());
         TransactionSynchronizationManager.setActualTransactionActive(true);
         try {

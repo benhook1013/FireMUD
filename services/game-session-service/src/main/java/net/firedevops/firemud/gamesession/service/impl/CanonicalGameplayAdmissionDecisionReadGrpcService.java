@@ -6,8 +6,11 @@ import io.grpc.stub.StreamObserver;
 import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisConnectionException;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
@@ -128,16 +131,10 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
     }
     final ListVisiblePublicProductionAdmissionTargetsResponse response;
     try {
-      var before =
-          routeReader.readVisiblePublicProductionTargets().stream()
-              .map(CanonicalGameplayAdmissionDecisionReadGrpcService::toTarget)
-              .toList();
+      var before = readDiscoveryTargets();
       // Validate the complete first read before treating it as an expected collection.
       CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(parsed, before);
-      var after =
-          routeReader.readVisiblePublicProductionTargets().stream()
-              .map(CanonicalGameplayAdmissionDecisionReadGrpcService::toTarget)
-              .toList();
+      var after = readDiscoveryTargets();
       response = CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(parsed, after);
       if (!new HashSet<>(before).equals(new HashSet<>(after))) {
         fail(observer, Status.FAILED_PRECONDITION);
@@ -197,6 +194,34 @@ public final class CanonicalGameplayAdmissionDecisionReadGrpcService
       return;
     }
     sendSource(observer, response);
+  }
+
+  private List<Target> readDiscoveryTargets() {
+    var selected = new ArrayList<Target>();
+    var tenants = new HashSet<UUID>();
+    var tenantSlugs = new HashSet<String>();
+    var realms = new HashSet<UUID>();
+    for (var route : routeReader.readVisiblePublicProductionTargets()) {
+      // Qualify the complete collection before returning either supported discovery policy.
+      var target =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetEvidence(
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetEvidence(toTarget(route)));
+      if (!workloadNamespace.equals(target.targetNamespace())
+          || !"SHARED".equals(target.playableStateScope())
+          || target.ownerProofOutcome() != OwnerProofOutcome.COMMITTED
+          || target.positiveDurableAbort()
+          || !tenants.add(target.canonicalTenantId())
+          || !tenantSlugs.add(target.tenantSlug())
+          || !realms.add(target.realmId())) {
+        throw new IllegalArgumentException("Discovery source has invalid or duplicate authority");
+      }
+      if (!"PRESEEDED_ONLY".equals(target.characterCreationPolicy())
+          && !"PLAYER_CREATED".equals(target.characterCreationPolicy())) {
+        throw new IllegalArgumentException("Discovery source has unsupported character policy");
+      }
+      selected.add(target);
+    }
+    return List.copyOf(selected);
   }
 
   @Override

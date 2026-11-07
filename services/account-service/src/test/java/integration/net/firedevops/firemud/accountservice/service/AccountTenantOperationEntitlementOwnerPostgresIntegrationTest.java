@@ -7,7 +7,9 @@ import integration.net.firedevops.firemud.accountservice.repository.CanonicalHos
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
+import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
@@ -40,6 +42,53 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void reusedAccountFixtureKeepsConfirmedCustomerAndObservationHistoryUnchanged() {
+    var first = context().fixture();
+    Account existing = new Account();
+    existing.setId(first.accountId());
+    existing.setAccountUuid(first.accountUuid());
+    var customerBefore =
+        first
+            .dsl()
+            .fetch("SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM billing_customer t")
+            .intoMaps();
+    var observationsBefore =
+        first
+            .dsl()
+            .fetch(
+                "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM account_billing_customer_observations t")
+            .intoMaps();
+    assertThat(
+            java.util.Objects.requireNonNull(
+                    first.dsl().fetchOne("SELECT row_version FROM billing_customer"))
+                .get(0, Long.class))
+        .isGreaterThan(1L);
+
+    var second =
+        CanonicalHostingSubscriptionTestFixture.create(
+            java.util.Objects.requireNonNull(first.jdbc().getDataSource()), existing);
+
+    assertThat(second.accountUuid()).isEqualTo(first.accountUuid());
+    assertThat(second.tenantId()).isNotEqualTo(first.tenantId());
+    assertThat(second.creation().providerCustomerId())
+        .isEqualTo(first.creation().providerCustomerId());
+    assertThat(
+            first
+                .dsl()
+                .fetch(
+                    "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM billing_customer t")
+                .intoMaps())
+        .isEqualTo(customerBefore);
+    assertThat(
+            first
+                .dsl()
+                .fetch(
+                    "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM account_billing_customer_observations t")
+                .intoMaps())
+        .isEqualTo(observationsBefore);
+  }
 
   @Test
   void paidUsesActualReceiptSdkAndAuthorityCheckpointWithFreshEvaluationOfSameSnapshot() {
@@ -102,20 +151,24 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
     var f = c.fixture();
     var claim =
         f.service().claimProvisioning(f.creation().requestId(), 1, UUID.randomUUID()).claim();
-    f.service()
-        .reconcile(
-            UUID.randomUUID(),
-            f.creation().requestId(),
-            claim.subscriptionRowVersion(),
-            f.providerId(),
-            claim.attemptId());
+    var committed =
+        f.service()
+            .reconcile(
+                UUID.randomUUID(),
+                f.creation().requestId(),
+                claim.subscriptionRowVersion(),
+                f.providerId(),
+                claim.attemptId());
+    assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
     String marker = "capture_marker_" + UUID.randomUUID().toString().replace("-", "");
+    AtomicInteger captures = new AtomicInteger();
     assertThatThrownBy(
             () ->
                 f.service()
                     .readCurrentAndCapture(
                         f.tenantId(),
                         receipt -> {
+                          captures.incrementAndGet();
                           assertThat(TransactionSynchronizationManager.isActualTransactionActive())
                               .isTrue();
                           assertThat(
@@ -124,7 +177,10 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
                           f.dsl().execute("CREATE TABLE " + marker + " (id bigint)");
                           throw new IllegalStateException("controlled capture rollback");
                         }))
-        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
+        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE")
+        .hasCauseInstanceOf(IllegalStateException.class)
+        .hasRootCauseMessage("controlled capture rollback");
+    assertThat(captures).hasValue(1);
     assertThat(f.dsl().fetchOne("SELECT to_regclass(?)::text", marker).get(0, String.class))
         .isNull();
   }

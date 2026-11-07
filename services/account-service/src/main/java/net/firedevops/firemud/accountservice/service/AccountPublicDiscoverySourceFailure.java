@@ -11,7 +11,7 @@ final class AccountPublicDiscoverySourceFailure {
     if (failure instanceof ClientUnavailableException) return true;
     if (!(failure instanceof StatusRuntimeException transport)) return false;
     return switch (transport.getStatus().getCode()) {
-      case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, ABORTED -> true;
+      case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, ABORTED -> true;
       default -> false;
     };
   }

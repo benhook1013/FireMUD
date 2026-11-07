@@ -68,6 +68,11 @@ class AccountHostingSubscriptionLifecyclePolicyTest {
         .isEqualTo(Reason.RECOVERY_ORIGIN_UNRESOLVED);
     assertThat(policy().evaluate(observed(response, NOW), NOW, NOW.plusNanos(1)).resolved())
         .isFalse();
+    Instant delayedRead = NOW.plusSeconds(600);
+    assertThat(policy().evaluate(observed(response, delayedRead), delayedRead, null).reason())
+        .isEqualTo(Reason.RECOVERY_ORIGIN_UNRESOLVED);
+    assertThat(policy().evaluate(observed(response, delayedRead), delayedRead, NOW).status())
+        .isEqualTo(Status.SUSPENDED);
     Instant warningEnd = NOW.plusSeconds(60);
     assertThat(policy().evaluate(observed(response, NOW), NOW, NOW).status())
         .isEqualTo(Status.PAST_DUE);
@@ -158,7 +163,9 @@ class AccountHostingSubscriptionLifecyclePolicyTest {
     var observer =
         new StripeHostingSubscriptionObserver(
             new com.stripe.StripeClient(new ControlledTransport(json)),
-            Clock.fixed(readAt, ZoneOffset.UTC));
+            Clock.fixed(readAt, ZoneOffset.UTC),
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     return observer.observe(
         new StripeHostingSubscriptionObserver.ExpectedBinding(
             "sub_expected",

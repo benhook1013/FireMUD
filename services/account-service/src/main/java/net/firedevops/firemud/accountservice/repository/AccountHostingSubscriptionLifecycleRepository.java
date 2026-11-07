@@ -82,15 +82,24 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     requireTransaction();
     Objects.requireNonNull(request);
     var original = intents.findCreation(request.creationRequestId()).orElseThrow();
-    var observedCurrent = intents.findCurrentByTenant(original.tenantId()).orElseThrow();
-    var current = intents.lockForLifecycle(original.requestId(), observedCurrent.rowVersion());
-    Record failed = operationForUpdate(request.failedRequestId());
     Record journal =
         dsl.fetchOne(
             "SELECT * FROM subscription_lifecycle_terminal_resolutions WHERE resolution_request_id = ? FOR UPDATE",
             request.resolutionRequestId());
+    // Exact committed-result disclosure belongs to the original authenticated actor. It must not
+    // select a successor subscription or require the canceled predecessor to remain current.
+    // Only a new mutation takes today's current-row/owner/instrument fence, in its original order.
+    long currentVersion;
+    if (journal == null) {
+      var observedCurrent = intents.findCurrentByTenant(original.tenantId()).orElseThrow();
+      currentVersion =
+          intents.lockForLifecycle(original.requestId(), observedCurrent.rowVersion()).rowVersion();
+    } else {
+      currentVersion = journal.get("result_row_version", Long.class);
+    }
+    Record failed = operationForUpdate(request.failedRequestId());
     if (!request.tenantId().equals(original.tenantId())
-        || !request.subscriptionId().equals(current.subscriptionId())
+        || !request.subscriptionId().equals(original.subscriptionId())
         || !request.actorAccountId().equals(original.owner().accountUuid())
         || !request.creationRequestId().equals(failed.get("creation_request_id", UUID.class))
         || !request.subscriptionId().equals(failed.get("subscription_id", UUID.class))
@@ -129,7 +138,8 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return new ResolutionPreparation(
           request,
           binding,
-          current.rowVersion(),
+          original.owner().accountUuid(),
+          currentVersion,
           now(),
           now(),
           new TransitionResult(
@@ -138,11 +148,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
               journal.get("result_row_version", Long.class),
               null));
     }
-    if (request.expectedSubscriptionVersion() != current.rowVersion()
+    if (request.expectedSubscriptionVersion() != currentVersion
         || !request
             .failedRequestId()
             .equals(
-                links(current.subscriptionId()).get("lifecycle_inflight_request_id", UUID.class))) {
+                links(request.subscriptionId()).get("lifecycle_inflight_request_id", UUID.class))) {
       throw new FenceRejectedException("Terminal resolution lost its exact failed current fence");
     }
     Instant captured = now();
@@ -151,7 +161,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             captured.plus(limits.lease()),
             captured.plusMillis(failed.get("observation_age_millis", Long.class)));
     return new ResolutionPreparation(
-        request, binding, current.rowVersion(), captured, deadline, null);
+        request, binding, original.owner().accountUuid(), currentVersion, captured, deadline, null);
   }
 
   /**
@@ -192,7 +202,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     var actor =
         Objects.requireNonNull(
             authorization.requireAuthorized(
-                new LockedTarget(request, request.actorAccountId(), locked.currentVersion)));
+                new LockedTarget(request, locked.billingOwnerAccountId, locked.currentVersion)));
     Instant authenticated = now();
     if (!request.actorAccountId().equals(actor.actorAccountId())
         || !request.controlUiIssuanceOperationId().equals(actor.controlUiIssuanceOperationId())
@@ -299,6 +309,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
   public static final class ResolutionPreparation {
     private final Request request;
     private final ExpectedBinding binding;
+    private final UUID billingOwnerAccountId;
     private final long currentVersion;
     private final Instant capturedAt;
     private final Instant deadline;
@@ -307,12 +318,14 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     private ResolutionPreparation(
         Request request,
         ExpectedBinding binding,
+        UUID billingOwnerAccountId,
         long currentVersion,
         Instant capturedAt,
         Instant deadline,
         TransitionResult replay) {
       this.request = request;
       this.binding = binding;
+      this.billingOwnerAccountId = billingOwnerAccountId;
       this.currentVersion = currentVersion;
       this.capturedAt = capturedAt;
       this.deadline = deadline;
@@ -554,12 +567,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       requireObservedBinding(binding, observed);
     }
     Record oldReceipt = receiptForCurrent(links(current.subscriptionId()));
-    Instant origin = oldReceipt == null ? null : nullableInstant(oldReceipt, "past_due_since");
-    if (result instanceof ObservedSubscription observed
-        && "past_due".equals(observed.providerStatus())
-        && origin == null) {
-      origin = observed.observedAt().truncatedTo(ChronoUnit.MICROS);
-    }
+    Instant origin = retainedPastDueOrigin(oldReceipt);
+    // A provider read cannot establish when an uninterrupted payment-failure episode began.
+    // Missing retained history must remain unresolved rather than restarting warning/grace.
     var decision = retainedPolicy(operation).evaluate(result, now, origin);
     byte[] observation = AccountHostingSubscriptionLifecycleEvidence.observation(result);
     String observationDigest = AccountHostingSubscriptionLifecycleEvidence.digest(observation);
@@ -1106,6 +1116,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     }
   }
 
+  static Instant retainedPastDueOrigin(Record receipt) {
+    return receipt == null ? null : nullableInstant(receipt, "past_due_since");
+  }
+
   private static Instant nullableInstant(Record row, String field) {
     OffsetDateTime value = row.get(field, OffsetDateTime.class);
     return value == null ? null : value.toInstant();
@@ -1296,8 +1310,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
   /**
    * Inserts a separate immutable provider-dispatch boundary after revalidating the exact live
-   * private worker claim. Only a new first-attempt insertion may carry initial-call permission.
-   * Preexisting unknown migration guards and all replayed/recovered attempts reconcile only.
+   * private worker claim. Only a newly inserted first-dispatch receipt may carry initial-call
+   * permission, even if an earlier worker attempt expired without dispatching. Preexisting unknown
+   * migration guards and all replayed dispatches reconcile only.
    */
   public ProviderDispatch prepareProviderDispatch(ProvisioningClaim supplied, UUID dispatchId) {
     requireTransaction();
@@ -1322,7 +1337,6 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     requireDispatchBinding(retained, receipt);
     boolean initial =
         inserted == 1
-            && retained.attemptNumber() == 1
             && "FIRST_DISPATCH".equals(receipt.classification())
             && retained.attemptId().equals(receipt.firstAttemptId());
     return providerDispatch(retained, receipt, initial, false, transactionId());
@@ -1548,7 +1562,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return fail(work, "ABSOLUTE_DEADLINE", now).disposition();
     }
     if (!now.isBefore(claim.expiresAt())) {
-      throw new FenceRejectedException("Expired attempt cannot record provider completion");
+      // The exact retained attempt expired without a provider completion. Leave its work and
+      // reservation untouched for the next claimant rather than treating normal expiry as a fault.
+      return Disposition.ATTEMPT_EXPIRED;
     }
     if (work.get("attempt_count", Integer.class) >= work.get("max_attempts", Integer.class)) {
       return fail(work, "ATTEMPT_BUDGET", now).disposition();

@@ -15,6 +15,7 @@ import com.stripe.net.StripeResponseGetter;
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -22,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountHostingPlanQuote;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
@@ -69,8 +72,23 @@ class StripeHostingSubscriptionProvisionerTest {
             "/v1/subscriptions/search",
             "/v1/subscriptions",
             "/v1/subscriptions/sub_exact");
-    assertThat(transport.options.get(3).getIdempotencyKey()).isEqualTo(OPERATION.toString());
-    assertThat(transport.options.get(3).getMaxNetworkRetries()).isZero();
+    assertThat(transport.methods)
+        .containsExactly(
+            RequestMethod.GET,
+            RequestMethod.GET,
+            RequestMethod.GET,
+            RequestMethod.POST,
+            RequestMethod.GET);
+    assertThat(transport.options)
+        .extracting(RequestOptions::getIdempotencyKey)
+        .containsExactly(null, null, null, OPERATION.toString(), null);
+    assertThat(transport.options)
+        .allSatisfy(
+            options -> {
+              assertThat(options.getConnectTimeout()).isEqualTo(250);
+              assertThat(options.getReadTimeout()).isEqualTo(1000);
+              assertThat(options.getMaxNetworkRetries()).isZero();
+            });
     assertThat(transport.params.get(3))
         .containsOnlyKeys(
             "customer",
@@ -91,17 +109,41 @@ class StripeHostingSubscriptionProvisionerTest {
   void unknownOrExpiredIdempotencyOutcomeNeverAuthorizesAnotherCreate() {
     Transport missing = transport(search(""));
     assertThat(adapter(missing).provision(dispatch(false)))
-        .isInstanceOf(StripeHostingSubscriptionProvisioner.Pending.class);
-    assertThat(missing.methods).doesNotContain(RequestMethod.POST);
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending("PROVIDER_LOOKUP_UNRESOLVED", null));
+    assertThat(missing.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact", "/v1/payment_methods/pm_exact", "/v1/subscriptions/search");
+    assertThat(missing.methods)
+        .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
     Transport lost = transport(search(""), subscription());
     lost.failureAt = 3;
     lost.failure = mock(StripeException.class);
     assertThat(adapter(lost).provision(dispatch(true)))
-        .isInstanceOf(StripeHostingSubscriptionProvisioner.Pending.class);
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "PROVIDER_OUTCOME_UNKNOWN", lost.failure));
+    assertThat(lost.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions");
+    assertThat(lost.methods)
+        .containsExactly(
+            RequestMethod.GET, RequestMethod.GET, RequestMethod.GET, RequestMethod.POST);
     Transport recovered = transport(search(subscription()), subscription());
     assertThat(adapter(recovered).provision(dispatch(false)))
         .isInstanceOf(StripeHostingSubscriptionProvisioner.Located.class);
-    assertThat(recovered.methods).doesNotContain(RequestMethod.POST);
+    assertThat(recovered.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions/sub_exact");
+    assertThat(recovered.methods)
+        .containsExactly(
+            RequestMethod.GET, RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
   }
 
   @Test
@@ -110,16 +152,72 @@ class StripeHostingSubscriptionProvisionerTest {
     failed.failureAt = 2;
     failed.failure = mock(StripeException.class);
     assertThat(adapter(failed).provision(dispatch(true)))
-        .isInstanceOf(StripeHostingSubscriptionProvisioner.Pending.class);
-    assertThat(failed.methods).doesNotContain(RequestMethod.POST);
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "PROVIDER_OUTCOME_UNKNOWN", failed.failure));
+    assertThat(failed.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact", "/v1/payment_methods/pm_exact", "/v1/subscriptions/search");
+    assertThat(failed.methods)
+        .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
     Transport duplicate = transport(search(subscription() + "," + subscription()));
     assertThat(adapter(duplicate).provision(dispatch(true)))
-        .isInstanceOf(StripeHostingSubscriptionProvisioner.Pending.class);
-    assertThat(duplicate.methods).doesNotContain(RequestMethod.POST);
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "INCOMPLETE_OR_AMBIGUOUS_PROVIDER_SEARCH", null));
+    assertThat(duplicate.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact", "/v1/payment_methods/pm_exact", "/v1/subscriptions/search");
+    assertThat(duplicate.methods)
+        .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
     Transport mismatch =
         transport(search(subscription()), subscription().replace("pm_exact", "pm_wrong"));
     assertThat(adapter(mismatch).provision(dispatch(false)))
-        .isInstanceOf(StripeHostingSubscriptionProvisioner.Pending.class);
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "INDEPENDENT_PROVIDER_READBACK_UNRESOLVED", null));
+    assertThat(mismatch.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions/sub_exact");
+    assertThat(mismatch.methods)
+        .containsExactly(
+            RequestMethod.GET, RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @Test
+  void incompleteFirstInvoiceRemainsNonAuthorizingWithoutAnyPaymentConfirmationCall() {
+    String incomplete =
+        subscription().replace("\"status\":\"active\"", "\"status\":\"incomplete\"");
+    Transport transport = transport(search(""), incomplete, incomplete);
+    var located =
+        (StripeHostingSubscriptionProvisioner.Located) adapter(transport).provision(dispatch(true));
+    assertThat(located.observation().providerStatus()).isEqualTo("incomplete");
+    var policy =
+        new AccountHostingSubscriptionLifecyclePolicy(
+            Duration.ofSeconds(30),
+            new RecoveryTiming(Duration.ofMinutes(1), Duration.ofMinutes(1)));
+    var decision = policy.evaluate(located.observation(), NOW, null);
+    assertThat(decision.resolved()).isFalse();
+    assertThat(decision.reason())
+        .isEqualTo(AccountHostingSubscriptionLifecyclePolicy.Reason.UNMAPPED_PROVIDER_STATUS);
+    assertThat(transport.params.get(3)).containsEntry("payment_behavior", "default_incomplete");
+    assertThat(transport.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions",
+            "/v1/subscriptions/sub_exact");
+    assertThat(transport.methods)
+        .containsExactly(
+            RequestMethod.GET,
+            RequestMethod.GET,
+            RequestMethod.GET,
+            RequestMethod.POST,
+            RequestMethod.GET);
   }
 
   @Test
@@ -133,10 +231,14 @@ class StripeHostingSubscriptionProvisionerTest {
         new StripeHostingSubscriptionProvisioner(
             new com.stripe.StripeClient(transport),
             Clock.fixed(NOW.plusSeconds(20), ZoneOffset.UTC),
-            false);
+            false,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     assertThat(expired.provision(dispatch(true)))
-        .isInstanceOf(StripeHostingSubscriptionProvisioner.Pending.class);
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_LEASE_EXPIRED", null));
     assertThat(transport.paths).isEmpty();
+    assertThat(transport.methods).isEmpty();
   }
 
   @Test
@@ -147,8 +249,12 @@ class StripeHostingSubscriptionProvisionerTest {
     responses.set(1, responses.get(1).replace("cus_exact", "cus_other"));
     Transport mismatch = new Transport(responses.toArray(String[]::new));
     assertThat(adapter(mismatch).provision(dispatch(true)))
-        .isInstanceOf(StripeHostingSubscriptionProvisioner.Pending.class);
-    assertThat(mismatch.paths).hasSize(2);
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "PROVIDER_PREREQUISITES_UNRESOLVED", null));
+    assertThat(mismatch.paths)
+        .containsExactly("/v1/customers/cus_exact", "/v1/payment_methods/pm_exact");
+    assertThat(mismatch.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
     Transport ambient = new Transport();
     org.springframework.transaction.support.TransactionSynchronizationManager
         .setActualTransactionActive(true);
@@ -156,6 +262,7 @@ class StripeHostingSubscriptionProvisionerTest {
       assertThatThrownBy(() -> adapter(ambient).provision(dispatch(true)))
           .hasMessageContaining("ambient SQL");
       assertThat(ambient.paths).isEmpty();
+      assertThat(ambient.methods).isEmpty();
     } finally {
       org.springframework.transaction.support.TransactionSynchronizationManager
           .setActualTransactionActive(false);
@@ -190,7 +297,11 @@ class StripeHostingSubscriptionProvisionerTest {
 
   private static StripeHostingSubscriptionProvisioner adapter(Transport transport) {
     return new StripeHostingSubscriptionProvisioner(
-        new com.stripe.StripeClient(transport), Clock.fixed(NOW, ZoneOffset.UTC), false);
+        new com.stripe.StripeClient(transport),
+        Clock.fixed(NOW, ZoneOffset.UTC),
+        false,
+        Duration.ofMillis(250),
+        Duration.ofSeconds(1));
   }
 
   private static Transport transport(String... responses) {

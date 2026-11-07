@@ -305,7 +305,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
   @Container
   static final PostgreSQLContainer<?> ACCOUNT =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      // Account's exact-original LOGIN disposal refuses nondurable PostgreSQL settings.
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withCommand("postgres", "-c", "fsync=on", "-c", "synchronous_commit=on");
 
   @Container
   static final GenericContainer<?> REDIS =
@@ -584,6 +586,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           "Created placement proof requires the committed coupled owner path");
     }
     UUID tenant = UUID.randomUUID();
+    var sharedAuthoredSource = controlledSource("controlled-upstream", tenant);
+    var sharedCreation =
+        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(sharedAuthoredSource);
     try (var account =
             new AccountControlUiOriginalOrderFixture(
                 ACCOUNT.getJdbcUrl(),
@@ -592,13 +597,22 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 REDIS.getHost(),
                 REDIS.getMappedPort(6379),
                 proofDirectory.resolve("account"),
-                tenant,
+                sharedCreation,
                 true);
         var world = database(WORLD, "world-management-service", true);
         var gs = database(GS, "game-session-service", true)) {
       var issuer =
           new AccountOriginalStartSessionAuthorizationProofFixture(
               account, proofDirectory.resolve("issuer"), NAMESPACE);
+      var accountDurability =
+          issuer
+              .sourceDsl()
+              .fetchSingle(
+                  "SELECT pg_is_in_recovery() AS recovery, current_setting('fsync') AS fsync,"
+                      + " current_setting('synchronous_commit') AS commit_mode");
+      assertThat(accountDurability.get("recovery", Boolean.class)).isFalse();
+      assertThat(accountDurability.get("fsync", String.class)).isEqualTo("on");
+      assertThat(accountDurability.get("commit_mode", String.class)).isEqualTo("on");
       Duration lease =
           refusal == Refusal.EXPIRED_ATTEMPT
               ? Duration.ofSeconds(30)
@@ -682,7 +696,14 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       var createdPublication = new AtomicReference<RealmPolicyPublishedEvidence.PublishedSet>();
       var preparedInput =
           preparationInputs(
-              world, gs, tuple, claim.get(), tenant, playerCreatedPlacement, createdPublication);
+              world,
+              gs,
+              tuple,
+              claim.get(),
+              tenant,
+              playerCreatedPlacement,
+              createdPublication,
+              sharedAuthoredSource);
       var input =
           refusal == Refusal.MISMATCHED_ATTEMPT
               ? new WorldCanonicalInstancePreparation.Input(
@@ -1860,6 +1881,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               exerciseCoupledCanonicalInitialAdmission(
                   gs,
                   world,
+                  account,
                   issuer,
                   currentAttempt,
                   proofDirectory,
@@ -2426,6 +2448,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   private static void exerciseCoupledCanonicalInitialAdmission(
       Database gs,
       Database world,
+      AccountControlUiOriginalOrderFixture account,
       AccountOriginalStartSessionAuthorizationProofFixture issuer,
       GrpcOriginalStartSessionCurrentAttemptClient currentAttempt,
       Path proofDirectory,
@@ -3008,6 +3031,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       composeActualEntityWorldRegionPrerequisite(
           gs,
           world,
+          account,
           proofDirectory,
           pki,
           factory,
@@ -3088,6 +3112,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   private static void composeActualEntityWorldRegionPrerequisite(
       Database gs,
       Database world,
+      AccountControlUiOriginalOrderFixture account,
       Path proofDirectory,
       WorldOriginalStartSessionPreparationProofPki worldPki,
       GrpcChannelFactory channels,
@@ -3436,6 +3461,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           try {
             var worldEndpoints = new ServiceEndpointsProperties();
             worldEndpoints.setWorldManagementService("127.0.0.1:" + worldLocationServer.getPort());
+            // The earlier generic password-write proof deliberately leaves creator LOGIN
+            // currentness unavailable. The later composition uses a separate fresh player.
             var initialLocationClient =
                 new CanonicalInitialPlayerLocationClient(
                     worldEndpoints, worldPki.client("game-session-service"), channels, NAMESPACE);
@@ -3542,6 +3569,18 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               assertThat(regionProofs.foreignOwnerCapabilityRejectedWithoutStateChange()).isTrue();
               assertThat(regionProofs.expiredGrantRejectedWithoutStateChange()).isTrue();
             }
+            // Run the genuine second-player DEMO mutation after original placement assertions.
+            WorldPublishedAdmissionSourceComposition.exercise(
+                proofDirectory,
+                gs.dsl(),
+                gs.manager(),
+                REDIS.getHost(),
+                REDIS.getMappedPort(6379),
+                currentTarget,
+                accountUuid,
+                account,
+                worldEndpoints,
+                worldPki.client("game-session-service"));
           } finally {
             shutdown(worldLocationServer);
             entityReceiptClient.close();
@@ -4161,11 +4200,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
       UUID tenant,
       boolean playerCreatedPlacement,
-      AtomicReference<RealmPolicyPublishedEvidence.PublishedSet> createdPublication)
+      AtomicReference<RealmPolicyPublishedEvidence.PublishedSet> createdPublication,
+      AuthoredWorldSourceEvidence source)
       throws Exception {
     var intakeRepository = new WorldAuthoredSourceIntakeRepository(world.dsl());
     var versionRepository = new WorldAuthoredVersionIdentityRepository(world.dsl());
-    var source = controlledSource("controlled-upstream", tenant);
     var intake =
         Objects.requireNonNull(
             world
