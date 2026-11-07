@@ -370,9 +370,44 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
         server("account", calls, observedJwt, observedPeer, context(), login.evidence());
     try (var client = client(server, clientClock)) {
       client.init();
-      assertThatThrownBy(
-              () -> client.read(scope, original, transport, selectedReadId, login, current))
-          .isInstanceOf(RuntimeException.class);
+      var refusal =
+          assertThatThrownBy(
+                  () -> client.read(scope, original, transport, selectedReadId, login, current))
+              .as(change);
+      switch (change) {
+        case "stale-custody", "throwing-custody", "null-custody", "custody-lost-before-rpc" ->
+            refusal
+                .isExactlyInstanceOf(StatusRuntimeException.class)
+                .hasMessage("CANCELLED: Account player-admission entitlement read did not complete")
+                .satisfies(
+                    failure ->
+                        assertThat(Status.fromThrowable(failure).getCode())
+                            .isEqualTo(Status.Code.CANCELLED));
+        case "original-request",
+            "original-context",
+            "attempt-fence",
+            "transport-session",
+            "transport-proxy",
+            "expired-login",
+            "expired-scope" ->
+            refusal
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Exact authenticated lobby evidence required");
+        case "closed-login" ->
+            refusal
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessage("Controlled closed LOGIN");
+        case "wrong-namespace",
+            "private-scope",
+            "created-policy",
+            "durable-abort",
+            "read-correlation" ->
+            refusal
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage(
+                    "Exact live LOGIN custody and verified player-admission scope required");
+        default -> throw new IllegalArgumentException(change);
+      }
       assertThat(calls).hasValue(0);
       assertThat(observedJwt).hasValue(null);
       assertThat(observedPeer).hasValue(null);
