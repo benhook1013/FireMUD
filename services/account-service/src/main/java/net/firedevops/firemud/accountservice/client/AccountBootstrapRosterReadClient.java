@@ -96,14 +96,21 @@ public final class AccountBootstrapRosterReadClient
     List<Actor> actors = new ArrayList<>(response.getActorsCount());
     String previous = null;
     for (var actor : response.getActorsList()) {
-      UUID id = parseUuid(actor.getCharacterUuid());
       if (!actor.getUnknownFields().asMap().isEmpty()
           || !actor.hasLevel()
           || (previous != null && previous.compareTo(actor.getCharacterUuid()) >= 0)) {
         throw new IllegalStateException(
             "Entity bootstrap discovery actors are duplicated or unordered");
       }
-      actors.add(new Actor(id, actor.getDisplayName(), actor.getLevel()));
+      Actor decoded;
+      try {
+        decoded =
+            new Actor(
+                parseUuid(actor.getCharacterUuid()), actor.getDisplayName(), actor.getLevel());
+      } catch (IllegalArgumentException invalidActor) {
+        throw new IllegalStateException("Entity bootstrap discovery actor is malformed");
+      }
+      actors.add(decoded);
       previous = actor.getCharacterUuid();
     }
     return List.copyOf(actors);

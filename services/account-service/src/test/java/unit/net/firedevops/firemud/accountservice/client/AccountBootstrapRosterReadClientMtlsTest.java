@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
@@ -55,6 +56,7 @@ class AccountBootstrapRosterReadClientMtlsTest {
   private static final UUID INSTANCE = UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final UUID VERSION = UUID.fromString("66666666-6666-4666-8666-666666666666");
   private static final UUID ACTOR = UUID.fromString("77777777-7777-4777-8777-777777777777");
+  private static final UUID SECOND_ACTOR = UUID.fromString("88888888-8888-4888-8888-888888888888");
   @TempDir static Path directory;
   private static LoopbackMtlsTestPki.Pki pki;
 
@@ -87,6 +89,7 @@ class AccountBootstrapRosterReadClientMtlsTest {
             AccountBootstrapRosterReadResponse.newBuilder()
                 .setRequest(request)
                 .addActors(actor().setLevel(0))
+                .addActors(actor().setCharacterUuid(SECOND_ACTOR.toString()).setLevel(4))
                 .build();
     try (var server = server("entity", service);
         var client = client(server.port())) {
@@ -94,7 +97,9 @@ class AccountBootstrapRosterReadClientMtlsTest {
       UUID requestId = UUID.randomUUID();
       var actors = client.read(requestId, ACCOUNT, published());
       assertThat(actors)
-          .containsExactly(new AccountBootstrapRosterReadClient.Actor(ACTOR, "Mara", 0));
+          .containsExactly(
+              new AccountBootstrapRosterReadClient.Actor(ACTOR, "Mara", 0),
+              new AccountBootstrapRosterReadClient.Actor(SECOND_ACTOR, "Mara", 4));
       assertThat(service.request.get().getRequestUuid()).isEqualTo(requestId.toString());
       assertThat(service.request.get().getCanonicalAccountUuid()).isEqualTo(ACCOUNT.toString());
       assertThat(service.request.get().getExpectedTarget().getPlayableStateNamespaceUuid())
@@ -167,6 +172,129 @@ class AccountBootstrapRosterReadClientMtlsTest {
                   .build();
       assertThatThrownBy(() -> client.read(UUID.randomUUID(), ACCOUNT, published()))
           .isInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  @Test
+  void malformedActorFieldsRemainBoundedSourceFailures() throws Exception {
+    var invalidActors =
+        List.of(
+            actor().setLevel(1).setCharacterUuid("source-payload-not-a-uuid").build(),
+            actor().setLevel(1).clearCharacterUuid().build(),
+            actor().setLevel(1).setCharacterUuid(new UUID(0L, 0L).toString()).build(),
+            actor().setLevel(1).clearDisplayName().build(),
+            actor().setLevel(1).setDisplayName(" ").build(),
+            actor().setLevel(1).setDisplayName(" Mara").build(),
+            actor().setLevel(1).setDisplayName("Mara ").build(),
+            actor().setLevel(1).setDisplayName("M".repeat(101)).build(),
+            actor().setLevel(1).setDisplayName("Mara\u0007").build(),
+            actor().setLevel(-1).build());
+    Probe service = new Probe();
+    try (var server = server("entity", service);
+        var client = client(server.port())) {
+      client.init();
+      for (var invalid : invalidActors) {
+        service.respond =
+            request ->
+                AccountBootstrapRosterReadResponse.newBuilder()
+                    .setRequest(request)
+                    .addActors(invalid)
+                    .build();
+        assertThatThrownBy(() -> client.read(UUID.randomUUID(), ACCOUNT, published()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Entity bootstrap discovery actor is malformed")
+            .hasNoCause();
+      }
+      assertThat(service.calls.get()).isEqualTo(invalidActors.size());
+    }
+  }
+
+  @Test
+  void actorShapeAndOrderingAreCheckedBeforeSourceUuidParsing() throws Exception {
+    var unknownFields =
+        UnknownFieldSet.newBuilder()
+            .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+    var invalidActorLists =
+        List.of(
+            List.of(actor().setCharacterUuid("source-payload-not-a-uuid").build()),
+            List.of(actor().setLevel(1).setUnknownFields(unknownFields).build()),
+            List.of(
+                actor()
+                    .setLevel(1)
+                    .setCharacterUuid("source-payload-not-a-uuid")
+                    .setUnknownFields(unknownFields)
+                    .build()),
+            List.of(actor().setLevel(1).build(), actor().setLevel(1).build()),
+            List.of(
+                actor().setLevel(1).setCharacterUuid(SECOND_ACTOR.toString()).build(),
+                actor().setLevel(1).build()),
+            List.of(
+                actor().setLevel(1).build(),
+                actor().setLevel(1).setCharacterUuid("0-source-payload-not-a-uuid").build()));
+    Probe service = new Probe();
+    try (var server = server("entity", service);
+        var client = client(server.port())) {
+      client.init();
+      for (var invalid : invalidActorLists) {
+        service.respond =
+            request ->
+                AccountBootstrapRosterReadResponse.newBuilder()
+                    .setRequest(request)
+                    .addAllActors(invalid)
+                    .build();
+        assertThatThrownBy(() -> client.read(UUID.randomUUID(), ACCOUNT, published()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Entity bootstrap discovery actors are duplicated or unordered")
+            .hasNoCause();
+      }
+      assertThat(service.calls.get()).isEqualTo(invalidActorLists.size());
+    }
+  }
+
+  @Test
+  void noncanonicalActorUuidRemainsASourceFailure() throws Exception {
+    Probe service = new Probe();
+    try (var server = server("entity", service);
+        var client = client(server.port())) {
+      client.init();
+      for (String noncanonical : List.of("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "7-7-4-8-7")) {
+        service.respond =
+            request ->
+                AccountBootstrapRosterReadResponse.newBuilder()
+                    .setRequest(request)
+                    .addActors(actor().setCharacterUuid(noncanonical).setLevel(1))
+                    .build();
+        assertThatThrownBy(() -> client.read(UUID.randomUUID(), ACCOUNT, published()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Canonical actor UUID required")
+            .hasNoCause();
+      }
+      assertThat(service.calls.get()).isEqualTo(2);
+    }
+  }
+
+  @Test
+  void callerInputFailuresRemainArgumentErrorsBeforeTheEntityRead() throws Exception {
+    Probe service = new Probe();
+    try (var server = server("entity", service);
+        var client = client(server.port())) {
+      client.init();
+      for (UUID invalid : new UUID[] {null, new UUID(0L, 0L)}) {
+        assertThatThrownBy(() -> client.read(invalid, ACCOUNT, published()))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> client.read(UUID.randomUUID(), invalid, published()))
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+      assertThatThrownBy(() -> client.read(UUID.randomUUID(), TENANT, published()))
+          .isInstanceOf(IllegalArgumentException.class);
+      var unsupported = published();
+      when(unsupported.currentTarget().playableStateScope()).thenReturn("ISOLATED");
+      assertThatThrownBy(() -> client.read(UUID.randomUUID(), ACCOUNT, unsupported))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> new AccountBootstrapRosterReadClient.Actor(ACTOR, " ", 1))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThat(service.calls.get()).isZero();
     }
   }
 
