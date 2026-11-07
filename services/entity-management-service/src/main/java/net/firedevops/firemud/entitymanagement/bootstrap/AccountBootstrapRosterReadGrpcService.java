@@ -43,7 +43,12 @@ public final class AccountBootstrapRosterReadGrpcService
     AccountBootstrapRosterReadResponse response;
     try {
       AccountBootstrapRosterReadService.requireNoAmbientTransaction();
-      AccountBootstrapRosterReadContract.requireRequest(request);
+      try {
+        AccountBootstrapRosterReadContract.requireRequest(request);
+      } catch (IllegalArgumentException invalid) {
+        refuse(observer, Status.INVALID_ARGUMENT);
+        return;
+      }
       if (!namespace.equals(request.getTargetNamespace())) {
         refuse(observer, Status.PERMISSION_DENIED);
         return;
@@ -57,9 +62,6 @@ public final class AccountBootstrapRosterReadGrpcService
       return;
     } catch (UnsupportedOperationException | IllegalStateException precondition) {
       refuse(observer, Status.FAILED_PRECONDITION);
-      return;
-    } catch (IllegalArgumentException invalid) {
-      refuse(observer, Status.INVALID_ARGUMENT);
       return;
     } catch (RuntimeException unexpected) {
       refuse(observer, Status.INTERNAL);

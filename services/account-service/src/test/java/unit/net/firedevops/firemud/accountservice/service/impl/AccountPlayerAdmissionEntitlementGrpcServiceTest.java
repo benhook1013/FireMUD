@@ -24,6 +24,7 @@ import net.firedevops.firemud.accountservice.security.AccountPlayerAdmissionEnti
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
 import net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
@@ -90,6 +91,9 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
             new AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException(),
             Status.Code.UNAVAILABLE),
         org.junit.jupiter.params.provider.Arguments.of(
+            new AccountGameplayAdmissionCallerVerifier.CallerUnavailableException(),
+            Status.Code.UNAVAILABLE),
+        org.junit.jupiter.params.provider.Arguments.of(
             new AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException(
                 new IllegalStateException(SECRET)),
             Status.Code.UNAVAILABLE),
@@ -105,6 +109,9 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
         org.junit.jupiter.params.provider.Arguments.of(
             new org.springframework.transaction.CannotCreateTransactionException(SECRET),
             Status.Code.UNAVAILABLE),
+        org.junit.jupiter.params.provider.Arguments.of(
+            new IllegalStateException("Account gameplay caller verification failed"),
+            Status.Code.INTERNAL),
         org.junit.jupiter.params.provider.Arguments.of(
             new IllegalStateException("ENTITLEMENT_UNAVAILABLE: " + SECRET), Status.Code.INTERNAL),
         org.junit.jupiter.params.provider.Arguments.of(

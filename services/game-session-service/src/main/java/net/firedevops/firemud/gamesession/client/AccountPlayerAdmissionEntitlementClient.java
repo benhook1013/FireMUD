@@ -380,8 +380,7 @@ public final class AccountPlayerAdmissionEntitlementClient
       buildStub(ManagedChannel channel) {
     return AccountPlayerAdmissionEntitlementReadServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedAccountPeer))
-        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedAccountPeer))
-        .withCompression("gzip");
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedAccountPeer));
   }
 
   private static IllegalArgumentException invalid() {
