@@ -92,6 +92,11 @@ dependencies {
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
     integrationTestImplementation(project(path = ":game-session-service", configuration = "gameSessionClassesProof"))
     integrationTestImplementation(project(path = ":entity-management-service", configuration = "entityClassesProof"))
+    // Share canonical bootstrap proof values without importing Entity application resources.
+    val entityBootstrapProof = testFixtures(project(":entity-management-service"))
+        as org.gradle.api.artifacts.ModuleDependency
+    entityBootstrapProof.isTransitive = false
+    integrationTestImplementation(entityBootstrapProof)
     integrationTestImplementation(testFixtures(project(":common-test-support")))
     integrationTestImplementation(project(":social-groups-service"))
     integrationTestImplementation(testFixtures(project(":account-service")))

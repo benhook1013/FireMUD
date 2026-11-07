@@ -37,13 +37,13 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -1892,7 +1892,6 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             mock(AccountSecurityStateOperationRepository.class),
             mock(AccountPasswordResetDraftSourceChangeRepository.class),
             mock(AccountAuditOutboxRepository.class),
-            mock(AccountConnectScopeRepository.class),
             mock(AccountJoinOperationRepository.class),
             challenges,
             null,
@@ -1901,9 +1900,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
             null,
             null,
             null,
-            null,
-            null,
-            null,
+            org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
             null,
             null,
             null,

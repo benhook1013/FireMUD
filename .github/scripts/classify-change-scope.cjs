@@ -160,9 +160,18 @@ function moduleForFile(file) {
 function classifyChangeScope(inputFiles, options = {}) {
   const files = [...new Set(inputFiles)].sort();
   const forceAll = options.forceAll === true;
+  // Known service documentation retains docs proof without selecting runtime modules.
+  // Unknown service paths and every non-documentation input remain fail closed.
+  const moduleInputFiles = files.filter(
+    (file) =>
+      !(file.startsWith("services/") &&
+        moduleForFile(file) !== null &&
+        isDocumentation(file) &&
+        isLightweightEligible(file)),
+  );
   const runAll =
     forceAll ||
-    files.some(
+    moduleInputFiles.some(
       (file) =>
         SHARED_FILES.has(file) ||
         (SHARED_PREFIXES.some((prefix) => file.startsWith(prefix)) &&
@@ -176,7 +185,7 @@ function classifyChangeScope(inputFiles, options = {}) {
     ALL_SERVICES.forEach((service) => affectedServices.add(service));
     ALL_MODULES.forEach((module) => affectedModules.add(module));
   } else {
-    for (const file of files) {
+    for (const file of moduleInputFiles) {
       const module = moduleForFile(file);
       if (module !== null) {
         affectedModules.add(module);

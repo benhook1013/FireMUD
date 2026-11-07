@@ -6,12 +6,12 @@ import java.util.UUID;
  * Game Session's complete selected-target evidence, re-resolved by Account before scope issuance.
  */
 public record DirectTextJoinTarget(
-    long tenantId,
+    UUID tenantId,
     UUID realmId,
     String worldSlug,
     String realmSlug,
-    String playableStateNamespaceId,
+    UUID playableStateNamespaceId,
     String playableStateScope,
-    long gameInstanceId,
+    UUID gameInstanceId,
     long catalogRevision,
     long pointerVersion) {}

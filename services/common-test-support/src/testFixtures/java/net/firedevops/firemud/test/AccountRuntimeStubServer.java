@@ -368,6 +368,18 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .setAccountId(caller.getAccountId())
               .setTenantId(caller.getTenantId())
               .build());
+    } else if ("ACTIVE".equals(membershipLifecycleState.get())) {
+      responseObserver.onNext(
+          JoinPublicProductionMembershipResponse.newBuilder()
+              .setSuccess(true)
+              .setOutcomeCode("ALREADY_ACTIVE")
+              .setAccountId(caller.getAccountId())
+              .setTenantId(caller.getTenantId())
+              .setMembershipId("1")
+              .setMembershipVersion(membershipVersion.get())
+              .setMembershipAuthorityGeneration(membershipAuthorityGeneration.get())
+              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
+              .build());
     } else {
       membershipLifecycleState.set("ACTIVE");
       gameplayAdmissionAllowed.set(true);
@@ -377,10 +389,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .setOutcomeCode("JOINED")
               .setAccountId(caller.getAccountId())
               .setTenantId(caller.getTenantId())
-              .setMembershipId(
-                  "stub-membership-" + caller.getAccountId() + "-" + caller.getTenantId())
-              .setMembershipVersion(1L)
-              .setMembershipAuthorityGeneration(1L)
+              .setMembershipId("1")
+              .setMembershipVersion(membershipVersion.get())
+              .setMembershipAuthorityGeneration(membershipAuthorityGeneration.get())
+              .setGameplayAdmissionAllowed(true)
               .build());
     }
     responseObserver.onCompleted();

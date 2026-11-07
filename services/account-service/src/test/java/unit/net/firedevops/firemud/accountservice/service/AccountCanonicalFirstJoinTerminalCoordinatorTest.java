@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
@@ -32,6 +33,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReadFence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
@@ -75,14 +78,25 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     TransactionSynchronizationManager.clear();
   }
 
-  @Test
-  void pendingFirstJoinStagesSourcesAppendsAuditAndCommitsExactTerminalProof() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void pendingFirstJoinStagesSourcesAppendsAuditAndCommitsExactTerminalProof(boolean paid) {
     Fixture fixture = new Fixture();
     fixture.arrangePending();
     fixture.startWritableTransaction();
 
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(fixture.eventProducer.publishPaidCanonicalFirstJoinMembershipChange(
+            fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed))
+        .thenReturn(fixture.checkpoint);
     CanonicalJoinTerminalProof result =
-        fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING);
+        paid
+            ? fixture.coordinator.commitPaidCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed)
+            : fixture.coordinator.commitCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING);
 
     assertThat(result).isEqualTo(fixture.expectedProof);
     InOrder ordered = inOrder(fixture.memberships, fixture.roles, fixture.eventProducer);
@@ -91,9 +105,15 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .verify(fixture.roles)
         .replaceCanonical(
             fixture.membership, ACCOUNT_ID, TENANT_ID, fixture.provenance, 2L, List.of("player"));
-    ordered
-        .verify(fixture.eventProducer)
-        .publishCanonicalFirstJoinMembershipChange(fixture.scope, REQUEST_ID, CALLER_BINDING);
+    if (paid)
+      ordered
+          .verify(fixture.eventProducer)
+          .publishPaidCanonicalFirstJoinMembershipChange(
+              fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed);
+    else
+      ordered
+          .verify(fixture.eventProducer)
+          .publishCanonicalFirstJoinMembershipChange(fixture.scope, REQUEST_ID, CALLER_BINDING);
     verify(fixture.audit)
         .appendCanonicalTenant(
             fixture.expectedProof.auditEventId(),
@@ -104,14 +124,25 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .commitCanonicalFirstJoin(REQUEST_ID, fixture.scope, CALLER_BINDING, fixture.expectedProof);
   }
 
-  @Test
-  void committedExactRetryReadsReceiptWithoutCreatingMembershipOrAppendingAudit() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void committedExactRetryReadsReceiptWithoutCreatingMembershipOrAppendingAudit(boolean paid) {
     Fixture fixture = new Fixture();
     fixture.arrangeCommittedReplay();
     fixture.startWritableTransaction();
 
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
     CanonicalJoinTerminalProof result =
-        fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING);
+        paid
+            ? fixture.coordinator.commitPaidCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed)
+            : fixture.coordinator.commitCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING);
+    verifyNoInteractions(hosting);
+    verify(fixture.eventProducer, never())
+        .publishPaidCanonicalFirstJoinMembershipChange(any(), any(), any(), any(), any(), any());
 
     assertThat(result).isEqualTo(fixture.expectedProof);
     assertThat(fixture.minimalAuditEnvelope.payload()).isNull();

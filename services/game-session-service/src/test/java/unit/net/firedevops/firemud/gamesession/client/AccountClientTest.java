@@ -370,6 +370,21 @@ class AccountClientTest {
   }
 
   @Test
+  void joinDoesNotAcceptJoinedOutcomeWithoutAdmissionFlag() throws Exception {
+    var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    when(fixture.initialStub().joinPublicProductionMembership(any()))
+        .thenReturn(
+            joinSuccess("JOINED", false).toBuilder().setGameplayAdmissionAllowed(false).build());
+
+    var result = join(fixture.client(), directTextContext());
+
+    assertThat(result.getSuccess()).isFalse();
+    assertThat(result.getError().getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    verify(fixture.initialStub()).joinPublicProductionMembership(any());
+    verify(fixture.retryStub(), never()).joinPublicProductionMembership(any());
+  }
+
+  @Test
   void joinPreservesTypedNonSuccessWithOrWithoutErrorWithoutRetry() throws Exception {
     var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
     var normal =
@@ -698,6 +713,7 @@ class AccountClientTest {
         .setMembershipVersion(12L)
         .setMembershipAuthorityGeneration(3L)
         .setReplayed(replayed)
+        .setGameplayAdmissionAllowed(true)
         .build();
   }
 

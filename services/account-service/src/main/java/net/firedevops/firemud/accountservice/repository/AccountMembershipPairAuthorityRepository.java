@@ -218,6 +218,95 @@ public class AccountMembershipPairAuthorityRepository {
     return advanced;
   }
 
+  /** Advances an existing positive pair after its exact restored membership event was appended. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PairAuthority commitRestore(PairAuthority expected, PairTransition transition) {
+    requireOwnerWriteTransaction();
+    Objects.requireNonNull(expected);
+    Objects.requireNonNull(transition);
+    requireFreshProvenance(expected.provenance());
+    long nextSequence = increment(expected.eventSequence(), "membership event sequence");
+    long nextVersion = increment(expected.membershipVersion(), "membership version");
+    if (!expected.membershipExists()
+        || expected.eventSequence() <= 0L
+        || !transition.membershipExists()
+        || transition.eventSequence() != nextSequence
+        || transition.callerBoundAuthorityInvalidated()
+        || !expected.equals(
+            readForUpdate(expected.accountUuid(), expected.tenantUuid()).orElseThrow())) {
+      throw new IllegalStateException("Restore requires the exact current positive pair");
+    }
+    Record ownerEvidence =
+        dsl.fetchOne(
+            "SELECT EXISTS (SELECT 1 FROM account_authority_outbox_events next_event "
+                + "JOIN account_authority_outbox_streams stream USING (outbox_stream_key) "
+                + "JOIN account_authority_outbox_events prior_event USING (outbox_stream_key) "
+                + "JOIN accounts account ON account.account_uuid = ? "
+                + "JOIN account_tenant_membership member ON member.account_id = account.id AND member.tenant_uuid = ? "
+                + "WHERE next_event.outbox_stream_key = ? AND next_event.outbox_sequence = ? "
+                + "AND next_event.event_id = ? AND next_event.event_digest = ? AND stream.last_sequence = ? "
+                + "AND prior_event.outbox_sequence = ? AND prior_event.event_id = ? AND prior_event.event_digest = ? "
+                + "AND convert_from(prior_event.payload, 'UTF8')::JSONB ->> 'membershipLifecycleState' = 'INACTIVE' "
+                + "AND member.lifecycle_state = 'ACTIVE' AND member.gameplay_admission_allowed IS TRUE "
+                + "AND member.membership_version = ? AND member.membership_authority_generation = ?)",
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            "account:auth-authority:v1:membership/"
+                + expected.accountUuid()
+                + "/"
+                + expected.tenantUuid(),
+            nextSequence,
+            transition.eventId(),
+            transition.eventDigest(),
+            nextSequence,
+            expected.eventSequence(),
+            expected.eventId(),
+            expected.eventDigest(),
+            nextVersion,
+            expected.membershipAuthorityGeneration());
+    if (ownerEvidence == null || !Boolean.TRUE.equals(ownerEvidence.get(0, Boolean.class))) {
+      throw new IllegalStateException(
+          "Restore pair requires actual current membership and event evidence");
+    }
+    int changed =
+        dsl.execute(
+            "UPDATE "
+                + TABLE
+                + " SET membership_version = ?, last_event_sequence = ?, "
+                + "last_event_id = ?, last_event_digest = ?, last_transition_invalidated = FALSE "
+                + "WHERE account_uuid = ? AND tenant_uuid = ? AND membership_exists IS TRUE "
+                + "AND membership_version = ? AND membership_authority_generation = ? "
+                + "AND last_event_sequence = ? AND last_event_id = ? AND last_event_digest = ?",
+            nextVersion,
+            nextSequence,
+            transition.eventId(),
+            transition.eventDigest(),
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            expected.membershipVersion(),
+            expected.membershipAuthorityGeneration(),
+            expected.eventSequence(),
+            expected.eventId(),
+            expected.eventDigest());
+    if (changed != 1) throw new IllegalStateException("Restore pair compare-and-advance failed");
+    PairAuthority actual =
+        readForUpdate(expected.accountUuid(), expected.tenantUuid()).orElseThrow();
+    PairAuthority required =
+        new PairAuthority(
+            expected.accountUuid(),
+            expected.tenantUuid(),
+            expected.provenance(),
+            true,
+            nextVersion,
+            expected.membershipAuthorityGeneration(),
+            nextSequence,
+            transition.eventId(),
+            transition.eventDigest(),
+            false);
+    if (!required.equals(actual)) throw new IllegalStateException("Restore pair readback differs");
+    return actual;
+  }
+
   private static void requireScope(UUID accountUuid, UUID tenantUuid) {
     if (accountUuid == null || tenantUuid == null || isNil(accountUuid) || isNil(tenantUuid)) {
       throw new IllegalArgumentException("Canonical non-nil Account and tenant UUIDs are required");

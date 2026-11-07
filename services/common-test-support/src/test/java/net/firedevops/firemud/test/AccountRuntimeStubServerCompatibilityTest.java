@@ -65,6 +65,7 @@ class AccountRuntimeStubServerCompatibilityTest {
 
     assertField(descriptor, "membership_version", 6, FieldDescriptor.Type.UINT64);
     assertField(descriptor, "membership_authority_generation", 7, FieldDescriptor.Type.UINT64);
+    assertField(descriptor, "gameplay_admission_allowed", 10, FieldDescriptor.Type.BOOL);
   }
 
   @Test
@@ -302,6 +303,49 @@ class AccountRuntimeStubServerCompatibilityTest {
             stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11"));
         assertThat(membershipAfterJoin.getMembershipExists()).isTrue();
         assertThat(membershipAfterJoin.getGameplayAdmissionAllowed()).isTrue();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void alreadyActiveNonAdmittingJoinReturnsMembershipReceiptWithoutGrantingAdmission()
+      throws Exception {
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
+      server.denyGameplayAdmission();
+      String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+      var scopeRequest = validConnectScopeRequest(accountUuid);
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        String connectScopeId = stub.issueDirectTextConnectScope(scopeRequest).getConnectScopeId();
+        var before = stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11"));
+        var reply =
+            stub.joinPublicProductionMembership(
+                JoinPublicProductionMembershipRequest.newBuilder()
+                    .setPlayerContext(scopeRequest.getPlayerContext())
+                    .setConnectScopeId(connectScopeId)
+                    .setRequestId("join-request-1")
+                    .build());
+
+        assertThat(reply.getSuccess()).isTrue();
+        assertThat(reply.getOutcomeCode()).isEqualTo("ALREADY_ACTIVE");
+        assertThat(reply.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(reply.getMembershipVersion()).isEqualTo(before.getMembershipVersion());
+        assertThat(reply.getMembershipAuthorityGeneration())
+            .isEqualTo(before.getMembershipAuthorityGeneration());
+        assertThat(reply.getMembershipId()).matches("[1-9][0-9]{0,18}");
+        var after = stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11"));
+        assertThat(after.getMembershipExists()).isEqualTo(before.getMembershipExists());
+        assertThat(after.getGameplayAdmissionAllowed())
+            .isEqualTo(before.getGameplayAdmissionAllowed());
+        assertThat(after.getMembershipVersion()).isEqualTo(before.getMembershipVersion());
+        assertThat(after.getMembershipAuthorityGeneration())
+            .isEqualTo(before.getMembershipAuthorityGeneration());
       } finally {
         channel.shutdownNow();
       }

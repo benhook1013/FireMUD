@@ -78,6 +78,9 @@ message JoinPublicProductionMembershipResponse {
   uint64 membership_authority_generation = 7;
   bool replayed = 8;
   shared.v1.ErrorDetail error = 9;
+  // Exact current membership flag. A successful membership receipt may be non-admitting;
+  // this field and success never replace the separate current gameplay admission checks.
+  bool gameplay_admission_allowed = 10;
 }
 
 // Empty request used to verify that the service is reachable.
