@@ -1666,7 +1666,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
   public record ClaimResult(Disposition disposition, ProvisioningClaim claim) {}
 
   /**
-   * Private construction prevents mistaking caller-supplied status/version booleans for a claim.
+   * Private construction prevents mistaking caller-supplied status/version booleans for a claim. A
+   * claim's attempt number never grants or denies provider creation. Only an independently read
+   * ProviderDispatch carries initial-call permission from the retained first-dispatch receipt.
    */
   public static final class ProvisioningClaim {
     private final AccountSubscriptionCreationRecord creation;
@@ -1713,10 +1715,6 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
     public Instant expiresAt() {
       return expiresAt;
-    }
-
-    public boolean reconciliationRequiredBeforeCreate() {
-      return attemptNumber > 1;
     }
   }
 

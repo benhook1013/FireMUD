@@ -48,6 +48,9 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
+          // Issuer barrier claims take this clock before locking the mapping and source rows.
+          // Keep the same order so a retained claim cannot deadlock with tag resolution.
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
           BindingTarget source = loadBindingTarget(transaction, transitionId);
           requireTenantClaim(transaction, source.tenantId());
           return resolveMapping(
@@ -242,6 +245,7 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     return dsl.transactionResult(
         configuration -> {
           DSLContext transaction = DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
           BindingTarget source = loadBindingTarget(transaction, transitionId);
           requireTenantClaim(transaction, source.tenantId());
           return resolveMapping(transaction, source, candidateVersion, candidateTag);

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -22,6 +23,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDe
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -85,9 +88,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Bootstrap JWT signing uses a local test key and the actual caller verifier/persisted Account; the
  * active-session registry and complete Game Session collection are controlled inputs. Fresh Game
  * Design evidence is imported as a fixture, not obtained from an authenticated owner call. The
- * canonical public-scope cases additionally use real membership/pair and V2 scope persistence. This
- * proves neither paid hosting, issuer custody, workload provenance, a World hold, private support
- * nor gameplay admission; a retained selector is not PLAYER entitlement or JOIN permission.
+ * canonical public-scope cases additionally use real membership/pair, V2 scope persistence and
+ * retained-selector reads. Expected reader Account UUIDs are comparison inputs from this fixture,
+ * not caller authentication performed by the reader. This proves neither paid hosting, issuer
+ * custody, workload provenance, a World hold, private support nor gameplay admission; a retained
+ * selector is not PLAYER entitlement or JOIN permission.
  */
 class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
   private static final String NAMESPACE = "demo-worlds-proof";
@@ -350,6 +355,143 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
                 .get(0, Long.class))
         .isEqualTo(1L);
     f.assertNoMembershipPairJoinOrPaidReads();
+    SessionContext.setContext(
+        f.account.getAccountUuid().toString(),
+        List.of("player"),
+        Map.of(tenant.tenantId().toString(), List.of("player")));
+
+    assertThat(f.scopeReader.read(f.account.getAccountUuid(), scope.connectScopeId()))
+        .isEqualTo(scope);
+    assertThat(f.scopeReader.read(f.account.getAccountUuid(), scope.connectScopeId()))
+        .isEqualTo(scope);
+
+    assertThat(SessionContext.getAccountId()).isEqualTo(f.account.getAccountUuid().toString());
+    assertThat(SessionContext.getScopedRoles(tenant.tenantId().toString()))
+        .containsExactly("player");
+    assertThat(f.snapshot()).isEqualTo(after);
+    assertThat(
+            f.inTransaction(
+                () -> f.scopes.findCanonicalEvidenceByTokenHash(tokenHash).orElseThrow()))
+        .isEqualTo(evidence);
+    f.assertNoMembershipPairJoinOrPaidReads();
+    verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
+  }
+
+  @Test
+  void actualRetainedScopeRefusesAnotherPersistedExpectedAccountWithoutChangingCallerContext() {
+    Fixture f = fixture();
+    CanonicalJoinScopeV2 scope = f.issueScope("scope-wrong-account");
+    Account other = new Account();
+    other.setUsername("other-scope-reader");
+    other.setEmail("other-scope-reader@example.test");
+    other.setPasswordHash("controlled-unused-password-verifier");
+    other.setRole("player");
+    Account expected = f.inTransaction(() -> f.accounts.save(other));
+    SessionContext.setContext(expected.getAccountUuid().toString(), List.of("player"), Map.of());
+    Map<String, String> before = f.snapshot();
+
+    assertCode(
+        "CONNECT_SCOPE_INVALID",
+        () -> f.scopeReader.read(expected.getAccountUuid(), scope.connectScopeId()));
+
+    assertThat(SessionContext.getAccountId()).isEqualTo(expected.getAccountUuid().toString());
+    assertThat(f.scopeReader.read(f.account.getAccountUuid(), scope.connectScopeId()))
+        .isEqualTo(scope);
+    // The UUID argument is comparison data supplied by the outer owner; ambient roles/identity
+    // are neither accepted as source authority nor cleared to make this read succeed.
+    assertThat(SessionContext.getAccountId()).isEqualTo(expected.getAccountUuid().toString());
+    assertThat(f.snapshot()).isEqualTo(before);
+    f.assertNoMembershipPairJoinOrPaidReads();
+    verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
+  }
+
+  @Test
+  void actualIssuedScopeExpiryRefusesWithoutRestampingItsRetainedSelector() {
+    Fixture f = fixture();
+    CanonicalJoinScopeV2 scope = f.issueScope("scope-reader-expiry");
+    Map<String, String> before = f.snapshot();
+    f.clock.offset.set(
+        Duration.between(f.clock.instant(), Instant.parse(scope.connectScopeExpiresAt()))
+            .plusSeconds(1));
+
+    assertCode(
+        "CONNECT_SCOPE_INVALID",
+        () -> f.scopeReader.read(f.account.getAccountUuid(), scope.connectScopeId()));
+
+    assertThat(f.snapshot()).isEqualTo(before);
+    assertThat(f.inTransaction(() -> f.scopes.findCanonical(scope.connectScopeId()).orElseThrow()))
+        .isEqualTo(scope);
+    f.assertNoMembershipPairJoinOrPaidReads();
+    verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
+  }
+
+  @Test
+  void actualImmutableScopeGuardRejectsEvidenceMutationAndReaderReturnsOriginalPreimage() {
+    Fixture f = fixture();
+    CanonicalJoinScopeV2 scope = f.issueScope("scope-immutable");
+    Map<String, String> before = f.snapshot();
+    String tokenHash = AccountJoinDigest.tokenHash(scope.connectScopeId());
+
+    org.jooq.exception.DataAccessException failure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.jooq.exception.DataAccessException.class,
+            () ->
+                f.dsl.execute(
+                    "UPDATE account_connect_scope_records SET world_slug = ? WHERE scope_token_hash = ?",
+                    "different-world",
+                    tokenHash));
+
+    SQLException sql = Objects.requireNonNull(sqlFailure(failure));
+    assertThat(sql.getSQLState()).isEqualTo("23514");
+    assertThat(sql.getMessage()).contains("Canonical Account connect scope evidence is immutable");
+    assertThat(f.scopeReader.read(f.account.getAccountUuid(), scope.connectScopeId()))
+        .isEqualTo(scope);
+    assertThat(f.snapshot()).isEqualTo(before);
+    f.assertNoMembershipPairJoinOrPaidReads();
+  }
+
+  @Test
+  void actualAccountLockTimeoutMakesScopeReadUnavailableAndFreshReadRecoversUnchanged()
+      throws SQLException {
+    Fixture f = fixture();
+    CanonicalJoinScopeV2 scope = f.issueScope("scope-lock-timeout");
+    Map<String, String> before = f.snapshot();
+    // Bound only this fixture DataSource's future physical connections. The reader still uses
+    // its real DataSourceTransactionManager, writable SERIALIZABLE transaction and repositories.
+    Properties connectionProperties = new Properties();
+    connectionProperties.setProperty("connectTimeout", "10");
+    connectionProperties.setProperty("socketTimeout", "60");
+    connectionProperties.setProperty("options", "-c lock_timeout=150ms");
+    f.dataSource.setConnectionProperties(connectionProperties);
+    try (Connection holder = f.dataSource.getConnection()) {
+      holder.setAutoCommit(false);
+      try {
+        try (var statement =
+            holder.prepareStatement("SELECT id FROM accounts WHERE account_uuid = ? FOR UPDATE")) {
+          statement.setObject(1, f.account.getAccountUuid());
+          try (var locked = statement.executeQuery()) {
+            assertThat(locked.next()).isTrue();
+          }
+        }
+
+        AuthenticationException failure =
+            org.junit.jupiter.api.Assertions.assertThrows(
+                AuthenticationException.class,
+                () -> f.scopeReader.read(f.account.getAccountUuid(), scope.connectScopeId()));
+
+        assertThat(failure.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+        SQLException sql = Objects.requireNonNull(sqlFailure(failure));
+        assertThat(sql.getSQLState()).isEqualTo("55P03");
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      } finally {
+        holder.rollback();
+      }
+    }
+
+    assertThat(f.scopeReader.read(f.account.getAccountUuid(), scope.connectScopeId()))
+        .isEqualTo(scope);
+    assertThat(f.snapshot()).isEqualTo(before);
+    f.assertNoMembershipPairJoinOrPaidReads();
     verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
   }
 
@@ -449,6 +591,7 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
   }
 
   private static final class Fixture {
+    private final DriverManagerDataSource dataSource;
     private final DSLContext dsl;
     private final TransactionTemplate transaction;
     private final AccountRepository accounts;
@@ -469,11 +612,13 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
     private final String token;
     private final AccountPublicBootstrapWorldsOwner worlds;
     private final AccountCanonicalPublicRealmScopeOwner realmScopes;
+    private final AccountCanonicalConnectScopeReader scopeReader;
     private final AtomicInteger targetReadCount = new AtomicInteger();
     private long sourceRowId;
     private Runnable onSecondTargetRead = () -> {};
 
     private Fixture(DriverManagerDataSource dataSource) {
+      this.dataSource = dataSource;
       dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
       var transactions = new DataSourceTransactionManager(dataSource);
       transaction = new TransactionTemplate(transactions);
@@ -520,6 +665,7 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
                   dsl, new LegacyTenantSourceEvidence(dsl), NAMESPACE),
               NAMESPACE);
       scopes = new AccountConnectScopeRepository(dsl, retainedIdentities, tenants);
+      scopeReader = new AccountCanonicalConnectScopeReader(jwt, scopes, transactions, clock);
       var tokenProperties = new AccountTokenProperties();
       tokenProperties.setConnectScopeExpirationMs(120000L);
       realmScopes =
@@ -571,6 +717,15 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
             generations.initializeTenantIfAbsent(tenantId);
             return source;
           });
+    }
+
+    private CanonicalJoinScopeV2 issueScope(String worldSlug) {
+      DemoTenant tenant = demo(worldSlug, true);
+      targetReads(List.of(tenant.target()), List.of(tenant.target()));
+      return realmScopes
+          .listRealmScopes(token, tenant.target().tenantSlug(), tenant.target().worldSlug())
+          .getFirst()
+          .scope();
     }
 
     private DemoTenant demo(String worldSlug, boolean available) {

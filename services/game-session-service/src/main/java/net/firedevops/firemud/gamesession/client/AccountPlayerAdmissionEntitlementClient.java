@@ -187,7 +187,11 @@ public final class AccountPlayerAdmissionEntitlementClient
       requireLoginBinding(evidence, login);
       requireCurrent(loginCustodyCurrent, requireScopeCurrent);
       requireLiveLogin(loginCustody, request.target().accountId());
-      evidence.requireCurrentAt(clock.instant());
+      // Account owns evaluatedAt ordering; an independent receiver clock cannot make it a
+      // not-before bound. Preserve the exact expiry without any skew allowance or extension.
+      if (!clock.instant().isBefore(evidence.validUntil())) {
+        throw failure(Status.Code.DEADLINE_EXCEEDED);
+      }
       return evidence;
     } catch (StatusRuntimeException transport) {
       throw failure(transport.getStatus().getCode());

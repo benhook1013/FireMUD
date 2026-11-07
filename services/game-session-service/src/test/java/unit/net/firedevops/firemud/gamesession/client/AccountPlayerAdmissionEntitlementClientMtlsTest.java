@@ -139,6 +139,68 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
   }
 
   @Test
+  void independentReceiverClockMayPrecedeAccountEvaluationWithoutExtendingExpiry()
+      throws Exception {
+    var context = context();
+    var login = loginCustody();
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    Server server = server("account", calls, observedJwt, observedPeer, context, login.evidence());
+    Clock receiverClock = Clock.fixed(NOW.minusMillis(25), ZoneOffset.UTC);
+    try (var client = client(server, receiverClock)) {
+      client.init();
+      var result = client.read(context, READ_REQUEST, login, () -> true);
+      assertThat(result.evaluatedAt()).isEqualTo(NOW).isAfter(receiverClock.instant());
+      assertThat(result.validUntil())
+          .isEqualTo(Instant.ofEpochMilli(context.claims().expiresAtMillis()));
+      assertThat(calls).hasValue(1);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = {-1, 0, 1})
+  void exactPaidReceiptExpiryHasNoReceiverSkewAllowance(long offsetMillis) throws Exception {
+    var context = context();
+    var login = loginCustody();
+    Instant receiptExpiry = NOW.plusSeconds(1);
+    var calls = new AtomicInteger();
+    var observedJwt = new AtomicReference<String>();
+    var observedPeer = new AtomicReference<String>();
+    Server server =
+        server(
+            "account",
+            calls,
+            observedJwt,
+            observedPeer,
+            context.resolvedTarget(),
+            Instant.ofEpochMilli(context.claims().expiresAtMillis()),
+            login.evidence(),
+            (target, sources) -> sources.put("paidReceiptValidUntil", receiptExpiry.toString()),
+            () -> {});
+    try (var client =
+        client(server, Clock.fixed(receiptExpiry.plusMillis(offsetMillis), ZoneOffset.UTC))) {
+      client.init();
+      if (offsetMillis < 0) {
+        assertThat(client.read(context, READ_REQUEST, login, () -> true).validUntil())
+            .isEqualTo(receiptExpiry);
+      } else {
+        assertThatThrownBy(() -> client.read(context, READ_REQUEST, login, () -> true))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode())
+                        .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      }
+      assertThat(calls).hasValue(1);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
   void sameCaWrongServiceAndNamespaceReceiveNoRequestCredential() throws Exception {
     for (String identity : List.of("wrong-service", "wrong-namespace")) {
       var context = context();
@@ -686,6 +748,10 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     sources.put("worldCaptureId", "77777777-7777-4777-8777-777777777777");
     sources.put("worldRowVersion", "0");
     drift.accept(target, sources);
+    if (sources.get("paidReceiptValidUntil") != null) {
+      facts.put("sourceKind", "PAID_HOSTING");
+      facts.put("subscriptionStatus", "active");
+    }
 
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
         request.target().readRequestId(),
