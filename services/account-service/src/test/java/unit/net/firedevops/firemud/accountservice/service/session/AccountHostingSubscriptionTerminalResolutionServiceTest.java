@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ExpectedBinding;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ObservedSubscription;
@@ -202,7 +203,7 @@ class AccountHostingSubscriptionTerminalResolutionServiceTest {
 
     assertThat(failure).isInstanceOf(AuthenticationException.class);
     AuthenticationException error = (AuthenticationException) failure;
-    assertThat(error.getCode()).isEqualTo("INVALID_CREDENTIALS");
+    assertThat(error.getCode()).isEqualTo(AuthenticationErrorCodes.INVALID_CREDENTIALS);
     assertThat(error).hasMessage("Account reauthentication failed");
     assertThat(error.getCause()).isNull();
     assertThat(error.toString()).doesNotContain(EMAIL, SECRET);
@@ -441,7 +442,8 @@ class AccountHostingSubscriptionTerminalResolutionServiceTest {
                       }
                     });
                 throw new AuthenticationException(
-                    "INVALID_CREDENTIALS", "Rejected credential was " + SECRET);
+                    AuthenticationErrorCodes.INVALID_CREDENTIALS,
+                    "Rejected credential was " + SECRET);
               })
           .when(primaryAuthentication)
           .authenticateControlUiPrimaryIdentity(EMAIL, SECRET);

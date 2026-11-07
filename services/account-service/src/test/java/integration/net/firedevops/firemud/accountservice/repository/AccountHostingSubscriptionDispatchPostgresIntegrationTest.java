@@ -33,6 +33,7 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.ProducerEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionProvisioningService;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
@@ -209,7 +210,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(prepareAndRead(f, second).initialCallAllowed()).isFalse();
     f.clock().advance(Duration.ofSeconds(10));
     assertThatThrownBy(() -> f.tx().execute(s -> f.owner().readProviderDispatch(prepared)))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(FenceRejectedException.class)
+        .hasMessage("Exact live provisioning claim readback rejected");
   }
 
   @Test

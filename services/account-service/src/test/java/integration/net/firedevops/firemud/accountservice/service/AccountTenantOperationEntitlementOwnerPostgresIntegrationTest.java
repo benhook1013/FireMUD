@@ -7,6 +7,7 @@ import integration.net.firedevops.firemud.accountservice.repository.CanonicalHos
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -150,20 +151,24 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
     var f = c.fixture();
     var claim =
         f.service().claimProvisioning(f.creation().requestId(), 1, UUID.randomUUID()).claim();
-    f.service()
-        .reconcile(
-            UUID.randomUUID(),
-            f.creation().requestId(),
-            claim.subscriptionRowVersion(),
-            f.providerId(),
-            claim.attemptId());
+    var committed =
+        f.service()
+            .reconcile(
+                UUID.randomUUID(),
+                f.creation().requestId(),
+                claim.subscriptionRowVersion(),
+                f.providerId(),
+                claim.attemptId());
+    assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
     String marker = "capture_marker_" + UUID.randomUUID().toString().replace("-", "");
+    AtomicInteger captures = new AtomicInteger();
     assertThatThrownBy(
             () ->
                 f.service()
                     .readCurrentAndCapture(
                         f.tenantId(),
                         receipt -> {
+                          captures.incrementAndGet();
                           assertThat(TransactionSynchronizationManager.isActualTransactionActive())
                               .isTrue();
                           assertThat(
@@ -172,7 +177,10 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
                           f.dsl().execute("CREATE TABLE " + marker + " (id bigint)");
                           throw new IllegalStateException("controlled capture rollback");
                         }))
-        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
+        .hasMessageContaining("ENTITLEMENT_UNAVAILABLE")
+        .hasCauseInstanceOf(IllegalStateException.class)
+        .hasRootCauseMessage("controlled capture rollback");
+    assertThat(captures).hasValue(1);
     assertThat(f.dsl().fetchOne("SELECT to_regclass(?)::text", marker).get(0, String.class))
         .isNull();
   }

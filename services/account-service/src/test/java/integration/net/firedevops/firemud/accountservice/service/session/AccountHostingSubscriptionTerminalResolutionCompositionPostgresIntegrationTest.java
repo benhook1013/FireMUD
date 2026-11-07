@@ -239,7 +239,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
                             return issued.sources().accounts.save(account);
                           }));
       assertThatThrownBy(() -> resolve(failed, issued.account().getEmail(), OTP))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact current authenticated initial creator required");
       var authorityAfter =
           issued
               .sources()

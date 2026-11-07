@@ -393,7 +393,7 @@ final class AccountControlUiOwnerSourcesFixture {
               null, // Email delivery is not used by primary authentication.
               null, // Mail properties are not used by primary authentication.
               null, // Token properties are not used by primary authentication.
-              null, // Entity Management client is not used by primary authentication.
+              null, // JWT auth properties are not used by primary authentication.
               null, // JWT utility is not used by primary authentication.
               null, // Session service is not used by primary authentication.
               manager);
