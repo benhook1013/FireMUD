@@ -296,8 +296,9 @@ public final class PrivateWorldPreparationReadEvidence {
     }
 
     public void requireCurrentAt(Instant now) {
-      if (now == null || now.isBefore(observedAt) || !now.isBefore(preparation.forkExpiresAt()))
-        throw invalid();
+      // observedAt belongs to the Game Session database clock, not the receiving JVM clock.
+      // Ordering between source observations is checked separately in the owning assemblies.
+      if (now == null || !now.isBefore(preparation.forkExpiresAt())) throw invalid();
     }
 
     public boolean admissionAllowed() {

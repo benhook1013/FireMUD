@@ -152,6 +152,67 @@ class PrivateWorldPreparationReadGrpcServiceTest {
         .isEqualTo(held);
   }
 
+  @Test
+  void protectionOwnerCorruptionIsDistinctFromMalformedCallerFrames() throws Exception {
+    var fixture = new Fixture();
+    var source = fixture.call(fixture.request);
+    var evidence = PrivateWorldPreparationReadGrpcCodec.fromResponse(fixture.request, source.value);
+    var acquire = new PrivatePreparationProtectionGrpcCodec.Acquire(UUID.randomUUID(), evidence);
+    var held =
+        new PrivatePreparationProtectionGrpcCodec.Held(
+            acquire.requestId(), UUID.randomUUID(), 1, evidence);
+    var read =
+        new PrivatePreparationProtectionGrpcCodec.Read(
+            UUID.randomUUID(), acquire.requestId(), held.holdId(), 1, held.sourceDigest());
+    var owner = mock(GameSessionPrivatePreparationProtectionRepository.class);
+    var service = new PrivatePreparationProtectionGrpcService(owner, NS);
+    String peer = "spiffe://firemud/ns/" + NS + "/sa/world-management-service";
+    var malformedAcquire = new ProtectionResult();
+    withPeer(
+        peer,
+        () ->
+            service.acquirePrivatePreparationProtection(
+                net.firedevops.firemud.gamesession.v1.AcquirePrivatePreparationProtectionRequest
+                    .getDefaultInstance(),
+                malformedAcquire));
+    var malformedRead = new ProtectionResult();
+    withPeer(
+        peer,
+        () ->
+            service.readCurrentPrivatePreparationProtection(
+                net.firedevops.firemud.gamesession.v1.ReadCurrentPrivatePreparationProtectionRequest
+                    .getDefaultInstance(),
+                malformedRead));
+    assertThat(Status.fromThrowable(malformedAcquire.failure).getCode())
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(Status.fromThrowable(malformedRead.failure).getCode())
+        .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(owner);
+
+    when(owner.acquire(acquire.requestId(), evidence.snapshot()))
+        .thenThrow(new IllegalArgumentException("Controlled retained acquire corruption"));
+    when(owner.readCurrent(read.requestId(), read.holdId(), read.fence()))
+        .thenThrow(new IllegalArgumentException("Controlled retained read corruption"));
+    var badAcquire = new ProtectionResult();
+    withPeer(
+        peer,
+        () ->
+            service.acquirePrivatePreparationProtection(
+                PrivatePreparationProtectionGrpcCodec.toWire(acquire), badAcquire));
+    var badRead = new ProtectionResult();
+    withPeer(
+        peer,
+        () ->
+            service.readCurrentPrivatePreparationProtection(
+                PrivatePreparationProtectionGrpcCodec.toWire(read), badRead));
+    assertThat(Status.fromThrowable(badAcquire.failure).getCode())
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(Status.fromThrowable(badRead.failure).getCode())
+        .isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(badAcquire.value).isNull();
+    assertThat(badRead.value).isNull();
+  }
+
   private static final class ProtectionResult
       implements StreamObserver<PrivatePreparationProtectionResponse> {
     PrivatePreparationProtectionResponse value;

@@ -38,7 +38,7 @@ public final class PrivatePreparationProtectionGrpcService
     serve(
         observer,
         () -> {
-          var request = PrivatePreparationProtectionGrpcCodec.parse(wire);
+          var request = parsed(() -> PrivatePreparationProtectionGrpcCodec.parse(wire));
           if (!namespace.equals(request.expectedSource().snapshot().scope().targetNamespace()))
             throw Status.PERMISSION_DENIED.asRuntimeException();
           var retained = owner.acquire(request.requestId(), request.expectedSource().snapshot());
@@ -59,7 +59,7 @@ public final class PrivatePreparationProtectionGrpcService
     serve(
         observer,
         () -> {
-          var request = PrivatePreparationProtectionGrpcCodec.parse(wire);
+          var request = parsed(() -> PrivatePreparationProtectionGrpcCodec.parse(wire));
           var retained = owner.readCurrent(request.requestId(), request.holdId(), request.fence());
           if (!namespace.equals(retained.source().scope().targetNamespace()))
             throw Status.PERMISSION_DENIED.asRuntimeException();
@@ -73,6 +73,14 @@ public final class PrivatePreparationProtectionGrpcService
         });
   }
 
+  private static <T> T parsed(Supplier<T> decode) {
+    try {
+      return decode.get();
+    } catch (IllegalArgumentException malformed) {
+      throw Status.INVALID_ARGUMENT.asRuntimeException();
+    }
+  }
+
   private void serve(
       StreamObserver<PrivatePreparationProtectionResponse> observer,
       Supplier<PrivatePreparationProtectionResponse> action) {
@@ -83,8 +91,6 @@ public final class PrivatePreparationProtectionGrpcService
       observer.onCompleted();
     } catch (StatusRuntimeException denied) {
       fail(observer, denied.getStatus());
-    } catch (IllegalArgumentException malformed) {
-      fail(observer, Status.INVALID_ARGUMENT);
     } catch (RuntimeException failure) {
       boolean unavailable = false;
       for (Throwable cause = failure; cause != null; cause = cause.getCause()) {

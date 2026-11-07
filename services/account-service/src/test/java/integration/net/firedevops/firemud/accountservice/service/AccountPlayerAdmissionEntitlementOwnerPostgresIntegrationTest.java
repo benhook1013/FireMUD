@@ -229,7 +229,11 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         assertThat(new String(received.canonicalBytes(), StandardCharsets.UTF_8))
             .doesNotContain(CONTROLLED_COMPACT_TOKEN);
         assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> false))
-            .isInstanceOf(RuntimeException.class);
+            .isExactlyInstanceOf(io.grpc.StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(((io.grpc.StatusRuntimeException) failure).getStatus().getCode())
+                        .isEqualTo(io.grpc.Status.Code.CANCELLED));
         assertThat(f.dsl.fetchCount(DSL.table("account_tenant_membership")))
             .isEqualTo(membershipsBefore);
       } finally {
@@ -248,6 +252,46 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     } catch (java.security.NoSuchAlgorithmException unavailable) {
       throw new IllegalStateException(unavailable);
     }
+  }
+
+  @Test
+  void tenantOperationDemoCapturesCurrentSourceOnActualWritableSerializableConnection() {
+    Fixture f = fixture(false);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                  .isFalse();
+              f.dsl.connection(
+                  connection -> {
+                    assertThat(connection.getTransactionIsolation())
+                        .isEqualTo(Connection.TRANSACTION_SERIALIZABLE);
+                    assertThat(connection.isReadOnly()).isFalse();
+                  });
+              return invocation.callRealMethod();
+            })
+        .when(f.demos)
+        .readCurrent(f.tenantId);
+    var owner =
+        new AccountTenantOperationEntitlementOwner(
+            mock(AccountHostingSubscriptionLifecycleService.class),
+            f.demos,
+            new DataSourceTransactionManager(f.dataSource),
+            Clock.fixed(NOW, ZoneOffset.UTC),
+            NAMESPACE);
+    var request =
+        new AccountTenantOperationEntitlementOwner.Request(
+            f.tenantId,
+            UUID.randomUUID(),
+            "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service");
+
+    var evidence = owner.evaluateDemo(request);
+
+    assertThat(evidence.fields())
+        .containsEntry("variant", "TENANT_OPERATION")
+        .containsEntry("sourceKind", "NON_PAID_DEMO")
+        .containsEntry("tenantId", f.tenantId.toString())
+        .containsEntry("requestId", request.requestId().toString());
   }
 
   @Test

@@ -372,6 +372,10 @@ class PrivateWorldPreparationReadGrpcCodecTest {
             NOW.plusSeconds(1));
     assertThat(PrivateWorldPreparationReadGrpcCodec.stableBytes(later))
         .containsExactly(PrivateWorldPreparationReadGrpcCodec.stableBytes(snapshot));
+    snapshot.requireCurrentAt(snapshot.observedAt().minusMillis(25));
+    snapshot.requireCurrentAt(snapshot.preparation().forkExpiresAt().minusNanos(1));
+    assertThatThrownBy(() -> snapshot.requireCurrentAt(null))
+        .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> snapshot.requireCurrentAt(snapshot.preparation().forkExpiresAt()))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
