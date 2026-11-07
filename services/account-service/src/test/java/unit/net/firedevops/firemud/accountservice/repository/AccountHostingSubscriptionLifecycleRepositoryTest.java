@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
@@ -133,6 +134,47 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> repository.applyTerminalResolution(null, null, null))
         .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(dsl);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"tenant", "subscription", "actor"})
+  void terminalResolutionRejectsWrongCallerOrTargetBeforeAnyJournalSqlOrLocks(String changed) {
+    var request = terminalRequest("Same-owner cancellation resolution");
+    var original = mock(AccountSubscriptionCreationRecord.class);
+    when(original.tenantId())
+        .thenReturn("tenant".equals(changed) ? UUID.randomUUID() : request.tenantId());
+    when(original.subscriptionId())
+        .thenReturn("subscription".equals(changed) ? UUID.randomUUID() : request.subscriptionId());
+    when(original.owner())
+        .thenReturn(
+            new AccountSubscriptionCreateRequest.OwnerFence(
+                "actor".equals(changed) ? UUID.randomUUID() : request.actorAccountId(),
+                1,
+                UUID.randomUUID()));
+    var controlledIntents = mock(AccountSubscriptionIntentRepository.class);
+    when(controlledIntents.findCreation(request.creationRequestId()))
+        .thenReturn(Optional.of(original));
+    var controlledRepository =
+        new AccountHostingSubscriptionLifecycleRepository(
+            dsl,
+            controlledIntents,
+            Clock.systemUTC(),
+            limits(3, 2, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
+            new AccountHostingSubscriptionLifecyclePolicy(
+                Duration.ofSeconds(15),
+                new AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming(
+                    Duration.ofSeconds(60), Duration.ofSeconds(120))),
+            "prod",
+            false);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThatThrownBy(() -> controlledRepository.prepareTerminalResolution(request))
+        .isExactlyInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessage("Exact same-owner terminal lifecycle target rejected");
+
+    verify(controlledIntents).findCreation(request.creationRequestId());
+    verifyNoMoreInteractions(controlledIntents);
     verifyNoInteractions(dsl);
   }
 

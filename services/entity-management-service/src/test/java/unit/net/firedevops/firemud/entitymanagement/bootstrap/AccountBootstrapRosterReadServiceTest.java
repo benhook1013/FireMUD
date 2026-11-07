@@ -229,12 +229,15 @@ class AccountBootstrapRosterReadServiceTest {
   @SuppressWarnings("unchecked")
   void receiverClassifiesStoredProjectionAndResponseValidationFailuresAsInternal()
       throws Exception {
-    for (boolean invalidProjection : List.of(false, true)) {
+    for (String invalidProjection : List.of("duplicate", "negative-level", "null-level")) {
       var f = AccountBootstrapRosterFixture.create();
       var client = mock(GameSessionCanonicalGameplayRosterOwnerReadClient.class);
       var repository = mock(CharacterRepository.class);
       when(client.getCanonicalGameplayRosterOwnerRead(any())).thenReturn(f.evidence());
-      if (invalidProjection) {
+      if ("null-level".equals(invalidProjection)) {
+        when(repository.readAccountBootstrapRoster(any(), any()))
+            .thenThrow(new IllegalStateException("CANONICAL_ROSTER_LEVEL_NULL"));
+      } else if ("negative-level".equals(invalidProjection)) {
         when(repository.readAccountBootstrapRoster(any(), any()))
             .thenAnswer(
                 ignored ->

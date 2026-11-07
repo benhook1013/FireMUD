@@ -251,6 +251,7 @@ class AccountTenantOperationEntitlementClientMtlsTest {
       for (var invalid :
           java.util.List.of(
               wire.toBuilder().clearSourceKind().build(),
+              wire.toBuilder().setSourceKind(0, "UNKNOWN_SOURCE").build(),
               wire.toBuilder().addRequestId(wire.getRequestId(0)).build(),
               wire.toBuilder().setUnknownFields(unknown).build())) {
         assertStatus(
@@ -261,15 +262,16 @@ class AccountTenantOperationEntitlementClientMtlsTest {
               stub.readTenantOperationEntitlement(
                   wire.toBuilder().setTargetNamespace(0, "other").build()),
           Status.Code.PERMISSION_DENIED);
-      assertThatThrownBy(
-              () ->
-                  stub.readTenantOperationEntitlement(
-                      wire.toBuilder().setSourceKind(0, "a".repeat(2048)).build()))
-          .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure ->
-                  assertThat(Status.fromThrowable(failure).getCode())
-                      .isIn(Status.Code.RESOURCE_EXHAUSTED, Status.Code.INVALID_ARGUMENT));
+      var oversized =
+          wire.toBuilder()
+              .setSourceKind(
+                  0,
+                  "a".repeat(RuntimeTenantOperationEntitlementGrpcCodec.MAX_REQUEST_WIRE_BYTES + 1))
+              .build();
+      assertThat(oversized.getSerializedSize())
+          .isGreaterThan(RuntimeTenantOperationEntitlementGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+      assertStatus(
+          () -> stub.readTenantOperationEntitlement(oversized), Status.Code.RESOURCE_EXHAUSTED);
       org.mockito.Mockito.verifyNoInteractions(owner);
     } finally {
       channel.shutdownNow();

@@ -60,7 +60,8 @@ public final class AccountBootstrapRosterReadGrpcService
         | org.springframework.transaction.CannotCreateTransactionException unavailable) {
       refuse(observer, Status.UNAVAILABLE);
       return;
-    } catch (UnsupportedOperationException | IllegalStateException precondition) {
+    } catch (UnsupportedOperationException
+        | AccountBootstrapRosterReadService.TargetChangedException precondition) {
       refuse(observer, Status.FAILED_PRECONDITION);
       return;
     } catch (RuntimeException unexpected) {
