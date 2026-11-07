@@ -2,10 +2,10 @@
 import base64
 import hashlib
 import json
-from pathlib import Path
 import re
 import unicodedata
 import unittest
+from pathlib import Path
 
 MAX = 9223372036854775807
 

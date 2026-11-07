@@ -42,7 +42,7 @@ public final class AccountTenantCapacityRepository {
         dsl.execute(
             "INSERT INTO account_tenant_capacity_evaluations "
                 + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (evaluation_identity) DO NOTHING",
+                + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz) ON CONFLICT (evaluation_identity) DO NOTHING",
             evidence.evaluationIdentity(),
             evidence.snapshotIdentity(),
             evidence.tenantId(),
@@ -141,7 +141,7 @@ public final class AccountTenantCapacityRepository {
         dsl.execute(
             "INSERT INTO account_tenant_capacity_reservations "
                 + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, canonical_payload, evaluation_identity, capacity_delta, expires_at, reconcile_deadline, state, execution_status) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'RESERVED', 'OWNER_EXECUTION_PENDING')",
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz, 'RESERVED', 'OWNER_EXECUTION_PENDING')",
             request.identity().tenantId(),
             request.identity().requestId(),
             request.identity().admissionId(),

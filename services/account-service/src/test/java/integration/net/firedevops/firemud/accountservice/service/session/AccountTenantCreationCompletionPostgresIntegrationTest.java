@@ -622,7 +622,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
               // Production
               // has no route to perform this insertion and World admission remains unavailable.
               c.dsl.execute(
-                  "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "INSERT INTO account_tenant_capacity_evaluations (evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
                   evidence.evaluationIdentity(),
                   evidence.snapshotIdentity(),
                   tenant,

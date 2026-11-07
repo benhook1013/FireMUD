@@ -184,7 +184,7 @@ public final class AccountTenantCapacityRecoveryWorker {
                   : observed == null ? "SOURCE_UNAVAILABLE" : observed.disposition().name();
           int retained =
               dsl.execute(
-                  "INSERT INTO account_tenant_capacity_recovery_evidence (tenant_uuid, request_id, admission_id, admission_attempt_id, recovery_claim_fence, recovery_policy_version, recovery_attempt_number, observed_at, outcome, canonical_readback, readback_digest) VALUES (?, ?, ?, ?, ?, 'capacity-recovery/1', ?, ?, ?, ?, ?)",
+                  "INSERT INTO account_tenant_capacity_recovery_evidence (tenant_uuid, request_id, admission_id, admission_attempt_id, recovery_claim_fence, recovery_policy_version, recovery_attempt_number, observed_at, outcome, canonical_readback, readback_digest) VALUES (?, ?, ?, ?, ?, 'capacity-recovery/1', ?, ?::timestamptz, ?, ?, ?)",
                   request.identity().tenantId(),
                   request.identity().requestId(),
                   request.identity().admissionId(),
@@ -199,7 +199,7 @@ public final class AccountTenantCapacityRecoveryWorker {
           if (indeterminate) {
             int updated =
                 dsl.execute(
-                    "UPDATE account_tenant_capacity_reservations SET recovery_attempt_count = ?, state = ?, recovery_escalated_at = ?, next_reconcile_at = ? WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'OWNER_EXECUTION_PENDING'",
+                    "UPDATE account_tenant_capacity_reservations SET recovery_attempt_count = ?, state = ?, recovery_escalated_at = ?::timestamptz, next_reconcile_at = ?::timestamptz WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_owner = ? AND recovery_claim_fence = ? AND state = 'RESERVED' AND execution_status = 'OWNER_EXECUTION_PENDING'",
                     attempt,
                     quarantine
                         ? State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION.name()
@@ -307,7 +307,7 @@ public final class AccountTenantCapacityRecoveryWorker {
           long fence = Math.incrementExact(number(row, "recovery_claim_fence"));
           int changed =
               dsl.execute(
-                  "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, recovery_claim_fence = ?, recovery_claim_expires_at = ?, next_reconcile_at = LEAST(?, reconcile_deadline) "
+                  "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, recovery_claim_fence = ?, recovery_claim_expires_at = ?::timestamptz, next_reconcile_at = LEAST(?::timestamptz, reconcile_deadline) "
                       + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? AND recovery_claim_fence = ?",
                   workerId,
                   fence,
