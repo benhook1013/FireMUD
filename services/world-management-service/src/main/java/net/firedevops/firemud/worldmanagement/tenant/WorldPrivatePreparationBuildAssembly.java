@@ -42,7 +42,7 @@ public final class WorldPrivatePreparationBuildAssembly {
     Build first = source.readBuild(scope, preparationRequestId, deadline).evidence();
     var frozen =
         topology
-            .readCommitted(capture(first.selectedWorld().request()))
+            .readCommitted(capture(first.selectedWorld().request()), deadline)
             .orElseThrow(
                 () -> new IllegalStateException("Exact selected World frozen graph is absent"));
     if (!frozen.request().freeze().equals(capture(first.selectedWorld().request())))

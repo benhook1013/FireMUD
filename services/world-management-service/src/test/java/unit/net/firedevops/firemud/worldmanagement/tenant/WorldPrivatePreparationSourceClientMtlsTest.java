@@ -96,7 +96,10 @@ class WorldPrivatePreparationSourceClientMtlsTest {
       assertThat(build.admissionAllowed()).isFalse();
       var topology = org.mockito.Mockito.mock(WorldCanonicalFrozenTopologyRepository.class);
       org.mockito.Mockito.when(
-              topology.readCommitted(WorldPrivatePreparationBuildAssembly.capture(world.request())))
+              topology.readCommitted(
+                  org.mockito.ArgumentMatchers.eq(
+                      WorldPrivatePreparationBuildAssembly.capture(world.request())),
+                  org.mockito.ArgumentMatchers.any(Deadline.class)))
           .thenReturn(java.util.Optional.empty());
       assertThatThrownBy(
               () ->
@@ -105,7 +108,13 @@ class WorldPrivatePreparationSourceClientMtlsTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("frozen graph is absent");
       org.mockito.Mockito.verify(topology)
-          .readCommitted(WorldPrivatePreparationBuildAssembly.capture(world.request()));
+          .readCommitted(
+              org.mockito.ArgumentMatchers.eq(
+                  WorldPrivatePreparationBuildAssembly.capture(world.request())),
+              org.mockito.ArgumentMatchers.argThat(
+                  deadline ->
+                      deadline.timeRemaining(TimeUnit.NANOSECONDS) > 0
+                          && deadline.timeRemaining(TimeUnit.SECONDS) <= 5));
       assertThat(h.requests).hasSize(2);
     }
   }
