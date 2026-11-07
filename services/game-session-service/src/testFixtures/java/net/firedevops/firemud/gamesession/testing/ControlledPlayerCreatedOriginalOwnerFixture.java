@@ -92,7 +92,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class ControlledPlayerCreatedOriginalOwnerFixture {
   private static final JsonMapper JSON = JsonMapper.builder().build();
-  private final DriverManagerDataSource dataSource;
+  private final javax.sql.DataSource dataSource;
   private final String schema;
   private final Path migrations;
   private final CanonicalPlayerRouteReadService routeReader;
@@ -109,12 +109,29 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
   private final WireFixture wireFixture;
   private final AtomicInteger controlledWorldLifecycleReads = new AtomicInteger();
 
+  public ControlledPlayerCreatedOriginalOwnerFixture(
+      DriverManagerDataSource dataSource,
+      WireFixture supplied,
+      CanonicalGameplayRosterRecoveryClient recovery,
+      Clock clock,
+      CanonicalGameplayRosterReferencePolicy policy)
+      throws Exception {
+    this(
+        dataSource,
+        Objects.requireNonNull(dataSource.getSchema(), "caller-owned isolated schema"),
+        supplied,
+        recovery,
+        clock,
+        policy);
+  }
+
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification =
           "The caller and fixture intentionally share the isolated DataSource and schema lifecycle.")
   public ControlledPlayerCreatedOriginalOwnerFixture(
-      DriverManagerDataSource dataSource,
+      javax.sql.DataSource dataSource,
+      String schema,
       WireFixture supplied,
       CanonicalGameplayRosterRecoveryClient recovery,
       Clock clock,
@@ -124,7 +141,7 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
     this.dataSource = Objects.requireNonNull(dataSource);
     Objects.requireNonNull(clock);
     migrations = resolveMigrationDirectory();
-    schema = Objects.requireNonNull(dataSource.getSchema(), "caller-owned isolated schema");
+    this.schema = Objects.requireNonNull(schema, "caller-owned isolated schema");
     migrate("1005");
     var manager = new DataSourceTransactionManager(dataSource);
     transactions = new TransactionTemplate(manager);
