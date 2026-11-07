@@ -3,15 +3,20 @@ package unit.net.firedevops.firemud.accountservice.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.intThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLTimeoutException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -20,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
@@ -69,12 +75,17 @@ import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvide
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -201,6 +212,63 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     order.verify(f.observer).observe(fence.binding());
     order.verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
     order.verify(f.hosting).readCurrent(fence, observed);
+  }
+
+  @Test
+  void sourceTimeoutReachesJdbcLockingStatementAndRollsBackWithoutReturningEvidence()
+      throws Exception {
+    Fixture f = new Fixture(false);
+    var dataSource = mock(DataSource.class);
+    var connection = mock(Connection.class);
+    try (var statement = mock(PreparedStatement.class)) {
+      when(dataSource.getConnection()).thenReturn(connection);
+      when(connection.getAutoCommit()).thenReturn(true, false);
+      when(connection.getTransactionIsolation())
+          .thenReturn(Connection.TRANSACTION_READ_COMMITTED, Connection.TRANSACTION_SERIALIZABLE);
+      when(connection.prepareStatement(anyString()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(invocation.getArgument(0, String.class)).endsWith("for update");
+                return statement;
+              });
+      when(statement.execute()).thenThrow(new SQLTimeoutException("Controlled timeout", "57014"));
+      // The real Spring proxy transfers the remaining transaction budget to jOOQ's JDBC statement.
+      // The driver is controlled here; physical PostgreSQL cancellation is separate proof.
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+      var owner =
+          new AccountPlayerAdmissionEntitlementOwner(
+              dsl,
+              new AccountRepository(dsl),
+              f.callers,
+              f.issuances,
+              f.memberships,
+              f.scopes,
+              f.hosting,
+              f.observer,
+              f.demos,
+              f.sources,
+              f.targets,
+              new DataSourceTransactionManager(dataSource),
+              Clock.fixed(NOW, java.time.ZoneOffset.UTC),
+              "prod");
+
+      assertThatThrownBy(() -> owner.evaluate(f.request, "controlled-token"))
+          .isExactlyInstanceOf(DataAccessException.class)
+          .hasRootCauseExactlyInstanceOf(SQLTimeoutException.class);
+      verify(statement).execute();
+      verify(statement).close();
+      verify(statement).setQueryTimeout(intThat(seconds -> seconds > 0 && seconds <= 5));
+      verify(connection).rollback();
+      verifyNoInteractions(
+          f.issuances,
+          f.memberships,
+          f.scopes,
+          f.hosting,
+          f.observer,
+          f.demos,
+          f.sources,
+          f.targets);
+    }
   }
 
   @Test
@@ -980,6 +1048,9 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
         assertThat(definition.getIsolationLevel())
             .isEqualTo(TransactionDefinition.ISOLATION_SERIALIZABLE);
         assertThat(definition.isReadOnly()).isFalse();
+        assertThat(definition.getPropagationBehavior())
+            .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        assertThat(definition.getTimeout()).isEqualTo(5);
       }
       events.add("begin");
       TransactionSynchronizationManager.setActualTransactionActive(true);
