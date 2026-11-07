@@ -476,6 +476,7 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     var calls = new AtomicInteger();
     var observedJwt = new AtomicReference<String>();
     var observedPeer = new AtomicReference<String>();
+    var successfulResponses = new AtomicInteger();
     Runnable afterRead =
         () -> {
           switch (change) {
@@ -486,6 +487,7 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
                 when(login.compactJwtBytes()).thenThrow(new IllegalStateException("Closed LOGIN"));
             default -> throw new IllegalArgumentException(change);
           }
+          successfulResponses.incrementAndGet();
         };
     Server server =
         server(
@@ -500,10 +502,29 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
             afterRead);
     try (var client = client(server, movingClock)) {
       client.init();
-      assertThatThrownBy(
-              () -> client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, current::get))
-          .isInstanceOf(RuntimeException.class);
+      var refusal =
+          assertThatThrownBy(
+              () -> client.read(scope, ORIGINAL, TRANSPORT, READ_REQUEST, login, current::get));
+      switch (change) {
+        case "custody" ->
+            refusal
+                .isExactlyInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(Status.fromThrowable(failure).getCode())
+                            .isEqualTo(Status.Code.CANCELLED));
+        case "scope-expiry", "login-expiry" ->
+            refusal
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Exact authenticated lobby evidence required");
+        case "closed-login" ->
+            refusal.isExactlyInstanceOf(IllegalStateException.class).hasMessage("Closed LOGIN");
+        default -> throw new IllegalArgumentException(change);
+      }
       assertThat(calls).hasValue(1);
+      assertThat(successfulResponses).hasValue(1);
+      assertThat(observedJwt).hasValue(JWT);
+      assertThat(observedPeer).hasValue(GS_PEER);
     } finally {
       stop(server);
     }
@@ -588,10 +609,12 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
               var presented = RuntimePlayerAdmissionEntitlementGrpcCodec.parseRequest(request);
               observedJwt.set(presented.initialLoginJwt());
               var evidence = evidence(presented.request(), target, scopeExpiry, login, drift);
-              afterRead.run();
-              observer.onNext(
+              // Live-input changes happen only after the successful response is fully encoded.
+              var response =
                   RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(
-                      presented.request(), evidence));
+                      presented.request(), evidence);
+              afterRead.run();
+              observer.onNext(response);
               observer.onCompleted();
             } catch (Exception malformed) {
               observer.onError(

@@ -20,6 +20,7 @@ import java.util.UUID;
 import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementRequest;
 import net.firedevops.firemud.account.v1.ReadPlayerAdmissionEntitlementResponse;
+import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.security.AccountPlayerAdmissionEntitlementWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountPlayerAdmissionEntitlementOwner;
@@ -116,6 +117,13 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
             new IllegalStateException("ENTITLEMENT_UNAVAILABLE: " + SECRET), Status.Code.INTERNAL),
         org.junit.jupiter.params.provider.Arguments.of(
             new IllegalArgumentException(SECRET), Status.Code.INTERNAL),
+        // Only the protected-target owner boundary may translate its transport failures.
+        org.junit.jupiter.params.provider.Arguments.of(
+            Status.UNAVAILABLE.withDescription(SECRET).asRuntimeException(), Status.Code.INTERNAL),
+        org.junit.jupiter.params.provider.Arguments.of(
+            new CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException(
+                new IllegalStateException(SECRET)),
+            Status.Code.INTERNAL),
         org.junit.jupiter.params.provider.Arguments.of(
             new NullPointerException(SECRET), Status.Code.INTERNAL));
   }

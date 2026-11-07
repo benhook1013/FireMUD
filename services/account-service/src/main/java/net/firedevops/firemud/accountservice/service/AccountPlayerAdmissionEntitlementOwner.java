@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.StatusRuntimeException;
 import java.sql.Connection;
 import java.time.Clock;
 import java.time.Instant;
@@ -525,17 +526,27 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       Request request, CanonicalConnectScopeEvidence scope) {
     requireNoAmbientTransaction();
     var selector = selector(request, scope);
-    var resolved = Objects.requireNonNull(targets.resolvePublishedRealmAdmissionTarget(selector));
-    if (!selector.equals(resolved.selector())) throw unavailable();
-    requireSupportedTarget(resolved.currentTarget());
-    CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
-        selector, resolved.currentTarget());
-    var result =
-        Objects.requireNonNull(targets.readPublishedRealmAdmissionOwner(resolved.strictSelector()));
-    if (!resolved.strictSelector().equals(result.selector())
-        || !resolved.currentTarget().equals(result.currentTarget())) throw unavailable();
-    requireSupportedTarget(result.currentTarget());
-    return result;
+    try {
+      var resolved = Objects.requireNonNull(targets.resolvePublishedRealmAdmissionTarget(selector));
+      if (!selector.equals(resolved.selector())) throw unavailable();
+      requireSupportedTarget(resolved.currentTarget());
+      CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
+          selector, resolved.currentTarget());
+      var result =
+          Objects.requireNonNull(
+              targets.readPublishedRealmAdmissionOwner(resolved.strictSelector()));
+      if (!resolved.strictSelector().equals(result.selector())
+          || !resolved.currentTarget().equals(result.currentTarget())) throw unavailable();
+      requireSupportedTarget(result.currentTarget());
+      return result;
+    } catch (CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException failure) {
+      throw unavailable();
+    } catch (StatusRuntimeException failure) {
+      switch (failure.getStatus().getCode()) {
+        case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, ABORTED -> throw unavailable();
+        default -> throw failure;
+      }
+    }
   }
 
   private static void requireSupportedTarget(
