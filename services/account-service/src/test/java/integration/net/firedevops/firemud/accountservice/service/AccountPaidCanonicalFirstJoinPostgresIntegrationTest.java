@@ -200,20 +200,7 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
 
     private Context(CanonicalHostingSubscriptionTestFixture.Fixture hosting, boolean wrongPolicy) {
       this.hosting = hosting;
-      var claim =
-          hosting
-              .service()
-              .claimProvisioning(hosting.creation().requestId(), 1, UUID.randomUUID())
-              .claim();
-      var committed =
-          hosting
-              .service()
-              .reconcile(
-                  UUID.randomUUID(),
-                  hosting.creation().requestId(),
-                  claim.subscriptionRowVersion(),
-                  hosting.providerId(),
-                  claim.attemptId());
+      var committed = hosting.completeFirstInvoice();
       assertThat(committed.outcome())
           .isEqualTo(
               net.firedevops.firemud.accountservice.repository

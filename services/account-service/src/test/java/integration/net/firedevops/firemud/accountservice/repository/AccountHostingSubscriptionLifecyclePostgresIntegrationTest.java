@@ -12,6 +12,7 @@ import com.stripe.net.BaseAddress;
 import com.stripe.net.RequestOptions;
 import com.stripe.net.StripeResponseGetter;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.sql.SQLException;
@@ -63,9 +64,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Actual PostgreSQL + actual Stripe SDK over CONTROLLED read-only transport. Creator/consent and
- * customer/wallet enrollment are controlled source inputs, not qualification of their live issuers.
- * No trigger is disabled, no confirmed SDK value is fabricated, and no remote Stripe call is made.
+ * Actual PostgreSQL + actual Stripe SDK over CONTROLLED transport. Initial positive authority uses
+ * real primary reauthentication, exact billing consent and a verified test-signed first invoice.
+ * Creator/customer/wallet, policy and signing-key inputs are controlled, not live Stripe or
+ * protected production-custody qualification. No trigger is disabled, no confirmed SDK value is
+ * fabricated, and no remote Stripe call is made.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
@@ -78,20 +81,48 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void actualSdkReadCommitsExactMappingReceiptCanonicalStreamsAndConsistentReaderThenReplays() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
-    var claim = claim(f);
-    UUID request = UUID.randomUUID();
+    var claim = paidClaim(f);
+    UUID request = claim.lifecycleRequestId();
     var committed =
         f.service()
             .reconcile(
                 request,
                 f.creation().requestId(),
-                claim.subscriptionRowVersion(),
+                claim.expectedRowVersion(),
                 f.providerId(),
-                claim.attemptId());
+                null);
     assertThat(committed.outcome()).isEqualTo(Outcome.COMMITTED);
-    assertThat(committed.committedRowVersion()).isEqualTo(4);
+    assertThat(committed.committedRowVersion()).isEqualTo(5);
+    assertThat(
+            in(
+                c,
+                () ->
+                    new AccountHostingFirstInvoicePaymentRepository(c.dsl(), c.intents(), f.clock())
+                        .completed(f.creation().subscriptionId(), request)))
+        .isTrue();
+    assertThat(
+            one(
+                    c,
+                    "SELECT completion.committed_transaction_id = receipt.committed_transaction_id AS same_transaction "
+                        + "FROM subscription_first_invoice_completions completion JOIN subscription_lifecycle_receipts receipt "
+                        + "ON receipt.request_id = completion.lifecycle_request_id JOIN account_audit_outbox audit "
+                        + "ON audit.audit_event_id = completion.audit_event_id WHERE completion.lifecycle_request_id = ?",
+                    request)
+                .get("same_transaction", Boolean.class))
+        .isTrue();
+    for (String table :
+        List.of(
+            "subscription_first_invoices",
+            "subscription_first_invoice_confirmations",
+            "subscription_first_invoice_dispatches",
+            "subscription_first_invoice_success_evidence",
+            "subscription_first_invoice_completions")) {
+      assertSqlState(
+          "23514",
+          () -> c.setup().execute("UPDATE " + table + " SET subscription_id = subscription_id"));
+    }
     var current = f.service().readCurrent(f.creation().tenantId());
     assertThat(current.subscriptionStatus()).isEqualTo(Status.ACTIVE);
     assertThat(current.gameplayAvailable()).isTrue();
@@ -131,7 +162,12 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     int reads = f.transport().reads;
     assertThat(
             f.service()
-                .reconcile(request, f.creation().requestId(), 2, f.providerId(), claim.attemptId()))
+                .reconcile(
+                    request,
+                    f.creation().requestId(),
+                    claim.expectedRowVersion(),
+                    f.providerId(),
+                    null))
         .isEqualTo(committed);
     assertThat(f.transport().reads).isEqualTo(reads);
     assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
@@ -141,32 +177,175 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             () ->
                 f.service()
                     .reconcile(
-                        request, f.creation().requestId(), 2, "sub_other", claim.attemptId()))
+                        request,
+                        f.creation().requestId(),
+                        claim.expectedRowVersion(),
+                        "sub_other",
+                        null))
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
     assertThat(f.transport().reads).isEqualTo(reads);
   }
 
   @Test
+  void providerActiveOrTrialingWithoutFirstInvoiceConsentCannotCreateHostingAuthority() {
+    for (String status : List.of("active", "trialing")) {
+      Context c = context("1039");
+      Fixture f = fixture(c);
+      f.transport().json = response(f, status);
+      var claim = claim(f);
+      assertThatThrownBy(
+              () ->
+                  f.service()
+                      .reconcile(
+                          UUID.randomUUID(),
+                          f.creation().requestId(),
+                          claim.subscriptionRowVersion(),
+                          f.providerId(),
+                          claim.attemptId()))
+          .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+          .hasMessageContaining("first-invoice");
+      for (String table :
+          List.of(
+              "subscription_first_invoices",
+              "subscription_first_invoice_confirmations",
+              "subscription_first_invoice_dispatches",
+              "subscription_first_invoice_completions",
+              "subscription_lifecycle_receipts",
+              "account_tenant_entitlement_outbox_events")) {
+        assertThat(count(c, table)).as(table).isZero();
+      }
+      assertThat(
+              one(
+                      c,
+                      "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                      f.creation().requestId())
+                  .get("released_at"))
+          .isNull();
+      assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
+          .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
+    }
+  }
+
+  @Test
+  void lateSignedSuccessCompletesConsumedAuthorizationWithoutAnotherProviderConfirmation() {
+    Context c = context("1039");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var authorized = checkout.authorize(CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    var generations = new AccountAuthorityGenerationRepository(c.dsl());
+    var accountScope =
+        AccountAuthorityGenerationRepository.AuthorityScope.account(
+            f.creation().owner().accountUuid());
+    var authorityBefore = in(c, () -> generations.read(accountScope));
+    var accounts =
+        new AccountRepository(
+            c.dsl(),
+            new AccountAuthoritySourceEvidenceRepository(
+                c.dsl(), generations, new AccountAuthorityOutboxRepository(c.dsl())));
+    in(
+        c,
+        () -> {
+          var account =
+              accounts.findByAccountUuidForUpdate(f.creation().owner().accountUuid()).orElseThrow();
+          account.setRole("admin");
+          return accounts.save(account);
+        });
+    assertThat(in(c, () -> generations.read(accountScope)).generation())
+        .isGreaterThan(authorityBefore.generation());
+    // This generic source advance cannot renew actor/charge authority, but cannot erase an already
+    // consumed exact payment authorization or prevent read-only signed outcome reconciliation.
+    f.clock().advance(Duration.ofSeconds(301));
+    assertThat(f.clock().instant()).isAfter(authorized.validUntil());
+    var success = checkout.retainSignedSuccess();
+    assertThat(success.requestId()).isEqualTo(authorized.requestId());
+    assertThat(success.providerIdempotencyId()).isEqualTo(authorized.providerIdempotencyId());
+    assertThat(
+            f.service()
+                .reconcile(
+                    success.lifecycleRequestId(),
+                    f.creation().requestId(),
+                    success.expectedRowVersion(),
+                    f.providerId(),
+                    null)
+                .outcome())
+        .isEqualTo(Outcome.COMMITTED);
+    assertThat(f.service().readCurrent(f.creation().tenantId()).receiptRequestId())
+        .isEqualTo(success.lifecycleRequestId());
+    assertThat(
+            in(
+                c,
+                () ->
+                    checkout
+                        .payments()
+                        .completed(f.creation().subscriptionId(), success.lifecycleRequestId())))
+        .isTrue();
+    assertThat(checkout.confirmations()).isOne();
+    assertThatThrownBy(
+            () ->
+                checkout
+                    .provider()
+                    .confirm(
+                        authorized,
+                        () -> {
+                          throw new AssertionError(
+                              "Expired consent must not request a provider command claim");
+                        }))
+        .hasMessageContaining("consent");
+    assertThat(checkout.confirmations()).isOne();
+    assertThat(count(c, "subscription_first_invoice_dispatches")).isOne();
+    assertThat(count(c, "subscription_first_invoice_completions")).isOne();
+  }
+
+  @Test
   void trialUsesRetainedQuoteWithoutTodaysCatalogAndSqlShapedRowsAloneNeverAuthorize() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     assertThat(f.transport().reads).isZero();
-    f.transport().json = response(f, "trialing");
+    f.transport().json = response(f, "active");
     var emptyCatalogRepository =
         new AccountSubscriptionIntentRepository(c.dsl(), new AccountHostingPlanCatalog(List.of()));
     var owner = owner(c, f.clock(), emptyCatalogRepository);
     var service = service(c, owner, f.transport(), f.clock());
-    var claim = service.claimProvisioning(f.creation().requestId(), 1, UUID.randomUUID()).claim();
+    var claim = paidClaim(f);
+    assertThat(
+            service
+                .reconcile(
+                    claim.lifecycleRequestId(),
+                    f.creation().requestId(),
+                    claim.expectedRowVersion(),
+                    f.providerId(),
+                    null)
+                .outcome())
+        .isEqualTo(Outcome.COMMITTED);
+    assertThat(
+            in(
+                c,
+                () ->
+                    new AccountHostingFirstInvoicePaymentRepository(c.dsl(), c.intents(), f.clock())
+                        .completed(f.creation().subscriptionId(), claim.lifecycleRequestId())))
+        .isTrue();
+    f.transport().json = response(f, "trialing");
+    long currentVersion =
+        c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().rowVersion();
     assertThat(
             service
                 .reconcile(
                     UUID.randomUUID(),
                     f.creation().requestId(),
-                    2,
+                    currentVersion,
                     f.providerId(),
-                    claim.attemptId())
+                    null)
                 .outcome())
         .isEqualTo(Outcome.COMMITTED);
     assertThat(service.readCurrent(f.creation().tenantId()).subscriptionStatus())
@@ -199,7 +378,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void rawSqlActiveMappingWithoutGenuineClaimAndReceiptCannotBecomeAReadOrLifecycleSource() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     c.tx()
         .executeWithoutResult(
@@ -237,7 +416,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void hostingExtendsExistingDemoStreamsWithoutRewritingOrReinterpretingDemoEvidence() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     var identity = new FreshTenantIdentityAssociationRepository(c.dsl(), "prod");
     var generations = new AccountAuthorityGenerationRepository(c.dsl());
@@ -301,10 +480,10 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void concurrentSameRequestObservesOneInflightOwnerAndReplaysOneCommittedTransition()
       throws Exception {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
-    var claim = claim(f);
-    UUID request = UUID.randomUUID();
+    var claim = paidClaim(f);
+    UUID request = claim.lifecycleRequestId();
     CountDownLatch reading = new CountDownLatch(1);
     CountDownLatch completeRead = new CountDownLatch(1);
     f.transport().duringRead =
@@ -319,12 +498,20 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
               () ->
                   f.service()
                       .reconcile(
-                          request, f.creation().requestId(), 2, f.providerId(), claim.attemptId()));
+                          request,
+                          f.creation().requestId(),
+                          claim.expectedRowVersion(),
+                          f.providerId(),
+                          null));
       assertThat(reading.await(5, TimeUnit.SECONDS)).isTrue();
       assertThat(
               f.service()
                   .reconcile(
-                      request, f.creation().requestId(), 2, f.providerId(), claim.attemptId())
+                      request,
+                      f.creation().requestId(),
+                      claim.expectedRowVersion(),
+                      f.providerId(),
+                      null)
                   .outcome())
           .isEqualTo(Outcome.RECONCILING);
       completeRead.countDown();
@@ -333,7 +520,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       assertThat(
               f.service()
                   .reconcile(
-                      request, f.creation().requestId(), 2, f.providerId(), claim.attemptId()))
+                      request,
+                      f.creation().requestId(),
+                      claim.expectedRowVersion(),
+                      f.providerId(),
+                      null))
           .isEqualTo(committed);
       assertThat(f.transport().reads).isOne();
       assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
@@ -346,7 +537,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void providerIdMetadataCustomerInstrumentPriceQuantityAndUnknownStatusesCannotBecomeAuthority() {
-    Context c = context("1030");
+    Context c = context("1039");
     for (String mismatch :
         List.of("id", "metadata", "customer", "instrument", "price", "quantity", "unknown")) {
       Fixture f = fixture(c);
@@ -397,14 +588,19 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void providerExceptionIsNotAbsenceAndSameRequestRecoversWithoutAnotherProviderIdentity() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
-    var claim = claim(f);
-    UUID request = UUID.randomUUID();
+    var claim = paidClaim(f);
+    UUID request = claim.lifecycleRequestId();
     f.transport().failure = mock(StripeException.class);
     assertThat(
             f.service()
-                .reconcile(request, f.creation().requestId(), 2, f.providerId(), claim.attemptId())
+                .reconcile(
+                    request,
+                    f.creation().requestId(),
+                    claim.expectedRowVersion(),
+                    f.providerId(),
+                    null)
                 .outcome())
         .isEqualTo(Outcome.RECONCILING);
     assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
@@ -419,7 +615,12 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     f.clock().advance(Duration.ofSeconds(2));
     assertThat(
             f.service()
-                .reconcile(request, f.creation().requestId(), 2, f.providerId(), claim.attemptId())
+                .reconcile(
+                    request,
+                    f.creation().requestId(),
+                    claim.expectedRowVersion(),
+                    f.providerId(),
+                    null)
                 .outcome())
         .isEqualTo(Outcome.COMMITTED);
     assertThat(count(c, "subscription_create_operations")).isOne();
@@ -430,18 +631,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void walletDisplayAdvanceDuringSdkReadPreservesBindingAndStaleRowOwnerInputsRejectBeforeRead() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
-    var claim = claim(f);
+    var claim = paidClaim(f);
     assertThatThrownBy(
             () ->
                 f.service()
                     .reconcile(
-                        UUID.randomUUID(),
-                        f.creation().requestId(),
-                        1,
-                        f.providerId(),
-                        claim.attemptId()))
+                        UUID.randomUUID(), f.creation().requestId(), 1, f.providerId(), null))
         .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
     assertThat(f.transport().reads).isZero();
     var wrongOwner =
@@ -478,11 +675,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(
             f.service()
                 .reconcile(
-                    UUID.randomUUID(),
+                    claim.lifecycleRequestId(),
                     f.creation().requestId(),
-                    2,
+                    claim.expectedRowVersion(),
                     f.providerId(),
-                    claim.attemptId())
+                    null)
                 .outcome())
         .isEqualTo(Outcome.COMMITTED);
     assertThat(
@@ -507,18 +704,27 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void
       deferredSqlFailureRollsBackMappingObservationReceiptGenerationAndBothEventsThenRetryRecovers() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
-    var claim = claim(f);
-    UUID request = UUID.randomUUID();
+    var claim = paidClaim(f);
+    UUID request = claim.lifecycleRequestId();
     var prepared =
         in(
             c,
             () ->
                 f.owner()
                     .prepare(
-                        request, f.creation().requestId(), 2, f.providerId(), claim.attemptId()));
+                        request,
+                        f.creation().requestId(),
+                        claim.expectedRowVersion(),
+                        f.providerId(),
+                        null));
     var actualSdk = f.observer().observe(prepared.binding());
+    var mappingBefore =
+        c.setup()
+            .fetch(
+                "SELECT row_to_json(h)::text AS value, xmin::text AS xmin FROM subscription_provider_history h")
+            .intoMaps();
     assertSqlState(
         "23514",
         () ->
@@ -546,7 +752,6 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     }));
     for (String table :
         List.of(
-            "subscription_provider_history",
             "subscription_lifecycle_observations",
             "subscription_lifecycle_receipts",
             "account_tenant_entitlement_outbox_events",
@@ -554,6 +759,21 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             "account_tenant_authority_source_records")) {
       assertThat(count(c, table)).as(table).isZero();
     }
+    assertThat(count(c, "subscription_provider_history")).isOne();
+    assertThat(
+            c.setup()
+                .fetch(
+                    "SELECT row_to_json(h)::text AS value, xmin::text AS xmin FROM subscription_provider_history h")
+                .intoMaps())
+        .isEqualTo(mappingBefore);
+    assertThat(
+            one(
+                    c,
+                    "SELECT count(*) FROM account_audit_outbox WHERE event_type = 'HOSTING_FIRST_INVOICE_COMPLETED'")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isOne();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
     assertThat(
             one(
                     c,
@@ -571,7 +791,12 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     f.clock().advance(Duration.ofSeconds(12));
     assertThat(
             f.service()
-                .reconcile(request, f.creation().requestId(), 2, f.providerId(), claim.attemptId())
+                .reconcile(
+                    request,
+                    f.creation().requestId(),
+                    claim.expectedRowVersion(),
+                    f.providerId(),
+                    null)
                 .outcome())
         .isEqualTo(Outcome.COMMITTED);
     assertThat(f.service().readCurrent(f.creation().tenantId()).tenantBillingSequence()).isOne();
@@ -579,7 +804,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void databaseGuardRejectsUnauditedOwnerUpdateDuringSdkTransport() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     var claim = claim(f);
     // The actual database refuses an unaudited transfer. Preserve that guard rather than
@@ -642,7 +867,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void realInitialCanceledEvidenceRetiresOnlyItsHoldAndCommittedReceiptCannotBeDetached() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     f.transport().json = response(f, "canceled");
     var claim = claim(f);
@@ -679,21 +904,28 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void freshReadsBeyondObservationAgePreserveCommittedReceiptAndAuthorityUntilRealPeriodEnd() {
     for (String status : List.of("active", "trialing")) {
-      Context c = context("1030");
+      Context c = context("1039");
       Fixture f = fixture(c);
-      f.transport().json = response(f, status);
       activate(f);
+      long checkpoints = 1;
+      if ("trialing".equals(status)) {
+        f.transport().json = response(f, status);
+        refresh(f);
+        checkpoints = 2;
+      }
       var receipt =
           one(
               c,
-              "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r");
+              "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r WHERE request_id = (SELECT current_receipt_request_id FROM subscription)");
       var authority =
           one(
               c,
               "SELECT row_to_json(a)::text AS value, xmin::text AS xmin FROM account_tenant_authority_source_records a");
       Instant periodEnd = Instant.ofEpochSecond(f.creation().createdAt().getEpochSecond() + 3600);
       assertThat(
-              one(c, "SELECT valid_until FROM subscription_lifecycle_receipts")
+              one(
+                      c,
+                      "SELECT valid_until FROM subscription_lifecycle_receipts WHERE request_id = (SELECT current_receipt_request_id FROM subscription)")
                   .get(0, java.time.OffsetDateTime.class)
                   .toInstant())
           .isEqualTo(periodEnd);
@@ -703,21 +935,22 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         var current = f.service().readCurrent(f.creation().tenantId());
         assertThat(current.gameplayAvailable()).isTrue();
         assertThat(current.validUntil()).isEqualTo(f.clock().instant().plusSeconds(15));
-        assertThat(current.tenantBillingSequence()).isOne();
-        assertThat(current.tenantAuthorityEvent().tenantAuthorityGeneration()).isEqualTo(2);
+        assertThat(current.tenantBillingSequence()).isEqualTo(checkpoints);
+        assertThat(current.tenantAuthorityEvent().tenantAuthorityGeneration())
+            .isEqualTo(checkpoints + 1);
         assertThat(f.transport().reads).isEqualTo(reads + laterRead);
         assertThat(
                 one(
                     c,
-                    "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r"))
+                    "SELECT row_to_json(r)::text AS value, xmin::text AS xmin FROM subscription_lifecycle_receipts r WHERE request_id = (SELECT current_receipt_request_id FROM subscription)"))
             .isEqualTo(receipt);
         assertThat(
                 one(
                     c,
                     "SELECT row_to_json(a)::text AS value, xmin::text AS xmin FROM account_tenant_authority_source_records a"))
             .isEqualTo(authority);
-        assertThat(count(c, "account_tenant_entitlement_outbox_events")).isOne();
-        assertThat(count(c, "account_authority_outbox_events")).isOne();
+        assertThat(count(c, "account_tenant_entitlement_outbox_events")).isEqualTo(checkpoints);
+        assertThat(count(c, "account_authority_outbox_events")).isEqualTo(checkpoints);
       }
       f.clock().advance(Duration.between(f.clock().instant(), periodEnd));
       int beforeExpiredRead = f.transport().reads;
@@ -729,14 +962,14 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
           .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
           .hasMessageContaining("current receipt is expired");
       assertThat(f.transport().reads).isEqualTo(beforeExpiredRead);
-      assertThat(count(c, "subscription_lifecycle_receipts")).isOne();
+      assertThat(count(c, "subscription_lifecycle_receipts")).isEqualTo(checkpoints);
     }
   }
 
   @Test
   void canceledReceiptsReturnFreshNegativeProjectionAfterOriginalObservationAgeWithoutMutation() {
     for (boolean providerCanceled : new boolean[] {true, false}) {
-      Context c = context("1030");
+      Context c = context("1039");
       Fixture f = fixture(c);
       f.transport().json =
           providerCanceled
@@ -797,7 +1030,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void inFlightAndStaleObservationOrChangedSdkFactsNeverRefreshAnOldPositiveSnapshot() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     activate(f);
     var fence = in(c, () -> f.owner().prepareCurrentRead(f.creation().tenantId()));
@@ -839,7 +1072,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void unchangedInvalidEvidenceExhaustsFrozenStallBudgetOnceAndNeverReleasesBillingWork() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     var claim = claim(f);
     UUID request = UUID.randomUUID();
@@ -875,7 +1108,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void firstPastDueObservationWithoutRetainedRecoveryOriginStaysUnresolvedAndHoldsReservation() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     activate(f);
     var receipt =
@@ -951,7 +1184,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void effectiveCancellationAdvancesMonotonicCutoffWithoutPrematureReservationRelease() {
-    Context c = context("1030");
+    Context c = context("1039");
     Fixture f = fixture(c);
     activate(f);
     Instant cancellation =
@@ -1118,9 +1351,52 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
         c.setup().fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps();
     assertThat(afterHistory).hasSize(history.size() + 1);
     assertThat(afterHistory.subList(0, history.size())).isEqualTo(history);
+    var v1030Subscription =
+        one(
+            c,
+            "SELECT row_to_json(s)::text AS value, xmin::text AS xmin FROM subscription s WHERE subscription_id = ?",
+            f.creation().subscriptionId());
+    configuration(c).target("1039").load().migrate();
+    assertThat(
+            one(
+                c,
+                "SELECT row_to_json(s)::text AS value, xmin::text AS xmin FROM subscription s WHERE subscription_id = ?",
+                f.creation().subscriptionId()))
+        .isEqualTo(v1030Subscription);
+    assertThat(
+            one(
+                c,
+                "SELECT row_to_json(o)::text AS value, xmin::text AS xmin FROM subscription_create_operations o WHERE request_id = ?",
+                f.creation().requestId()))
+        .isEqualTo(intent);
+    var currentHistory =
+        c.setup().fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps();
+    assertThat(currentHistory.subList(0, afterHistory.size())).isEqualTo(afterHistory);
+    assertThat(count(c, "subscription_first_invoices")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
     assertThat(count(c, "subscription_lifecycle_receipts")).isZero();
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
+  }
+
+  private static AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch paidClaim(
+      Fixture f) {
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            f.context().source(),
+            f.context().dsl(),
+            f.context().tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var authorized =
+        checkout.authorizeAndRetainSuccess(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    assertThat(checkout.confirmations()).isOne();
+    assertThat(count(f.context(), "subscription_first_invoice_completions")).isZero();
+    return authorized;
   }
 
   private static AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim claim(Fixture f) {
@@ -1513,7 +1789,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   private static FailedResolution failedResolution() {
-    Context c = context("1036");
+    Context c = context("1039");
     Fixture f = fixture(c);
     var claim = claim(f);
     UUID failed = UUID.randomUUID();
@@ -1619,15 +1895,31 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       Fixture fixture, Request request, String failureImage, long auditRowsBefore) {}
 
   private static void activate(Fixture f) {
-    var claim = claim(f);
+    // Terminal initial provider evidence may release a hold without authorizing a payment.
+    boolean terminal = f.transport().json.contains("\"status\":\"canceled\"");
+    if (terminal) {
+      var claim = claim(f);
+      assertThat(
+              f.service()
+                  .reconcile(
+                      UUID.randomUUID(),
+                      f.creation().requestId(),
+                      claim.subscriptionRowVersion(),
+                      f.providerId(),
+                      claim.attemptId())
+                  .outcome())
+          .isEqualTo(Outcome.COMMITTED);
+      return;
+    }
+    var payment = paidClaim(f);
     assertThat(
             f.service()
                 .reconcile(
-                    UUID.randomUUID(),
+                    payment.lifecycleRequestId(),
                     f.creation().requestId(),
-                    claim.subscriptionRowVersion(),
+                    payment.expectedRowVersion(),
                     f.providerId(),
-                    claim.attemptId())
+                    null)
                 .outcome())
         .isEqualTo(Outcome.COMMITTED);
   }
@@ -1650,12 +1942,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   private static Fixture fixture(Context c) {
     long row = ROWS.incrementAndGet();
     UUID account =
-        one(
-                c,
-                "INSERT INTO accounts(username,email,password_hash) VALUES (?, ?, 'controlled-hash') RETURNING account_uuid",
-                "hosting-" + row,
-                "hosting-" + row + "@example.test")
-            .get("account_uuid", UUID.class);
+        CanonicalHostingSubscriptionTestFixture.createBillingAccount(c.dsl(), c.tx())
+            .getAccountUuid();
     UUID tenant = UUID.randomUUID();
     UUID createRequest = UUID.randomUUID();
     UUID createOperation = UUID.randomUUID();

@@ -1,6 +1,7 @@
 package integration.net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import com.stripe.exception.StripeException;
 import com.stripe.model.StripeObject;
@@ -9,43 +10,78 @@ import com.stripe.net.ApiResource.RequestMethod;
 import com.stripe.net.BaseAddress;
 import com.stripe.net.RequestOptions;
 import com.stripe.net.StripeResponseGetter;
+import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import javax.sql.DataSource;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
+import net.firedevops.firemud.accountservice.mapper.AccountMapper;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRepository;
+import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
+import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingPlanCatalog;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReconciliationLimits;
 import net.firedevops.firemud.accountservice.repository.AccountInitialTenantBillingOwnerRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRecord;
 import net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRecord.DisplayMetadata;
 import net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRecord.State;
 import net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRepository;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.ProducerEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreationRecord;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
+import net.firedevops.firemud.accountservice.repository.StripeEventInboxRepository;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
+import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiKeyring;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiResponseCryptography;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicyRepository;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationRepository;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationService;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
@@ -53,6 +89,7 @@ import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.mapstruct.factory.Mappers;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -67,6 +104,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 public final class CanonicalHostingSubscriptionTestFixture {
   private static final String DIGEST = "sha256:" + "a".repeat(64);
+  public static final String BILLING_PASSWORD = "test-only-hosting-first-invoice-password";
+  private static final String WEBHOOK_SECRET = "whsec_test_only_hosting_first_invoice";
   private static final AtomicLong GAME_ROWS = new AtomicLong(20_000);
 
   private CanonicalHostingSubscriptionTestFixture() {}
@@ -95,18 +134,13 @@ public final class CanonicalHostingSubscriptionTestFixture {
         new AccountSubscriptionIntentRepository(dsl, catalog);
 
     long row = GAME_ROWS.incrementAndGet();
+    Account account =
+        existingAccount == null ? createBillingAccount(dsl, transaction) : existingAccount;
     var accountRow =
-        existingAccount == null
-            ? dsl.fetchOne(
-                "INSERT INTO accounts (username, email, password_hash) "
-                    + "VALUES (?, ?, 'controlled-hash') RETURNING id, account_uuid",
-                "hosting-fixture-" + row,
-                "hosting-fixture-" + row + "@example.test")
-            : dsl.fetchOne(
-                "SELECT id, account_uuid FROM accounts WHERE id = ? AND account_uuid = ?",
-                Objects.requireNonNull(existingAccount.getId(), "persisted Account ID required"),
-                Objects.requireNonNull(
-                    existingAccount.getAccountUuid(), "persisted Account UUID required"));
+        dsl.fetchOne(
+            "SELECT id, account_uuid FROM accounts WHERE id = ? AND account_uuid = ?",
+            Objects.requireNonNull(account.getId(), "persisted Account ID required"),
+            Objects.requireNonNull(account.getAccountUuid(), "persisted Account UUID required"));
     Objects.requireNonNull(accountRow, "Exact persisted Account row required");
     long accountId = accountRow.get("id", Long.class);
     UUID accountUuid = accountRow.get("account_uuid", UUID.class);
@@ -256,9 +290,440 @@ public final class CanonicalHostingSubscriptionTestFixture {
             transport,
             service,
             lifecycleRepository,
-            observer);
+            observer,
+            source);
     fixture.providerStatus("active");
     return fixture;
+  }
+
+  /** Separate factory for protected HTTPS owner tests that supply their own genuine actor. */
+  public static Fixture createAwaitingPayment(DataSource source, Account account) {
+    var fixture = create(source, account);
+    fixture.awaitFirstInvoice();
+    fixture.providerStatus("incomplete");
+    return fixture;
+  }
+
+  /** Fresh Account insert through the real identity/authority owner, with a real test password. */
+  public static Account createBillingAccount(DSLContext dsl, TransactionTemplate transaction) {
+    var generations = new AccountAuthorityGenerationRepository(dsl);
+    var outbox = new AccountAuthorityOutboxRepository(dsl);
+    var accounts =
+        new AccountRepository(
+            dsl, new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox));
+    var account = new Account();
+    String suffix = UUID.randomUUID().toString();
+    account.setUsername("hosting-first-invoice-" + suffix);
+    account.setEmail(suffix + "@example.test");
+    char[] password = BILLING_PASSWORD.toCharArray();
+    var argon = Argon2Factory.create();
+    try {
+      account.setPasswordHash(argon.hash(2, 4096, 1, password));
+    } finally {
+      argon.wipeArray(password);
+    }
+    account.setRole("player");
+    account.setLoginAuthModes("PASSWORD");
+    account.setLifecycleState(AccountLifecycleState.ACTIVE);
+    return in(transaction, () -> accounts.save(account));
+  }
+
+  /** Actual dispatch/capture owner. Commercial/security policy rows are explicit test inputs. */
+  public static FirstInvoiceCheckout prepareFirstInvoice(
+      DataSource source,
+      DSLContext dsl,
+      TransactionTemplate transaction,
+      AccountSubscriptionCreationRecord creation,
+      AccountPaymentInstrumentRecord instrument,
+      String providerId,
+      Clock clock,
+      AccountHostingSubscriptionLifecycleRepository lifecycle) {
+    in(
+        transaction,
+        () -> {
+          dsl.execute(
+              "INSERT INTO account_billing_reauthentication_policy_values (policy_scope, policy_version, recent_age_seconds, max_clock_skew_seconds) VALUES ('PLATFORM',1,300,30),('DEPLOYMENT',1,300,30) ON CONFLICT DO NOTHING");
+          dsl.execute(
+              "INSERT INTO account_billing_reauthentication_policy_current (policy_scope, policy_version) VALUES ('PLATFORM',1),('DEPLOYMENT',1) ON CONFLICT DO NOTHING");
+          dsl.execute(
+              "INSERT INTO account_hosting_billing_policy_values (provider_price_id, policy_version, quantity, amount, currency) VALUES (?,1,1,2400,'usd') ON CONFLICT DO NOTHING",
+              creation.planQuote().providerPriceId());
+          dsl.execute(
+              "INSERT INTO account_hosting_billing_policy_current (provider_price_id, policy_version) VALUES (?,1) ON CONFLICT DO NOTHING",
+              creation.planQuote().providerPriceId());
+          return true;
+        });
+    var claim =
+        in(transaction, () -> lifecycle.claim(creation.requestId(), 1, UUID.randomUUID()).claim());
+    var prepared =
+        in(transaction, () -> lifecycle.prepareProviderDispatch(claim, UUID.randomUUID()));
+    var dispatch = in(transaction, () -> lifecycle.readProviderDispatch(prepared));
+    var transport = new ControlledFirstInvoiceTransport(creation, instrument, providerId);
+    var provider =
+        new StripeHostingFirstInvoicePaymentClient(
+            new com.stripe.StripeClient(transport),
+            clock,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
+    var payments =
+        new AccountHostingFirstInvoicePaymentRepository(
+            dsl,
+            new AccountSubscriptionIntentRepository(dsl, new AccountHostingPlanCatalog(List.of())),
+            clock);
+    try {
+      var observed = provider.capture(dispatch, providerId);
+      var invoice =
+          in(transaction, () -> payments.retainAwaitingPayment(dispatch, providerId, observed));
+      return new FirstInvoiceCheckout(
+          source, dsl, transaction, clock, payments, provider, transport, invoice);
+    } catch (StripeException failure) {
+      throw new IllegalStateException("Controlled existing-invoice capture failed", failure);
+    }
+  }
+
+  /**
+   * Real payment/reauth owners with test-only policy, keys, primary password and signed transport.
+   */
+  public static final class FirstInvoiceCheckout {
+    private final DSLContext dsl;
+    private final TransactionTemplate transaction;
+    private final Clock clock;
+    private final AccountHostingFirstInvoicePaymentRepository payments;
+    private final StripeHostingFirstInvoicePaymentClient provider;
+    private final ControlledFirstInvoiceTransport transport;
+    private final AccountHostingFirstInvoicePayment invoice;
+    private final StripeHostingWebhookVerifier verifier;
+    private final AccountRecentReauthenticationService reauthentication;
+    private final AccountRepository accounts;
+
+    private FirstInvoiceCheckout(
+        DataSource source,
+        DSLContext dsl,
+        TransactionTemplate transaction,
+        Clock clock,
+        AccountHostingFirstInvoicePaymentRepository payments,
+        StripeHostingFirstInvoicePaymentClient provider,
+        ControlledFirstInvoiceTransport transport,
+        AccountHostingFirstInvoicePayment invoice) {
+      this.dsl = dsl;
+      this.transaction = transaction;
+      this.clock = clock;
+      this.payments = payments;
+      this.provider = provider;
+      this.transport = transport;
+      this.invoice = invoice;
+      verifier = new StripeHostingWebhookVerifier(WEBHOOK_SECRET, clock);
+      var manager = new DataSourceTransactionManager(source);
+      var generations = new AccountAuthorityGenerationRepository(dsl);
+      var outbox = new AccountAuthorityOutboxRepository(dsl);
+      var sources = new AccountAuthoritySourceEvidenceRepository(dsl, generations, outbox);
+      accounts = new AccountRepository(dsl, sources);
+      var primary =
+          new AccountServiceImpl(
+              accounts,
+              generations,
+              sources,
+              outbox,
+              mock(AccountPasswordResetOperationRepository.class),
+              mock(AccountLogoutAllOperationRepository.class),
+              mock(AccountSecurityStateOperationRepository.class),
+              mock(AccountPasswordResetDraftSourceChangeRepository.class),
+              mock(AccountAuditOutboxRepository.class),
+              mock(AccountJoinOperationRepository.class),
+              new AccountEmailLoginChallengeRepository(dsl),
+              null,
+              null,
+              Mappers.getMapper(AccountMapper.class),
+              null,
+              null,
+              null,
+              mock(RetainedSubscriptionEvidenceRepository.class),
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              manager);
+      try {
+        Path custody = Files.createTempDirectory("hosting-first-invoice-test-only-custody-");
+        for (String purpose : List.of("encryption", "request-mac")) {
+          byte[] bytes = new byte[32];
+          Arrays.fill(bytes, (byte) (purpose.equals("encryption") ? 11 : 29));
+          Files.createDirectories(custody.resolve(purpose));
+          Files.writeString(
+              custody.resolve(purpose).resolve("keyring"),
+              "firemud-account-response-envelope-keyring-v1\nactive test1 "
+                  + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+                  + "\n");
+        }
+        reauthentication =
+            new AccountRecentReauthenticationService(
+                primary,
+                accounts,
+                generations,
+                new AccountRecentReauthenticationRepository(dsl),
+                new AccountRecentReauthenticationPolicyRepository(dsl),
+                manager,
+                clock,
+                new AccountControlUiResponseCryptography(
+                    new AccountControlUiKeyring(custody), clock));
+      } catch (IOException failure) {
+        throw new IllegalStateException("Test-only custody setup failed", failure);
+      }
+    }
+
+    public AccountHostingFirstInvoicePayment invoice() {
+      return invoice;
+    }
+
+    public AccountHostingFirstInvoicePaymentRepository payments() {
+      return payments;
+    }
+
+    public StripeHostingFirstInvoicePaymentClient provider() {
+      return provider;
+    }
+
+    public StripeHostingWebhookVerifier verifier() {
+      return verifier;
+    }
+
+    public void status(String status) {
+      transport.status = status;
+    }
+
+    public int confirmations() {
+      return transport.confirmations;
+    }
+
+    public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch
+        authorizeAndRetainSuccess(String password) {
+      authorize(password);
+      return retainSignedSuccess();
+    }
+
+    public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch authorize(
+        String password) {
+      UUID requestId = UUID.randomUUID();
+      Account account =
+          in(
+              transaction,
+              () -> accounts.findByAccountUuidForUpdate(invoice.ownerAccountId()).orElseThrow());
+      var evidence =
+          reauthentication.reauthenticate(
+              new AccountRecentReauthenticationService.Request(
+                  UUID.randomUUID(),
+                  invoice.ownerAccountId(),
+                  AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+                  requestId,
+                  account.getEmail(),
+                  password));
+      var prepared =
+          in(
+              transaction,
+              () -> {
+                reauthentication.validateAndConsumeLocked(
+                    evidence,
+                    invoice.ownerAccountId(),
+                    AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+                    requestId);
+                return payments.prepareConfirmation(
+                    invoice.ownerAccountId(),
+                    requestId,
+                    invoice.subscriptionId(),
+                    payments.ownerRowVersion(invoice.subscriptionId(), invoice.ownerAccountId()),
+                    invoice.digest(),
+                    evidence);
+              });
+      var dispatch =
+          in(transaction, () -> payments.readDispatch(prepared, invoice.ownerAccountId()));
+      try {
+        assertThat(
+                provider
+                    .confirm(
+                        dispatch,
+                        () ->
+                            in(
+                                transaction,
+                                () -> payments.claimCommand(dispatch, invoice.ownerAccountId())))
+                    .status())
+            .isEqualTo("succeeded");
+        assertThat(transport.confirmations).isOne();
+        return dispatch;
+      } catch (StripeException failure) {
+        throw new IllegalStateException("Controlled confirmation failed", failure);
+      }
+    }
+
+    /**
+     * Signed success and independent paid readback may arrive after consumed authorization expires.
+     */
+    public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch retainSignedSuccess() {
+      try {
+        var signed = signedSuccess();
+        var verified = verifier.verify(signed.payload(), signed.signature());
+        in(transaction, () -> new StripeEventInboxRepository(dsl).retainOrReplay(verified));
+        var readback = provider.observe(invoice);
+        return in(transaction, () -> payments.retainSignedSuccess(verified, readback));
+      } catch (StripeException failure) {
+        throw new IllegalStateException("Controlled signed checkout failed", failure);
+      }
+    }
+
+    public SignedSuccess signedSuccess() {
+      String payload =
+          "{\"id\":\"evt_"
+              + invoice.paymentIntentId().substring(3)
+              + "\",\"object\":\"event\",\"type\":\"payment_intent.succeeded\",\"created\":"
+              + clock.instant().getEpochSecond()
+              + ",\"livemode\":false,\"data\":{\"object\":"
+              + transport.intent("succeeded")
+              + "}}";
+      String timestamp = Long.toString(clock.instant().getEpochSecond());
+      try {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(WEBHOOK_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        return new SignedSuccess(
+            payload,
+            "t="
+                + timestamp
+                + ",v1="
+                + HexFormat.of()
+                    .formatHex(
+                        mac.doFinal((timestamp + "." + payload).getBytes(StandardCharsets.UTF_8))));
+      } catch (java.security.GeneralSecurityException failure) {
+        throw new IllegalStateException(failure);
+      }
+    }
+  }
+
+  public record SignedSuccess(String payload, String signature) {}
+
+  private static final class ControlledFirstInvoiceTransport implements StripeResponseGetter {
+    private final AccountSubscriptionCreationRecord creation;
+    private final AccountPaymentInstrumentRecord instrument;
+    private final String providerId, invoiceId, intentId;
+    private String status = "requires_confirmation";
+    private int confirmations;
+    private String confirmationStatus = "succeeded";
+
+    private ControlledFirstInvoiceTransport(
+        AccountSubscriptionCreationRecord creation,
+        AccountPaymentInstrumentRecord instrument,
+        String providerId) {
+      this.creation = creation;
+      this.instrument = instrument;
+      this.providerId = providerId;
+      String suffix = creation.subscriptionId().toString().replace("-", "");
+      invoiceId = "in_" + suffix;
+      intentId = "pi_" + suffix;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T extends StripeObject> T request(
+        BaseAddress address,
+        RequestMethod method,
+        String path,
+        Map<String, Object> params,
+        Type type,
+        RequestOptions options,
+        ApiMode mode)
+        throws StripeException {
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      String json;
+      if (path.equals("/v1/subscriptions/" + providerId)) {
+        assertThat(method).isEqualTo(RequestMethod.GET);
+        json =
+            "{\"id\":\""
+                + providerId
+                + "\",\"object\":\"subscription\",\"customer\":\""
+                + creation.providerCustomerId()
+                + "\",\"default_payment_method\":\""
+                + instrument.providerPaymentMethodId()
+                + "\",\"livemode\":false,\"status\":\"incomplete\",\"created\":"
+                + creation.createdAt().getEpochSecond()
+                + ",\"latest_invoice\":\""
+                + invoiceId
+                + "\",\"metadata\":{\"firemud_operation_id\":\""
+                + creation.subscriptionProvisioningRequestId()
+                + "\",\"firemud_subscription_id\":\""
+                + creation.subscriptionId()
+                + "\"}}";
+      } else if (path.equals("/v1/invoices/" + invoiceId)) {
+        assertThat(method).isEqualTo(RequestMethod.GET);
+        boolean paid = "succeeded".equals(status);
+        json =
+            "{\"id\":\""
+                + invoiceId
+                + "\",\"object\":\"invoice\",\"customer\":\""
+                + creation.providerCustomerId()
+                + "\",\"livemode\":false,\"billing_reason\":\"subscription_create\",\"status\":\""
+                + (paid ? "paid" : "open")
+                + "\",\"amount_due\":2400,\"total\":2400,\"starting_balance\":0,\"amount_paid\":"
+                + (paid ? 2400 : 0)
+                + ",\"amount_remaining\":"
+                + (paid ? 0 : 2400)
+                + ",\"currency\":\"usd\",\"parent\":{\"subscription_details\":{\"subscription\":\""
+                + providerId
+                + "\"}},\"lines\":{\"has_more\":false,\"data\":[{\"object\":\"line_item\",\"amount\":2400,\"currency\":\"usd\",\"quantity\":"
+                + creation.planQuote().providerQuantity()
+                + ",\"pricing\":{\"type\":\"price_details\",\"price_details\":{\"price\":\""
+                + creation.planQuote().providerPriceId()
+                + "\"}}}]},\"payments\":{\"object\":\"list\",\"has_more\":false,\"data\":[{\"object\":\"invoice_payment\",\"payment\":{\"type\":\"payment_intent\",\"payment_intent\":"
+                + intent(status)
+                + "}}]}}";
+      } else if (path.equals("/v1/payment_intents/" + intentId)) {
+        assertThat(method).isEqualTo(RequestMethod.GET);
+        json = intent(status);
+      } else if (path.equals("/v1/payment_intents/" + intentId + "/confirm")) {
+        assertThat(method).isEqualTo(RequestMethod.POST);
+        assertThat(options.getIdempotencyKey()).isNotBlank();
+        assertThat(params)
+            .containsEntry("payment_method", instrument.providerPaymentMethodId())
+            .containsEntry("use_stripe_sdk", true);
+        assertThat(++confirmations).isOne();
+        status = confirmationStatus;
+        json = intent(status);
+      } else {
+        throw new AssertionError("Unexpected controlled Stripe call: " + path);
+      }
+      return (T) com.stripe.net.ApiResource.GSON.fromJson(json, type);
+    }
+
+    private String intent(String state) {
+      return "{\"id\":\""
+          + intentId
+          + "\",\"object\":\"payment_intent\",\"customer\":\""
+          + creation.providerCustomerId()
+          + "\",\"payment_method\":\""
+          + instrument.providerPaymentMethodId()
+          + "\",\"livemode\":false,\"confirmation_method\":\"automatic\",\"status\":\""
+          + state
+          + "\",\"amount\":2400,\"amount_received\":"
+          + (state.equals("succeeded") ? 2400 : 0)
+          + ",\"currency\":\"usd\""
+          + (state.equals("requires_action")
+              ? ",\"client_secret\":\"" + intentId + "_secret_testOnly\""
+              : "")
+          + "}";
+    }
+
+    @Override
+    public InputStream requestStream(
+        BaseAddress address,
+        RequestMethod method,
+        String path,
+        Map<String, Object> params,
+        RequestOptions options,
+        ApiMode mode) {
+      throw new AssertionError("No streaming provider calls");
+    }
   }
 
   private static <T> T in(TransactionTemplate transaction, Supplier<T> body) {
@@ -281,6 +746,8 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private final AccountHostingSubscriptionLifecycleService service;
     private final AccountHostingSubscriptionLifecycleRepository lifecycleRepository;
     private final StripeHostingSubscriptionObserver observer;
+    private final DataSource source;
+    private FirstInvoiceCheckout checkout;
 
     private Fixture(
         JdbcTemplate jdbc,
@@ -297,7 +764,8 @@ public final class CanonicalHostingSubscriptionTestFixture {
         ControlledStripeTransport transport,
         AccountHostingSubscriptionLifecycleService service,
         AccountHostingSubscriptionLifecycleRepository lifecycleRepository,
-        StripeHostingSubscriptionObserver observer) {
+        StripeHostingSubscriptionObserver observer,
+        DataSource source) {
       this.jdbc = jdbc;
       this.dsl = dsl;
       this.transaction = transaction;
@@ -313,6 +781,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       this.service = service;
       this.lifecycleRepository = lifecycleRepository;
       this.observer = observer;
+      this.source = source;
     }
 
     @SuppressFBWarnings(
@@ -386,6 +855,93 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public StripeHostingSubscriptionObserver observer() {
       return observer;
+    }
+
+    /** Retains the actual existing invoice without granting payment or hosting authority. */
+    public FirstInvoiceCheckout awaitFirstInvoice() {
+      if (checkout == null)
+        checkout =
+            prepareFirstInvoice(
+                source,
+                dsl,
+                transaction,
+                creation,
+                instrument,
+                providerId,
+                clock,
+                lifecycleRepository);
+      return checkout;
+    }
+
+    public AccountHostingFirstInvoicePayment firstInvoice() {
+      return awaitFirstInvoice().invoice();
+    }
+
+    public AccountHostingFirstInvoicePaymentRepository firstInvoiceRepository() {
+      return awaitFirstInvoice().payments();
+    }
+
+    public StripeHostingFirstInvoicePaymentClient firstInvoiceProvider() {
+      return awaitFirstInvoice().provider();
+    }
+
+    public StripeHostingWebhookVerifier webhookVerifier() {
+      return awaitFirstInvoice().verifier();
+    }
+
+    public void firstInvoiceStatus(String status) {
+      awaitFirstInvoice().status(status);
+    }
+
+    public void firstInvoiceConfirmationStatus(String status) {
+      awaitFirstInvoice().transport.confirmationStatus = status;
+    }
+
+    public int firstInvoiceConfirmations() {
+      return awaitFirstInvoice().confirmations();
+    }
+
+    public String signedSuccessPayload() {
+      return signedSuccess().payload();
+    }
+
+    public String signedSuccessHeader() {
+      return signedSuccess().signature();
+    }
+
+    public SignedSuccess signedSuccess() {
+      return awaitFirstInvoice().signedSuccess();
+    }
+
+    /** Genuine password reauthentication and signed completion over controlled provider inputs. */
+    public AccountHostingSubscriptionLifecycleRepository.TransitionResult completeFirstInvoice() {
+      return completeFirstInvoice(BILLING_PASSWORD);
+    }
+
+    public AccountHostingSubscriptionLifecycleRepository.TransitionResult completeFirstInvoice(
+        String password) {
+      var authorized = awaitFirstInvoice().authorizeAndRetainSuccess(password);
+      providerStatus("active");
+      var committed =
+          service.reconcile(
+              authorized.lifecycleRequestId(),
+              creation.requestId(),
+              authorized.expectedRowVersion(),
+              providerId,
+              null);
+      assertThat(committed.outcome())
+          .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
+      assertThat(service.readCurrent(tenantId).receiptRequestId())
+          .isEqualTo(authorized.lifecycleRequestId());
+      assertThat(
+              in(
+                  transaction,
+                  () ->
+                      checkout
+                          .payments()
+                          .completed(creation.subscriptionId(), authorized.lifecycleRequestId())))
+          .isTrue();
+      return committed;
     }
 
     public void providerStatus(String status) {

@@ -68,3 +68,7 @@ The source-only Control-UI issuance preparation reads the configured margin thro
 ## Proto Files
 
 The gRPC schemas for this service live in [`protos/account/v1`](../../../../protos/account/v1). Use `./gradlew generateProto` to regenerate Java stubs when the definitions change.
+
+### Held first-invoice checkout configuration
+
+The prepared [first-invoice owner](./stripe-integration.md#first-invoice-confirmation-and-completion) has no enabling flag or automatically registered bean/controller. Explicit composition requires the Account Stripe client, a protected webhook signing secret (`firemud.payment.hosting-webhook-secret`), a public Stripe publishable key for the provider-authentication client, finite provider transport limits and genuine current Account/control-ui owners. Secrets must not be logged or exposed through property diagnostics. Separate versioned billing-purpose reauthentication policies and exact commercial billing-policy rows are required; absent rows refuse and no migration seeds a default. Configuration alone does not clear registration or custody gates.

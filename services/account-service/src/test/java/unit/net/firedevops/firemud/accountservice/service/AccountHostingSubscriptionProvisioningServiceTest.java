@@ -32,7 +32,15 @@ class AccountHostingSubscriptionProvisioningServiceTest {
   private final LocalTransactions transactions = new LocalTransactions();
   private final AccountHostingSubscriptionProvisioningService service =
       new AccountHostingSubscriptionProvisioningService(
-          repository, provider, lifecycle, transactions);
+          repository,
+          provider,
+          mock(
+              net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient
+                  .class),
+          mock(
+              net.firedevops.firemud.accountservice.repository
+                  .AccountHostingFirstInvoicePaymentRepository.class),
+          transactions);
   private final ProvisioningClaim claim = mock(ProvisioningClaim.class);
 
   @AfterEach

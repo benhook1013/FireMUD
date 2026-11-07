@@ -65,21 +65,15 @@ class AccountAuthorityCurrentnessIntegrationTest {
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     var fixture = CanonicalHostingSubscriptionTestFixture.create(dataSource);
-    var claim =
+    var initialCommit = fixture.completeFirstInvoice();
+    UUID initialRequest = initialCommit.requestId();
+    long initialExpectedVersion =
         fixture
-            .service()
-            .claimProvisioning(fixture.creation().requestId(), 1, UUID.randomUUID())
-            .claim();
-    UUID initialRequest = UUID.randomUUID();
-    var initialCommit =
-        fixture
-            .service()
-            .reconcile(
-                initialRequest,
-                fixture.creation().requestId(),
-                claim.subscriptionRowVersion(),
-                fixture.providerId(),
-                claim.attemptId());
+            .dsl()
+            .fetchSingle(
+                "SELECT expected_row_version FROM subscription_lifecycle_operations WHERE request_id = ?",
+                initialRequest)
+            .get(0, Long.class);
     assertThat(initialCommit.outcome()).isEqualTo(Outcome.COMMITTED);
     var initial = fixture.service().readCurrent(fixture.tenantId());
     assertThat(initial.entitlementVersion()).isOne();
@@ -91,9 +85,9 @@ class AccountAuthorityCurrentnessIntegrationTest {
                 .reconcile(
                     initialRequest,
                     fixture.creation().requestId(),
-                    claim.subscriptionRowVersion(),
+                    initialExpectedVersion,
                     fixture.providerId(),
-                    claim.attemptId()))
+                    null))
         .isEqualTo(initialCommit);
     assertThat(fixture.transport().reads()).isEqualTo(initialReads);
     var initialRetry = fixture.service().readCurrent(fixture.tenantId());

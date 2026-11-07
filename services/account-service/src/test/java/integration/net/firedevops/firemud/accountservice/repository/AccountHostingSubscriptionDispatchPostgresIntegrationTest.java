@@ -25,7 +25,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionProvisioner;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionBirthSource.Category;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
@@ -34,7 +33,6 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.ProducerEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
-import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionProvisioningService;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -241,11 +239,10 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     f.clock().advance(Duration.ofSeconds(11));
     var second = claim(f, first.subscriptionRowVersion());
     var result =
-        (AccountHostingSubscriptionProvisioningService.Committed)
+        (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
             service(f).provision(second, UUID.randomUUID(), UUID.randomUUID());
-    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
-    assertThat(result.current().current().subscriptionId())
-        .isEqualTo(f.creation().subscriptionId());
+    assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(result.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
     assertThat(f.transport().creates).isEqualTo(1);
     var dispatch =
         Objects.requireNonNull(
@@ -278,16 +275,25 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
-  void realInitialSdkCreateFlowsThroughExistingLifecycleCommitAndIndependentCurrentRead() {
+  void realInitialSdkCreateOnlyLinksAwaitingInvoiceAndCannotCommitHostingAuthority() {
     Fixture f = fixture("1032");
     var result =
-        (AccountHostingSubscriptionProvisioningService.Committed)
+        (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
             service(f).provision(claim(f, 1), UUID.randomUUID(), UUID.randomUUID());
-    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
-    assertThat(result.current().current().subscriptionId())
-        .isEqualTo(f.creation().subscriptionId());
+    assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(result.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
     assertThat(f.transport().creates).isEqualTo(1);
-    assertThat(f.transport().subscriptionReads).isGreaterThanOrEqualTo(3);
+    assertThat(f.transport().subscriptionReads).isGreaterThanOrEqualTo(2);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
+    assertThat(
+            Objects.requireNonNull(f.dsl().fetchOne("SELECT status FROM subscription"))
+                .get("status", String.class))
+        .isEqualTo("provisioning");
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl().fetchOne("SELECT phase FROM subscription_provisioning_work"))
+                .get("phase", String.class))
+        .isEqualTo("AWAITING_PAYMENT");
   }
 
   @Test
@@ -316,9 +322,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     f.clock().advance(Duration.ofSeconds(2));
     var third = claim(f, second.subscriptionRowVersion());
     var result =
-        (AccountHostingSubscriptionProvisioningService.Committed)
+        (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
             service(f).provision(third, UUID.randomUUID(), UUID.randomUUID());
-    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(f.transport().creates).isEqualTo(1);
     assertThat(f.transport().searches).isEqualTo(3);
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isOne();
@@ -412,18 +418,26 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   private static AccountHostingSubscriptionProvisioningService service(Fixture f) {
+    migrate(f.source(), f.schema(), "1039");
+    f.dsl()
+        .execute(
+            "INSERT INTO account_hosting_billing_policy_values (provider_price_id, policy_version, quantity, amount, currency) "
+                + "VALUES (?, 1, ?, 2400, 'usd') ON CONFLICT DO NOTHING",
+            f.creation().planQuote().providerPriceId(),
+            f.creation().planQuote().providerQuantity());
+    f.dsl()
+        .execute(
+            "INSERT INTO account_hosting_billing_policy_current VALUES (?, 1) ON CONFLICT DO NOTHING",
+            f.creation().planQuote().providerPriceId());
     var stripe = new com.stripe.StripeClient(f.transport());
-    var lifecycle =
-        new AccountHostingSubscriptionLifecycleService(
-            f.owner(),
-            new StripeHostingSubscriptionObserver(
-                stripe, f.clock(), Duration.ofMillis(250), Duration.ofSeconds(1)),
-            new DataSourceTransactionManager(f.source()));
     return new AccountHostingSubscriptionProvisioningService(
         f.owner(),
         new StripeHostingSubscriptionProvisioner(
             stripe, f.clock(), false, Duration.ofMillis(250), Duration.ofSeconds(1)),
-        lifecycle,
+        new net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient(
+            stripe, f.clock(), Duration.ofMillis(250), Duration.ofSeconds(1)),
+        new net.firedevops.firemud.accountservice.repository
+            .AccountHostingFirstInvoicePaymentRepository(f.dsl(), f.intents(), f.clock()),
         new DataSourceTransactionManager(f.source()));
   }
 
@@ -566,7 +580,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
             false);
     var transport = new Transport(creation, instrument.providerPaymentMethodId(), clock);
     return new Fixture(
-        source, schema, dsl, transaction, creation, lifecycleOwner, clock, transport);
+        source, schema, dsl, intents, transaction, creation, lifecycleOwner, clock, transport);
   }
 
   private static UUID enroll(DSLContext dsl, TransactionTemplate tx, long suffix) {
@@ -675,6 +689,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
       DriverManagerDataSource source,
       String schema,
       DSLContext dsl,
+      AccountSubscriptionIntentRepository intents,
       TransactionTemplate tx,
       AccountSubscriptionCreationRecord creation,
       AccountHostingSubscriptionLifecycleRepository owner,
@@ -791,6 +806,23 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
           throw org.mockito.Mockito.mock(StripeException.class);
         }
         response = subscription();
+      } else if (path.equals("/v1/invoices/in_exact")) {
+        response =
+            "{\"object\":\"invoice\",\"id\":\"in_exact\",\"customer\":\""
+                + creation.providerCustomerId()
+                + "\",\"livemode\":false,\"billing_reason\":\"subscription_create\",\"parent\":{\"subscription_details\":{\"subscription\":\"sub_exact\"}},"
+                + "\"total\":2400,\"starting_balance\":0,\"amount_due\":2400,\"amount_paid\":0,\"amount_remaining\":2400,\"currency\":\"usd\",\"status\":\"open\","
+                + "\"lines\":{\"has_more\":false,\"data\":[{\"object\":\"line_item\",\"amount\":2400,\"currency\":\"usd\",\"quantity\":"
+                + creation.planQuote().providerQuantity()
+                + ",\"pricing\":{\"type\":\"price_details\",\"price_details\":{\"price\":\""
+                + creation.planQuote().providerPriceId()
+                + "\"}}}]},\"payments\":{\"has_more\":false,\"data\":[{\"payment\":{\"type\":\"payment_intent\",\"payment_intent\":{"
+                + "\"object\":\"payment_intent\",\"id\":\"pi_exact\",\"customer\":\""
+                + creation.providerCustomerId()
+                + "\",\"payment_method\":\""
+                + paymentMethod
+                + "\",\"livemode\":false,\"amount\":2400,\"currency\":\"usd\","
+                + "\"confirmation_method\":\"automatic\",\"status\":\"requires_confirmation\"}}}]}}";
       } else if (path.equals("/v1/subscriptions/sub_exact")) {
         subscriptionReads++;
         response = subscription();
@@ -805,7 +837,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
           + creation.providerCustomerId()
           + "\",\"default_payment_method\":\""
           + paymentMethod
-          + "\",\"livemode\":false,\"status\":\"active\",\"cancel_at_period_end\":false,"
+          + "\",\"livemode\":false,\"status\":\"incomplete\",\"latest_invoice\":\"in_exact\",\"created\":"
+          + clock.instant().getEpochSecond()
+          + ",\"cancel_at_period_end\":false,"
           + "\"metadata\":{\"firemud_metadata_schema_version\":\"1\",\"firemud_operation_type\":\"subscription_provisioning\","
           + "\"firemud_operation_id\":\""
           + creation.subscriptionProvisioningRequestId()

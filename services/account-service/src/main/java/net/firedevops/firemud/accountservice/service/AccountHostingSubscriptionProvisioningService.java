@@ -2,13 +2,13 @@ package net.firedevops.firemud.accountservice.service;
 
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionProvisioner;
-import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
+import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
-import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
-import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.TransitionResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -24,17 +24,20 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class AccountHostingSubscriptionProvisioningService {
   private final AccountHostingSubscriptionLifecycleRepository repository;
   private final StripeHostingSubscriptionProvisioner provider;
-  private final AccountHostingSubscriptionLifecycleService lifecycle;
+  private final StripeHostingFirstInvoicePaymentClient firstInvoiceProvider;
+  private final AccountHostingFirstInvoicePaymentRepository firstInvoices;
   private final TransactionTemplate transaction;
 
   public AccountHostingSubscriptionProvisioningService(
       AccountHostingSubscriptionLifecycleRepository repository,
       StripeHostingSubscriptionProvisioner provider,
-      AccountHostingSubscriptionLifecycleService lifecycle,
+      StripeHostingFirstInvoicePaymentClient firstInvoiceProvider,
+      AccountHostingFirstInvoicePaymentRepository firstInvoices,
       PlatformTransactionManager transactions) {
     this.repository = Objects.requireNonNull(repository);
     this.provider = Objects.requireNonNull(provider);
-    this.lifecycle = Objects.requireNonNull(lifecycle);
+    this.firstInvoiceProvider = Objects.requireNonNull(firstInvoiceProvider);
+    this.firstInvoices = Objects.requireNonNull(firstInvoices);
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
@@ -58,28 +61,27 @@ public final class AccountHostingSubscriptionProvisioningService {
               transaction.execute(status -> repository.deferUnresolved(dispatch.claim())));
       return new Pending(disposition, located);
     }
-    // Locator and actual observation select the existing owner operation, never an ad-hoc write.
-    TransitionResult transition =
-        lifecycle.reconcile(
-            lifecycleRequestId,
-            claim.creation().requestId(),
-            claim.subscriptionRowVersion(),
-            actual.providerSubscriptionId(),
-            claim.attemptId());
-    if (transition.outcome() != Outcome.COMMITTED) {
-      return new Reconciling(transition);
+    // DEFAULT_INCOMPLETE only locates an existing invoice. Provisioning never confirms or grants.
+    try {
+      var observed = firstInvoiceProvider.capture(dispatch, actual.providerSubscriptionId());
+      var retained =
+          Objects.requireNonNull(
+              transaction.execute(
+                  status ->
+                      firstInvoices.retainAwaitingPayment(
+                          dispatch, actual.providerSubscriptionId(), observed)));
+      var readback =
+          Objects.requireNonNull(
+              transaction.execute(status -> firstInvoices.find(retained.subscriptionId())));
+      if (!retained.equals(readback))
+        throw new IllegalStateException("Independent awaiting-payment readback mismatch");
+      return new AwaitingPayment(readback);
+    } catch (com.stripe.exception.StripeException unresolved) {
+      return new Pending(
+          Objects.requireNonNull(
+              transaction.execute(status -> repository.deferUnresolved(dispatch.claim()))),
+          new StripeHostingSubscriptionProvisioner.Pending("FIRST_INVOICE_UNRESOLVED", unresolved));
     }
-    AccountHostingSubscriptionCurrentReceipt current =
-        lifecycle.readCurrent(claim.creation().tenantId());
-    if (!current.receiptRequestId().equals(lifecycleRequestId)
-        || current.current().rowVersion() != transition.committedRowVersion()
-        || !current.current().subscriptionId().equals(claim.creation().subscriptionId())
-        || !current.current().creationRequestId().equals(claim.creation().requestId())
-        || !actual.providerSubscriptionId().equals(current.current().providerSubscriptionId())
-        || !current.current().planQuote().equals(claim.creation().planQuote())) {
-      throw new IllegalStateException("Independent committed hosting receipt readback mismatch");
-    }
-    return new Committed(transition, current);
   }
 
   private static void requireUuid(UUID value) {
@@ -95,31 +97,12 @@ public final class AccountHostingSubscriptionProvisioningService {
     }
   }
 
-  public sealed interface Result permits Pending, Reconciling, Committed {}
+  public sealed interface Result permits Pending, AwaitingPayment {}
 
   public record Pending(
       Disposition disposition, StripeHostingSubscriptionProvisioner.Result providerResult)
       implements Result {}
 
-  public record Reconciling(TransitionResult transition) implements Result {}
-
-  /** Privately constructed after actual lifecycle commit and independent current readback. */
-  public static final class Committed implements Result {
-    private final TransitionResult transition;
-    private final AccountHostingSubscriptionCurrentReceipt current;
-
-    private Committed(
-        TransitionResult transition, AccountHostingSubscriptionCurrentReceipt current) {
-      this.transition = transition;
-      this.current = current;
-    }
-
-    public TransitionResult transition() {
-      return transition;
-    }
-
-    public AccountHostingSubscriptionCurrentReceipt current() {
-      return current;
-    }
-  }
+  /** Provider linkage is non-authorizing and still reserves the exact selected instrument. */
+  public record AwaitingPayment(AccountHostingFirstInvoicePayment invoice) implements Result {}
 }

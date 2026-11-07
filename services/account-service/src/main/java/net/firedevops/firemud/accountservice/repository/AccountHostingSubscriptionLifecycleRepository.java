@@ -423,24 +423,34 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             "Reconciliation cannot rebind the canonical provider identity");
       }
       if (priorReceipt == null) {
-        Record work = workForUpdate(creationId);
-        Record claimedAttempt =
-            provisioningAttemptId == null
-                ? null
-                : dsl.fetchOne(
-                    "SELECT claimed_at FROM subscription_provisioning_attempts WHERE attempt_id = ?",
-                    provisioningAttemptId);
-        if (provisioningAttemptId == null
-            || !"provisioning".equals(current.status())
-            || claimedAttempt == null
-            || now.isBefore(instant(claimedAttempt, "claimed_at"))
-            || !"CLAIMED".equals(work.get("phase", String.class))
-            || !provisioningAttemptId.equals(work.get("last_attempt_id", UUID.class))
-            || current.rowVersion() != work.get("subscription_row_version", Long.class)
-            || !now.isBefore(instant(work, "lease_expires_at"))
-            || !now.isBefore(instant(work, "deadline_at"))) {
-          throw new FenceRejectedException(
-              "Initial confirmation lacks its exact durable provisioning claim");
+        if (current.providerSubscriptionId() != null) {
+          var proof = firstPaymentProof(current.subscriptionId(), requestId);
+          if (proof == null
+              || provisioningAttemptId != null
+              || !"provisioning".equals(current.status())) {
+            throw new FenceRejectedException(
+                "Initial paid lifecycle requires exact signed first-invoice completion evidence");
+          }
+        } else {
+          Record work = workForUpdate(creationId);
+          Record claimedAttempt =
+              provisioningAttemptId == null
+                  ? null
+                  : dsl.fetchOne(
+                      "SELECT claimed_at FROM subscription_provisioning_attempts WHERE attempt_id = ?",
+                      provisioningAttemptId);
+          if (provisioningAttemptId == null
+              || !"provisioning".equals(current.status())
+              || claimedAttempt == null
+              || now.isBefore(instant(claimedAttempt, "claimed_at"))
+              || !"CLAIMED".equals(work.get("phase", String.class))
+              || !provisioningAttemptId.equals(work.get("last_attempt_id", UUID.class))
+              || current.rowVersion() != work.get("subscription_row_version", Long.class)
+              || !now.isBefore(instant(work, "lease_expires_at"))
+              || !now.isBefore(instant(work, "deadline_at"))) {
+            throw new FenceRejectedException(
+                "Initial confirmation lacks its exact durable provisioning claim");
+          }
         }
       } else if (current.providerSubscriptionId() == null || provisioningAttemptId != null) {
         throw new FenceRejectedException(
@@ -625,6 +635,18 @@ public final class AccountHostingSubscriptionLifecycleRepository {
           prepared.requestId(), Outcome.RECONCILING, 0, decision.reason().name());
     }
     Objects.requireNonNull(observed);
+    Record firstPayment = null;
+    if (java.util.Set.of(Status.TRIALING, Status.ACTIVE, Status.PAST_DUE, Status.GRACE)
+            .contains(decision.status())
+        && dsl.fetchOne(
+                "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?",
+                current.subscriptionId())
+            == null) {
+      firstPayment = firstPaymentProof(current.subscriptionId(), prepared.requestId());
+      if (firstPayment == null)
+        throw new FenceRejectedException(
+            "Authorizing hosting requires exact signed first-invoice payment completion");
+    }
     if (current.status().equals("canceled") && decision.status() != Status.CANCELED) {
       throw new FenceRejectedException("A canceled subscription cannot be reactivated");
     }
@@ -743,6 +765,35 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         authorityEvent.eventId().toString(),
         authorityEvent.eventDigest(),
         utc(now));
+    if (firstPayment != null) {
+      var auditFields = new LinkedHashMap<String, Object>();
+      auditFields.put("schemaVersion", "account-hosting-first-invoice-completed/v1");
+      auditFields.put("checkoutRequestId", firstPayment.get("request_id", UUID.class).toString());
+      auditFields.put("subscriptionId", current.subscriptionId().toString());
+      auditFields.put("invoiceId", firstPayment.get("invoice_id", String.class));
+      auditFields.put("paymentIntentId", firstPayment.get("payment_intent_id", String.class));
+      auditFields.put("tupleDigest", firstPayment.get("tuple_digest", String.class));
+      auditFields.put(
+          "receiptDigest", AccountHostingSubscriptionLifecycleEvidence.digest(receiptPayload));
+      new AccountAuditOutboxRepository(dsl)
+          .appendCanonicalTenant(
+              firstPayment.get("audit_event_id", UUID.class),
+              current.tenantId().toString(),
+              "HOSTING_FIRST_INVOICE_COMPLETED",
+              new String(
+                  AccountHostingSubscriptionLifecycleEvidence.encode(auditFields),
+                  StandardCharsets.UTF_8));
+      dsl.execute(
+          "INSERT INTO subscription_first_invoice_completions (subscription_id, request_id, lifecycle_request_id, tuple_digest, receipt_digest, audit_event_id, committed_at) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz)",
+          current.subscriptionId(),
+          firstPayment.get("request_id"),
+          prepared.requestId(),
+          firstPayment.get("tuple_digest"),
+          AccountHostingSubscriptionLifecycleEvidence.digest(receiptPayload),
+          firstPayment.get("audit_event_id", UUID.class),
+          utc(now));
+    }
     UUID terminalResolution = current.terminalResolutionId();
     if (observed.providerStatusIsCanceled() && terminalResolution == null) {
       terminalResolution = UUID.randomUUID();
@@ -781,14 +832,27 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             + "row_version = row_version + 1 WHERE request_id = ?",
         factsDigest,
         prepared.requestId());
-    if (operation.get("provisioning_attempt_id") != null) {
+    if (operation.get("provisioning_attempt_id") != null || firstPayment != null) {
       dsl.execute(
-          "UPDATE subscription_provisioning_work SET phase = 'CONFIRMED', row_version = row_version + 1 WHERE request_id = ? AND phase = 'CLAIMED'",
+          "UPDATE subscription_provisioning_work SET phase = 'CONFIRMED', row_version = row_version + 1 WHERE request_id = ? AND phase IN ('CLAIMED','AWAITING_PAYMENT')",
           original.requestId());
     }
     tenantEvents.readHostingCheckpoint(current.tenantId(), prepared.requestId());
     return new TransitionResult(
         prepared.requestId(), Outcome.COMMITTED, current.rowVersion() + 1, null);
+  }
+
+  private Record firstPaymentProof(UUID subscriptionId, UUID lifecycleRequestId) {
+    // Historical authorization was atomically consumed before the single provider dispatch.
+    // Reading it after expiry cannot renew payment permission or disclose a client secret.
+    return dsl.fetchOne(
+        "SELECT c.*, i.invoice_id, i.payment_intent_id, e.tuple_digest AS evidence_tuple FROM subscription_first_invoice_confirmations c "
+            + "JOIN subscription_first_invoice_success_evidence e USING (request_id, subscription_id) "
+            + "JOIN subscription_first_invoice_dispatches d USING (request_id, subscription_id) "
+            + "JOIN subscription_first_invoices i ON i.subscription_id = c.subscription_id AND i.tuple_digest = c.tuple_digest "
+            + "WHERE c.subscription_id = ? AND c.lifecycle_request_id = ? AND c.tuple_digest = e.tuple_digest FOR SHARE OF c",
+        subscriptionId,
+        lifecycleRequestId);
   }
 
   private Map<String, Object> receiptFields(
@@ -939,6 +1003,14 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     var candidate = intents.findCurrentByTenant(tenantId).orElseThrow();
     var current = intents.lockForLifecycle(candidate.creationRequestId(), candidate.rowVersion());
     Record currentLinks = links(current.subscriptionId());
+    if (java.util.Set.of("trialing", "active", "past_due", "grace").contains(current.status())
+        && dsl.fetchOne(
+                "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?",
+                current.subscriptionId())
+            == null) {
+      throw new FenceRejectedException(
+          "ENTITLEMENT_UNAVAILABLE: signed first-invoice fulfillment is absent");
+    }
     if (currentLinks.get("lifecycle_inflight_request_id") != null
         || current.providerSubscriptionId() == null) {
       throw new FenceRejectedException(

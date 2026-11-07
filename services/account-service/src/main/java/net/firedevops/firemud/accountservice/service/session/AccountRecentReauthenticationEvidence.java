@@ -67,7 +67,7 @@ public final class AccountRecentReauthenticationEvidence {
     this.recentAgeSeconds = recentAgeSeconds;
     this.maxClockSkewSeconds = maxClockSkewSeconds;
     this.issuedAt = Objects.requireNonNull(issuedAt);
-    if (AccountRecentReauthenticationPolicy.PURPOSE.equals(purpose) == false
+    if (!AccountRecentReauthenticationPolicy.supportedPurpose(purpose)
         || identitySourceNumericId <= 0L
         || lifecycleState != AccountLifecycleState.ACTIVE
         || accountAuthorityGeneration <= 0L

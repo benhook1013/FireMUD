@@ -293,3 +293,7 @@ For every first public-production text entry, the target command sequence is `LO
 7. Global roles alone never bypass this flow or grant gameplay admission/connect-token issuance without the same live checks.
 
 The matrix should be expanded as service API surfaces evolve. Service docs may include local excerpts, but this file is the canonical policy for declared entries; current omissions remain an explicit inventory drift/gap until source-stable coverage and validation complete the registry.
+
+### Held Account first-invoice checkout
+
+The four prepared HTTPS owner routes `GET /billing/hosting/subscriptions/{subscriptionId}/first-invoice`, `POST .../reauthenticate` `POST .../confirm` and `POST .../renew` are `account_scoped`, bound to the exact current subscription billing owner and selected Account instrument, rather than a tenant-admin role. They preserve billing recovery when gameplay is unavailable and confer no tenant or gameplay authority. The [Account API contract](./microservices/account-service/api-contracts.md#hosting-first-invoice-checkout) owns request, explicit consent and no-store client-secret semantics. The controller remains unregistered, all four matrix entries are `target_not_currently_routable`, and activation gates remain held.

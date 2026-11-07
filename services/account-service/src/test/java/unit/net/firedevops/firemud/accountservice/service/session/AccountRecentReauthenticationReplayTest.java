@@ -148,6 +148,27 @@ class AccountRecentReauthenticationReplayTest {
     verify(f.transactions, times(2)).commit(any());
   }
 
+  @Test
+  void billingReplayRetainsOriginalProofAndCannotBeReplayedAsGameCreation() {
+    var f = new Fixture(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
+    when(f.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("a".repeat(64));
+    assertThat(f.service.reauthenticate(f.request(f.operation))).isSameAs(f.evidence);
+    verifyNoInteractions(f.primary, f.accounts, f.generations, f.policies);
+    var wrongPurpose = new Fixture(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
+    var changed =
+        new AccountRecentReauthenticationService.Request(
+            wrongPurpose.requestId,
+            wrongPurpose.account,
+            AccountRecentReauthenticationPolicy.PURPOSE,
+            wrongPurpose.operation,
+            "person@example.test",
+            "test-only-secret");
+    assertThatThrownBy(() -> wrongPurpose.service.reauthenticate(changed))
+        .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    verifyNoInteractions(wrongPurpose.primary, wrongPurpose.crypto);
+  }
+
   private static final class Fixture {
     final UUID requestId = UUID.randomUUID(),
         account = UUID.randomUUID(),
@@ -168,18 +189,24 @@ class AccountRecentReauthenticationReplayTest {
     final AccountRecentReauthenticationRepository.ReplayProof proof =
         new AccountRecentReauthenticationRepository.ReplayProof("prior-key", "a".repeat(64));
     final AccountRecentReauthenticationService service;
+    final String purpose;
 
     Fixture() {
+      this(AccountRecentReauthenticationPolicy.PURPOSE);
+    }
+
+    Fixture(String purpose) {
+      this.purpose = purpose;
       when(transactions.getTransaction(any()))
           .thenAnswer(invocation -> mock(TransactionStatus.class));
       when(evidence.requestId()).thenReturn(requestId);
       when(evidence.accountId()).thenReturn(account);
-      when(evidence.purpose()).thenReturn(AccountRecentReauthenticationPolicy.PURPOSE);
+      when(evidence.purpose()).thenReturn(purpose);
       when(evidence.creationOperationId()).thenReturn(operation);
       String requestDigest =
           AccountRecentReauthenticationRepository.digest(
               AccountRecentReauthenticationRepository.requestPayload(
-                  requestId, account, AccountRecentReauthenticationPolicy.PURPOSE, operation));
+                  requestId, account, purpose, operation));
       when(evidence.requestDigest()).thenReturn(requestDigest);
       when(repository.findByRequest(requestId)).thenReturn(Optional.of(evidence));
       when(repository.findReplayProof(evidence)).thenReturn(Optional.of(proof));
@@ -200,7 +227,7 @@ class AccountRecentReauthenticationReplayTest {
       return new AccountRecentReauthenticationService.Request(
           requestId,
           account,
-          AccountRecentReauthenticationPolicy.PURPOSE,
+          purpose,
           creationOperation,
           "person@example.test",
           "test-only-secret");
