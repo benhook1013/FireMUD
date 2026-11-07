@@ -296,6 +296,9 @@ class CanonicalGameplayIssuerAdmissionBarrierRepositoryIntegrationTest {
       var secondClaim = executor.submit(() -> retainedRepository.claimFirstCreatePermit(second));
       assertThat(retainedMappingLocked.await(10, TimeUnit.SECONDS)).isTrue();
       var firstClaim = executor.submit(() -> assignmentRepository.claimFirstCreatePermit(first));
+      assertThat(assignmentLockAttempted.await(10, TimeUnit.SECONDS))
+          .as("Assignment claim must reach its lock attempt before the retained claim can finish")
+          .isTrue();
       assertThat(secondClaim.get(10, TimeUnit.SECONDS)).isTrue();
       assertThat(firstClaim.get(10, TimeUnit.SECONDS)).isFalse();
       assertThat(initializationState(state, operationId)).isEqualTo("INITIALIZING");
