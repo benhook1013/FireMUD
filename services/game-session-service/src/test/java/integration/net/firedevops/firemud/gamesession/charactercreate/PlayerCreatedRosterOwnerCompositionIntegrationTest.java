@@ -608,7 +608,14 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
                 .wireFixture();
         gs =
             new ControlledPlayerCreatedOriginalOwnerFixture(
-                gsData,
+                new org.springframework.jdbc.datasource.DelegatingDataSource(gsData) {
+                  @Override
+                  public java.sql.Connection getConnection() throws java.sql.SQLException {
+                    var connection = super.getConnection();
+                    connection.setSchema("public");
+                    return connection;
+                  }
+                },
                 gsData.getSchema(),
                 initial,
                 recovery,

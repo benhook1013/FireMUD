@@ -2942,11 +2942,14 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
                 .dsl()
                 .configuration()
                 .derive(
-                    org.jooq.ExecuteListener.onExecuteEnd(
+                    org.jooq.ExecuteListener.onRecordEnd(
                         execution -> {
                           String sql = execution.sql();
+                          var record = execution.record();
                           if (sql != null
                               && sql.contains("pg_try_advisory_xact_lock")
+                              && record != null
+                              && Boolean.FALSE.equals(record.get("acquired", Boolean.class))
                               && attemptedThreads.add(Thread.currentThread().threadId()))
                             attempts.countDown();
                         })));

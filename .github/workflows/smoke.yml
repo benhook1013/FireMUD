@@ -176,7 +176,7 @@ jobs:
                 : "skipped (run_smoke_full=false)";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
+              if (value === "failure" || value.startsWith("failure (")) return "❌";
               if (value === "cancelled") return "⚪";
               if (value === "pending") return "⏳";
               if (value === "unavailable") return "⚠️";
@@ -336,7 +336,7 @@ jobs:
                 : "skipped (run_smoke_full=false)";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
+              if (value === "failure" || value.startsWith("failure (")) return "❌";
               if (value === "cancelled") return "⚪";
               if (value === "skipped") return "⏭️";
               if (value === "unavailable") return "⚠️";

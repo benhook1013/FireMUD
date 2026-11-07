@@ -3,12 +3,15 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -22,6 +25,10 @@ import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.Role;
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.StateClass;
 import net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalogCodec;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -40,12 +47,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Real combined Game Session/Saga filesystem/PostgreSQL source tests, never an H2 pg_catalog model.
- * Populated predecessor identities/bytes are controlled retention fixtures, not genuine private
- * issuance, Account/World authority, Redis custody, process-death recovery or whole-FRESH proof.
- * Positive tests deliberately do not skip when Docker is absent. Execution is delegated to Main.
+ * Populated predecessor identities/bytes are controlled retention fixtures. Private catalog rows
+ * use real Game Session owners with stipulated upstream publication evidence, not private
+ * credential issuance, Account/World authority, Redis custody, process-death recovery or
+ * whole-FRESH proof. Positive tests deliberately do not skip when Docker is absent. Execution is
+ * delegated to Main.
  */
 @Testcontainers(disabledWithoutDocker = false)
 @SuppressWarnings("resource")
@@ -292,6 +302,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   void populatedV1056UpgradePreservesAllOriginalRowsHistorySequencesAndGuards() {
     try (Fixture f = fixture("1056")) {
       f.populatePredecessor();
+      f.populatePrivateCatalogAllocation();
       Map<String, String> before = f.rows(f.tables());
       before.remove(f.history);
       for (String table :
@@ -468,6 +479,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   void genuineV1057ThroughV1060UpgradesRetainOldEvidenceBeforeSealingEpochFour() {
     try (Fixture f = fixture("1057")) {
       f.populatePredecessor();
+      f.populatePrivateCatalogAllocation();
       var original = f.owner().capture(request());
       assertThat(original.catalog().catalogEpoch()).isEqualTo(1);
       Map<String, String> before = f.rows(f.tables());
@@ -1313,6 +1325,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                 "SELECT count(*) FROM game_session_canonical_realm_catalog "
                     + "WHERE private_preparation_request_id IS NOT NULL")
             .get(0, Long.class);
+    assertThat(originalPrivateAllocations).isPositive();
     assertThat(fixture.count("game_session_private_catalog_revision_history")).isZero();
     assertThat(fixture.count("game_session_current_private_catalog_revisions"))
         .isEqualTo(originalPrivateAllocations);
@@ -1493,6 +1506,141 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               + " SELECT ?,bytes,'sha256:'||encode(sha256(bytes),'hex') FROM (SELECT gs_runtime_family_catalog_bytes(?) AS bytes) revision",
           epoch,
           epoch);
+    }
+
+    void populatePrivateCatalogAllocation() {
+      // Match the existing initial-playtest proof: upstream producers are stipulated by its
+      // publication fixture, while every retained Game Session row uses its real guarded owner.
+      var transaction = new TransactionTemplate(manager);
+      UUID tenant = UUID.randomUUID();
+      UUID registration = UUID.randomUUID();
+      UUID sourceOperation = UUID.randomUUID();
+      String requestDigest =
+          AuthoredWorldSourceDigest.requestDigest(
+              "test", registration, tenant, "source-tenant", "source-world", "Source World");
+      var evidence =
+          new AuthoredWorldSourceEvidence(
+              1,
+              "test",
+              registration,
+              sourceOperation,
+              requestDigest,
+              tenant,
+              "source-tenant",
+              "source-world",
+              "Source World",
+              731L,
+              "controlled-source-game",
+              "NEW_GAME_ROW",
+              AuthoredWorldSourceDigest.evidenceDigest(
+                  "test",
+                  registration,
+                  sourceOperation,
+                  requestDigest,
+                  tenant,
+                  "source-tenant",
+                  "source-world",
+                  "Source World",
+                  731L,
+                  "controlled-source-game",
+                  "NEW_GAME_ROW"));
+      var sourceOwner = new GameSessionAuthoredWorldSourceRepository(dsl);
+      var intake =
+          Objects.requireNonNull(
+              transaction.execute(status -> sourceOwner.register(UUID.randomUUID(), evidence)));
+      transaction.executeWithoutResult(
+          status ->
+              new GameSessionFreshTenantAssociationRepository(dsl)
+                  .associateFresh(
+                      UUID.randomUUID(),
+                      "test",
+                      intake,
+                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(evidence)));
+      var catalogRequest =
+          new CreateCanonicalRealmCatalogRequest(
+              UUID.randomUUID(),
+              "test",
+              tenant,
+              intake.operationId(),
+              "source-public",
+              "Source Public",
+              true,
+              true,
+              "SHARED",
+              "PRESEEDED_ONLY",
+              null,
+              null);
+      var privatePolicy =
+          RealmEntryPolicy.parse(
+              """
+              {"schemaVersion":1,"worldSlug":"source-world","worldDisplayName":"Source World",
+              "realmSlug":"private-playtest","realmDisplayName":"Private Playtest","visible":true,
+              "publicProduction":false,"stateScope":"ISOLATED","entryPolicy":"PRESEEDED_ONLY"}
+              """,
+              JsonMapper.builder().build());
+      UUID version = UUID.randomUUID();
+      var published =
+          CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+              catalogRequest,
+              evidence,
+              version,
+              72L,
+              "controlled-publish-" + UUID.randomUUID(),
+              "release-bundle:" + version,
+              "generation-1",
+              3L,
+              List.of(privatePolicy));
+      var catalogs = new GameSessionCanonicalRealmCatalogRepository(dsl);
+      var preparedCatalog = catalogs.prepareInitialPublicProduction(catalogRequest, published);
+      var catalog =
+          Objects.requireNonNull(
+              transaction.execute(
+                  status -> catalogs.createInitialPublicProduction(preparedCatalog)));
+      var preparationRequest =
+          new GameSessionInitialPlaytestLifecycleRepository.Request(
+              UUID.randomUUID(),
+              "test",
+              tenant,
+              catalog.worldSlug(),
+              privatePolicy.realmSlug(),
+              catalog.realmId(),
+              catalog.creationRequestId(),
+              catalog.catalogRevision(),
+              intake.operationId(),
+              version,
+              published.publishedReleaseBundleRef(),
+              published.publishedReleaseBundleDigest(),
+              GameSessionInitialPlaytestLifecycleRepository.InitializationMode.FRESH,
+              dsl.fetchSingle("SELECT clock_timestamp()")
+                  .get(0, OffsetDateTime.class)
+                  .toInstant()
+                  .plusSeconds(3600));
+      var preparation =
+          Objects.requireNonNull(
+                  transaction.execute(
+                      status ->
+                          new GameSessionInitialPlaytestLifecycleRepository(dsl)
+                              .prepare(preparationRequest)))
+              .preparation();
+      var privateTargets = new GameSessionPrivateFreshTargetRepository(dsl);
+      var serializable = new TransactionTemplate(manager);
+      serializable.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
+      var allocation =
+          Objects.requireNonNull(
+              serializable.execute(
+                  status ->
+                      privateTargets.allocate(
+                          new GameSessionPrivateFreshTargetRepository.Request(
+                              UUID.randomUUID(),
+                              preparationRequest.requestId(),
+                              preparation.playtestLifecycleId()))));
+      assertThat(allocation.replayed()).isFalse();
+      assertThat(
+              privateTargets.readByPreparation(
+                  preparationRequest.requestId(), preparation.playtestLifecycleId()))
+          .contains(allocation.snapshot());
+      assertThat(allocation.snapshot().catalogRevision()).isEqualTo(1);
+      assertThat(allocation.snapshot().admissionAllowed()).isFalse();
     }
 
     void populatePredecessor() {
