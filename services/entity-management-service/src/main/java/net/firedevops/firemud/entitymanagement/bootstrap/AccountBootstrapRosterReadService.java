@@ -83,7 +83,8 @@ public final class AccountBootstrapRosterReadService {
   public static void requireNoAmbientTransaction() {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
-      throw new TargetChangedException();
+      throw new IllegalStateException(
+          "Account bootstrap roster read requires no ambient transaction or synchronization");
     }
   }
 
