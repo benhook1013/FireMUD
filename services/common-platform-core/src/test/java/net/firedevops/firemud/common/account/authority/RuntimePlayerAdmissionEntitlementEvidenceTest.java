@@ -52,6 +52,55 @@ class RuntimePlayerAdmissionEntitlementEvidenceTest {
   }
 
   @Test
+  void ownerEmissionUsesTheDecoderStringLimitBeforeReturningEvidence() {
+    var atLimit = target();
+    atLimit.put("worldSlug", "a".repeat(65536));
+    var value = capture(atLimit, facts(), sources(), NOW);
+    assertThat(
+            RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(value.canonicalBytes())
+                .canonicalBytes())
+        .containsExactly(value.canonicalBytes());
+    var tooLong = target();
+    tooLong.put("worldSlug", "a".repeat(65537));
+    assertThatThrownBy(() -> capture(tooLong, facts(), sources(), NOW))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Player evidence exceeds decoder constraints");
+  }
+
+  @Test
+  void ownerEmissionRejectsOversizedRoleInventoryBeforeReturningEvidence() {
+    var original = membership();
+    var oversized =
+        new Snapshot(
+            original.issuerId(),
+            original.accountId(),
+            original.tenantId(),
+            original.membershipExists(),
+            original.membershipLifecycleState(),
+            original.gameplayAdmissionAllowed(),
+            original.membershipVersion(),
+            original.membershipAuthorityGeneration(),
+            java.util.stream.IntStream.range(0, 17).mapToObj(i -> "role" + i).toList(),
+            original.authorityTuple(),
+            original.issuanceFence(),
+            original.checkpoints(),
+            original.sourceEvidence());
+    assertThatThrownBy(
+            () ->
+                RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+                    REQUEST,
+                    PEER,
+                    "controlled-scope",
+                    oversized,
+                    target(),
+                    facts(),
+                    sources(),
+                    NOW))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Bounded list required");
+  }
+
+  @Test
   void identitiesBindActualInputsAndSeparateSnapshotFromEvaluation() {
     var first = capture(target(), facts(), sources(), NOW);
     var later = capture(target(), facts(), sources(), NOW.plusSeconds(1));

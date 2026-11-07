@@ -122,6 +122,14 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
       Map<String, Object> source,
       Instant evaluatedAt) {
     Objects.requireNonNull(membership);
+    for (List<?> bounded :
+        List.of(
+            membership.roles(),
+            membership.checkpoints(),
+            membership.sourceEvidence(),
+            membership.authorityTuple().privateRealmGrantVersions())) {
+      if (bounded.size() > 16) throw invalid("Bounded list required");
+    }
     RuntimeMembershipAuthorityEvidenceValidator.validate(membership);
     requireUuid(membership.accountId());
     requireUuid(membership.tenantId());
@@ -260,6 +268,12 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
                 evaluatedAt.toString())));
     byte[] bytes = canonical(fields);
     if (bytes.length > MAX_CANONICAL_BYTES) throw invalid("Player evidence exceeds size bound");
+    // Apply the decoder's exact JSON limits without recursively invoking parseCanonical.
+    try {
+      if (!JSON.readTree(bytes).isObject()) throw invalid("Player evidence object required");
+    } catch (RuntimeException malformed) {
+      throw invalid("Player evidence exceeds decoder constraints");
+    }
     return new RuntimePlayerAdmissionEntitlementEvidence(membership, bytes);
   }
 
