@@ -6,6 +6,8 @@ This is a non-normative implementation tracker for player access and session. Ca
 
 ## Current Status
 
+PR #3390 currently authenticates LOGIN but direct backend PLAY fails exactly `ERROR ENTITLEMENT_UNAVAILABLE`; LOOK and successful public admission remain unproved. The [temporary CI exception](../../architecture/system-architecture-cicd.md#temporary-pr-3390-play-exception) accepts only that classified failure after held-admission qualification and authenticated cleanup for merge gating. It does not establish runtime success or permit image publication. Remove it with successful fresh-image backend LOGIN/PLAY/LOOK proof after repairing the Account entitlement cutover.
+
 Account initial/current/final creation owners, explicit initial billing-owner consent, private Game Design create/close receivers, and original-bound dispatch/recovery are locally composed and unregistered. Focused receiving proof passes, while physical cross-owner qualification, protected Redis/source custody and public/default registration remain incomplete; proof limits are recorded below.
 
 ### Receiving review boundaries
