@@ -549,7 +549,6 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
   @ParameterizedTest
   @MethodSource("protectedTargetFailures")
-  @SuppressWarnings("unchecked")
   void protectedTargetFailuresKeepTheirClassificationThroughActualOwnerAndReceiver(
       String stage, RuntimeException failure, io.grpc.Status.Code expected) throws Exception {
     Fixture f = new Fixture(false);
@@ -569,9 +568,28 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
               AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
           .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
           .hasNoCause();
+    } else if (expected == io.grpc.Status.Code.FAILED_PRECONDITION) {
+      direct
+          .isExactlyInstanceOf(
+              AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException.class)
+          .hasNoCause();
     } else {
       direct.isSameAs(failure);
     }
+    assertReceiverRefusal(f, expected);
+    verify(f.targets, times(2)).resolvePublishedRealmAdmissionTarget(f.request.target());
+    if ("strict".equals(stage)) {
+      verify(f.targets, times(2)).readPublishedRealmAdmissionOwner(resolved.strictSelector());
+    } else {
+      verify(f.targets, never()).readPublishedRealmAdmissionOwner(any());
+    }
+    verifyNoInteractions(f.demos, f.hosting, f.observer);
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void assertReceiverRefusal(Fixture f, io.grpc.Status.Code expected)
+      throws Exception {
     String token = "controlled-token.payload.signature";
     var caller = f.callers.verifyPresentedCompactToken("controlled-token");
     when(f.callers.verifyPresentedCompactToken(token)).thenReturn(caller);
@@ -604,14 +622,6 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
       verify(observer, never()).onNext(any());
       verify(observer, never()).onCompleted();
     }
-    verify(f.targets, times(2)).resolvePublishedRealmAdmissionTarget(f.request.target());
-    if ("strict".equals(stage)) {
-      verify(f.targets, times(2)).readPublishedRealmAdmissionOwner(resolved.strictSelector());
-    } else {
-      verify(f.targets, never()).readPublishedRealmAdmissionOwner(any());
-    }
-    verifyNoInteractions(f.demos, f.hosting, f.observer);
-    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
   }
 
   private static Stream<Arguments> protectedTargetFailures() {
@@ -639,17 +649,22 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
                       io.grpc.Status.INVALID_ARGUMENT
                           .withDescription("private target detail")
                           .asRuntimeException(),
-                      io.grpc.Status.FAILED_PRECONDITION
-                          .withDescription("private target detail")
-                          .asRuntimeException(),
                       new IllegalArgumentException("private target detail"),
                       new IllegalStateException(
                           "Game Session returned invalid current target evidence",
                           new IllegalArgumentException("private target detail")),
                       new NullPointerException("private target detail"));
               return Stream.concat(
-                  outages.map(
-                      failure -> Arguments.of(stage, failure, io.grpc.Status.Code.UNAVAILABLE)),
+                  Stream.concat(
+                      outages.map(
+                          failure -> Arguments.of(stage, failure, io.grpc.Status.Code.UNAVAILABLE)),
+                      Stream.of(
+                          Arguments.of(
+                              stage,
+                              io.grpc.Status.FAILED_PRECONDITION
+                                  .withDescription("private target detail")
+                                  .asRuntimeException(),
+                              io.grpc.Status.Code.FAILED_PRECONDITION))),
                   unexpected.map(
                       failure -> Arguments.of(stage, failure, io.grpc.Status.Code.INTERNAL)));
             });
@@ -677,8 +692,53 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     when(resolved.currentTarget().pointerVersion()).thenReturn(f.scope.pointerVersion() + 1);
     doReturn(resolved).when(f.targets).resolvePublishedRealmAdmissionTarget(selector);
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
-        .hasMessageContaining("retained");
+        .isExactlyInstanceOf(
+            AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException.class)
+        .hasNoCause();
+    assertReceiverRefusal(f, io.grpc.Status.Code.FAILED_PRECONDITION);
     verifyNoInteractions(f.demos, f.hosting, f.observer);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"resolved-selector", "strict-selector", "strict-target", "current-scope"})
+  void changedProtectedTargetComparisonsRemainPreconditionsThroughOwnerAndReceiver(String change)
+      throws Exception {
+    Fixture f = new Fixture(false);
+    var resolved = f.targets.resolvePublishedRealmAdmissionTarget(f.request.target());
+    var read = f.targets.readPublishedRealmAdmissionOwner(resolved.strictSelector());
+    doReturn(resolved).when(f.targets).resolvePublishedRealmAdmissionTarget(f.request.target());
+    clearInvocations(f.targets);
+    switch (change) {
+      case "resolved-selector" ->
+          when(resolved.selector())
+              .thenReturn(
+                  mock(
+                      CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector
+                          .class));
+      case "strict-selector" ->
+          when(read.selector())
+              .thenReturn(mock(CanonicalGameplayRosterOwnerReadEvidence.Request.class));
+      case "strict-target" ->
+          when(read.currentTarget())
+              .thenReturn(mock(CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target.class));
+      case "current-scope" ->
+          when(resolved.currentTarget().playableStateScope()).thenReturn("ISOLATED");
+      default -> throw new AssertionError("Unknown controlled target change");
+    }
+
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isExactlyInstanceOf(
+            AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException.class)
+        .hasNoCause();
+    assertReceiverRefusal(f, io.grpc.Status.Code.FAILED_PRECONDITION);
+    verify(f.targets, times(2)).resolvePublishedRealmAdmissionTarget(f.request.target());
+    if (change.startsWith("strict-")) {
+      verify(f.targets, times(2)).readPublishedRealmAdmissionOwner(resolved.strictSelector());
+    } else {
+      verify(f.targets, never()).readPublishedRealmAdmissionOwner(any());
+    }
+    verifyNoInteractions(f.demos, f.hosting, f.observer);
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
   }
 
   @ParameterizedTest
@@ -692,12 +752,14 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
         .isExactlyInstanceOf(
-            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+            AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException.class)
+        .hasNoCause();
+    assertReceiverRefusal(f, io.grpc.Status.Code.FAILED_PRECONDITION);
 
     org.mockito.Mockito.verify(f.targets, org.mockito.Mockito.never())
         .readPublishedRealmAdmissionOwner(any());
     verifyNoInteractions(f.demos, f.hosting, f.observer);
-    assertThat(f.transactions.events).containsExactly("begin", "commit");
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
   }
 
   @Test
@@ -706,10 +768,12 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
         .isExactlyInstanceOf(
-            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+            AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException.class)
+        .hasNoCause();
+    assertReceiverRefusal(f, io.grpc.Status.Code.FAILED_PRECONDITION);
 
     verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer);
-    assertThat(f.transactions.events).containsExactly("begin", "rollback");
+    assertThat(f.transactions.events).containsExactly("begin", "rollback", "begin", "rollback");
   }
 
   @Test
@@ -727,10 +791,12 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
 
     assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
         .isExactlyInstanceOf(
-            AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class);
+            AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException.class)
+        .hasNoCause();
+    assertReceiverRefusal(f, io.grpc.Status.Code.FAILED_PRECONDITION);
 
     verifyNoInteractions(f.demos, f.hosting, f.observer);
-    assertThat(f.transactions.events).containsExactly("begin", "commit");
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "commit");
   }
 
   @Test

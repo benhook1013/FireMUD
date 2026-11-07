@@ -354,7 +354,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
             .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(request.connectScopeId()))
             .orElseThrow(AccountPlayerAdmissionEntitlementOwner::unavailable);
     if (!"PUBLIC_PRODUCTION".equals(scope.targetClass())
-        || !"SHARED".equals(scope.playableStateScope())
         || scope.tenantProvenance().kind() != TenantProvenanceKind.FRESH_GAME_DESIGN
         || scope.tenantProvenance().legacyTenantId() != null
         || !accountId.equals(scope.accountUuid())
@@ -363,7 +362,8 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         || !Objects.equals(account.getId(), scope.privateAccountId())) {
       throw unavailable();
     }
-    if (!request.target().equals(selector(request, scope))) throw unavailable();
+    if (!"SHARED".equals(scope.playableStateScope())) throw targetPrecondition();
+    if (!request.target().equals(selector(request, scope))) throw targetPrecondition();
     return new CurrentPlayer(snapshot, scope, current);
   }
 
@@ -468,6 +468,18 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     }
   }
 
+  private static TargetPreconditionException targetPrecondition() {
+    return new TargetPreconditionException();
+  }
+
+  /** The current target is unsupported or differs from the exact retained selectors. */
+  public static final class TargetPreconditionException extends IllegalStateException {
+    public TargetPreconditionException() {
+      super(
+          "ENTITLEMENT_TARGET_PRECONDITION: current target does not match the supported retained target");
+    }
+  }
+
   private void requireSameHead(Request request, SourceSelection selected) {
     SourceSelection current = sources.readCurrentSourceSelection(request.tenantId());
     if (selected.kind() != current.kind() || !selected.matches(current.checkpoint()))
@@ -528,15 +540,20 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     var selector = selector(request, scope);
     try {
       var resolved = Objects.requireNonNull(targets.resolvePublishedRealmAdmissionTarget(selector));
-      if (!selector.equals(resolved.selector())) throw unavailable();
+      if (!selector.equals(resolved.selector())) throw targetPrecondition();
       requireSupportedTarget(resolved.currentTarget());
-      CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
-          selector, resolved.currentTarget());
+      try {
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
+            selector, resolved.currentTarget());
+      } catch (IllegalArgumentException changedTarget) {
+        // Only this exact target comparison is a precondition, not arbitrary codec failures.
+        throw targetPrecondition();
+      }
       var result =
           Objects.requireNonNull(
               targets.readPublishedRealmAdmissionOwner(resolved.strictSelector()));
       if (!resolved.strictSelector().equals(result.selector())
-          || !resolved.currentTarget().equals(result.currentTarget())) throw unavailable();
+          || !resolved.currentTarget().equals(result.currentTarget())) throw targetPrecondition();
       requireSupportedTarget(result.currentTarget());
       return result;
     } catch (CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException failure) {
@@ -544,6 +561,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     } catch (StatusRuntimeException failure) {
       switch (failure.getStatus().getCode()) {
         case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, ABORTED -> throw unavailable();
+        case FAILED_PRECONDITION -> throw targetPrecondition();
         default -> throw failure;
       }
     }
@@ -552,7 +570,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
   private static void requireSupportedTarget(
       CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target target) {
     if (!"SHARED".equals(target.playableStateScope())
-        || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())) throw unavailable();
+        || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())) throw targetPrecondition();
   }
 
   private RuntimePlayerAdmissionEntitlementEvidence capture(
