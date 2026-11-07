@@ -3370,10 +3370,20 @@ echo "Required-gate status producer contract checks passed"
 
 # Exercise the temporary failed-producer verifier separately: passing producer
 # proof above is unchanged and remains the only runtime qualification path.
-node - "$smoke_clock_fixture" <<'NODE'
+node - "$smoke_clock_fixture" "$ROOT_DIR/.github/workflows/smoke.yml" <<'NODE'
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const script = fs.readFileSync(process.argv[2], "utf8");
+const icons = [...fs.readFileSync(process.argv[3], "utf8").matchAll(/const statusIcon = \(value\) => \{[\s\S]*?\n\s*\};/g)];
+assert.equal(icons.length, 2);
+for (const [declaration] of icons) {
+  const statusIcon = new Function(`${declaration}; return statusIcon;`)();
+  assert.equal(statusIcon("failure (known temporary PLAY exception)"), "❌");
+  assert.equal(statusIcon("failure"), "❌");
+  assert.equal(statusIcon("success"), "✅");
+  assert.equal(statusIcon("cancelled"), "⚪");
+  assert.equal(statusIcon("skipped"), "⏭️");
+}
 const bytes = fs.readFileSync(process.argv[2] + ".producer");
 const start = script.indexOf("async function verifyKnownPlayFailure(");
 const end = script.indexOf("// Commit objects", start);

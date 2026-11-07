@@ -145,8 +145,11 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
     CanonicalJoinOperationEvidence operation =
         joinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId).orElseThrow();
     requireExactOperation(operation, account.getId(), scope, requestId, callerBinding);
-    if ("COMMITTED".equals(operation.status())) {
+    if ("COMMITTED".equals(operation.status()) || "FAILED".equals(operation.status())) {
       return operation;
+    }
+    if (!"PENDING".equals(operation.status())) {
+      throw new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts");
     }
     AccountTenantMembership membership =
         membershipRepository

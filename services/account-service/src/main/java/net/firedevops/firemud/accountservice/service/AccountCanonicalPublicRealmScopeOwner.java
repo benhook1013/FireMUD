@@ -252,6 +252,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
           selectForCaller(readTargets(), tenantSlug, worldSlug, tenantQualified, directTarget));
       requireSameCaller(original, authenticate.get());
       requireFresh(entitlement);
+      if (directTarget != null) throw entitlementUnavailable(null);
       return List.of();
     }
 
