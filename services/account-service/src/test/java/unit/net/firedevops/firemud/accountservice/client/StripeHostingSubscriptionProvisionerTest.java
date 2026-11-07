@@ -79,11 +79,16 @@ class StripeHostingSubscriptionProvisionerTest {
             RequestMethod.GET,
             RequestMethod.POST,
             RequestMethod.GET);
-    assertThat(transport.options.get(3).getIdempotencyKey()).isEqualTo(OPERATION.toString());
-    assertThat(transport.options.get(3).getMaxNetworkRetries()).isZero();
-    assertThat(transport.options.get(4).getConnectTimeout()).isEqualTo(250);
-    assertThat(transport.options.get(4).getReadTimeout()).isEqualTo(1000);
-    assertThat(transport.options.get(4).getMaxNetworkRetries()).isZero();
+    assertThat(transport.options)
+        .extracting(RequestOptions::getIdempotencyKey)
+        .containsExactly(null, null, null, OPERATION.toString(), null);
+    assertThat(transport.options)
+        .allSatisfy(
+            options -> {
+              assertThat(options.getConnectTimeout()).isEqualTo(250);
+              assertThat(options.getReadTimeout()).isEqualTo(1000);
+              assertThat(options.getMaxNetworkRetries()).isZero();
+            });
     assertThat(transport.params.get(3))
         .containsOnlyKeys(
             "customer",
