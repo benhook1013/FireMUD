@@ -48,6 +48,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionPaidSource;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingPlanCatalog;
@@ -111,15 +112,22 @@ public final class CanonicalHostingSubscriptionTestFixture {
   private CanonicalHostingSubscriptionTestFixture() {}
 
   public static Fixture create(DataSource source) {
-    return createInternal(source, null);
+    return createInternal(source, null, "prod");
+  }
+
+  /** Uses the caller's explicit workload namespace without changing controlled source custody. */
+  public static Fixture create(DataSource source, String namespace) {
+    return createInternal(source, null, namespace);
   }
 
   /** Reuses the exact persisted Account of a genuine actor/authentication composition. */
   public static Fixture create(DataSource source, Account account) {
-    return createInternal(source, Objects.requireNonNull(account, "persisted Account required"));
+    return createInternal(
+        source, Objects.requireNonNull(account, "persisted Account required"), "prod");
   }
 
-  private static Fixture createInternal(DataSource source, Account existingAccount) {
+  private static Fixture createInternal(
+      DataSource source, Account existingAccount, String namespace) {
     Objects.requireNonNull(source, "migrated Account datasource is required");
     JdbcTemplate jdbc = new JdbcTemplate(source);
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
@@ -151,11 +159,11 @@ public final class CanonicalHostingSubscriptionTestFixture {
     String tenantKey = "hosting-fixture-game-" + row;
     String tenantRequestDigest =
         GameTenantCreationDigest.requestDigest(
-            "prod", tenantCreateRequest, tenantKey, "Controlled hosting", "Storage only");
+            namespace, tenantCreateRequest, tenantKey, "Controlled hosting", "Storage only");
     var tenantSource =
         new FreshTenantCreationEvidence(
             1,
-            "prod",
+            namespace,
             tenantCreateRequest,
             tenantCreateOperation,
             tenantRequestDigest,
@@ -164,7 +172,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
             tenantKey,
             "NEW_GAME_ROW",
             GameTenantCreationDigest.evidenceDigest(
-                "prod",
+                namespace,
                 tenantCreateRequest,
                 tenantCreateOperation,
                 tenantRequestDigest,
@@ -175,7 +183,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     in(
         transaction,
         () -> {
-          new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenantSource);
+          new FreshTenantIdentityAssociationRepository(dsl, namespace).importVerified(tenantSource);
           return new AccountAuthorityGenerationRepository(dsl).initializeTenantIfAbsent(tenantId);
         });
 
@@ -253,18 +261,16 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     MutableClock clock = new MutableClock(creation.createdAt().plusSeconds(1));
     ControlledStripeTransport transport = new ControlledStripeTransport();
+    var limits =
+        new ReconciliationLimits(
+            4, 3, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1));
+    var policy =
+        new AccountHostingSubscriptionLifecyclePolicy(
+            Duration.ofSeconds(15),
+            new RecoveryTiming(Duration.ofSeconds(60), Duration.ofSeconds(120)));
     var lifecycleRepository =
         new AccountHostingSubscriptionLifecycleRepository(
-            dsl,
-            intents,
-            clock,
-            new ReconciliationLimits(
-                4, 3, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
-            new AccountHostingSubscriptionLifecyclePolicy(
-                Duration.ofSeconds(15),
-                new RecoveryTiming(Duration.ofSeconds(60), Duration.ofSeconds(120))),
-            "prod",
-            false);
+            dsl, intents, clock, limits, policy, namespace, false);
     var observer =
         new StripeHostingSubscriptionObserver(
             new com.stripe.StripeClient(transport),
@@ -291,6 +297,8 @@ public final class CanonicalHostingSubscriptionTestFixture {
             service,
             lifecycleRepository,
             observer,
+            new AccountGameplayAdmissionPaidSource(
+                catalog, clock, limits, policy, observer, namespace, false),
             source);
     fixture.providerStatus("active");
     return fixture;
@@ -746,6 +754,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private final AccountHostingSubscriptionLifecycleService service;
     private final AccountHostingSubscriptionLifecycleRepository lifecycleRepository;
     private final StripeHostingSubscriptionObserver observer;
+    private final AccountGameplayAdmissionPaidSource admissionPaidSource;
     private final DataSource source;
     private FirstInvoiceCheckout checkout;
 
@@ -765,6 +774,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
         AccountHostingSubscriptionLifecycleService service,
         AccountHostingSubscriptionLifecycleRepository lifecycleRepository,
         StripeHostingSubscriptionObserver observer,
+        AccountGameplayAdmissionPaidSource admissionPaidSource,
         DataSource source) {
       this.jdbc = jdbc;
       this.dsl = dsl;
@@ -781,6 +791,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       this.service = service;
       this.lifecycleRepository = lifecycleRepository;
       this.observer = observer;
+      this.admissionPaidSource = admissionPaidSource;
       this.source = source;
     }
 
@@ -855,6 +866,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public StripeHostingSubscriptionObserver observer() {
       return observer;
+    }
+
+    public AccountGameplayAdmissionPaidSource admissionPaidSource() {
+      return admissionPaidSource;
     }
 
     /** Retains the actual existing invoice without granting payment or hosting authority. */
