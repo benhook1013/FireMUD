@@ -36,6 +36,8 @@ import net.firedevops.firemud.entitymanagement.v1.AccountBootstrapRosterReadRequ
 import net.firedevops.firemud.entitymanagement.v1.AccountBootstrapRosterReadResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
@@ -88,6 +90,7 @@ class AccountBootstrapRosterReadServiceTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
   void sourceChangedBeforeSqlOrDuringProjectionNeverReturnsEmptySuccess() throws Exception {
     var f = AccountBootstrapRosterFixture.create();
     var changed =
@@ -102,6 +105,11 @@ class AccountBootstrapRosterReadServiceTest {
     when(client.getCanonicalGameplayRosterOwnerRead(any())).thenReturn(changed);
     assertThatThrownBy(() -> service.read(f.request()))
         .isInstanceOf(AccountBootstrapRosterReadService.TargetChangedException.class);
+    var receiver =
+        new AccountBootstrapRosterReadGrpcService(service, AccountBootstrapRosterFixture.NAMESPACE);
+    StreamObserver<AccountBootstrapRosterReadResponse> observer = mock(StreamObserver.class);
+    withControlledAccountPeer(() -> receiver.readAccountBootstrapRoster(f.request(), observer));
+    assertReceiverFailure(observer, Status.Code.FAILED_PRECONDITION);
     verifyNoInteractions(repository);
     when(client.getCanonicalGameplayRosterOwnerRead(any())).thenReturn(f.evidence(), changed);
     when(repository.readAccountBootstrapRoster(any(), any())).thenReturn(List.of());
@@ -160,9 +168,43 @@ class AccountBootstrapRosterReadServiceTest {
         .executeWithoutResult(
             ignored -> {
               assertThatThrownBy(() -> service.read(f.request()))
-                  .isInstanceOf(AccountBootstrapRosterReadService.TargetChangedException.class);
+                  .isExactlyInstanceOf(IllegalStateException.class)
+                  .hasMessage(
+                      "Account bootstrap roster read requires no ambient transaction or synchronization")
+                  .hasNoCause();
             });
     verifyNoInteractions(client, repository);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @SuppressWarnings("unchecked")
+  void ambientTransactionOrSynchronizationIsInternalBeforeAnySourceOrSql(boolean transactionActive)
+      throws Exception {
+    var f = AccountBootstrapRosterFixture.create();
+    var client = mock(GameSessionCanonicalGameplayRosterOwnerReadClient.class);
+    var repository = mock(CharacterRepository.class);
+    var service = service(client, repository);
+    var receiver =
+        new AccountBootstrapRosterReadGrpcService(service, AccountBootstrapRosterFixture.NAMESPACE);
+    StreamObserver<AccountBootstrapRosterReadResponse> observer = mock(StreamObserver.class);
+    TransactionSynchronizationManager.setActualTransactionActive(transactionActive);
+    if (!transactionActive) TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThatThrownBy(() -> service.read(f.request()))
+          .isExactlyInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Account bootstrap roster read requires no ambient transaction or synchronization")
+          .hasNoCause();
+
+      withControlledAccountPeer(() -> receiver.readAccountBootstrapRoster(f.request(), observer));
+
+      assertReceiverFailure(observer, Status.Code.INTERNAL);
+      verifyNoInteractions(client, repository);
+    } finally {
+      if (!transactionActive) TransactionSynchronizationManager.clearSynchronization();
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
   }
 
   @Test
