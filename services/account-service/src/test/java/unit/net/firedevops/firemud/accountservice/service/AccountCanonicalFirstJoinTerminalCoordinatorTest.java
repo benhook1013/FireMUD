@@ -161,6 +161,60 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
   }
 
   @Test
+  void committedJoinReturnsStoredEvidenceWithoutReadingOrMutatingCurrentAuthority() {
+    Fixture fixture = new Fixture();
+    var committed = Fixture.committed(fixture.operation, fixture.expectedProof);
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
+        .thenReturn(Optional.of(committed));
+    fixture.startWritableTransaction();
+
+    var result =
+        fixture.coordinator.commitCanonicalJoin(
+            fixture.scope, REQUEST_ID, CALLER_BINDING, null, null, null);
+
+    assertThat(result).isSameAs(committed);
+    InOrder ordered = inOrder(fixture.accounts, fixture.operations);
+    ordered.verify(fixture.accounts).findByAccountUuid(ACCOUNT_ID);
+    ordered.verify(fixture.operations).lockAccount(fixture.account.getId());
+    ordered.verify(fixture.operations).findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID);
+    ordered.verifyNoMoreInteractions();
+    verifyNoInteractions(
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void committedJoinStillRejectsChangedRequestOrCallerBinding(boolean changedRequest) {
+    Fixture fixture = new Fixture();
+    String requestId = changedRequest ? "different-request" : REQUEST_ID;
+    String callerBinding = changedRequest ? CALLER_BINDING : "different-caller";
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(requestId))
+        .thenReturn(Optional.of(Fixture.committed(fixture.operation, fixture.expectedProof)));
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalJoin(
+                    fixture.scope, requestId, callerBinding, null, null, null))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class)
+        .hasMessage("Canonical JOIN intent conflicts");
+    verifyNoInteractions(
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
+  @Test
   void changedCallerUnderGlobalRequestIdConflictsBeforeReturningAnyReceipt() {
     Fixture fixture = new Fixture();
     fixture.arrangePending();

@@ -67,8 +67,13 @@ class ClassificationSocket:
 
 for label, command, response, prior, expected_type in [
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.PlayEntitlementUnavailable),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.PlayEntitlementUnavailable),
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE extra", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly. more", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.\n", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Another message.", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
     ("PLAY", "PLAY demo", "ERROR UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "LOOK demo", "ERROR ENTITLEMENT_UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
     ("LOGIN", "LOGIN user secret", "ERROR ENTITLEMENT_UNAVAILABLE", [], smoke_common.ExplicitProtocolFailure),
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE", [], smoke_common.ExplicitProtocolFailure),
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE", [{"label": "LOGIN", "response": "ERROR LOGIN"}], smoke_common.ExplicitProtocolFailure),
@@ -86,9 +91,12 @@ for label, command, response, prior, expected_type in [
 
 # Execute the actual held branch with disposable probe commands: prerequisite
 # failure must prevent classification, and no failed probe becomes success.
-held_branch = (root / "dev-tools/verify-smoke-images.sh").read_text().split(
+held_branch_source = (root / "dev-tools/verify-smoke-images.sh").read_text().split(
     '  run_held_admission_qualification "${COMPOSE_FILES[@]}"', 1
-)[1].rsplit("fi", 1)[0]
+)[1]
+held_branch, closing_marker, trailing = held_branch_source.rpartition("\nfi\n")
+assert closing_marker and not trailing.strip(), "Held smoke branch closing marker changed"
+assert held_branch.strip() and "WS_SMOKE_SCRIPT" in held_branch
 with tempfile.TemporaryDirectory() as directory:
     probe = Path(directory) / "probe.sh"
     output = Path(directory) / "output"
@@ -1871,6 +1879,28 @@ else:
     raise AssertionError("close OSError unexpectedly retried")
 assert len(close_failure_attempts) == 1
 assert close_failure_attempts[0].closed is True
+
+
+known_play_failure = smoke_common.PlayEntitlementUnavailable("ERROR ENTITLEMENT_UNAVAILABLE")
+
+
+def raise_known_play_failure(_session):
+    raise known_play_failure
+
+
+try:
+    run_transport_session(
+        open_close_failure_session,
+        raise_known_play_failure,
+        "known PLAY close failure session",
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert type(exc) is smoke_common.ProbeOperationalFailure
+    assert "Failed to close known PLAY close failure session" in str(exc)
+    assert isinstance(exc.__cause__, OSError)
+    assert str(exc.__cause__) == "close failed"
+else:
+    raise AssertionError("A failed transport close must not qualify the PLAY exception")
 
 
 class FakeHttpResponse:

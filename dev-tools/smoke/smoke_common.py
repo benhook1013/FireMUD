@@ -323,7 +323,12 @@ def run_transport_session(
             raise ProbeOperationalFailure(f"Failed during {session_label}: {exc}") from exc
         except PlayEntitlementUnavailable:
             # The temporary CI classification also requires a clean transport close.
-            session.close()
+            try:
+                session.close()
+            except Exception as close_exc:
+                raise ProbeOperationalFailure(
+                    f"Failed to close {session_label} after known PLAY refusal: {close_exc}"
+                ) from close_exc
             raise
         except Exception:
             # A secondary close failure must not hide the primary command failure.
@@ -892,7 +897,10 @@ def send_websocket_command_and_expect(
         )
     except ExplicitProtocolFailure as exc:
         if (label == "PLAY" and line.startswith("PLAY ")
-                and exc.response == "ERROR ENTITLEMENT_UNAVAILABLE"
+                and exc.response in {
+                    "ERROR ENTITLEMENT_UNAVAILABLE",
+                    "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.",
+                }
                 and step_results and step_results[-1]["label"] == "LOGIN"
                 and step_results[-1]["response"].startswith("OK LOGIN")):
             raise PlayEntitlementUnavailable(exc.response) from exc

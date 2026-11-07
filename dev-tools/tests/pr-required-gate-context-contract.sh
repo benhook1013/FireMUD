@@ -3396,7 +3396,7 @@ const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name:
     step("Known PR 3390 PLAY failure with successful authenticated cleanup", "success"),
     step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
 async function verify(mutate = () => {}) {
-  const data = structuredClone({pr: "3390", run, identity, source, candidate, jobs: [candidate], latest: source,
+  const data = structuredClone({pr: "3390", run, identity, source, candidate, jobs: [candidate], latest: {...source},
     definition: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}});
   mutate(data);
   const github = {request: async () => ({data: data.source}), paginate: async () => data.jobs,
@@ -3443,7 +3443,8 @@ function markerAccepted(overrides = {}) {
     d => {d.identity.mergeSha = "d".repeat(40);},
     d => {d.run.event = "repository_dispatch";},
     d => {d.source.run_attempt = 1;},
-    d => {d.latest.run_attempt = 3;},
+    d => {d.latest.run_attempt = 3; assert.equal(d.source.run_attempt, 2);},
+    d => {d.latest.conclusion = "success"; assert.equal(d.source.conclusion, "failure");},
     d => {d.source.path = ".github/workflows/spoof.yml";},
     d => {d.source.repository.full_name = "attacker/FireMUD";},
     d => {d.definition.content = Buffer.from("spoof").toString("base64"); d.definition.size = 5;},

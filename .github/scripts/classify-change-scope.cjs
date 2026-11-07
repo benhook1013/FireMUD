@@ -133,6 +133,7 @@ function isPythonDependency(file) {
 function isLightweightEligible(file) {
   return (
     (isDocumentation(file) || isValidationPython(file)) &&
+    !isServiceSourceMarkdown(file) &&
     file !== "dev-tools/docs/generate-erd.sh" &&
     !isRuntimeAuthority(file) &&
     !SHARED_FILES.has(file)
@@ -157,16 +158,23 @@ function moduleForFile(file) {
   return null;
 }
 
+function isServiceSourceMarkdown(file) {
+  return file.startsWith("services/") &&
+    moduleForFile(file) !== null &&
+    /^services\/[^/]+\/src\/.*\.md$/.test(file);
+}
+
 function classifyChangeScope(inputFiles, options = {}) {
   const files = [...new Set(inputFiles)].sort();
   const forceAll = options.forceAll === true;
-  // Known service documentation retains docs proof without selecting runtime modules.
-  // Unknown service paths and every non-documentation input remain fail closed.
+  // Known service documentation outside source sets retains docs proof without
+  // selecting runtime modules, including README files under shared common-* paths.
+  // Unknown services, source resources and non-lightweight inputs remain fail closed.
   const moduleInputFiles = files.filter(
     (file) =>
       !(file.startsWith("services/") &&
         moduleForFile(file) !== null &&
-        isDocumentation(file) &&
+        !isServiceSourceMarkdown(file) &&
         isLightweightEligible(file)),
   );
   const runAll =
