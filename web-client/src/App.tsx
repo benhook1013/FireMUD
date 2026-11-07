@@ -1,14 +1,37 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Button from '@mui/material/Button';
 import GameEditor from './GameEditor';
 import ScriptEditor from './ScriptEditor';
+import AccountCheckoutRoute, {
+  type AccountCheckoutRouteProps,
+} from './account/AccountCheckoutRoute';
 import reactLogo from './assets/react.svg';
 import viteLogo from '/vite.svg';
 import './App.css';
 
-function App() {
+export interface AppProps {
+  accountCheckoutRouteProps?: Omit<AccountCheckoutRouteProps, 'pathname'>;
+}
+
+function App({ accountCheckoutRouteProps }: AppProps = {}) {
+  const [pathname, setPathname] = useState(() => window.location.pathname);
   const [count, setCount] = useState(0);
   const [mode, setMode] = useState<'demo' | 'game' | 'script'>('demo');
+
+  useEffect(() => {
+    const updatePathname = () => setPathname(window.location.pathname);
+    window.addEventListener('popstate', updatePathname);
+    return () => window.removeEventListener('popstate', updatePathname);
+  }, []);
+
+  if (pathname.startsWith('/account/')) {
+    return (
+      <AccountCheckoutRoute
+        pathname={pathname}
+        {...(accountCheckoutRouteProps ?? {})}
+      />
+    );
+  }
 
   return (
     <>

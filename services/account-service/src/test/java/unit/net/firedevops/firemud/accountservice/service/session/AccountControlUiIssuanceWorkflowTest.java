@@ -562,6 +562,47 @@ class AccountControlUiIssuanceWorkflowTest {
         && expected.recoveryExpiry.equals(actual.recoveryExpiry);
   }
 
+  @org.junit.jupiter.api.Test
+  void accountOnlyCompositionRefusesTenantIssuanceBeforePrimaryAuthentication() {
+    Fixture f = new Fixture(NOW.plusSeconds(600));
+    var accountOnly =
+        new net.firedevops.firemud.accountservice.authordraft.AccountControlUiAccountAuthority(
+            mock(net.firedevops.firemud.accountservice.repository.AccountRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountAuthoritySourceEvidenceRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountPlatformRestrictionOperationRepository.class),
+            mock(org.jooq.DSLContext.class));
+    var issuer =
+        new AccountControlUiIssuanceService(
+            f.primary,
+            f.operations,
+            accountOnly,
+            f.fences,
+            f.signers,
+            f.cryptography,
+            f.registry,
+            f.actors,
+            f.transactions,
+            Clock.fixed(NOW, ZoneOffset.UTC),
+            300_000L,
+            ISSUER);
+    assertThatThrownBy(
+            () ->
+                issuer.issue(
+                    new AccountControlUiIssuanceService.Request(
+                        f.requestId,
+                        "owner@example.test",
+                        "controlled-secret",
+                        f.tenant,
+                        f.context),
+                    f.environment))
+        .isInstanceOf(IllegalStateException.class);
+    org.mockito.Mockito.verifyNoInteractions(f.primary, f.operations, f.signers, f.registry);
+  }
+
   private static final class Fixture {
     final UUID requestId = UUID.randomUUID();
     final UUID operationId = UUID.randomUUID();

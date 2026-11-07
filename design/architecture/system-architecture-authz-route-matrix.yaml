@@ -1760,6 +1760,26 @@ routes:
         - current_issuance_uses_legacy_scope_duplicated_session_keys_instead_of_single_token_registry
     required_live_checks: [account_state_login_eligible]
   - service: account-service
+    route: AccountControlUiAuthenticationService/AuthLogin
+    transport: grpc
+    scope: account
+    classification: internal_workload
+    route_status: target_not_currently_routable
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [spring-cloud-gateway]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/spring-cloud-gateway"]
+    end_user_token_required: false
+    required_live_checks: [account_state_login_eligible]
+    implementation_status:
+      known_drift:
+        - Registered only by explicit isolated checkout receiving; production remains closed.
+  - service: account-service
     route: PlayerBootstrapLogin
     http_route: POST /auth/player-bootstrap
     scope: public
@@ -3225,7 +3245,7 @@ routes:
     mutation_contract: current_owner_exact_subscription_and_instrument
     implementation_status:
       known_drift:
-        - Prepared owner controller is unregistered; provider, retention, deletion, backup and custody activation gates remain held.
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
   - service: account-service
     route: POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/reauthenticate
     scope: account
@@ -3243,7 +3263,7 @@ routes:
     mutation_contract: current_owner_and_actual_billing_purpose_primary_authentication
     implementation_status:
       known_drift:
-        - Prepared owner controller is unregistered; provider, retention, deletion, backup and custody activation gates remain held.
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
   - service: account-service
     route: POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm
     scope: account
@@ -3261,7 +3281,7 @@ routes:
     mutation_contract: current_owner_billing_purpose_reauthentication_explicit_exact_tuple_consent_single_dispatch
     implementation_status:
       known_drift:
-        - Prepared owner controller is unregistered; provider, retention, deletion, backup and custody activation gates remain held.
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
   - service: account-service
     route: POST /billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew
     scope: account
@@ -3279,7 +3299,7 @@ routes:
     mutation_contract: current_owner_fresh_billing_reauthentication_explicit_unchanged_consent_authorization_version_fence_no_command_replay
     implementation_status:
       known_drift:
-        - Prepared owner controller is unregistered; provider, retention, deletion, backup and custody activation gates remain held.
+        - Owner controller is registered only in explicit isolated receiving; production provider, retention, deletion, backup and custody activation gates remain held.
   - service: account-service
     route: GetSubscriptionTenantHighLevel
     scope: tenant

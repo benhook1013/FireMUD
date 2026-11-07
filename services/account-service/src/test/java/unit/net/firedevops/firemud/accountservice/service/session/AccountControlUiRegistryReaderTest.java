@@ -24,6 +24,18 @@ class AccountControlUiRegistryReaderTest {
   private static final String TOKEN_HASH = "a".repeat(64);
 
   @Test
+  void dependencyFailureIsUnavailableRatherThanEvidenceOfRevocation() {
+    var reader =
+        new AccountControlUiRegistryReader(
+            () -> {
+              throw new io.lettuce.core.RedisConnectionException("controlled transport failure");
+            });
+    assertThatThrownBy(() -> reader.readActive(TOKEN_HASH))
+        .isInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class)
+        .hasNoCause();
+  }
+
+  @Test
   void acceptsOnlyTheExactCanonicalActiveProfileRecord() throws Exception {
     byte[] bytes = canonicalRecord();
 

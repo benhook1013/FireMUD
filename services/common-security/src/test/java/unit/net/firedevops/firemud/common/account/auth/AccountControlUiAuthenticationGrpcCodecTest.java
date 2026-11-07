@@ -1,0 +1,132 @@
+package net.firedevops.firemud.common.account.auth;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.google.protobuf.UnknownFieldSet;
+import java.util.UUID;
+import net.firedevops.firemud.account.v1.AccountControlUiAuthLoginStatus;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Authenticated;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Outcome;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Request;
+import org.junit.jupiter.api.Test;
+
+class AccountControlUiAuthenticationGrpcCodecTest {
+  private static final UUID REQUEST_ID = uuid("0e70cae4-13c7-4597-a3c0-630315312574");
+  private static final UUID CALLER_CONTEXT_ID = uuid("bca4c5ab-4c36-4f18-9517-e99a34f93021");
+  private static final UUID ACCOUNT_ID = uuid("8d3ce19e-8c28-4dba-9f11-dfa2e96ace3c");
+  private static final String NAMESPACE = "checkout-test";
+  private static final String EMAIL = "operator@example.test";
+  private static final String SECRET = "synthetic-primary-secret";
+  private static final String TOKEN = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+
+  @Test
+  void mapsOneExactBoundedRequestWithoutExposingSecretInDiagnostics() {
+    Request request = request();
+
+    var wire = AccountControlUiAuthenticationGrpcCodec.toRequest(request);
+    var parsed = AccountControlUiAuthenticationGrpcCodec.parseRequest(wire);
+
+    assertThat(parsed).isEqualTo(request);
+    assertThat(request.toString()).doesNotContain(SECRET);
+    assertThat(wire.getSecretList()).containsExactly(SECRET);
+  }
+
+  @Test
+  void mapsSuccessAndDenialWhileNeverEchoingPrimarySecret() {
+    Request request = request();
+    Authenticated authenticated = new Authenticated(ACCOUNT_ID, TOKEN, 1_900_000_000L);
+
+    var success =
+        AccountControlUiAuthenticationGrpcCodec.requireResponse(
+            request, AccountControlUiAuthenticationGrpcCodec.toResponse(request, authenticated));
+    var denied =
+        AccountControlUiAuthenticationGrpcCodec.requireResponse(
+            request, AccountControlUiAuthenticationGrpcCodec.toResponse(request, null));
+
+    assertThat(success.outcome()).isEqualTo(Outcome.SUCCESS);
+    assertThat(success.authenticated()).isEqualTo(authenticated);
+    assertThat(denied.outcome()).isEqualTo(Outcome.DENIED);
+    assertThat(denied.authenticated()).isNull();
+    assertThat(
+            AccountControlUiAuthenticationGrpcCodec.toResponse(request, authenticated).toString())
+        .doesNotContain(SECRET);
+  }
+
+  @Test
+  void rejectsMissingDuplicateUnknownAndOversizedRequestMembers() {
+    var request = AccountControlUiAuthenticationGrpcCodec.toRequest(request());
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+
+    assertRejected(request.toBuilder().clearEmail().build());
+    assertRejected(request.toBuilder().addSecret("duplicate").build());
+    assertRejected(request.toBuilder().setUnknownFields(unknown).build());
+    assertRejected(request.toBuilder().setSecret(0, "x".repeat(10_000)).build());
+    assertRejected(
+        request.toBuilder().setRequestId(0, REQUEST_ID.toString().toUpperCase()).build());
+    assertRejected(request.toBuilder().setTargetNamespace(0, "../namespace").build());
+    assertRejected(request.toBuilder().setEmail(0, "not-an-email").build());
+    assertRejected(request.toBuilder().setSecret(0, "").build());
+  }
+
+  @Test
+  void rejectsResponseSubstitutionUnknownDuplicateAndContradictoryOutcomes() {
+    Request request = request();
+    var success =
+        AccountControlUiAuthenticationGrpcCodec.toResponse(
+            request, new Authenticated(ACCOUNT_ID, TOKEN, 1_900_000_000L));
+    var denial = AccountControlUiAuthenticationGrpcCodec.toResponse(request, null);
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+
+    assertResponseRejected(
+        success.toBuilder().setCallerContextId(0, ACCOUNT_ID.toString()).build());
+    assertResponseRejected(success.toBuilder().addAuthToken(TOKEN).build());
+    assertResponseRejected(success.toBuilder().setUnknownFields(unknown).build());
+    assertResponseRejected(success.toBuilder().setAccountId(0, "not-a-uuid").build());
+    assertResponseRejected(success.toBuilder().setAuthToken(0, "not-a-jwt").build());
+    assertResponseRejected(success.toBuilder().setExpiresAtEpochSeconds(0, 0L).build());
+    assertResponseRejected(denial.toBuilder().addAccountId(ACCOUNT_ID.toString()).build());
+    assertResponseRejected(
+        denial.toBuilder()
+            .addStatus(AccountControlUiAuthLoginStatus.ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_DENIED)
+            .build());
+  }
+
+  @Test
+  void acceptsMaximumCompactTokenAndRejectsOneByteOverTheLimit() {
+    String maxToken = "a." + "b".repeat(16_380) + ".c";
+    String oversizedToken = "a." + "b".repeat(16_381) + ".c";
+
+    assertThat(new Authenticated(ACCOUNT_ID, maxToken, 1_900_000_000L).authToken())
+        .hasSize(AccountControlUiAuthenticationGrpcCodec.MAX_COMPACT_AUTH_TOKEN_BYTES);
+    assertThatThrownBy(() -> new Authenticated(ACCOUNT_ID, oversizedToken, 1_900_000_000L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Exact bounded Control-UI authentication message required");
+  }
+
+  private static Request request() {
+    return new Request(REQUEST_ID, CALLER_CONTEXT_ID, NAMESPACE, EMAIL, SECRET);
+  }
+
+  private static UUID uuid(String value) {
+    return UUID.fromString(value);
+  }
+
+  private static void assertRejected(net.firedevops.firemud.account.v1.AuthLoginRequest request) {
+    assertThatThrownBy(() -> AccountControlUiAuthenticationGrpcCodec.parseRequest(request))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static void assertResponseRejected(
+      net.firedevops.firemud.account.v1.AuthLoginResponse response) {
+    assertThatThrownBy(
+            () -> AccountControlUiAuthenticationGrpcCodec.requireResponse(request(), response))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+}

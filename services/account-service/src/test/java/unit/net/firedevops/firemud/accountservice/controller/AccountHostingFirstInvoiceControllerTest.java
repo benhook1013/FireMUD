@@ -14,6 +14,18 @@ import org.springframework.web.server.ResponseStatusException;
 
 class AccountHostingFirstInvoiceControllerTest {
   @Test
+  void dependencyUnavailabilityIsNotReportedAsRevocationAndNeverDisclosesSecrets() {
+    var controller =
+        new AccountHostingFirstInvoiceController(
+            mock(AccountHostingFirstInvoicePaymentService.class));
+    var unavailable = controller.authenticationUnavailable();
+    assertThat(unavailable.getStatusCode().value()).isEqualTo(503);
+    assertThat(unavailable.getBody().code()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(unavailable.getHeaders().getCacheControl()).isEqualTo("no-store");
+    assertThat(controller.authenticationRefused().getStatusCode().value()).isEqualTo(401);
+  }
+
+  @Test
   void insecureTransportAndMissingControlUiBearerCannotReadOrDiscloseCheckout() {
     var service = mock(AccountHostingFirstInvoicePaymentService.class);
     var controller = new AccountHostingFirstInvoiceController(service);

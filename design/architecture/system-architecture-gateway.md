@@ -576,6 +576,12 @@ The following table summarizes the main network surfaces exposed or used by Spri
 
 ---
 
+### Isolated Account Checkout Receiving
+
+The default-off `isolated-checkout-receiving` composition registers exact Gateway HTTPS handlers for Account login, the four [first-invoice owner operations](./microservices/account-service/api-contracts.md#hosting-first-invoice-checkout), and the separate raw signed-event intake. These are controller handlers rather than broadly proxied routes, so the general route retry filter never automatically redispatches a confirmation. Account receives actual verified HTTPS, not a synthesized forwarded secure scheme. Both outbound receiving transports disable automatic retries, including gRPC channel retries and HTTP connection-reset retries. The exact handlers retain the canonical client-IP rate limit before parsing credentials or calling Account; limiter refusal returns `429`, and unavailable limiter authority fails closed with `503`.
+
+Login uses the narrow Account RPC over file-backed mTLS. The existing server-peer call-credentials gate verifies Account's exact same-namespace URI SAN before sending primary credentials; the response fence independently rejects an incorrect server identity. Account authenticates the exact Gateway peer and produces registry-backed Account-only authority. Other Gateway control-plane forwarding responsibilities remain unchanged. Configuration and live-activation limits belong to [Account configuration](./microservices/account-service/configuration.md#isolated-first-invoice-receiving-configuration).
+
 ## Related Documentation
 
 - [Deployment Environments](./infrastructure/deployment-environments.md)

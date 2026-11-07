@@ -19,7 +19,13 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.server.ResponseStatusException;
 
-/** Deliberately NOT a registered controller. Retention/custody and route activation remain held. */
+/** Registered only by the isolated receiving composition; production activation remains held. */
+@org.springframework.web.bind.annotation.RestController
+@org.springframework.context.annotation.Profile("isolated-checkout-receiving")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+    prefix = "firemud.account.checkout-receiving",
+    name = "enabled",
+    havingValue = "true")
 @RequestMapping("/billing/hosting/subscriptions/{subscriptionId}/first-invoice")
 public final class AccountHostingFirstInvoiceController {
   private final AccountHostingFirstInvoicePaymentService payments;
@@ -104,6 +110,29 @@ public final class AccountHostingFirstInvoiceController {
   public AccountHostingFirstInvoicePaymentService.Completion signedCompletion(
       String payload, String signature) throws SignatureVerificationException, StripeException {
     return payments.completeSigned(payload, signature);
+  }
+
+  @ExceptionHandler({
+    net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReader
+        .RegistryUnavailableException.class,
+    net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException.class,
+    net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier
+        .VerificationUnavailableException.class,
+    org.springframework.dao.DataAccessException.class
+  })
+  public ResponseEntity<ErrorResponse> authenticationUnavailable() {
+    return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+        .cacheControl(CacheControl.noStore())
+        .body(new ErrorResponse("AUTH_UNAVAILABLE"));
+  }
+
+  @ExceptionHandler(
+      net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.VerificationException
+          .class)
+  public ResponseEntity<ErrorResponse> authenticationRefused() {
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+        .cacheControl(CacheControl.noStore())
+        .body(new ErrorResponse("AUTH_SESSION_REVOKED"));
   }
 
   @ExceptionHandler(StripeException.class)

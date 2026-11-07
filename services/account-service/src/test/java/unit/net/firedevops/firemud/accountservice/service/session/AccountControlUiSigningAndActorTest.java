@@ -575,6 +575,33 @@ class AccountControlUiSigningAndActorTest {
     }
   }
 
+  @Test
+  void accountOnlyActorHasNoTenantCaptureCapability() {
+    Fixture f = new Fixture(true);
+    var accountOnly =
+        new net.firedevops.firemud.accountservice.authordraft.AccountControlUiAccountAuthority(
+            mock(net.firedevops.firemud.accountservice.repository.AccountRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountAuthoritySourceEvidenceRepository.class),
+            mock(
+                net.firedevops.firemud.accountservice.repository
+                    .AccountPlatformRestrictionOperationRepository.class),
+            mock(org.jooq.DSLContext.class));
+    var actor =
+        new AccountControlUiActorService(
+            f.operations,
+            accountOnly,
+            f.signers,
+            f.registry,
+            f.source,
+            f.fences,
+            f.transactions,
+            Clock.fixed(NOW, ZoneOffset.UTC));
+    assertThatThrownBy(() -> actor.authenticate("not-a-token", f.tenant, f.environment))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
   private static final class Fixture {
     final UUID actor = UUID.randomUUID(), tenant = UUID.randomUUID(), jti = UUID.randomUUID();
     final UUID operationId = UUID.randomUUID(), requestId = UUID.randomUUID();

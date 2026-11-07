@@ -33,9 +33,10 @@ interface Attempt {
 }
 
 /**
- * Mount under QueryClientProvider only inside a genuine control-ui session.
- * The demo App has no such session producer and intentionally does not mount it.
- * Changing subscription/session must unmount this component (use a React key).
+ * Mount under QueryClientProvider only from the App-owned account checkout
+ * route, after its memory-only control-ui session is active. The route keys
+ * this component by session identity and subscription so either change unmounts
+ * it; mounting, remounting, or browser navigation never authorizes a payment.
  */
 export default function HostingFirstInvoiceCheckout({
   subscriptionId,

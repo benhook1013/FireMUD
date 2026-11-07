@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAccountAuthority;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
@@ -21,14 +22,15 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Minimum genuine backend creator issuance/recovery, deliberately unregistered and unmounted.
- * Primary credentials, existing owner sources and actual Coordination are all required. An
+ * Genuine Account and creator issuance/recovery. Only Account issuance is selected by the isolated
+ * checkout receiving composition; creator receiving and default production activation remain
+ * closed. Primary credentials, existing owner sources and actual Coordination are all required. An
  * independently protected exact peer binding supplies transport identity, never creator authority.
  */
 public final class AccountControlUiIssuanceService {
   private final AccountServiceImpl primaryAuthentication;
   private final AccountControlUiIssuanceRepository operations;
-  private final AccountControlUiAuthority authority;
+  private final AccountControlUiAccountAuthority authority;
   private final DraftAuthorizationFenceRepository fences;
   private final AccountControlUiSignerOwner signers;
   private final AccountControlUiResponseCryptography cryptography;
@@ -46,7 +48,7 @@ public final class AccountControlUiIssuanceService {
   public AccountControlUiIssuanceService(
       AccountServiceImpl primaryAuthentication,
       AccountControlUiIssuanceRepository operations,
-      AccountControlUiAuthority authority,
+      AccountControlUiAccountAuthority authority,
       DraftAuthorizationFenceRepository fences,
       AccountControlUiSignerOwner signers,
       AccountControlUiResponseCryptography cryptography,
@@ -80,6 +82,7 @@ public final class AccountControlUiIssuanceService {
 
   public IssuedCredential issue(Request request, CapturedEnvironmentBoundary environment) {
     Objects.requireNonNull(request);
+    tenantAuthority();
     return issueInternal(
         new Invocation(
             request.requestId,
@@ -143,8 +146,9 @@ public final class AccountControlUiIssuanceService {
                 java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
                     request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
                         ? java.util.Optional.of(
-                            authority.captureInitial(
-                                request.tenantId.orElseThrow(), environment.orElseThrow()))
+                            tenantAuthority()
+                                .captureInitial(
+                                    request.tenantId.orElseThrow(), environment.orElseThrow()))
                         : java.util.Optional.empty();
                 tenantSource.ifPresent(value -> fences.lockProducerSourcesNowait(value.sources()));
                 AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
@@ -349,7 +353,8 @@ public final class AccountControlUiIssuanceService {
     var source =
         original.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT
             ? authority.captureAccount(original.accountId)
-            : authority.capture(original.accountId, original.tenantId(), environment.orElseThrow());
+            : tenantAuthority()
+                .capture(original.accountId, original.tenantId(), environment.orElseThrow());
     fences.lockProducerSourcesNowait(source.sources());
     if (!Arrays.equals(source.evidence(), original.sources)) {
       throw denied();
@@ -525,6 +530,11 @@ public final class AccountControlUiIssuanceService {
     public String toString() {
       return "AccountControlUiIssuanceService.IssuedCredential[redacted]";
     }
+  }
+
+  private AccountControlUiAuthority tenantAuthority() {
+    if (authority instanceof AccountControlUiAuthority tenantAuthority) return tenantAuthority;
+    throw denied();
   }
 
   private static IllegalStateException denied() {
