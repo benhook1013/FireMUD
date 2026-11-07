@@ -84,8 +84,7 @@ class GameSessionPrivatePreparationProtectionRepositoryTest {
       Thread.currentThread().interrupt();
       assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
           .isInstanceOf(
-              GameSessionPrivatePreparationProtectionRepository.ProtectionUnavailableException
-                  .class)
+              GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException.class)
           .hasMessageContaining("interrupted");
       assertThat(Thread.currentThread().isInterrupted()).isTrue();
     } finally {
@@ -115,8 +114,7 @@ class GameSessionPrivatePreparationProtectionRepositoryTest {
           .thenReturn(new byte[] {1});
       assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
           .isInstanceOf(
-              GameSessionPrivatePreparationProtectionRepository.ProtectionUnavailableException
-                  .class)
+              GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException.class)
           .hasMessageContaining("remained busy");
     }
     verify(transactions, atLeastOnce()).getTransaction(argThat(this::finiteSerializableOwner));
@@ -131,6 +129,23 @@ class GameSessionPrivatePreparationProtectionRepositoryTest {
         && definition.getIsolationLevel() == TransactionDefinition.ISOLATION_SERIALIZABLE
         && !definition.isReadOnly()
         && definition.getTimeout() == 5;
+  }
+
+  @Test
+  void absentRetainedProtectionIsNotAcquisitionContention() {
+    var dsl = mock(DSLContext.class);
+    var transactions = mock(PlatformTransactionManager.class);
+    var status = mock(TransactionStatus.class);
+    when(transactions.getTransaction(any())).thenReturn(status);
+    var owner = new GameSessionPrivatePreparationProtectionRepository(dsl, transactions);
+    assertThatThrownBy(() -> owner.readCurrent(UUID.randomUUID(), UUID.randomUUID(), 1))
+        .isExactlyInstanceOf(
+            GameSessionPrivatePreparationProtectionRepository.ProtectionUnavailableException.class)
+        .hasMessageContaining("absent");
+    verify(transactions).getTransaction(argThat(this::finiteSerializableOwner));
+    verify(transactions).rollback(status);
+    verify(dsl).fetchOne(startsWith("SELECT * FROM"), any(Object[].class));
+    verifyNoMoreInteractions(transactions, dsl);
   }
 
   @Test

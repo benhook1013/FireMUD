@@ -94,6 +94,10 @@ public final class PrivatePreparationProtectionGrpcService
     } catch (RuntimeException failure) {
       boolean unavailable = false;
       for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+        if (cause
+            instanceof
+            GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException)
+          unavailable = true;
         if (cause instanceof java.sql.SQLException sql
             && sql.getSQLState() != null
             && (sql.getSQLState().startsWith("08") || sql.getSQLState().equals("40001")))

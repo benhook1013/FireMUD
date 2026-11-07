@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -237,6 +238,74 @@ class PrivateWorldPreparationReadGrpcServiceTest {
         .isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(badAcquire.value).isNull();
     assertThat(badRead.value).isNull();
+  }
+
+  @Test
+  void protectionContentionAndRetryableSqlFailuresRemainDistinctFromSourceConflicts()
+      throws Exception {
+    var fixture = new Fixture();
+    var source = fixture.call(fixture.request);
+    var evidence = PrivateWorldPreparationReadGrpcCodec.fromResponse(fixture.request, source.value);
+    var acquire = new PrivatePreparationProtectionGrpcCodec.Acquire(UUID.randomUUID(), evidence);
+    var held =
+        new PrivatePreparationProtectionGrpcCodec.Held(
+            acquire.requestId(), UUID.randomUUID(), 1, evidence);
+    var read =
+        new PrivatePreparationProtectionGrpcCodec.Read(
+            UUID.randomUUID(), acquire.requestId(), held.holdId(), 1, held.sourceDigest());
+    var owner = mock(GameSessionPrivatePreparationProtectionRepository.class);
+    var service = new PrivatePreparationProtectionGrpcService(owner, NS);
+    record FailureCase(RuntimeException failure, Status.Code expected) {}
+    var cases =
+        List.of(
+            new FailureCase(
+                new GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException(
+                    "Private source protection request remained busy"),
+                Status.Code.UNAVAILABLE),
+            new FailureCase(
+                new GameSessionPrivatePreparationProtectionRepository.ProtectionContendedException(
+                    "Private source protection wait was interrupted"),
+                Status.Code.UNAVAILABLE),
+            new FailureCase(
+                new IllegalStateException(new SQLException("connection unavailable", "08006")),
+                Status.Code.UNAVAILABLE),
+            new FailureCase(
+                new IllegalStateException(new SQLException("serialization failure", "40001")),
+                Status.Code.UNAVAILABLE),
+            new FailureCase(
+                new GameSessionPrivatePreparationProtectionRepository
+                    .ProtectionUnavailableException("Private source changed before protection"),
+                Status.Code.FAILED_PRECONDITION),
+            new FailureCase(
+                new GameSessionPrivatePreparationProtectionRepository
+                    .ProtectionUnavailableException(
+                    "Source protection request identity was reused"),
+                Status.Code.FAILED_PRECONDITION),
+            new FailureCase(
+                new IllegalStateException(new SQLException("source constraint differs", "23514")),
+                Status.Code.FAILED_PRECONDITION));
+    for (var failureCase : cases) {
+      doThrow(failureCase.failure()).when(owner).acquire(acquire.requestId(), evidence.snapshot());
+      doThrow(failureCase.failure())
+          .when(owner)
+          .readCurrent(read.requestId(), read.holdId(), read.fence());
+      var acquireResult = new ProtectionResult();
+      var readResult = new ProtectionResult();
+      withPeer(
+          "spiffe://firemud/ns/" + NS + "/sa/world-management-service",
+          () -> {
+            service.acquirePrivatePreparationProtection(
+                PrivatePreparationProtectionGrpcCodec.toWire(acquire), acquireResult);
+            service.readCurrentPrivatePreparationProtection(
+                PrivatePreparationProtectionGrpcCodec.toWire(read), readResult);
+          });
+      for (var result : List.of(acquireResult, readResult)) {
+        assertThat(Status.fromThrowable(result.failure).getCode())
+            .as("owner failure: %s", failureCase.failure())
+            .isEqualTo(failureCase.expected());
+        assertThat(result.value).isNull();
+      }
+    }
   }
 
   private static byte[] replaceFrame(byte[] original, int changedIndex, byte[] replacement) {

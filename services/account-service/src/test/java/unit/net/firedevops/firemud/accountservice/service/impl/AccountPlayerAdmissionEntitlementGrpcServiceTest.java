@@ -89,6 +89,9 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
   private static Stream<org.junit.jupiter.params.provider.Arguments> ownerFailures() {
     return Stream.of(
         org.junit.jupiter.params.provider.Arguments.of(
+            new AccountPlayerAdmissionEntitlementOwner.TargetPreconditionException(),
+            Status.Code.FAILED_PRECONDITION),
+        org.junit.jupiter.params.provider.Arguments.of(
             new AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException(),
             Status.Code.UNAVAILABLE),
         org.junit.jupiter.params.provider.Arguments.of(
@@ -120,6 +123,9 @@ class AccountPlayerAdmissionEntitlementGrpcServiceTest {
         // Only the protected-target owner boundary may translate its transport failures.
         org.junit.jupiter.params.provider.Arguments.of(
             Status.UNAVAILABLE.withDescription(SECRET).asRuntimeException(), Status.Code.INTERNAL),
+        org.junit.jupiter.params.provider.Arguments.of(
+            Status.FAILED_PRECONDITION.withDescription(SECRET).asRuntimeException(),
+            Status.Code.INTERNAL),
         org.junit.jupiter.params.provider.Arguments.of(
             new CanonicalGameplayAdmissionDecisionReadClient.ClientUnavailableException(
                 new IllegalStateException(SECRET)),

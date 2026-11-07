@@ -136,14 +136,12 @@ public final class GameSessionPrivatePreparationProtectionRepository {
         // TransactionTemplate has already rolled back and released its connection.
         long remaining = contentionDeadline - System.nanoTime();
         if (remaining <= 0)
-          throw new ProtectionUnavailableException(
-              "Private source protection request remained busy");
+          throw new ProtectionContendedException("Private source protection request remained busy");
         try {
           TimeUnit.NANOSECONDS.sleep(Math.min(TimeUnit.MILLISECONDS.toNanos(25), remaining));
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
-          throw new ProtectionUnavailableException(
-              "Private source protection wait was interrupted");
+          throw new ProtectionContendedException("Private source protection wait was interrupted");
         }
       } catch (RuntimeException failure) {
         if (++attempt == 3 || !serializationFailure(failure)) throw failure;
@@ -282,6 +280,12 @@ public final class GameSessionPrivatePreparationProtectionRepository {
         || TransactionSynchronizationManager.isSynchronizationActive())
       throw new IllegalStateException(
           "Private source protection requires independent owner transactions");
+  }
+
+  public static final class ProtectionContendedException extends IllegalStateException {
+    public ProtectionContendedException(String message) {
+      super(message);
+    }
   }
 
   public static final class ProtectionUnavailableException extends IllegalStateException {
