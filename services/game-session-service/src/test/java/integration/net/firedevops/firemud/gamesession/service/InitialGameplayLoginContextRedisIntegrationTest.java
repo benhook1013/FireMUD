@@ -978,6 +978,8 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     var readResult = new CountDownLatch(1);
     var closing = new CountDownLatch(1);
     var transaction = new TransactionTemplate(new DataSourceTransactionManager(journalDataSource));
+    transaction.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     try (var executor = Executors.newFixedThreadPool(3)) {
       var rowOwner =
           executor.submit(
@@ -1002,7 +1004,9 @@ class InitialGameplayLoginContextRedisIntegrationTest {
                         return true;
                       }));
       try {
-        assertThat(rowLocked.await(10, TimeUnit.SECONDS)).isTrue();
+        boolean locked = rowLocked.await(10, TimeUnit.SECONDS);
+        if (!locked) rowOwner.get(1, TimeUnit.SECONDS); // Surface an early owner failure.
+        assertThat(locked).isTrue();
         var borrowing =
             executor.submit(
                 () ->

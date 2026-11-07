@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -114,7 +115,7 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
   }
 
   @Test
-  void exactAccountPeerReceivesCurrentLoginCredentialAndReturnsBoundCanonicalEvidence()
+  void exactAccountPeerReceivesUncompressedCurrentLoginCredentialAndReturnsBoundCanonicalEvidence()
       throws Exception {
     var context = context();
     var login = loginCustody();
@@ -124,6 +125,8 @@ class AccountPlayerAdmissionEntitlementClientMtlsTest {
     Server server = server("account", calls, observedJwt, observedPeer, context, login.evidence());
     try (var client = client(server)) {
       client.init();
+      assertThat(client.buildStub(mock(ManagedChannel.class)).getCallOptions().getCompressor())
+          .isNull();
       var result = client.read(context, READ_REQUEST, login, () -> true);
       assertThat(result.fields())
           .containsEntry("variant", "PLAYER_ADMISSION")

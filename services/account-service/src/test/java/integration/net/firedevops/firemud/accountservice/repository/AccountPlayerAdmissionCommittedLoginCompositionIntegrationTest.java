@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import io.grpc.Server;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
@@ -61,18 +62,20 @@ class AccountPlayerAdmissionCommittedLoginCompositionIntegrationTest {
   private static final String NAMESPACE = "test";
   private static final String PEER = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final Clock CLOCK = Clock.systemUTC();
+  private static final AccountPostgresIntegrationFixture POSTGRES =
+      new AccountPostgresIntegrationFixture(true);
   private final AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest fixtures =
-      new AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest();
+      AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.withPostgres(POSTGRES);
   @TempDir Path directory;
 
   @BeforeAll
   static void startPostgres() {
-    AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.startPostgres();
+    POSTGRES.start();
   }
 
   @AfterAll
   static void stopPostgres() {
-    AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest.stopPostgres();
+    POSTGRES.stop();
   }
 
   @AfterEach
@@ -224,16 +227,15 @@ class AccountPlayerAdmissionCommittedLoginCompositionIntegrationTest {
                           .isEqualTo(Status.Code.CANCELLED));
           verify(receiver).readPlayerAdmissionEntitlement(any(), any());
           // Retaining valid signature bytes and local custody is insufficient after Account moves.
-          // The caller verifier currently reports that loss as an untyped failure, so the actual
-          // receiver returns INTERNAL rather than the typed source-outage UNAVAILABLE status.
+          // The actual caller verifier and receiver classify this currentness loss as UNAVAILABLE.
           f.beginPlayerEntitlementLoginRevocation();
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> true))
               .isExactlyInstanceOf(StatusRuntimeException.class)
-              .hasMessage("INTERNAL: Account player-admission entitlement read did not complete")
+              .hasMessage("UNAVAILABLE: Account player-admission entitlement read did not complete")
               .satisfies(
                   failure ->
                       assertThat(((StatusRuntimeException) failure).getStatus().getCode())
-                          .isEqualTo(Status.Code.INTERNAL));
+                          .isEqualTo(Status.Code.UNAVAILABLE));
           verify(receiver, times(2)).readPlayerAdmissionEntitlement(any(), any());
           login.close();
           assertThatThrownBy(() -> client.read(context, UUID.randomUUID(), login, () -> true))
