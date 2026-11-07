@@ -1255,19 +1255,25 @@ public class CharacterRepository {
     if (enrolledScope != null && !target.playableStateScope().name().equals(enrolledScope)) {
       throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_NAMESPACE_SCOPE_MISMATCH");
     }
-    var rows =
-        canonicalRosterQuery(canonicalAccountUuid, target)
-            .fetch(
-                row ->
-                    new net.firedevops.firemud.entitymanagement.bootstrap
-                        .AccountBootstrapRosterActorProjection(
-                        row.get(CHARACTERS.CHARACTER_UUID),
-                        row.get(CHARACTERS.NAME),
-                        row.get(CHARACTERS.LEVEL)));
+    var rows = canonicalRosterQuery(canonicalAccountUuid, target).fetch();
     if (rows.size() > CanonicalGameplayRosterSnapshotDigest.MAX_ROSTER_SIZE) {
       throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_LIMIT_EXCEEDED");
     }
-    return rows;
+    var actors =
+        new ArrayList<
+            net.firedevops.firemud.entitymanagement.bootstrap
+                .AccountBootstrapRosterActorProjection>(rows.size());
+    for (var row : rows) {
+      Integer level = row.get(CHARACTERS.LEVEL);
+      if (level == null) {
+        throw new IllegalStateException("CANONICAL_ROSTER_LEVEL_NULL");
+      }
+      actors.add(
+          new net.firedevops.firemud.entitymanagement.bootstrap
+              .AccountBootstrapRosterActorProjection(
+              row.get(CHARACTERS.CHARACTER_UUID), row.get(CHARACTERS.NAME), level));
+    }
+    return actors;
   }
 
   private List<CanonicalGameplayRosterActor> readCurrentCanonicalRoster(

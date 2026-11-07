@@ -77,7 +77,7 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
             .claim();
     assertThat(first.creation()).isEqualTo(created);
     assertThat(first.subscriptionRowVersion()).isEqualTo(2);
-    assertThat(first.reconciliationRequiredBeforeCreate()).isFalse();
+    assertThat(first.attemptNumber()).isEqualTo(1);
     assertThat(c.repository().findCurrentByTenant(seed.tenant()).orElseThrow().status())
         .isEqualTo("provisioning");
     assertThat(
@@ -112,7 +112,8 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
                             lifecycle(c, recoveryTime)
                                 .claim(created.requestId(), 2, UUID.randomUUID())))
             .claim();
-    assertThat(recovered.reconciliationRequiredBeforeCreate()).isTrue();
+    // Attempt history does not grant provider IO; the independent dispatch receipt owns it.
+    assertThat(recovered.attemptNumber()).isEqualTo(2);
     assertThat(recovered.creation()).isEqualTo(created);
     assertThat(recovered.subscriptionRowVersion()).isEqualTo(3);
     assertThat(recovered.attemptId()).isNotEqualTo(first.attemptId());

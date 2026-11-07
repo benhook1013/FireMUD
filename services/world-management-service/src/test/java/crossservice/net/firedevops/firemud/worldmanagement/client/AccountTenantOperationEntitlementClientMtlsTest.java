@@ -60,7 +60,17 @@ class AccountTenantOperationEntitlementClientMtlsTest {
                           paid.tenantId(), paid.requestId(), paid.expectedWorldWorkload()));
               return evidence(paid);
             });
-    when(owner.evaluateDemo(any())).thenReturn(evidence(demo));
+    when(owner.evaluateDemo(any()))
+        .thenAnswer(
+            invocation -> {
+              var actual =
+                  (AccountTenantOperationEntitlementOwner.Request) invocation.getArgument(0);
+              assertThat(actual)
+                  .isEqualTo(
+                      new AccountTenantOperationEntitlementOwner.Request(
+                          demo.tenantId(), demo.requestId(), demo.expectedWorldWorkload()));
+              return evidence(demo);
+            });
     var receiver = new AccountTenantOperationEntitlementGrpcService(owner, "firemud");
     Server server =
         receiver
@@ -77,6 +87,7 @@ class AccountTenantOperationEntitlementClientMtlsTest {
         assertThat(read.request()).isEqualTo(paid);
         assertThat(read.evidence()).isEqualTo(evidence(paid));
         assertThat(client.read(demo).evidence()).isEqualTo(evidence(demo));
+        verify(owner, org.mockito.Mockito.times(1)).evaluatePaid(any());
         doThrow(
                 new AccountTenantOperationEntitlementOwner.SourceUnavailableException(
                     "private source detail"))
