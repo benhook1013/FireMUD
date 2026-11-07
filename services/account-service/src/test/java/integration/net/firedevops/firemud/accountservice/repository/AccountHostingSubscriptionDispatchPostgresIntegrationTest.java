@@ -356,11 +356,13 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var lifecycle =
         new AccountHostingSubscriptionLifecycleService(
             f.owner(),
-            new StripeHostingSubscriptionObserver(stripe, f.clock()),
+            new StripeHostingSubscriptionObserver(
+                stripe, f.clock(), Duration.ofMillis(250), Duration.ofSeconds(1)),
             new DataSourceTransactionManager(f.source()));
     return new AccountHostingSubscriptionProvisioningService(
         f.owner(),
-        new StripeHostingSubscriptionProvisioner(stripe, f.clock(), false),
+        new StripeHostingSubscriptionProvisioner(
+            stripe, f.clock(), false, Duration.ofMillis(250), Duration.ofSeconds(1)),
         lifecycle,
         new DataSourceTransactionManager(f.source()));
   }

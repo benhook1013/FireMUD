@@ -81,6 +81,9 @@ class StripeHostingSubscriptionProvisionerTest {
             RequestMethod.GET);
     assertThat(transport.options.get(3).getIdempotencyKey()).isEqualTo(OPERATION.toString());
     assertThat(transport.options.get(3).getMaxNetworkRetries()).isZero();
+    assertThat(transport.options.get(4).getConnectTimeout()).isEqualTo(250);
+    assertThat(transport.options.get(4).getReadTimeout()).isEqualTo(1000);
+    assertThat(transport.options.get(4).getMaxNetworkRetries()).isZero();
     assertThat(transport.params.get(3))
         .containsOnlyKeys(
             "customer",
@@ -223,7 +226,9 @@ class StripeHostingSubscriptionProvisionerTest {
         new StripeHostingSubscriptionProvisioner(
             new com.stripe.StripeClient(transport),
             Clock.fixed(NOW.plusSeconds(20), ZoneOffset.UTC),
-            false);
+            false,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     assertThat(expired.provision(dispatch(true)))
         .isEqualTo(
             new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_LEASE_EXPIRED", null));
@@ -287,7 +292,11 @@ class StripeHostingSubscriptionProvisionerTest {
 
   private static StripeHostingSubscriptionProvisioner adapter(Transport transport) {
     return new StripeHostingSubscriptionProvisioner(
-        new com.stripe.StripeClient(transport), Clock.fixed(NOW, ZoneOffset.UTC), false);
+        new com.stripe.StripeClient(transport),
+        Clock.fixed(NOW, ZoneOffset.UTC),
+        false,
+        Duration.ofMillis(250),
+        Duration.ofSeconds(1));
   }
 
   private static Transport transport(String... responses) {

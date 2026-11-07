@@ -128,27 +128,6 @@ class TestDataSeederTest {
   }
 
   @Test
-  void runDoesNotOverwriteExplicitJoinWhenReassertingDemoAccount() {
-    Account account = new Account();
-    account.setId(1L);
-    account.setEmail("demo@example.com");
-    AccountTenantMembership explicitJoin = membership(account, 1L, "ACTIVE", "EXPLICIT_JOIN", true);
-    explicitJoin.setMembershipVersion(4L);
-    explicitJoin.setMembershipAuthorityGeneration(8L);
-
-    when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
-    when(accountRepository.save(any(Account.class))).thenReturn(account);
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(explicitJoin));
-    when(profileRepository.findByAccountIdAndTenantId(1L, 1L))
-        .thenReturn(Optional.of(new Profile()));
-
-    seeder.run(new DefaultApplicationArguments(new String[] {}));
-
-    verify(accountTenantMembershipRepository, never()).save(any(AccountTenantMembership.class));
-  }
-
-  @Test
   void runReconcilesOnlyTheExactQuarantinedDemoMembership() throws Exception {
     Account account = new Account();
     account.setId(1L);

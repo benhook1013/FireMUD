@@ -1682,7 +1682,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     var transport = new ControlledTransport();
     var repository = owner(c, clock, c.intents());
     var observer =
-        new StripeHostingSubscriptionObserver(new com.stripe.StripeClient(transport), clock);
+        new StripeHostingSubscriptionObserver(
+            new com.stripe.StripeClient(transport),
+            clock,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     var service =
         new AccountHostingSubscriptionLifecycleService(
             repository, observer, new DataSourceTransactionManager(c.source()));
@@ -1715,7 +1719,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
       Clock clock) {
     return new AccountHostingSubscriptionLifecycleService(
         owner,
-        new StripeHostingSubscriptionObserver(new com.stripe.StripeClient(transport), clock),
+        new StripeHostingSubscriptionObserver(
+            new com.stripe.StripeClient(transport),
+            clock,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1)),
         new DataSourceTransactionManager(c.source()));
   }
 

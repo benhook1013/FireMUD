@@ -8,6 +8,7 @@ import com.stripe.param.SubscriptionCreateParams;
 import com.stripe.param.SubscriptionSearchParams;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
@@ -30,10 +31,16 @@ public final class StripeHostingSubscriptionProvisioner {
       justification =
           "Injected SDK/repository collaborators remain private; copying would break owner composition.")
   public StripeHostingSubscriptionProvisioner(
-      com.stripe.StripeClient stripe, Clock clock, boolean expectedLivemode) {
+      com.stripe.StripeClient stripe,
+      Clock clock,
+      boolean expectedLivemode,
+      Duration observationConnectTimeout,
+      Duration observationReadTimeout) {
     this.stripe = Objects.requireNonNull(stripe);
     this.clock = Objects.requireNonNull(clock);
-    observer = new StripeHostingSubscriptionObserver(stripe, clock);
+    observer =
+        new StripeHostingSubscriptionObserver(
+            stripe, clock, observationConnectTimeout, observationReadTimeout);
     prerequisites = new StripeBillingPrerequisiteObserver(stripe, clock, expectedLivemode);
   }
 

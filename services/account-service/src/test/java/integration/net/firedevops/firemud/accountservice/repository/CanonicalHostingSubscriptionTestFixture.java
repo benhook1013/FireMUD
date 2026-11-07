@@ -230,7 +230,11 @@ public final class CanonicalHostingSubscriptionTestFixture {
             "prod",
             false);
     var observer =
-        new StripeHostingSubscriptionObserver(new com.stripe.StripeClient(transport), clock);
+        new StripeHostingSubscriptionObserver(
+            new com.stripe.StripeClient(transport),
+            clock,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     var service =
         new AccountHostingSubscriptionLifecycleService(
             lifecycleRepository, observer, new DataSourceTransactionManager(source));
