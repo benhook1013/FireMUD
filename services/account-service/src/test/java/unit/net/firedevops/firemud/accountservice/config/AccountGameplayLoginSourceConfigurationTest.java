@@ -106,6 +106,7 @@ class AccountGameplayLoginSourceConfigurationTest {
                                 "test", "cluster-a")))) {
       redisFactory.when(() -> RedisClient.create(any(RedisURI.class))).thenReturn(client);
       enabledContext()
+          .withPropertyValues("firemud.account.public-jwks-read.enabled=true")
           .run(
               context -> {
                 assertThat(context).hasNotFailed();
@@ -218,7 +219,7 @@ class AccountGameplayLoginSourceConfigurationTest {
         .withPropertyValues(
             "firemud.account.gameplay-login.enabled=true",
             "firemud.grpc.workload-namespace=test",
-            "firemud.account.gameplay-login.jwks-api-binding-path="
+            "firemud.account.public-jwks.api-binding-path="
                 + AccountGameplayLoginProtectedSourcesConfigurationTest.API_PATH,
             "firemud.account.gameplay-login.coordination.uri="
                 + "rediss://account_coord_app:test-only-password@coordination.example.invalid:6380/0",

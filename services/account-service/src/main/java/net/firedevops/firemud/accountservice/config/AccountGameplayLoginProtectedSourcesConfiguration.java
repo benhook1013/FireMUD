@@ -10,13 +10,14 @@ import java.util.Arrays;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient;
 import net.firedevops.firemud.accountservice.service.session.LettuceAccountCoordinationPinnedConnectionProvider;
-import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 /** Selects delivered protected sources; never enrolls a signer or provisions Redis or keys. */
+@Import(AccountPublicJwksSourceConfiguration.class)
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
     prefix = "firemud.account.gameplay-login",
@@ -25,38 +26,6 @@ import org.springframework.context.annotation.Configuration;
 public class AccountGameplayLoginProtectedSourcesConfiguration {
   static final String COORDINATION_CONNECTIONS = "accountGameplayLoginCoordinationConnections";
   static final String ACKNOWLEDGEMENT_REQUIREMENTS = "accountGameplayLoginAcknowledgements";
-  private static final String JWKS_API_BINDING_PATH = "/etc/firemud/account-jwt-api/binding.json";
-
-  @Bean
-  AccountJwtJwksApiBinding accountGameplayLoginJwksApiBinding(
-      AccountJwtSignerMaterializerTrustBinding materializerTrust,
-      @Value("${firemud.account.gameplay-login.jwks-api-binding-path:}") String bindingPath,
-      @Value("${firemud.grpc.workload-namespace:}") String namespace) {
-    if (!JWKS_API_BINDING_PATH.equals(bindingPath)
-        || !GrpcPeerIdentity.isValidNamespace(namespace)) {
-      throw unavailable();
-    }
-    try {
-      var api = new AccountJwtJwksApiBinding(true, bindingPath);
-      var materializer = materializerTrust.current().orElseThrow();
-      var current = api.current();
-      if (!namespace.equals(materializer.namespace())
-          || !namespace.equals(current.namespace())
-          || !materializer.environmentId().equals(current.environmentId())
-          || !materializer.clusterId().equals(current.clusterId())
-          || !materializer
-              .expectedClusterIncarnationUid()
-              .equals(current.expectedClusterIncarnationUid())
-          || !materializer.expectedNamespaceUid().equals(current.expectedNamespaceUid())) {
-        throw unavailable();
-      }
-      // current() pins the protected API identity. Existing owners reread and compare both trust
-      // sources on use; a later materializer namespace cannot replace this accepted API identity.
-      return api;
-    } catch (RuntimeException failure) {
-      throw unavailable();
-    }
-  }
 
   @Bean(name = COORDINATION_CONNECTIONS, destroyMethod = "close")
   LettuceAccountCoordinationPinnedConnectionProvider accountGameplayLoginCoordinationConnections(

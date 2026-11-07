@@ -8,7 +8,6 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository;
-import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjectionRedisScriptContribution;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider;
@@ -22,7 +21,6 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayDele
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationResponseRecoveryOwner;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationTokenRegistry;
-import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksTrustedSource;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -33,9 +31,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /** Complete initial-LOGIN owner graph over the existing protected source implementations. */
+@Import(AccountPublicJwksSourceConfiguration.class)
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
     prefix = "firemud.account.gameplay-login",
@@ -75,21 +75,6 @@ public class AccountGameplayLoginSourceConfiguration {
   AccountGameplayDelegationResponseEnvelopeService accountGameplayLoginResponseEnvelopeService(
       AccountGameplayDelegationResponseEnvelopeRepository envelopes) {
     return new AccountGameplayDelegationResponseEnvelopeService(envelopes);
-  }
-
-  @Bean
-  AccountJwtJwksConfigMapClient accountGameplayLoginJwksClient(AccountJwtJwksApiBinding api) {
-    return new AccountJwtJwksConfigMapClient(api);
-  }
-
-  @Bean
-  AccountJwtJwksTrustedSource accountGameplayLoginTrustedJwks(
-      AccountJwtJwksConfigMapClient client,
-      AccountJwtSignerMaterializerTrustBinding trust,
-      AccountJwtSignerDesiredStateRepository signers,
-      AccountJwtJwksPublicationRepository publications,
-      @Qualifier("transactionManager") PlatformTransactionManager transactions) {
-    return new AccountJwtJwksTrustedSource(client, trust, signers, publications, transactions);
   }
 
   @Bean

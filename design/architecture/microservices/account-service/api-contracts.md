@@ -4,6 +4,12 @@ This document defines the Account Service REST and gRPC contracts, authenticatio
 
 The authoritative REST schema source lives in [../../../../services/account-service/src/main/resources/openapi.yaml](../../../../services/account-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
 
+## Private Current Public-JWKS Read
+
+The default-off `AccountPublicJwksReadService.GetCurrentPublicJwks` is a private read for the exact same-namespace Game Session mTLS workload. The closed schema-version-1 request accepts no key, issuer, path, URI or rotation selector. Its response carries only Account's actual nine-field current source identity and the exact public snapshot, at most 256 KiB; the complete frame is bounded to 256 KiB plus 2 KiB. Unknown fields and other versions are refused. This boundary implements the [JWT verification provenance contract](../../system-architecture-jwt-and-token-contracts.md#signing-key-rotation-contract-normative), not the raw public JWKS controller or a finite readiness-plan read.
+
+The owner reads through `AccountJwtJwksTrustedSource`, retaining its protected binding, coherent owner projection and exact live ConfigMap checks. The peer and protected Account binding are checked before and after that read. Missing or wrong workload authority returns `PERMISSION_DENIED`, malformed frames return `INVALID_ARGUMENT`, temporary source unavailability returns `UNAVAILABLE`, and custody/publication rejection returns `FAILED_PRECONDITION`. No private keys or credentials are returned, and no signing, registry, readiness, promotion or admission authority is granted. Composition and the exact bearer-exempt method classification are recorded in [configuration](./configuration.md#private-current-public-jwks-read); controlled proof and deployed prerequisites belong to [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md#initial-private-gameplay-login-issuance-source-intake).
+
 ## Normative Target Contract
 
 Account is the API boundary for platform identity, durable membership, entitlement authority, and Account-owned authentication mutations. This document retains endpoint and transport consequences; gameplay admission and JOIN identity binding are defined by [Authentication](../../system-architecture-authentication.md), while token refresh, replacement, generation, revocation, fencing, and logout are defined by [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
