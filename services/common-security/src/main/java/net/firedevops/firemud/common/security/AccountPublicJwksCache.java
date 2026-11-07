@@ -66,6 +66,7 @@ public final class AccountPublicJwksCache {
 
   private Map<String, RSAPublicKey> keys = Map.of();
   private boolean hardCutoverQuarantined;
+  private boolean sourceRejected;
   private Instant loadedAt;
   private String loadedJwksFingerprint;
   private Instant lastUnknownKidRefreshAt;
@@ -98,6 +99,9 @@ public final class AccountPublicJwksCache {
     }
     synchronized (monitor) {
       rejectHardDenied(kid);
+      if (sourceRejected) {
+        throw new InvalidJwksException();
+      }
       Instant now = clock.instant();
       boolean cachedKidKnown = keys.containsKey(kid);
       if (!cachedKidKnown && loadedAt != null) {
@@ -208,6 +212,28 @@ public final class AccountPublicJwksCache {
     }
   }
 
+  /**
+   * Explicit proactive refresh for an owning service's bounded lifecycle task. A temporary outage
+   * preserves the original age and finite fresh-key exception. Invalid authenticated source or key
+   * evidence permanently refuses this cache instance, including previously known keys; only an
+   * explicitly requalified replacement instance may resume. Deny history remains independent.
+   */
+  public void refresh() {
+    synchronized (monitor) {
+      if (sourceRejected) {
+        throw new InvalidJwksException();
+      }
+      try {
+        refreshFromSource();
+      } catch (SourceUnavailableException unavailable) {
+        throw unavailable;
+      } catch (RuntimeException rejected) {
+        sourceRejected = true;
+        throw new InvalidJwksException();
+      }
+    }
+  }
+
   /** Exposes only the non-secret source pin for integration correspondence checks. */
   public SourceIdentity sourceIdentity() {
     return expectedSource;
@@ -244,10 +270,17 @@ public final class AccountPublicJwksCache {
         throw new SourceUnavailableException();
       }
       return;
+    } catch (SourceCustodyRejectedException rejected) {
+      sourceRejected = true;
+      throw new InvalidJwksException();
     } catch (RuntimeException invalidSource) {
       throw new InvalidJwksException();
     }
-    if (snapshot == null || !expectedSource.equals(snapshot.sourceIdentity())) {
+    if (snapshot == null) {
+      throw new InvalidJwksException();
+    }
+    if (!expectedSource.equals(snapshot.sourceIdentity())) {
+      sourceRejected = true;
       throw new InvalidJwksException();
     }
 
@@ -500,6 +533,13 @@ public final class AccountPublicJwksCache {
   public static final class SourceUnavailableException extends RuntimeException {
     public SourceUnavailableException() {
       super("Account public JWKS source is unavailable");
+    }
+  }
+
+  /** Terminal custody refusal from a trusted source; never the finite-outage exception. */
+  public static final class SourceCustodyRejectedException extends RuntimeException {
+    public SourceCustodyRejectedException() {
+      super("Account public JWKS source custody is rejected");
     }
   }
 
