@@ -578,7 +578,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
-  void unauditedOwnerChangeDuringActualSdkReadIsRefusedBeforeAnyReceipt() {
+  void databaseGuardRejectsUnauditedOwnerUpdateDuringSdkTransport() {
     Context c = context("1030");
     Fixture f = fixture(c);
     var claim = claim(f);
@@ -594,12 +594,13 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                                 "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, owner_generation = ? WHERE tenant_uuid = ?",
                                 UUID.randomUUID(),
                                 f.creation().tenantId()));
+    UUID reconciliationRequest = UUID.randomUUID();
     assertSqlState(
         "23514",
         () ->
             f.service()
                 .reconcile(
-                    UUID.randomUUID(),
+                    reconciliationRequest,
                     f.creation().requestId(),
                     2,
                     f.providerId(),
@@ -607,6 +608,27 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(count(c, "subscription_lifecycle_receipts")).isZero();
     assertThat(count(c, "subscription_provider_history")).isZero();
     assertThat(count(c, "account_authority_outbox_events")).isZero();
+    assertThat(
+            one(
+                    c,
+                    "SELECT state FROM subscription_lifecycle_operations WHERE request_id = ?",
+                    reconciliationRequest)
+                .get("state", String.class))
+        .isEqualTo("PENDING");
+    assertThat(
+            one(
+                    c,
+                    "SELECT lifecycle_inflight_request_id FROM subscription WHERE subscription_id = ?",
+                    f.creation().subscriptionId())
+                .get("lifecycle_inflight_request_id", UUID.class))
+        .isEqualTo(reconciliationRequest);
+    assertThat(
+            one(
+                    c,
+                    "SELECT current_receipt_request_id FROM subscription WHERE subscription_id = ?",
+                    f.creation().subscriptionId())
+                .get("current_receipt_request_id", UUID.class))
+        .isNull();
     assertThat(
             one(
                     c,
