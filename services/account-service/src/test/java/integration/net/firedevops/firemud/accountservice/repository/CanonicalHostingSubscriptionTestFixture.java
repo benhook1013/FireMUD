@@ -120,6 +120,11 @@ public final class CanonicalHostingSubscriptionTestFixture {
   }
 
   private static Fixture createInternal(DataSource source, Account existingAccount) {
+    return createInternal(source, existingAccount, "prod");
+  }
+
+  private static Fixture createInternal(
+      DataSource source, Account existingAccount, String namespace) {
     Objects.requireNonNull(source, "migrated Account datasource is required");
     JdbcTemplate jdbc = new JdbcTemplate(source);
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
@@ -151,11 +156,11 @@ public final class CanonicalHostingSubscriptionTestFixture {
     String tenantKey = "hosting-fixture-game-" + row;
     String tenantRequestDigest =
         GameTenantCreationDigest.requestDigest(
-            "prod", tenantCreateRequest, tenantKey, "Controlled hosting", "Storage only");
+            namespace, tenantCreateRequest, tenantKey, "Controlled hosting", "Storage only");
     var tenantSource =
         new FreshTenantCreationEvidence(
             1,
-            "prod",
+            namespace,
             tenantCreateRequest,
             tenantCreateOperation,
             tenantRequestDigest,
@@ -164,7 +169,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
             tenantKey,
             "NEW_GAME_ROW",
             GameTenantCreationDigest.evidenceDigest(
-                "prod",
+                namespace,
                 tenantCreateRequest,
                 tenantCreateOperation,
                 tenantRequestDigest,
@@ -175,7 +180,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     in(
         transaction,
         () -> {
-          new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenantSource);
+          new FreshTenantIdentityAssociationRepository(dsl, namespace).importVerified(tenantSource);
           return new AccountAuthorityGenerationRepository(dsl).initializeTenantIfAbsent(tenantId);
         });
 
@@ -263,7 +268,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
             new AccountHostingSubscriptionLifecyclePolicy(
                 Duration.ofSeconds(15),
                 new RecoveryTiming(Duration.ofSeconds(60), Duration.ofSeconds(120))),
-            "prod",
+            namespace,
             false);
     var observer =
         new StripeHostingSubscriptionObserver(
@@ -299,6 +304,15 @@ public final class CanonicalHostingSubscriptionTestFixture {
   /** Separate factory for protected HTTPS owner tests that supply their own genuine actor. */
   public static Fixture createAwaitingPayment(DataSource source, Account account) {
     var fixture = create(source, account);
+    fixture.awaitFirstInvoice();
+    fixture.providerStatus("incomplete");
+    return fixture;
+  }
+
+  /** Same isolated receiving namespace, selected before immutable tenant-source creation. */
+  public static Fixture createAwaitingPayment(
+      DataSource source, Account account, String namespace) {
+    var fixture = createInternal(source, Objects.requireNonNull(account), namespace);
     fixture.awaitFirstInvoice();
     fixture.providerStatus("incomplete");
     return fixture;
@@ -879,6 +893,43 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public AccountHostingFirstInvoicePaymentRepository firstInvoiceRepository() {
       return awaitFirstInvoice().payments();
+    }
+
+    /** Actual SDK with only the existing bounded controlled transports, never Stripe network IO. */
+    public com.stripe.StripeClient receivingClient() {
+      var checkoutTransport = awaitFirstInvoice().transport;
+      return new com.stripe.StripeClient(
+          new StripeResponseGetter() {
+            @Override
+            public <T extends StripeObject> T request(
+                BaseAddress address,
+                RequestMethod method,
+                String path,
+                Map<String, Object> params,
+                Type type,
+                RequestOptions options,
+                ApiMode mode)
+                throws StripeException {
+              StripeResponseGetter selected =
+                  path.startsWith("/v1/subscriptions/") ? transport : checkoutTransport;
+              return selected.request(address, method, path, params, type, options, mode);
+            }
+
+            @Override
+            public InputStream requestStream(
+                BaseAddress address,
+                RequestMethod method,
+                String path,
+                Map<String, Object> params,
+                RequestOptions options,
+                ApiMode mode) {
+              throw new AssertionError("No streaming provider calls in isolated receiving");
+            }
+          });
+    }
+
+    public String receivingWebhookSecret() {
+      return WEBHOOK_SECRET;
     }
 
     public StripeHostingFirstInvoicePaymentClient firstInvoiceProvider() {

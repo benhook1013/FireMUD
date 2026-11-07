@@ -43,6 +43,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   private final AccountControlUiIssuanceRepository operations;
   private final AccountControlUiCoordination coordination;
   private final RedisClient accountClient;
+  private final RedisURI receivingCoordinationUri;
   private final Path temporary;
   private IssuedCreator originalCreator;
 
@@ -278,11 +279,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       custody("request-mac", "mac1", 29);
       String PASSWORD = UUID.randomUUID().toString();
       var admin = RedisClient.create(RedisURI.Builder.redis(redisHost, redisPort).build());
-      accountClient =
-          RedisClient.create(
-              RedisURI.Builder.redis(redisHost, redisPort)
-                  .withAuthentication("account_coord_app", PASSWORD)
-                  .build());
+      receivingCoordinationUri =
+          RedisURI.Builder.redis(redisHost, redisPort)
+              .withAuthentication("account_coord_app", PASSWORD)
+              .build();
+      accountClient = RedisClient.create(receivingCoordinationUri);
       allocatedClient = accountClient;
       accountClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
       try (var connection = admin.connect(ByteArrayCodec.INSTANCE)) {
@@ -465,6 +466,19 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       AccountControlUiOwnerSourcesFixture sources) {}
 
   /** Same-package reuse of genuine certified ACCOUNT issuance, separate from tenant creation. */
+  RedisURI receivingCoordinationUri() {
+    return receivingCoordinationUri;
+  }
+
+  AccountControlUiOwnerSourcesFixture receivingSources() {
+    return f;
+  }
+
+  /** The new HTTP/mTLS proof starts before login; no synthetic peer or token is supplied. */
+  net.firedevops.firemud.accountservice.entity.Account prepareReceivingAccount(String password) {
+    return f.createCertifiedGlobalAccount(password);
+  }
+
   IssuedAccount issueCertifiedAccount(String password) {
     var account = f.createCertifiedGlobalAccount(password);
     var request =

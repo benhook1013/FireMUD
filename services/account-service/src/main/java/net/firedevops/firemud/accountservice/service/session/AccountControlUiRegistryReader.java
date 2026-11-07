@@ -104,8 +104,10 @@ public final class AccountControlUiRegistryReader {
         throw denied();
       }
       return exact.clone();
+    } catch (RegistryRefusedException refused) {
+      throw refused;
     } catch (RuntimeException unavailable) {
-      throw denied();
+      throw new RegistryUnavailableException();
     }
   }
 
@@ -213,7 +215,19 @@ public final class AccountControlUiRegistryReader {
   }
 
   private static IllegalStateException denied() {
-    return new IllegalStateException(
-        "Exact Account active control-ui registry evidence unavailable");
+    return new RegistryRefusedException();
+  }
+
+  /** Dependency failure cannot certify revocation or make a cached token authoritative. */
+  public static final class RegistryUnavailableException extends IllegalStateException {
+    private RegistryUnavailableException() {
+      super("Account control-ui registry transport unavailable");
+    }
+  }
+
+  private static final class RegistryRefusedException extends IllegalStateException {
+    private RegistryRefusedException() {
+      super("Exact Account active control-ui registry evidence unavailable");
+    }
   }
 }
