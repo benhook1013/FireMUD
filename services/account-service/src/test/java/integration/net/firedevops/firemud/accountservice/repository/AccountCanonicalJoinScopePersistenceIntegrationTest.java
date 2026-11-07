@@ -284,7 +284,7 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
   }
 
   @Test
-  void receivingUpgradeFromParent1036PreservesCanonicalRowsAndHistory() {
+  void receivingUpgradeFromParent1036Through1038PreservesCanonicalRowsAndHistory() {
     String schema = createSchema("canonical_join_scope_");
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway parent = accountFlyway(dataSource, schema, "1036");
@@ -357,7 +357,7 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
             "V1037__canonical_join_failure_and_attempt_diagnostics.sql",
             "V1038__canonical_join_existing_membership_terminal.sql");
 
-    Flyway current = accountFlyway(dataSource, schema, null);
+    Flyway current = accountFlyway(dataSource, schema, "1038");
     current.migrate();
     current.validate();
     assertThat(current.info().current().getVersion())

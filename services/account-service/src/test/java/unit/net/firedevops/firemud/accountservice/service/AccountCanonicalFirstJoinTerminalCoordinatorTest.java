@@ -160,10 +160,11 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .commitCanonicalFirstJoin(REQUEST_ID, fixture.scope, CALLER_BINDING, fixture.expectedProof);
   }
 
-  @Test
-  void committedJoinReturnsStoredEvidenceWithoutReadingOrMutatingCurrentAuthority() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"COMMITTED", "FAILED"})
+  void terminalJoinReturnsStoredEvidenceWithoutReadingOrMutatingCurrentAuthority(String status) {
     Fixture fixture = new Fixture();
-    var committed = Fixture.committed(fixture.operation, fixture.expectedProof);
+    var committed = Fixture.terminal(fixture.operation, fixture.expectedProof, status);
     when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
     when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
         .thenReturn(Optional.of(committed));
@@ -654,6 +655,12 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
 
     private static CanonicalJoinOperationEvidence committed(
         CanonicalJoinOperationEvidence pending, CanonicalJoinTerminalProof proof) {
+      return terminal(pending, proof, "COMMITTED");
+    }
+
+    private static CanonicalJoinOperationEvidence terminal(
+        CanonicalJoinOperationEvidence pending, CanonicalJoinTerminalProof proof, String status) {
+      boolean success = "COMMITTED".equals(status);
       return new CanonicalJoinOperationEvidence(
           pending.requestId(),
           pending.privateAccountId(),
@@ -672,12 +679,12 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
           pending.lastAttemptAuthorityAvailability(),
           pending.lastAttemptFailureCode(),
           pending.callerBoundAuthorityInvalidated(),
-          "COMMITTED",
-          "JOINED",
-          proof.membershipId(),
-          proof.membershipVersion(),
-          proof.membershipAuthorityGeneration(),
-          proof,
+          status,
+          success ? "JOINED" : "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+          success ? proof.membershipId() : null,
+          success ? proof.membershipVersion() : null,
+          success ? proof.membershipAuthorityGeneration() : null,
+          success ? proof : null,
           pending.scopeEvidence());
     }
 

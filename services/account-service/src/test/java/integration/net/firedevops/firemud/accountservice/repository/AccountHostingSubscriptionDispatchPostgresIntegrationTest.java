@@ -112,6 +112,107 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
+  void upgradeRetainsControlledUnclaimedWorkWithoutInventingDispatchHistory() {
+    Fixture f = fixture("1030");
+    // Controlled retained state is inserted directly with the normal SQL guards enabled. The
+    // existing production claim owner does not commit nonterminal work without its first attempt.
+    f.tx()
+        .executeWithoutResult(
+            s ->
+                f.dsl()
+                    .execute(
+                        "INSERT INTO subscription_provisioning_work (request_id, subscription_id, phase, row_version, "
+                            + "attempt_count, max_attempts, max_stalled_attempts, lease_millis, backoff_millis, deadline_at, retry_at) "
+                            + "SELECT request_id, subscription_id, 'RECONCILING', 1, 0, 4, 3, 10000, 1000, "
+                            + "created_at + interval '1 hour', created_at FROM subscription_create_operations WHERE request_id = ?",
+                        f.creation().requestId()));
+    var retained =
+        f.dsl()
+            .fetch(
+                "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM subscription_provisioning_work t")
+            .intoMaps();
+    assertThat(retained).hasSize(1);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+
+    migrate(f.source(), f.schema(), "1032");
+
+    assertThat(
+            f.dsl()
+                .fetch(
+                    "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM subscription_provisioning_work t")
+                .intoMaps())
+        .isEqualTo(retained);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
+    var first = claim(f, 1);
+    assertThat(first.attemptNumber()).isOne();
+    var result =
+        (AccountHostingSubscriptionProvisioningService.Committed)
+            service(f).provision(first, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(f.transport().creates).isOne();
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl().fetchOne("SELECT * FROM subscription_provider_dispatch_claim"))
+                .intoMap())
+        .containsEntry("classification", "FIRST_DISPATCH")
+        .containsEntry("first_attempt_id", first.attemptId())
+        .containsEntry("first_claimed_row_version", first.subscriptionRowVersion());
+  }
+
+  @Test
+  void upgradeRetainsExpiredFirstClaimAsTerminalWithoutInventingDispatchHistory() {
+    Fixture f = fixture("1030");
+    f.clock().advance(Duration.ofHours(1));
+    var failed =
+        f.tx().execute(s -> f.owner().claim(f.creation().requestId(), 1, UUID.randomUUID()));
+    assertThat(failed.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(failed.claim()).isNull();
+    assertThat(
+            Objects.requireNonNull(f.dsl().fetchOne("SELECT * FROM subscription_provisioning_work"))
+                .intoMap())
+        .containsEntry("phase", "BILLING_RECONCILIATION_TERMINAL_FAILURE")
+        .containsEntry("attempt_count", 0)
+        .containsEntry("failure_reason", "ABSOLUTE_DEADLINE");
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isOne();
+    var retained = new java.util.LinkedHashMap<String, List<Map<String, Object>>>();
+    for (String table :
+        List.of(
+            "subscription",
+            "subscription_provisioning_work",
+            "subscription_provisioning_operator_outbox",
+            "subscription_instrument_reservations")) {
+      retained.put(
+          table,
+          f.dsl()
+              .fetch("SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM " + table + " t")
+              .intoMaps());
+    }
+
+    migrate(f.source(), f.schema(), "1032");
+
+    var replay =
+        f.tx().execute(s -> f.owner().claim(f.creation().requestId(), 1, UUID.randomUUID()));
+    assertThat(replay.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(replay.claim()).isNull();
+    for (var entry : retained.entrySet()) {
+      assertThat(
+              f.dsl()
+                  .fetch(
+                      "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM "
+                          + entry.getKey()
+                          + " t")
+                  .intoMaps())
+          .isEqualTo(entry.getValue());
+    }
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
+    assertThat(f.transport().creates).isZero();
+    assertThat(f.transport().searches).isZero();
+  }
+
+  @Test
   void onlyOneFreshInsertionCarriesInitialPermissionAndIndependentReadbackIsMandatory()
       throws Exception {
     Fixture f = fixture("1032");
@@ -454,6 +555,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         .containsEntry("failure_reason", "ABSOLUTE_DEADLINE");
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isOne();
     assertThat(f.dsl().fetch("SELECT * FROM subscription_create_operations").intoMaps())
+        .usingRecursiveComparison()
         .isEqualTo(originalRows);
     assertThat(f.dsl().fetch("SELECT * FROM subscription_instrument_reservations").intoMaps())
         .isEqualTo(reservation);
