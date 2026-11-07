@@ -5487,8 +5487,7 @@ def validate_first_invoice_route_owner_checks(
     live_checks_cache: LiveChecksCache | None = None,
     cardinality_errors: set[str] | None = None,
 ) -> None:
-    for route_name in FIRST_INVOICE_ROUTE_REQUIRED_LIVE_CHECKS:
-        required_checks = FIRST_INVOICE_ROUTE_REQUIRED_LIVE_CHECKS[route_name]
+    for route_name, required_checks in FIRST_INVOICE_ROUTE_REQUIRED_LIVE_CHECKS.items():
         route = resolve_unique_route(
             routes,
             "account-service",

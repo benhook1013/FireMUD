@@ -43,6 +43,7 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.ProducerEvidence;
 import net.firedevops.firemud.accountservice.service.AccountHostingSubscriptionLifecycleService;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
 import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
@@ -547,6 +548,11 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 "SELECT payload FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ? AND tenant_billing_sequence = 1",
                 source.canonicalTenantId())
             .get("payload", byte[].class);
+    var authorityStreamKeys =
+        c.setup()
+            .fetch(
+                "SELECT outbox_stream_key FROM account_authority_outbox_streams ORDER BY outbox_stream_key")
+            .getValues(0, String.class);
     activate(f);
     var current = f.service().readCurrent(source.canonicalTenantId());
     assertThat(current.entitlementVersion()).isEqualTo(2);
@@ -567,7 +573,19 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                 .get("payload", byte[].class))
         .isEqualTo(demoEvent);
     assertThat(count(c, "account_tenant_entitlement_outbox_streams")).isOne();
-    assertThat(count(c, "account_authority_outbox_streams")).isOne();
+    assertThat(
+            c.setup()
+                .fetch(
+                    "SELECT outbox_stream_key FROM account_authority_outbox_streams ORDER BY outbox_stream_key")
+                .getValues(0, String.class))
+        .containsExactlyElementsOf(authorityStreamKeys);
+    assertThat(
+            one(
+                    c,
+                    "SELECT last_sequence FROM account_authority_outbox_streams WHERE outbox_stream_key = ?",
+                    TenantAuthorityEventV1Codec.streamKey(source.canonicalTenantId()))
+                .get("last_sequence", Long.class))
+        .isEqualTo(current.tenantAuthorityEvent().outboxSequence());
     assertThat(count(c, "account_tenant_authority_source_records")).isOne();
   }
 
