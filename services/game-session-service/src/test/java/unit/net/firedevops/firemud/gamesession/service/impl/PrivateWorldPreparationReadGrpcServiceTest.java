@@ -11,6 +11,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
@@ -187,6 +190,29 @@ class PrivateWorldPreparationReadGrpcServiceTest {
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
     assertThat(Status.fromThrowable(malformedRead.failure).getCode())
         .isEqualTo(Status.Code.INVALID_ARGUMENT);
+    var originalAcquire = PrivatePreparationProtectionGrpcCodec.toWire(acquire);
+    for (int frame : new int[] {6, 15, 16, 36, 62}) {
+      byte[] malformedSource =
+          replaceFrame(
+              source.value.getCanonicalEvidence().toByteArray(),
+              frame,
+              (frame == 36 ? "{" : "not-an-instant").getBytes(StandardCharsets.UTF_8));
+      var malformed =
+          originalAcquire.toBuilder()
+              .setCanonicalEvidence(
+                  ByteString.copyFrom(
+                      replaceFrame(
+                          originalAcquire.getCanonicalEvidence().toByteArray(),
+                          3,
+                          malformedSource)))
+              .build();
+      var result = new ProtectionResult();
+      withPeer(peer, () -> service.acquirePrivatePreparationProtection(malformed, result));
+      assertThat(Status.fromThrowable(result.failure).getCode())
+          .as("malformed source frame %s", frame)
+          .isEqualTo(Status.Code.INVALID_ARGUMENT);
+      assertThat(result.value).isNull();
+    }
     verifyNoInteractions(owner);
 
     when(owner.acquire(acquire.requestId(), evidence.snapshot()))
@@ -211,6 +237,20 @@ class PrivateWorldPreparationReadGrpcServiceTest {
         .isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(badAcquire.value).isNull();
     assertThat(badRead.value).isNull();
+  }
+
+  private static byte[] replaceFrame(byte[] original, int changedIndex, byte[] replacement) {
+    var input = ByteBuffer.wrap(original);
+    var output = new ByteArrayOutputStream();
+    int index = 0;
+    while (input.hasRemaining()) {
+      byte[] field = new byte[input.getInt()];
+      input.get(field);
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          output, index++ == changedIndex ? replacement : field);
+    }
+    assertThat(index).isGreaterThan(changedIndex);
+    return output.toByteArray();
   }
 
   private static final class ProtectionResult

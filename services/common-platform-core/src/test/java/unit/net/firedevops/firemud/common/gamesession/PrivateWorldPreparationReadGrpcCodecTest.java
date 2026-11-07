@@ -359,6 +359,34 @@ class PrivateWorldPreparationReadGrpcCodecTest {
   }
 
   @Test
+  void malformedSourceTimestampsAndPolicyRemainCallerFrameErrors() {
+    var snapshot = snapshot();
+    var request = request(snapshot);
+    var wire = PrivateWorldPreparationReadGrpcCodec.toResponse(request, snapshot);
+    // ABSENT selection: selectedAt, createdAt, forkExpiresAt and final observedAt.
+    for (int frame : new int[] {6, 15, 16, frameCount(wire.getCanonicalEvidence()) - 1}) {
+      assertThatThrownBy(
+              () ->
+                  PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                      request,
+                      wire.toBuilder()
+                          .setCanonicalEvidence(
+                              replaceFrame(wire.getCanonicalEvidence(), frame, "not-an-instant"))
+                          .build()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    // RealmEntryPolicy already normalizes malformed JSON at its parsing boundary.
+    assertThatThrownBy(
+            () ->
+                PrivateWorldPreparationReadGrpcCodec.fromResponse(
+                    request,
+                    wire.toBuilder()
+                        .setCanonicalEvidence(replaceFrame(wire.getCanonicalEvidence(), 36, "{"))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void stableComparisonExcludesOnlyObservationAndCorrelationAndExpiryNeverBecomesReadiness() {
     var snapshot = snapshot();
     var later =

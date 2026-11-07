@@ -324,7 +324,12 @@ public final class PrivateWorldPreparationReadGrpcCodec {
   }
 
   private static Instant instant(String text) {
-    Instant value = Instant.parse(text);
+    final Instant value;
+    try {
+      value = Instant.parse(text);
+    } catch (java.time.DateTimeException malformed) {
+      throw invalid();
+    }
     if (!value.toString().equals(text)) throw invalid();
     return value;
   }
