@@ -441,7 +441,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             logoutAllOperations,
             securityStateOperations,
             resetSourceChanges,
-            null, // Connect scopes are not used by credential/reset owner tests.
+            null, // Account audit outbox is not used by credential/reset owner tests.
             null, // JOIN operations are not used by credential/reset owner tests.
             challenges,
             null, // Realm grants are not used by primary authentication.
@@ -459,7 +459,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             null, // Email delivery is not used by primary authentication.
             null, // Mail properties are not used by primary authentication.
             null, // Token properties are not used by primary authentication.
-            null, // Entity Management client is not used by primary authentication.
+            null, // JWT auth properties are not used by primary authentication.
             null, // JWT utility is not used by primary authentication.
             null, // Session service is not used by primary authentication.
             manager);

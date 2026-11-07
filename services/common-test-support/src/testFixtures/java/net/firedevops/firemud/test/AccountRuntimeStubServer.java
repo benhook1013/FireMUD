@@ -361,13 +361,6 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
                       .setCode("INVALID_ARGUMENT")
                       .setMessage("Direct-text JOIN request is incomplete"))
               .build());
-    } else if (!allowPublicJoin.get()) {
-      responseObserver.onNext(
-          JoinPublicProductionMembershipResponse.newBuilder()
-              .setOutcomeCode("PUBLIC_PRODUCTION_ADMISSION_DENIED")
-              .setAccountId(caller.getAccountId())
-              .setTenantId(caller.getTenantId())
-              .build());
     } else if ("ACTIVE".equals(membershipLifecycleState.get())) {
       responseObserver.onNext(
           JoinPublicProductionMembershipResponse.newBuilder()
@@ -380,7 +373,15 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .setMembershipAuthorityGeneration(membershipAuthorityGeneration.get())
               .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
               .build());
+    } else if (!allowPublicJoin.get()) {
+      responseObserver.onNext(
+          JoinPublicProductionMembershipResponse.newBuilder()
+              .setOutcomeCode("PUBLIC_PRODUCTION_ADMISSION_DENIED")
+              .setAccountId(caller.getAccountId())
+              .setTenantId(caller.getTenantId())
+              .build());
     } else {
+      long joinedMembershipVersion = membershipVersion.incrementAndGet();
       membershipLifecycleState.set("ACTIVE");
       gameplayAdmissionAllowed.set(true);
       responseObserver.onNext(
@@ -390,7 +391,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .setAccountId(caller.getAccountId())
               .setTenantId(caller.getTenantId())
               .setMembershipId("1")
-              .setMembershipVersion(membershipVersion.get())
+              .setMembershipVersion(joinedMembershipVersion)
               .setMembershipAuthorityGeneration(membershipAuthorityGeneration.get())
               .setGameplayAdmissionAllowed(true)
               .build());

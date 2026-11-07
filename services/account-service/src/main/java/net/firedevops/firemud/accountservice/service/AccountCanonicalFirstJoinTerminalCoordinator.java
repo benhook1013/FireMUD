@@ -145,6 +145,9 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
     CanonicalJoinOperationEvidence operation =
         joinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId).orElseThrow();
     requireExactOperation(operation, account.getId(), scope, requestId, callerBinding);
+    if ("COMMITTED".equals(operation.status())) {
+      return operation;
+    }
     AccountTenantMembership membership =
         membershipRepository
             .findFreshMembershipForUpdate(scope.accountId(), scope.tenantId())
@@ -179,13 +182,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
         pairAuthorityRepository.readForUpdate(scope.accountId(), scope.tenantId()).orElseThrow();
     String outcome;
     Checkpoint checkpoint;
-    if ("COMMITTED".equals(operation.status())) {
-      outcome = operation.outcome();
-      checkpoint =
-          authorityOutboxRepository
-              .readCheckpoint(operation.terminalProof().eventStreamKey())
-              .orElseThrow();
-    } else if ("ACTIVE".equals(membership.getLifecycleState())) {
+    if ("ACTIVE".equals(membership.getLifecycleState())) {
       outcome = "ALREADY_ACTIVE";
       checkpoint =
           authorityOutboxRepository

@@ -7,8 +7,10 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.TransitionResult;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -44,12 +46,23 @@ public final class AccountHostingSubscriptionProvisioningService {
     requireUuid(dispatchId);
     requireUuid(lifecycleRequestId);
     requireNoAmbientTransaction();
-    var prepared =
-        Objects.requireNonNull(
-            transaction.execute(status -> repository.prepareProviderDispatch(claim, dispatchId)));
-    var dispatch =
-        Objects.requireNonNull(
-            transaction.execute(status -> repository.readProviderDispatch(prepared)));
+    ProviderDispatch dispatch;
+    try {
+      var prepared =
+          Objects.requireNonNull(
+              transaction.execute(status -> repository.prepareProviderDispatch(claim, dispatchId)));
+      dispatch =
+          Objects.requireNonNull(
+              transaction.execute(status -> repository.readProviderDispatch(prepared)));
+    } catch (FenceRejectedException refused) {
+      // Dispatch remains strictly fenced. A new local transaction may only settle the same retained
+      // work; stale/current-owner/reservation mismatches still reject there before any write.
+      Disposition disposition =
+          Objects.requireNonNull(transaction.execute(status -> repository.deferUnresolved(claim)));
+      return new Pending(
+          disposition,
+          new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null));
+    }
     requireNoAmbientTransaction();
     var located = provider.provision(dispatch);
     if (!(located instanceof StripeHostingSubscriptionProvisioner.Located actual)) {

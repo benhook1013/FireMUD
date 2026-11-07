@@ -56,6 +56,63 @@ from smoke_common import (
     run_websocket_smoke_session,
 )
 
+# Typed evidence is command-local and requires successful LOGIN, not log matching.
+class ClassificationSocket:
+    def settimeout(self, timeout):
+        pass
+
+    def send(self, command):
+        pass
+
+
+for label, command, response, prior, expected_type in [
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.PlayEntitlementUnavailable),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.PlayEntitlementUnavailable),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE extra", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly. more", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.\n", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Another message.", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "LOOK demo", "ERROR ENTITLEMENT_UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
+    ("LOGIN", "LOGIN user secret", "ERROR ENTITLEMENT_UNAVAILABLE", [], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE", [], smoke_common.ExplicitProtocolFailure),
+    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE", [{"label": "LOGIN", "response": "ERROR LOGIN"}], smoke_common.ExplicitProtocolFailure),
+]:
+    with patch.object(smoke_common, "wait_for_incremental_response", side_effect=smoke_common.ExplicitProtocolFailure(response)):
+        try:
+            smoke_common.send_websocket_command_and_expect(
+                ClassificationSocket(), [], command, ["OK " + label], label, 1, step_results=prior
+            )
+        except Exception as exc:
+            assert type(exc) is expected_type, (label, response, type(exc), expected_type)
+        else:
+            raise AssertionError("Protocol failure was concealed")
+
+
+# Execute the actual held branch with disposable probe commands: prerequisite
+# failure must prevent classification, and no failed probe becomes success.
+held_branch_source = (root / "dev-tools/verify-smoke-images.sh").read_text().split(
+    '  run_held_admission_qualification "${COMPOSE_FILES[@]}"', 1
+)[1]
+held_branch, closing_marker, trailing = held_branch_source.rpartition("\nfi\n")
+assert closing_marker and not trailing.strip(), "Held smoke branch closing marker changed"
+assert held_branch.strip() and "WS_SMOKE_SCRIPT" in held_branch
+with tempfile.TemporaryDirectory() as directory:
+    probe = Path(directory) / "probe.sh"
+    output = Path(directory) / "output"
+    for qualification_status, probe_status in [(0, 86), (1, 86), (0, 1), (0, 0)]:
+        probe.write_text(f"exit {probe_status}\n")
+        output.write_text("")
+        code = (
+            f"WS_SMOKE_SCRIPT={probe}; GITHUB_OUTPUT={output}; "
+            f"run_held_admission_qualification() {{ return {qualification_status}; }}; "
+            'run_held_admission_qualification;\n' + held_branch
+        )
+        result = subprocess.run(["bash", "-e", "-c", code], capture_output=True, text=True, check=False)
+        assert result.returncode == (qualification_status or probe_status), result
+        assert bool(output.read_text()) == (qualification_status == 0 and probe_status == 86)
+
+
 assert held_admission.format_success_message() == (
     "Held-admission edge qualification passed. It proves Gateway/Telnet denial only; "
     "the direct backend positive proof is separate. Successful public Gateway/Telnet "
@@ -1822,6 +1879,28 @@ else:
     raise AssertionError("close OSError unexpectedly retried")
 assert len(close_failure_attempts) == 1
 assert close_failure_attempts[0].closed is True
+
+
+known_play_failure = smoke_common.PlayEntitlementUnavailable("ERROR ENTITLEMENT_UNAVAILABLE")
+
+
+def raise_known_play_failure(_session):
+    raise known_play_failure
+
+
+try:
+    run_transport_session(
+        open_close_failure_session,
+        raise_known_play_failure,
+        "known PLAY close failure session",
+    )
+except smoke_common.ProbeOperationalFailure as exc:
+    assert type(exc) is smoke_common.ProbeOperationalFailure
+    assert "Failed to close known PLAY close failure session" in str(exc)
+    assert isinstance(exc.__cause__, OSError)
+    assert str(exc.__cause__) == "close failed"
+else:
+    raise AssertionError("A failed transport close must not qualify the PLAY exception")
 
 
 class FakeHttpResponse:
