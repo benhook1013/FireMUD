@@ -609,9 +609,15 @@ class InitialGameplayLoginContextRedisIntegrationTest {
                   .isEqualTo(original.callerContextId().toString());
               return receipt;
             });
-    var owner = cleanup(client(provider, authority, 1), account);
+    // This positive closure proof allows replica fsync under shared-runner load.
+    // Insufficient-acknowledgement cases retain their separate short failure deadline.
+    var owner =
+        cleanup(
+            client(provider, authority, new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000)),
+            account);
     owner.reserve(original);
     assertThat(owner.abandonAndRetire(original).status())
+        .as("physical cleanup closure observations: %s", provider.traces)
         .isEqualTo(InitialGameplayLoginCleanupOwner.Status.ACCOUNT_RETIRED);
     assertThat(authority.active).isFalse();
     authority.condition = "unavailable";

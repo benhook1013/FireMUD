@@ -199,7 +199,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       probeCurrent.validate();
       assertThat(probeCurrent.info().pending()).isEmpty();
 
-      assertThat(latestVersion(upgradeDsl)).isEqualTo("1047");
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1048");
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(latestVersion(probeDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(migrationHistory(upgradeDsl, "1012")).isEqualTo(history1012Before);

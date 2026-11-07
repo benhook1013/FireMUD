@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
@@ -13,6 +14,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class WorldCanonicalInstanceActivationService {
   private final WorldCanonicalInstanceActivationRepository repository;
+  private final WorldRuntimeInstallationRegistry installationRegistry;
 
   /**
    * Production-safe default: request-only transports cannot start activation without the distinct
@@ -21,6 +23,7 @@ public final class WorldCanonicalInstanceActivationService {
   public WorldCanonicalInstanceActivationService(
       WorldCanonicalInstanceActivationRepository repository) {
     this.repository = Objects.requireNonNull(repository, "repository");
+    this.installationRegistry = null;
   }
 
   /**
@@ -31,7 +34,17 @@ public final class WorldCanonicalInstanceActivationService {
   public WorldCanonicalInstanceActivationService(
       WorldCanonicalInstanceActivationRepository repository, ActivationAuthorityVerifier ignored) {
     this.repository = Objects.requireNonNull(repository, "repository");
+    this.installationRegistry = null;
     Objects.requireNonNull(ignored, "verifier");
+  }
+
+  /** Explicit protected installation composition; creates no registered activation route. */
+  public WorldCanonicalInstanceActivationService(
+      WorldCanonicalInstanceActivationRepository repository,
+      WorldRuntimeInstallationRegistry installationRegistry) {
+    this.repository = Objects.requireNonNull(repository, "repository");
+    this.installationRegistry =
+        Objects.requireNonNull(installationRegistry, "installationRegistry");
   }
 
   /**
@@ -61,8 +74,16 @@ public final class WorldCanonicalInstanceActivationService {
     requireNoActiveTransaction();
     try (held) {
       held.requireHeld();
+      var retained = repository.readTerminalEvidence(protection);
+      if (retained.isPresent()) {
+        held.requireHeld();
+        return retained.orElseThrow();
+      }
+      requireInstallationRegistry();
       WorldOriginalStartSessionActivationTerminalEvidence terminal =
-          repository.activateProtected(protection, held);
+          installationRegistry.withLaunchOwners(
+              protection.request().worldActivationRequest().canonicalGameInstanceId(),
+              () -> repository.activateProtected(protection, held));
       held.requireHeld();
       return terminal;
     }
@@ -88,6 +109,21 @@ public final class WorldCanonicalInstanceActivationService {
     Objects.requireNonNull(protection, "protection");
     requireNoActiveTransaction();
     return repository.abortProtected(protection, terminalCode);
+  }
+
+  /**
+   * Read-only early refusal; the held installation check at actual commit remains authoritative.
+   */
+  void preflightInstallationRegistry(UUID gameInstanceId) {
+    requireInstallationRegistry();
+    installationRegistry.preflightLaunchOwners(gameInstanceId);
+  }
+
+  /** Rejects missing composition before the orchestrator acquires durable Account protection. */
+  void requireInstallationRegistry() {
+    if (installationRegistry == null) {
+      throw new ActivationDeniedException("Protected current-installation registry is unavailable");
+    }
   }
 
   private static void requireNoActiveTransaction() {

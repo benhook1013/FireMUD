@@ -22,6 +22,10 @@ The following tools are not strictly required to build or run the stack, but the
 - **Redis CLI (`redis-cli`)** and **RedisInsight** – useful for inspecting transient gameplay/session state in the local Redis instance and browsing keys like `session:*`, `tick:*`, and `timer:*`.
 - **Kubernetes CLI (`kubectl`)** and optionally **Helm** – install `kubectl` if you work on `k8s/`, Kustomize overlays, or overlay validation CI. Local validation uses `kubectl kustomize`, so this is effectively required for Kubernetes-related changes.
 
+## Game Design Cross-Service Checks
+
+Local `:game-design-service:crossServiceTest` and `:game-design-service:check` runs require `python3` and PyYAML because the owner-composition test launches the runtime installation inventory producer. From the repository root, activate a Python virtual environment and install the existing pinned YAML profile with `python3 -m pip install --require-hashes -r config/python/yaml-requirements.txt`. Keep that environment active when invoking the [canonical Gradle wrapper](design/developer-workflows/validation-and-runtime-proof.md#local-gradle-execution), so the test can find `python3` and its dependencies. CI installs the same YAML profile through the repository setup action.
+
 ## Windows + WSL Tooling
 
 If you develop from Windows, prefer running build and package-management tools inside WSL with Linux-native toolchains.

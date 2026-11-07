@@ -12,13 +12,16 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -99,8 +102,27 @@ class WorldCanonicalInstanceActivationServiceTest {
   @Test
   void protectedOperationHoldsItsDistinctAuthorityAroundTheOwnerCas() {
     var repository = mock(WorldCanonicalInstanceActivationRepository.class);
-    var protection = mock(AccountStartSessionActivationProtectionEvidence.class);
+    var protection =
+        mock(
+            AccountStartSessionActivationProtectionEvidence.class,
+            org.mockito.Mockito.RETURNS_DEEP_STUBS);
     var terminal = mock(WorldOriginalStartSessionActivationTerminalEvidence.class);
+    UUID gameInstanceId = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    when(protection.request().worldActivationRequest().canonicalGameInstanceId())
+        .thenReturn(gameInstanceId);
+    var installation = mock(WorldRuntimeInstallationRegistry.class);
+    var installationHeld = new AtomicBoolean();
+    when(installation.withLaunchOwners(eq(gameInstanceId), any()))
+        .thenAnswer(
+            call -> {
+              Supplier<?> owner = call.getArgument(1);
+              installationHeld.set(true);
+              try {
+                return owner.get();
+              } finally {
+                installationHeld.set(false);
+              }
+            });
     var heldChecks = new AtomicInteger();
     var closed = new java.util.concurrent.atomic.AtomicBoolean();
     var held =
@@ -115,14 +137,57 @@ class WorldCanonicalInstanceActivationServiceTest {
             closed.set(true);
           }
         };
-    when(repository.activateProtected(eq(protection), any())).thenReturn(terminal);
-    var service = new WorldCanonicalInstanceActivationService(repository);
+    when(repository.readTerminalEvidence(protection)).thenReturn(Optional.empty());
+    when(repository.activateProtected(eq(protection), any()))
+        .thenAnswer(
+            call -> {
+              assertThat(installationHeld).isTrue();
+              assertThat(closed).isFalse();
+              return terminal;
+            });
+    var service = new WorldCanonicalInstanceActivationService(repository, installation);
 
     assertThat(service.activateProtected(protection, held)).isSameAs(terminal);
 
     assertThat(heldChecks).hasValue(2);
     assertThat(closed.get()).isTrue();
+    assertThat(installationHeld).isFalse();
+    verify(installation).withLaunchOwners(eq(gameInstanceId), any());
     verify(repository).activateProtected(eq(protection), eq(held));
+  }
+
+  @Test
+  void protectedFreshOperationWithoutInstallationRefusesBeforeTheOwnerCasAndClosesLocalHold() {
+    var repository = mock(WorldCanonicalInstanceActivationRepository.class);
+    var protection = mock(AccountStartSessionActivationProtectionEvidence.class);
+    var held = mock(WorldCanonicalInstanceActivationService.HeldActivationAuthority.class);
+    when(repository.readTerminalEvidence(protection)).thenReturn(Optional.empty());
+    var service = new WorldCanonicalInstanceActivationService(repository);
+
+    assertThatThrownBy(() -> service.activateProtected(protection, held))
+        .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class)
+        .hasMessageContaining("current-installation registry is unavailable");
+
+    verify(repository).readTerminalEvidence(protection);
+    verify(repository, never()).activateProtected(any(), any());
+    verify(held).requireHeld();
+    verify(held).close();
+  }
+
+  @Test
+  void exactProtectedTerminalReplaysWithoutCurrentInstallationOrAnotherCas() {
+    var repository = mock(WorldCanonicalInstanceActivationRepository.class);
+    var protection = mock(AccountStartSessionActivationProtectionEvidence.class);
+    var held = mock(WorldCanonicalInstanceActivationService.HeldActivationAuthority.class);
+    var terminal = mock(WorldOriginalStartSessionActivationTerminalEvidence.class);
+    when(repository.readTerminalEvidence(protection)).thenReturn(Optional.of(terminal));
+    var service = new WorldCanonicalInstanceActivationService(repository);
+
+    assertThat(service.activateProtected(protection, held)).isSameAs(terminal);
+
+    verify(repository, never()).activateProtected(any(), any());
+    verify(held, org.mockito.Mockito.times(2)).requireHeld();
+    verify(held).close();
   }
 
   private static WorldCanonicalInstanceActivation.Request request() {
