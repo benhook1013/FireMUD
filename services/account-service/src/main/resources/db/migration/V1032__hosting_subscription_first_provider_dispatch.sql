@@ -42,8 +42,9 @@ DECLARE
 BEGIN
     SELECT * INTO STRICT creation FROM subscription_create_operations WHERE request_id = NEW.creation_request_id;
     PERFORM 1 FROM accounts WHERE account_uuid = creation.account_uuid FOR UPDATE;
-    SELECT * INTO STRICT instrument FROM payment_instrument WHERE instrument_uuid = creation.payment_instrument_id FOR UPDATE;
+    -- Match the canonical Account -> customer -> instrument acquisition order.
     SELECT * INTO STRICT customer FROM billing_customer WHERE account_uuid = creation.account_uuid FOR UPDATE;
+    SELECT * INTO STRICT instrument FROM payment_instrument WHERE instrument_uuid = creation.payment_instrument_id FOR UPDATE;
     SELECT * INTO STRICT current_row FROM subscription WHERE subscription_id = creation.subscription_id FOR UPDATE;
     SELECT * INTO STRICT work FROM subscription_provisioning_work WHERE request_id = creation.request_id FOR UPDATE;
     SELECT * INTO STRICT attempt FROM subscription_provisioning_attempts WHERE attempt_id = NEW.first_attempt_id;
