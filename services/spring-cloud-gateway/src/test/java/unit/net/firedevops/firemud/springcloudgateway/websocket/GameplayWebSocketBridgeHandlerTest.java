@@ -24,12 +24,15 @@ import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeP
 import net.firedevops.firemud.springcloudgateway.filter.VerifiedTcpProxyOrigin;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscription;
 import org.slf4j.MDC;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.HandshakeInfo;
@@ -198,6 +201,56 @@ class GameplayWebSocketBridgeHandlerTest {
         .isEqualTo(connectionId.toString());
     assertThat(forwarded.getValue().getFirst("X-Firemud-Connection-Mode"))
         .isEqualTo("trusted_tcp_proxy");
+  }
+
+  @Test
+  @ExtendWith(OutputCaptureExtension.class)
+  void missingAuthenticatedClientWarnsOnceWithoutConnectionDetailsAndKeepsFailClosed(
+      CapturedOutput output) {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 1, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+    VerifiedTcpProxyOrigin origin = mock(VerifiedTcpProxyOrigin.class);
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
+    headers.set("X-Firemud-Transport-Session-Id", "private-transport-session");
+    headers.set("X-Firemud-Connect-Context", "private-connect-context");
+    headers.set(HttpHeaders.AUTHORIZATION, "Bearer private-credential");
+    headers.set(HttpHeaders.COOKIE, "private-cookie");
+
+    for (int attempt = 0; attempt < 10; attempt++) {
+      WebSocketSession downstream = mock(WebSocketSession.class);
+      HandshakeInfo handshake = mock(HandshakeInfo.class);
+      when(downstream.getId()).thenReturn("private-downstream-session");
+      when(downstream.getAttributes())
+          .thenReturn(Map.of(VerifiedTcpProxyOrigin.class.getName(), origin));
+      when(downstream.getHandshakeInfo()).thenReturn(handshake);
+      when(handshake.getHeaders()).thenReturn(headers);
+      when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.empty());
+
+      StepVerifier.create(handler.handle(downstream)).verifyComplete();
+
+      verify(downstream).close(new CloseStatus(1013, "backend_unavailable"));
+      verify(downstream, never()).send(any());
+      verify(downstream, never()).receive();
+    }
+
+    verify(client, never())
+        .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+    assertThat(output.getAll())
+        .containsOnlyOnce("no authenticated gameplay upstream client is configured")
+        .contains("firemud.gateway.gameplay.bridge.authenticated-upstream-url")
+        .doesNotContain(
+            "private-transport-session",
+            "private-connect-context",
+            "private-credential",
+            "private-cookie",
+            "private-downstream-session");
   }
 
   @Test
