@@ -354,7 +354,7 @@ paths:
             schema: {type: string, description: 'Exact raw signed JSON bytes, at most 262144 UTF-8 bytes'}
       responses:
         '200': {description: Original Account completion state; no-store}
-        '400': {description: Missing, ambiguous, malformed or invalid signed event}
+        '400': {description: 'Missing, ambiguous, malformed or invalid signed event'}
         '401': {description: Actual HTTPS required}
         '409': {description: Exact retained event or billing evidence refused}
         '413': {description: Event body exceeds the bound}
