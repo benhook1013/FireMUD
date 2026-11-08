@@ -51,30 +51,46 @@ if [[ ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" ) 
   CHECK_ARGS+=("-PslowServiceCiPartitionModule=$MODULE" "-PslowServiceCiPartition=$PARTITION")
 fi
 
+# Controlled Account CI reliability experiment: serialize the complete selected check.
+# Existing integrationTest logic then uses one fork; preparation and other modules stay at two.
+# This does not establish the cause of the observed parallel test-dispatch shutdown wait.
+CHECK_WORKERS=2
+if [[ "$MODULE" == "account-service" && "$PARTITION" != "full" ]]; then
+  CHECK_WORKERS=1
+fi
+readonly CHECK_WORKERS
+
 # Keep the original recovery policy and complete check; diagnostics never retry it.
 CHECK_LOG="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/firemud-module-check.XXXXXX")" || CHECK_LOG=""
 readonly CHECK_LOG
 trap 'rm -f -- "$CHECK_LOG"' EXIT
 if [[ -z "$CHECK_LOG" ]]; then
+  printf 'FIREMUD_STALL_ACTIVATION status=disabled-capture-unavailable\n' >&2
   echo "Compile-failure log unavailable; running the original check without capture" >&2
   exec bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
     --runner "$ROOT_DIR/gradlew" -- \
-    --max-workers=2 \
+    --max-workers="$CHECK_WORKERS" \
     '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
     ":${MODULE}:check" "${CHECK_ARGS[@]}" --profile
 fi
 declare -a CAPTURE_ARGS=()
+stall_activation=disabled-scope
 # Observe Account's stalled forks only on an isolated hosted Linux runner.
 if [[ "$MODULE" == "account-service" && "$PARTITION" != "full" &&
   "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
   "${RUNNER_OS:-}" == Linux ]]; then
   CAPTURE_ARGS+=(--root "$ROOT_DIR" --stall-output
     "$ROOT_DIR/build/reports/gradle-stall/$MODULE/partition-$PARTITION")
+  stall_activation=enabled
+elif [[ "$MODULE" == "account-service" && "$PARTITION" != "full" ]]; then
+  stall_activation=disabled-runner-guard
 fi
+# Fixed reason only: do not print environment values or invocation arguments.
+printf 'FIREMUD_STALL_ACTIVATION status=%s\n' "$stall_activation" >&2
 set +e
 bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
   --runner "$ROOT_DIR/gradlew" -- \
-  --max-workers=2 \
+  --max-workers="$CHECK_WORKERS" \
   '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
   ":${MODULE}:check" \
   "${CHECK_ARGS[@]}" \
