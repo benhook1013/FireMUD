@@ -135,12 +135,13 @@ class DirectTextAuthenticatedLobbyTest {
         .isEqualTo(response);
   }
 
-  @Test
-  void alreadyActiveNonAdmittingMembershipIsRetainedAsAnExactNonAdmissionReceipt() {
+  @ParameterizedTest
+  @ValueSource(strings = {"JOINED", "ALREADY_ACTIVE"})
+  void nonAdmittingMembershipIsRetainedAsAnExactNonAdmissionReceipt(String outcome) {
     var f = new Fixture();
     var response =
         positive().toBuilder()
-            .setOutcomeCode("ALREADY_ACTIVE")
+            .setOutcomeCode(outcome)
             .setGameplayAdmissionAllowed(false)
             .setMembershipVersion(8L)
             .setMembershipAuthorityGeneration(4L)
@@ -152,16 +153,11 @@ class DirectTextAuthenticatedLobbyTest {
     assertThat(response.getGameplayAdmissionAllowed()).isFalse();
     assertThat(response.getMembershipVersion()).isEqualTo(8L);
     assertThat(response.getMembershipAuthorityGeneration()).isEqualTo(4L);
-  }
-
-  @Test
-  void joinedReceiptCannotClaimSuccessWithoutGameplayAdmission() {
-    var f = new Fixture();
-    var response = positive().toBuilder().setGameplayAdmissionAllowed(false).build();
-
-    assertThatThrownBy(
-            () -> DirectTextAuthenticatedLobbyJoin.decodeReply(f.scope, response.toByteArray()))
-        .isInstanceOf(IllegalArgumentException.class);
+    var completed =
+        new DirectTextAuthenticatedLobbyJoin(
+            f.scope, f.frozen.request(), State.COMPLETED, Optional.of(response));
+    assertThat(completed.reply()).contains(response);
+    assertThat(completed.reply().orElseThrow().getGameplayAdmissionAllowed()).isFalse();
   }
 
   @Test

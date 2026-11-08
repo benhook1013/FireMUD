@@ -445,22 +445,13 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     f.transport().emptySearchesRemaining = 1;
     f.clock().advance(Duration.ofSeconds(2));
     var second = claim(f, first.subscriptionRowVersion());
-    var delayed =
-        (AccountHostingSubscriptionProvisioningService.Pending)
-            service(f).provision(second, UUID.randomUUID(), UUID.randomUUID());
-    assertThat(delayed.disposition()).isEqualTo(Disposition.WAITING);
-    assertThat(delayed.providerResult())
-        .isEqualTo(
-            new StripeHostingSubscriptionProvisioner.Pending("PROVIDER_LOOKUP_UNRESOLVED", null));
-    assertThat(f.transport().creates).isEqualTo(1);
-    f.clock().advance(Duration.ofSeconds(2));
-    var third = claim(f, second.subscriptionRowVersion());
     var result =
         (AccountHostingSubscriptionProvisioningService.Committed)
-            service(f).provision(third, UUID.randomUUID(), UUID.randomUUID());
+            service(f).provision(second, UUID.randomUUID(), UUID.randomUUID());
     assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(f.transport().creates).isEqualTo(1);
-    assertThat(f.transport().searches).isEqualTo(3);
+    assertThat(f.transport().searches).isEqualTo(2);
+    assertThat(f.transport().lists).isEqualTo(1);
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isOne();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
   }
@@ -478,6 +469,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
     assertThat(f.transport().exists).isTrue();
     f.transport().emptySearchesRemaining = 2;
+    f.transport().emptyListsRemaining = 2;
     ProvisioningClaim previous = first;
     for (int attempt = 2; attempt <= 3; attempt++) {
       f.clock().advance(Duration.ofSeconds(2));
@@ -503,6 +495,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(retry.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
     assertThat(retry.claim()).isNull();
     assertThat(f.transport().searches).isEqualTo(3);
+    assertThat(f.transport().lists).isEqualTo(2);
     assertThat(f.transport().creates).isEqualTo(1);
     var current =
         Objects.requireNonNull(
@@ -1059,7 +1052,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     private boolean loseCreateResponse;
     private Runnable duringCreate;
     private int emptySearchesRemaining;
+    private int emptyListsRemaining;
     private int searches;
+    private int lists;
     private int creates;
     private int subscriptionReads;
 
@@ -1113,6 +1108,19 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         }
         response =
             "{\"object\":\"search_result\",\"has_more\":false,\"data\":["
+                + (visible ? subscription() : "")
+                + "]}";
+      } else if ("/v1/subscriptions".equals(path) && method == RequestMethod.GET) {
+        lists++;
+        assertThat(params)
+            .containsEntry("customer", creation.providerCustomerId())
+            .containsEntry("status", "all");
+        boolean visible = exists && emptyListsRemaining == 0;
+        if (emptyListsRemaining > 0) {
+          emptyListsRemaining--;
+        }
+        response =
+            "{\"object\":\"list\",\"has_more\":false,\"data\":["
                 + (visible ? subscription() : "")
                 + "]}";
       } else if (path.equals("/v1/subscriptions") && method == RequestMethod.POST) {
