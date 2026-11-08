@@ -150,12 +150,12 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
 
     assertThat(f.worlds.listWorlds(f.token))
         .containsExactly(
-            new BootstrapWorldDto("alpha", "World alpha"),
-            new BootstrapWorldDto("zulu", "World zulu"));
+            new BootstrapWorldDto(alpha.target().tenantSlug(), "alpha", "World alpha"),
+            new BootstrapWorldDto(zulu.target().tenantSlug(), "zulu", "World zulu"));
     assertThat(f.worlds.listWorlds(f.token))
         .containsExactly(
-            new BootstrapWorldDto("alpha", "World alpha"),
-            new BootstrapWorldDto("zulu", "World zulu"));
+            new BootstrapWorldDto(alpha.target().tenantSlug(), "alpha", "World alpha"),
+            new BootstrapWorldDto(zulu.target().tenantSlug(), "zulu", "World zulu"));
 
     assertThat(f.snapshot()).isEqualTo(before);
     assertThat(f.inTransaction(() -> f.sources.readCurrentSourceSelection(alpha.tenantId()).kind()))

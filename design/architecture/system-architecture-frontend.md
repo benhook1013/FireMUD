@@ -170,9 +170,9 @@ POST /auth/player-bootstrap
 
 GET /auth/bootstrap/worlds
 Authorization: Bearer <bootstrapToken>
--> [{ worldSlug: "demo", displayName: "Demo World" }]  # abbreviated world list; full realm snapshot follows
+-> [{ tenantSlug: "demo", worldSlug: "demo", displayName: "Demo World" }]  # abbreviated world list; full realm snapshot follows
 
-GET /auth/bootstrap/worlds/demo/realms
+GET /auth/bootstrap/worlds/demo/realms?tenantSlug=demo
 Authorization: Bearer <bootstrapToken>
 -> [{
    worldSlug: "demo",

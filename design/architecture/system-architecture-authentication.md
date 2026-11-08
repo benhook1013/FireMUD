@@ -418,9 +418,9 @@ POST /auth/player-bootstrap
 
 GET /auth/bootstrap/worlds
 Authorization: Bearer <bootstrapToken>
--> [{ worldSlug: "demo", displayName: "Demo World" }]  # abbreviated world list; full realm snapshot follows
+-> [{ tenantSlug: "demo", worldSlug: "demo", displayName: "Demo World" }]  # abbreviated world list; full realm snapshot follows
 
-GET /auth/bootstrap/worlds/demo/realms
+GET /auth/bootstrap/worlds/demo/realms?tenantSlug=demo
 Authorization: Bearer <bootstrapToken>
 -> [{
      worldSlug: "demo",
@@ -465,9 +465,9 @@ POST /auth/player-bootstrap
 
 GET /auth/bootstrap/worlds
 Authorization: Bearer <bootstrapToken>
--> [{ worldSlug: "emberfall", displayName: "Emberfall" }]  # abbreviated world list; full realm snapshot follows
+-> [{ tenantSlug: "emberfall-studio", worldSlug: "emberfall", displayName: "Emberfall" }]  # abbreviated world list; full realm snapshot follows
 
-GET /auth/bootstrap/worlds/emberfall/realms
+GET /auth/bootstrap/worlds/emberfall/realms?tenantSlug=emberfall-studio
 Authorization: Bearer <bootstrapToken>
 -> [{
      worldSlug: "emberfall",
@@ -488,7 +488,7 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
 -> { tenantId: "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40", membershipExists: true, membershipLifecycleState: "ACTIVE", roles: ["player"], gameplayAdmissionAllowed: true, membershipAuthorityGeneration: 8, membershipVersion: 1, authorityTuple: { issuerAuthGeneration: 7, accountAuthorityGeneration: 12, tenantAuthorityGeneration: { "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40": 4 }, membershipAuthorityGeneration: { "e14f2d0c-8b7a-4f26-9c51-6a3d7e8b2c40": 8 }, privateRealmGrantVersions: [] }, evaluatedAt: "2026-08-02T00:00:00Z", outboxCheckpoints: [{ outboxStreamKey: "account:auth-authority:v1:membership/<accountId>/<tenantId>", outboxSequence: 1 }], joined: true }
 
-GET /auth/bootstrap/worlds/emberfall/realms
+GET /auth/bootstrap/worlds/emberfall/realms?tenantSlug=emberfall-studio
 Authorization: Bearer <bootstrapToken>
 -> [{
      worldSlug: "emberfall",
@@ -548,9 +548,9 @@ POST /auth/player-bootstrap
 
 GET /auth/bootstrap/worlds
 Authorization: Bearer <bootstrapToken>
--> [{ worldSlug: "demo", displayName: "Demo World" }]  # abbreviated world list; full realm snapshot follows
+-> [{ tenantSlug: "demo", worldSlug: "demo", displayName: "Demo World" }]  # abbreviated world list; full realm snapshot follows
 
-GET /auth/bootstrap/worlds/demo/realms
+GET /auth/bootstrap/worlds/demo/realms?tenantSlug=demo
 Authorization: Bearer <bootstrapToken>
 -> [
      {
