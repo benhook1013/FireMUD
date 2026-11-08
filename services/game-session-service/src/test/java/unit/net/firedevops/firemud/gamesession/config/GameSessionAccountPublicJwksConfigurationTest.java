@@ -9,9 +9,14 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPublicKey;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
@@ -23,12 +28,15 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceCustodyRejectedException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.TrustedPublicJwksSource;
 import net.firedevops.firemud.gamesession.service.AccountPublicJwksReadClient;
 import net.firedevops.firemud.gamesession.service.GameSessionAccountPublicJwksSource;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class GameSessionAccountPublicJwksConfigurationTest {
@@ -187,5 +195,91 @@ class GameSessionAccountPublicJwksConfigurationTest {
       refresh.close();
       verify(scheduler).shutdownNow();
     }
+  }
+
+  @Test
+  void terminalSourceRejectionLatchesCacheAndLogsOneFixedErrorWithoutEvidence() {
+    var source = mock(TrustedPublicJwksSource.class);
+    when(source.load()).thenThrow(new SourceCustodyRejectedException());
+    SourceIdentity identity =
+        new SourceIdentity(
+            "test",
+            "cluster",
+            "11111111-1111-4111-8111-111111111111",
+            "test",
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333",
+            "revision-1",
+            "https://kubernetes.example:6443",
+            "a".repeat(64));
+    var cache =
+        new AccountPublicJwksCache(source, identity, Clock.systemUTC(), Duration.ofSeconds(2));
+    var scheduler = mock(ScheduledExecutorService.class);
+    var task = ArgumentCaptor.forClass(Runnable.class);
+    Logger logger =
+        (Logger)
+            LoggerFactory.getLogger(
+                GameSessionAccountPublicJwksConfiguration.PublicJwksRefresh.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+
+    try (var refresh =
+        new GameSessionAccountPublicJwksConfiguration.PublicJwksRefresh(
+            cache, Duration.ofSeconds(2), scheduler)) {
+      verify(scheduler)
+          .scheduleWithFixedDelay(task.capture(), eq(1000L), eq(1000L), eq(TimeUnit.MILLISECONDS));
+      task.getValue().run();
+      task.getValue().run();
+      verify(source).load();
+      assertThat(appender.list).hasSize(1);
+      var event = appender.list.getFirst();
+      assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+      assertThat(event.getFormattedMessage())
+          .isEqualTo(
+              "Account public JWKS cache refused until explicit requalification: SOURCE_REJECTED");
+      assertThat(event.getArgumentArray()).isNullOrEmpty();
+      assertThat(event.getThrowableProxy()).isNull();
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
+    verify(scheduler).shutdownNow();
+  }
+
+  @Test
+  void transientSourceUnavailabilityLogsSeparatelyAndAllowsNextRefresh() {
+    var cache = mock(AccountPublicJwksCache.class);
+    doThrow(new SourceUnavailableException()).doNothing().when(cache).refresh();
+    var scheduler = mock(ScheduledExecutorService.class);
+    var task = ArgumentCaptor.forClass(Runnable.class);
+    Logger logger =
+        (Logger)
+            LoggerFactory.getLogger(
+                GameSessionAccountPublicJwksConfiguration.PublicJwksRefresh.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+
+    try (var refresh =
+        new GameSessionAccountPublicJwksConfiguration.PublicJwksRefresh(
+            cache, Duration.ofSeconds(2), scheduler)) {
+      verify(scheduler)
+          .scheduleWithFixedDelay(task.capture(), eq(1000L), eq(1000L), eq(TimeUnit.MILLISECONDS));
+      task.getValue().run();
+      task.getValue().run();
+      verify(cache, times(2)).refresh();
+      assertThat(appender.list).hasSize(1);
+      var event = appender.list.getFirst();
+      assertThat(event.getLevel()).isEqualTo(Level.WARN);
+      assertThat(event.getFormattedMessage())
+          .isEqualTo("Account public JWKS refresh unavailable: SOURCE_UNAVAILABLE");
+      assertThat(event.getArgumentArray()).isNullOrEmpty();
+      assertThat(event.getThrowableProxy()).isNull();
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
+    verify(scheduler).shutdownNow();
   }
 }

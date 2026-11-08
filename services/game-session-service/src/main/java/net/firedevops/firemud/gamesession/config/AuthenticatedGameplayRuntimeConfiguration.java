@@ -27,19 +27,17 @@ import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthentic
 import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
 
-/** Composes genuine receiving owners only from independently supplied protected source custody. */
+/** Default-off receiving composition; every protected authority must be independently supplied. */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnBean({
-  InitialGameplayLoginRedisBinding.class,
-  InitialGameplayLoginCoordinationQualification.class,
-  AccountAsymmetricJwtVerifier.class,
-  CanonicalPlayerRouteReadService.class
-})
+@ConditionalOnProperty(
+    prefix = "firemud.game-session.authenticated-gameplay",
+    name = "enabled",
+    havingValue = "true")
 public class AuthenticatedGameplayRuntimeConfiguration {
   @Bean(initMethod = "initialize", destroyMethod = "close")
   CanonicalGameplayLoginAccountClient canonicalGameplayLoginAccountClient(

@@ -10,14 +10,26 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
+import io.grpc.stub.StreamObserver;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.account.v1.GetCurrentAccountPublicJwksResponse;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiCall;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ApiResponse;
+import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ParsedBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding.Binding;
+import net.firedevops.firemud.accountservice.config.AccountPublicJwksReadWorkloadGuard;
 import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository.PrepublicationIntent;
 import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository.PublicationEvidence;
@@ -32,19 +44,23 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationResult;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PromotionOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
+import net.firedevops.firemud.accountservice.service.impl.AccountPublicJwksReadGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient.BindingIdentity;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient.ConfigMapSnapshot;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksTrustedSource;
+import net.firedevops.firemud.accountservice.service.session.AccountPublicJwksReadService;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import tools.jackson.databind.json.JsonMapper;
 
 class AccountJwtJwksTrustedSourceTest {
   private static final String ENVIRONMENT = "test";
@@ -256,6 +272,145 @@ class AccountJwtJwksTrustedSourceTest {
         .isInstanceOf(SourceUnavailableException.class)
         .hasNoCause();
     verify(fixture.configMapClient, never()).observe();
+  }
+
+  @Test
+  void realPrincipalReviewOutageRemainsRetryableThroughCurrentReadGrpc() throws Exception {
+    Fixture fixture = new Fixture();
+    var parsed =
+        new ParsedBinding(
+            "api-r1",
+            ENVIRONMENT,
+            CLUSTER,
+            URI.create("https://kubernetes.test:6443"),
+            "kubernetes.test",
+            Path.of("unused-ca.pem"),
+            API_CA_DIGEST,
+            Path.of("unused-token"),
+            NAMESPACE,
+            CLUSTER_UID,
+            NAMESPACE_UID,
+            fixture.apiIdentity.expectedApiUsername(),
+            API_BINDING_DIGEST);
+    var api = mock(AccountJwtJwksApiBinding.class);
+    var operation = mock(AccountJwtJwksApiBinding.ApiOperation.class);
+    when(api.beginOperation()).thenReturn(operation);
+    when(operation.binding()).thenReturn(parsed);
+    var reviewStatus = new AtomicInteger(503);
+    var json = JsonMapper.builder().build();
+    when(operation.send(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              ApiCall call = invocation.getArgument(0);
+              int status =
+                  call == ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL ? reviewStatus.get() : 200;
+              Map<String, ?> body =
+                  switch (call) {
+                    case REVIEW_AUTHENTICATED_PRINCIPAL ->
+                        status == 201
+                            ? Map.of(
+                                "apiVersion", "authentication.k8s.io/v1",
+                                "kind", "SelfSubjectReview",
+                                "status",
+                                    Map.of(
+                                        "userInfo",
+                                        Map.of("username", parsed.expectedApiUsername())))
+                            : Map.of();
+                    case READ_KUBE_SYSTEM_NAMESPACE, READ_TARGET_NAMESPACE ->
+                        Map.of(
+                            "apiVersion",
+                            "v1",
+                            "kind",
+                            "Namespace",
+                            "metadata",
+                            Map.of(
+                                "name",
+                                call == ApiCall.READ_KUBE_SYSTEM_NAMESPACE
+                                    ? "kube-system"
+                                    : NAMESPACE,
+                                "uid",
+                                call == ApiCall.READ_KUBE_SYSTEM_NAMESPACE
+                                    ? CLUSTER_UID
+                                    : NAMESPACE_UID),
+                            "status",
+                            Map.of("phase", "Active"));
+                    case READ_JWKS_CONFIG_MAP ->
+                        Map.of(
+                            "apiVersion",
+                            "v1",
+                            "kind",
+                            "ConfigMap",
+                            "metadata",
+                            Map.of(
+                                "name",
+                                AccountJwtJwksConfigMapClient.CONFIG_MAP_NAME,
+                                "namespace",
+                                NAMESPACE,
+                                "uid",
+                                CONFIG_MAP_UID,
+                                "resourceVersion",
+                                fixture.snapshot.resourceVersion()),
+                            "data",
+                            fixture.snapshot.data());
+                    default -> throw new AssertionError("Unexpected public-read API call");
+                  };
+              return new ApiResponse(status, json.writeValueAsBytes(body));
+            });
+    var source =
+        new AccountJwtJwksTrustedSource(
+            new AccountJwtJwksConfigMapClient(api),
+            fixture.materializerTrust,
+            fixture.desiredStateRepository,
+            fixture.publicationRepository,
+            fixture.transactionManager);
+    var guard = mock(AccountPublicJwksReadWorkloadGuard.class);
+    when(guard.requireCaller())
+        .thenReturn(
+            new AccountPublicJwksReadWorkloadGuard.ProtectedCaller(fixture.binding, parsed));
+    var receiver =
+        new AccountPublicJwksReadGrpcService(new AccountPublicJwksReadService(source, guard));
+
+    // First-pin and later load outages both recover only after another complete protected read.
+    for (int status : List.of(408, 201, 429, 201, 503, 201, 401, 200)) {
+      reviewStatus.set(status);
+      var response = new AtomicReference<GetCurrentAccountPublicJwksResponse>();
+      var failure = new AtomicReference<Throwable>();
+      var completed = new AtomicInteger();
+      receiver.getCurrentPublicJwks(
+          AccountPublicJwksReadCodec.request(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(GetCurrentAccountPublicJwksResponse value) {
+              response.set(value);
+            }
+
+            @Override
+            public void onError(Throwable error) {
+              failure.set(error);
+            }
+
+            @Override
+            public void onCompleted() {
+              completed.incrementAndGet();
+            }
+          });
+      if (status == 201) {
+        assertThat(failure.get()).isNull();
+        assertThat(completed.get()).isEqualTo(1);
+        PublicJwksSnapshot snapshot = AccountPublicJwksReadCodec.snapshot(response.get());
+        assertThat(snapshot.sourceIdentity()).isEqualTo(source.sourceIdentity());
+        assertThat(snapshot.jwksBytes()).containsExactly(JWKS_1.getBytes(StandardCharsets.UTF_8));
+      } else {
+        assertThat(response.get()).isNull();
+        assertThat(completed.get()).isZero();
+        assertThat(failure.get()).isNotNull();
+        assertThat(Status.fromThrowable(failure.get()).getCode())
+            .isEqualTo(
+                status == 401 || status == 200
+                    ? Status.Code.FAILED_PRECONDITION
+                    : Status.Code.UNAVAILABLE);
+      }
+    }
   }
 
   @Test
