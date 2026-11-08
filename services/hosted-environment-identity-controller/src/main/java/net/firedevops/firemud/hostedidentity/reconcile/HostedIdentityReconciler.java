@@ -1066,7 +1066,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       phase = HostedEnvironmentIdentityStatus.Phase.Verifying;
       reason = "WorkloadIdentityEvidenceIncomplete";
       message =
-          "all five protected publication projections and the exact Account, Game Session, and Social Groups workload identities are required for readiness; readiness does not authorize publication methods";
+          "all five protected publication projections and the exact Account, Game Session, Social Groups, and Gateway client workload identities are required for readiness; readiness does not authorize publication methods";
     }
     HostedEnvironmentIdentityStatus updatedStatus =
         statusService.status(

@@ -12,16 +12,24 @@ import com.google.protobuf.ByteString;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
+import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwner;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
+import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.socket.WebSocketSession;
@@ -29,6 +37,79 @@ import org.springframework.web.socket.WebSocketSession;
 /** Process-local custody proof with controlled Account result/cleanup sources, not admission. */
 class AuthenticatedDirectTextSessionsTest {
   private final AuthenticatedDirectTextSessions sessions = new AuthenticatedDirectTextSessions();
+
+  @ParameterizedTest
+  @CsvSource({
+    "AUTH_INVALID_CREDENTIALS, INVALID_CREDENTIALS",
+    "AUTH_ACCOUNT_LOCKED, ACCOUNT_LOCKED",
+    "AUTH_RETRY_LATER, RETRY_LATER",
+    "IDEMPOTENCY_CONFLICT, IDEMPOTENCY_CONFLICT",
+    "RESPONSE_RECOVERY_EXPIRED, RESPONSE_RECOVERY_EXPIRED",
+    "AUTH_UNAVAILABLE, UNAVAILABLE",
+    "CUSTODY_LOST, UNAVAILABLE",
+    "LOGIN_UNAVAILABLE, UNAVAILABLE",
+    "DEADLINE_EXCEEDED, UNAVAILABLE",
+    "untrusted-owner-diagnostic, UNAVAILABLE",
+    ", UNAVAILABLE"
+  })
+  void rejectedLoginPreservesOnlyBoundedDecisionsThroughTheReceiver(
+      String ownerCode, String publicCode) throws Exception {
+    var socket = socket();
+    sessions.open(socket);
+    var outcome = mock(InitialGameplayLoginOwner.Outcome.class);
+    when(outcome.status()).thenReturn(InitialGameplayLoginOwner.Status.CLEANUP_ACCOUNT_NO_TOKEN);
+    when(outcome.failureCode()).thenReturn(Optional.ofNullable(ownerCode));
+    var owner = mock(InitialGameplayLoginOwner.class);
+    when(owner.receive(any())).thenReturn(outcome);
+    var beans = new StaticListableBeanFactory(Map.of("login", owner));
+    var receiver =
+        new AuthenticatedDirectTextCommandReceiver(
+            sessions,
+            beans.getBeanProvider(InitialGameplayLoginOwner.class),
+            beans.getBeanProvider(DirectTextWorldSelectionService.class),
+            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class));
+
+    var result =
+        receiver.receive(
+            socket,
+            new TextCommand(
+                TextCommandType.LOGIN,
+                List.of("player@example.test", "transient-secret"),
+                "LOGIN player@example.test transient-secret"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo(publicCode);
+    assertThat(result.commandResult().errorMessage())
+        .doesNotContain("transient-secret", "untrusted-owner-diagnostic");
+    if ("UNAVAILABLE".equals(publicCode)) {
+      assertThat(result.commandResult().errorMessage())
+          .isEqualTo("Authenticated gameplay authority unavailable");
+    }
+    verify(outcome, never()).withOwnedPrivateResult(any());
+    sessions.close(socket);
+    verify(outcome).close();
+  }
+
+  @Test
+  void rejectedLoginErasesCredentialsAndRetainsCleanupOwnership() throws Exception {
+    var socket = socket();
+    sessions.open(socket);
+    var outcome = mock(InitialGameplayLoginOwner.Outcome.class);
+    when(outcome.status()).thenReturn(InitialGameplayLoginOwner.Status.CLEANUP_HELD);
+    when(outcome.failureCode()).thenReturn(Optional.of("AUTH_INVALID_CREDENTIALS"));
+    var owner = mock(InitialGameplayLoginOwner.class);
+    when(owner.receive(any())).thenReturn(outcome);
+    char[] secret = "transient-private-secret".toCharArray();
+
+    assertThatThrownBy(() -> sessions.require(socket).login(owner, "player@example.test", secret))
+        .isInstanceOf(AuthenticatedDirectTextSessions.LoginRejectedException.class)
+        .hasMessage("Authenticated gameplay LOGIN was rejected");
+
+    assertThat(secret).containsOnly('\0');
+    verify(outcome, never()).close();
+    sessions.close(socket);
+    verify(outcome).close();
+  }
 
   @Test
   void exactConnectionOwnsIdenticalPrivateResultOnlyInsideBorrow() throws Exception {
