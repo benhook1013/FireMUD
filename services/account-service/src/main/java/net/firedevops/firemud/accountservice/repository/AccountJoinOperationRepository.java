@@ -468,6 +468,9 @@ public class AccountJoinOperationRepository {
       String outcome,
       CanonicalJoinTerminalProof proof) {
     requireWritableOwnerTransaction();
+    if (outcome == null || !Set.of("JOINED", "ALREADY_ACTIVE").contains(outcome)) {
+      throw new CanonicalJoinOperationConflictException("Canonical JOIN outcome/proof conflict");
+    }
     requireCanonicalOperationInput(requestId, callerBinding);
     Objects.requireNonNull(scope, "Canonical JOIN scope is required");
     Objects.requireNonNull(proof, "Canonical first-JOIN terminal proof is required");
@@ -493,8 +496,7 @@ public class AccountJoinOperationRepository {
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
     requireCanonicalPolicyMatch(operation, requestDigest, publicJoin, proof.entitlementVersion());
     requireTerminalProofScope(proof, requestId, scope, operation);
-    if (!Set.of("JOINED", "ALREADY_ACTIVE").contains(outcome)
-        || ("JOINED".equals(outcome) != (proof.auditEventId() != null))) {
+    if ("JOINED".equals(outcome) != (proof.auditEventId() != null)) {
       throw new CanonicalJoinOperationConflictException("Canonical JOIN outcome/proof conflict");
     }
     if ("COMMITTED".equals(operation.status())) {
@@ -1041,7 +1043,8 @@ public class AccountJoinOperationRepository {
               || membershipVersion != null
               || membershipAuthorityGeneration != null
               || terminalProof != null
-          : !Set.of("JOINED", "ALREADY_ACTIVE").contains(outcome)
+          : outcome == null
+              || !Set.of("JOINED", "ALREADY_ACTIVE").contains(outcome)
               || membershipId == null
               || membershipId <= 0L
               || membershipVersion == null
