@@ -637,8 +637,17 @@ public class AccountServiceImpl implements AccountService {
             status -> {
               lockCanonicalScopeAccount(scope);
               requireCanonicalScopeFresh(consumers, scope);
-              if ("FAILED".equals(prepared.operation().status())) {
-                return new CanonicalJoinResult(prepared.operation().outcome(), null, false);
+              CanonicalJoinOperationEvidence lockedOperation =
+                  accountJoinOperationRepository
+                      .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                      .orElseThrow();
+              if ("FAILED".equals(lockedOperation.status())) {
+                // Preparation precedes provider/target reads. Another exact attempt may have
+                // finished meanwhile, including before any policy evidence could be bound.
+                var retained =
+                    accountJoinOperationRepository.finishCanonicalFailure(
+                        requestId, scope, callerBinding, lockedOperation.outcome());
+                return new CanonicalJoinResult(retained.outcome(), null, false, true);
               }
               SourceSelection current =
                   consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
@@ -675,11 +684,12 @@ public class AccountServiceImpl implements AccountService {
                     gameplayAvailable
                         ? "PUBLIC_PRODUCTION_ADMISSION_DENIED"
                         : "TENANT_BILLING_BLOCKED";
-                if ("PENDING".equals(prepared.operation().status())) {
+                if ("PENDING".equals(policyBoundOperation.status())) {
                   accountJoinOperationRepository.finishCanonicalFailure(
                       requestId, scope, callerBinding, outcome);
                 }
-                return new CanonicalJoinResult(outcome, null, false);
+                return new CanonicalJoinResult(
+                    outcome, null, false, !"PENDING".equals(policyBoundOperation.status()));
               }
               var committed =
                   consumers
@@ -704,7 +714,8 @@ public class AccountServiceImpl implements AccountService {
                     committed.terminalProof(),
                     currentMembership
                         .map(AccountTenantMembership::isGameplayAdmissionAllowed)
-                        .orElse(false));
+                        .orElse(false),
+                    true);
               }
               AccountTenantMembership committedMembership = currentMembership.orElseThrow();
               if (committedMembership.getMembershipVersion()
@@ -717,7 +728,8 @@ public class AccountServiceImpl implements AccountService {
               return new CanonicalJoinResult(
                   committed.outcome(),
                   committed.terminalProof(),
-                  committedMembership.isGameplayAdmissionAllowed());
+                  committedMembership.isGameplayAdmissionAllowed(),
+                  false);
             }));
   }
 
@@ -748,7 +760,10 @@ public class AccountServiceImpl implements AccountService {
       ReadFence fence) {}
 
   private record CanonicalJoinResult(
-      String outcome, CanonicalJoinTerminalProof proof, boolean gameplayAdmissionAllowed) {}
+      String outcome,
+      CanonicalJoinTerminalProof proof,
+      boolean gameplayAdmissionAllowed,
+      boolean replayed) {}
 
   /** Explicit non-admitting Entity projection; no default runtime client is registered here. */
   public void setAccountBootstrapRosterReadClient(AccountBootstrapRosterReadClient client) {
@@ -1075,7 +1090,7 @@ public class AccountServiceImpl implements AccountService {
           proof == null ? 0L : proof.membershipVersion(),
           proof == null ? 0L : proof.membershipAuthorityGeneration(),
           committed.gameplayAdmissionAllowed(),
-          !"PENDING".equals(prepared.operation().status()));
+          committed.replayed());
     } catch (AccountJoinOperationRepository.CanonicalJoinOperationConflictException failure) {
       throw new AuthenticationException(
           "IDEMPOTENCY_CONFLICT", "JOIN request ID conflicts", failure);

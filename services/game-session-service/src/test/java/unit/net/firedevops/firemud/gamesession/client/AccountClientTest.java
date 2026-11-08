@@ -169,6 +169,30 @@ class AccountClientTest {
     org.mockito.Mockito.verifyNoInteractions(stub);
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "abc",
+        "-1",
+        " 42",
+        "+1",
+        "0",
+        "000",
+        "000000000000000000000000000000001",
+        "9223372036854775808"
+      })
+  void directTextMethodsRejectMalformedNumericSessionIdsBeforeDispatch(String sessionId)
+      throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    var client = newClient(stub);
+    var context = directTextContext().toBuilder().setSessionId(sessionId).build();
+
+    assertThat(client.issueDirectTextConnectScope(context, directTextTarget()).getError().getCode())
+        .isEqualTo("INVALID_ARGUMENT");
+    assertThat(join(client, context).getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    org.mockito.Mockito.verifyNoInteractions(stub);
+  }
+
   @Test
   void scopeIssuanceRejectsEachIndependentContextTargetMismatch() throws Exception {
     var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
@@ -435,16 +459,17 @@ class AccountClientTest {
   }
 
   @Test
-  void joinDoesNotAcceptJoinedOutcomeWithoutAdmissionFlag() throws Exception {
+  void joinPreservesJoinedNonAdmittingReplayReceipt() throws Exception {
     var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
-    when(fixture.initialStub().joinPublicProductionMembership(any()))
-        .thenReturn(
-            joinSuccess("JOINED", false).toBuilder().setGameplayAdmissionAllowed(false).build());
+    var expected =
+        joinSuccess("JOINED", true).toBuilder().setGameplayAdmissionAllowed(false).build();
+    when(fixture.initialStub().joinPublicProductionMembership(any())).thenReturn(expected);
 
     var result = join(fixture.client(), directTextContext());
 
-    assertThat(result.getSuccess()).isFalse();
-    assertThat(result.getError().getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(result).isSameAs(expected);
+    assertThat(result.getGameplayAdmissionAllowed()).isFalse();
+    assertThat(result.getReplayed()).isTrue();
     verify(fixture.initialStub()).joinPublicProductionMembership(any());
     verify(fixture.retryStub(), never()).joinPublicProductionMembership(any());
   }
@@ -546,7 +571,8 @@ class AccountClientTest {
     var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
     when(fixture.initialStub().joinPublicProductionMembership(any()))
         .thenThrow(Status.fromCode(Status.Code.valueOf(status)).asRuntimeException());
-    var expected = joinSuccess("JOINED", true);
+    var expected =
+        joinSuccess("JOINED", true).toBuilder().setGameplayAdmissionAllowed(false).build();
     when(fixture.retryStub().joinPublicProductionMembership(any())).thenReturn(expected);
 
     assertThat(join(fixture.client(), directTextContext())).isSameAs(expected);

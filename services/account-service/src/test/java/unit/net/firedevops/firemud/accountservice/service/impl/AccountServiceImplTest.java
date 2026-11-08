@@ -892,6 +892,31 @@ class AccountServiceImplTest {
         .commitCanonicalJoin(f.scope, f.requestId, f.binding, null, null, null);
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void canonicalConcurrentCommitUsesLockedReplayStateAndStillChecksCurrentPolicy(boolean gameplay) {
+    var f = canonicalJoinFixture();
+    when(f.committed.status()).thenReturn("COMMITTED");
+    when(accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(f.requestId))
+        .thenReturn(Optional.of(f.pending), Optional.of(f.committed));
+    when(accountJoinOperationRepository.bindCanonicalPolicyEvidence(
+            f.requestId, f.scope, f.binding, true, 1L))
+        .thenReturn(f.committed);
+    when(f.demo.gameplayAvailable()).thenReturn(gameplay);
+
+    var result = f.browserJoin();
+
+    assertTrue(result.replayed());
+    assertEquals(gameplay, result.success());
+    assertEquals(gameplay ? "JOINED" : "TENANT_BILLING_BLOCKED", result.outcomeCode());
+    org.mockito.Mockito.verify(f.demos).revalidate(f.demo);
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finishCanonicalFailure(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    if (!gameplay) verifyNoInteractions(f.terminal);
+  }
+
   @Test
   void canonicalCommittedRetryCannotUseUnavailableCurrentEntitlementOrRewriteTerminalBytes() {
     var f = canonicalJoinFixture();
@@ -946,6 +971,9 @@ class AccountServiceImplTest {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
     when(f.pending.outcome()).thenReturn(outcome);
+    when(accountJoinOperationRepository.finishCanonicalFailure(
+            f.requestId, f.scope, f.binding, outcome))
+        .thenReturn(f.pending);
     var result = f.browserJoin();
     assertFalse(result.success());
     assertTrue(result.replayed());
@@ -1392,6 +1420,9 @@ class AccountServiceImplTest {
     var f = canonicalJoinFixture();
     var caller = f.directCaller(f.requestId);
     f.binding = caller.sessionId();
+    when(accountJoinOperationRepository.bindCanonicalPolicyEvidence(
+            f.requestId, f.scope, caller.sessionId(), true, 1L))
+        .thenReturn(f.pending);
     org.mockito.Mockito.clearInvocations(sessionService);
     var result =
         canonicalGameSessionPeer()
@@ -1402,7 +1433,10 @@ class AccountServiceImplTest {
                         new JoinPublicProductionRequest(f.scope.connectScopeId(), f.requestId)));
     assertTrue(result.success());
     assertEquals(f.scope.tenantId(), result.tenantId());
+    assertFalse(result.replayed());
     verifyNoInteractions(sessionService);
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
+        .bindCanonicalPolicyEvidence(f.requestId, f.scope, caller.sessionId(), true, 1L);
     org.mockito.Mockito.verify(f.terminal)
         .commitCanonicalJoin(f.scope, f.requestId, f.binding, null, null, null);
   }
@@ -1649,6 +1683,13 @@ class AccountServiceImplTest {
       when(pending.status()).thenReturn("PENDING");
       when(accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId))
           .thenReturn(Optional.of(pending));
+      when(accountJoinOperationRepository.bindCanonicalPolicyEvidence(
+              org.mockito.ArgumentMatchers.eq(requestId),
+              org.mockito.ArgumentMatchers.eq(scope),
+              org.mockito.ArgumentMatchers.eq(binding),
+              org.mockito.ArgumentMatchers.anyBoolean(),
+              org.mockito.ArgumentMatchers.anyLong()))
+          .thenReturn(pending);
       when(sources.readCurrentSourceSelection(scope.tenantId())).thenReturn(source);
       when(source.kind())
           .thenReturn(

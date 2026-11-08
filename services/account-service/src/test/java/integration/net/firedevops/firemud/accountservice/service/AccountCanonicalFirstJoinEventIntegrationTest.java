@@ -657,6 +657,94 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     assertThat(stored.scopeEvidence().tenantUuid()).isEqualTo(fixture.tenantUuid);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"COMMITTED", "FAILED_UNBOUND", "FAILED_BOUND"})
+  void browserFacadeReplaysOperationFinishedAfterPreparation(String terminalState) {
+    Fixture fixture = newFixture();
+    BrowserFacade browser = fixture.browserFacade();
+    var selected =
+        browser.service().listBootstrapRealms(browser.bootstrapToken(), "world").getFirst();
+    String requestId = UUID.randomUUID().toString();
+    var request =
+        new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
+            selected.connectScopeId(), requestId);
+    var callerReads = new java.util.concurrent.atomic.AtomicInteger();
+    var retained =
+        new java.util.concurrent.atomic.AtomicReference<
+            AccountJoinOperationRepository.CanonicalJoinOperationEvidence>();
+    org.mockito.Mockito.when(
+            browser
+                .sessions()
+                .isAccountSessionActive(fixture.account.getId(), browser.bootstrapToken()))
+        .thenAnswer(
+            invocation -> {
+              // The second caller read occurs outside SQL, after preparation and immediately before
+              // the final transaction. Finish another exact attempt in this deterministic gap.
+              if (callerReads.incrementAndGet() == 2) {
+                if ("COMMITTED".equals(terminalState)) {
+                  var first =
+                      browser.service().joinPublicProduction(browser.bootstrapToken(), request);
+                  assertThat(first.success()).isTrue();
+                  assertThat(first.replayed()).isFalse();
+                } else {
+                  fixture.inTransaction(
+                      () -> {
+                        fixture.operations.lockAccount(fixture.account.getId());
+                        var scope =
+                            fixture
+                                .connectScopes
+                                .findCanonical(selected.connectScopeId())
+                                .orElseThrow();
+                        var pending =
+                            fixture
+                                .operations
+                                .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                                .orElseThrow();
+                        assertThat(pending.status()).isEqualTo("PENDING");
+                        if ("FAILED_BOUND".equals(terminalState)) {
+                          var policy = fixture.demoEntitlements.readCurrent(fixture.tenantUuid);
+                          fixture.operations.bindCanonicalPolicyEvidence(
+                              requestId,
+                              scope,
+                              pending.callerBinding(),
+                              policy.allowPublicJoin(),
+                              policy.entitlementVersion());
+                        }
+                        fixture.operations.finishCanonicalFailure(
+                            requestId, scope, pending.callerBinding(), "CONNECT_SCOPE_MISMATCH");
+                        return null;
+                      });
+                }
+                retained.set(
+                    fixture.inTransaction(
+                        () ->
+                            fixture
+                                .operations
+                                .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                                .orElseThrow()));
+              }
+              return true;
+            });
+
+    var replay = browser.service().joinPublicProduction(browser.bootstrapToken(), request);
+
+    assertThat(retained.get()).isNotNull();
+    assertThat(replay.replayed()).isTrue();
+    assertThat(replay.success()).isEqualTo("COMMITTED".equals(terminalState));
+    assertThat(replay.outcomeCode()).isEqualTo(retained.get().outcome());
+    assertThat(
+            fixture.inTransaction(
+                () ->
+                    fixture
+                        .operations
+                        .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                        .orElseThrow()))
+        .isEqualTo(retained.get());
+    assertThat(fixture.countAll("account_audit_outbox"))
+        .isEqualTo("COMMITTED".equals(terminalState) ? 1L : 0L);
+  }
+
   @Test
   void browserFacadeReplaysCommittedJoinProofAfterMembershipBecomesInactive() {
     Fixture fixture = newFixture();
