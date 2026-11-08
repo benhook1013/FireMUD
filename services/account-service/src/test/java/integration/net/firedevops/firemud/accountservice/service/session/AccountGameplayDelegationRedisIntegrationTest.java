@@ -3114,7 +3114,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
             logoutAllOperations,
             securityStateOperations,
             sourceChanges,
-            null, // connect scopes
+            null, // account audit outbox
             null, // join operations
             null, // email login challenges
             null, // realm grants
