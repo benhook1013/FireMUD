@@ -549,17 +549,23 @@ public class AccountServiceImpl implements AccountService {
       var resolved =
           Objects.requireNonNull(
               consumers.targets().resolvePublishedRealmAdmissionTarget(selector));
-      net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec
-          .requireRetainedTargetMatches(selector, resolved.currentTarget());
+      // Only a locally verified target mismatch is definitive. Exceptions from either remote
+      // owner (including malformed evidence) remain unavailable rather than condemning the intent.
+      try {
+        net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec
+            .requireRetainedTargetMatches(selector, resolved.currentTarget());
+      } catch (IllegalArgumentException mismatch) {
+        throw new AuthenticationException(
+            "CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE, mismatch);
+      }
       if (!selector.equals(resolved.selector()))
-        throw new IllegalStateException("Resolved selector differs");
+        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
       var published =
           Objects.requireNonNull(
               consumers.targets().readPublishedRealmAdmissionOwner(resolved.strictSelector()));
       if (!resolved.strictSelector().equals(published.selector())
           || !resolved.currentTarget().equals(published.currentTarget())) {
-        throw new IllegalStateException(
-            "Published target differs from its resolved owner selectors");
+        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
       }
       return published;
     } catch (AuthenticationException failure) {
