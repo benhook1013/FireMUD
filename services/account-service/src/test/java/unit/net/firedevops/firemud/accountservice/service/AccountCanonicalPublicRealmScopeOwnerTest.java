@@ -137,6 +137,46 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   @Test
+  void directProducerRejectsUnknownAccountWithoutReadingTargetsOrPersistingScope() {
+    Fixture f = new Fixture(300000L);
+    doReturn(Optional.empty()).when(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "CONNECT_CONTEXT_INVALID",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target), directTarget(f.target))));
+
+    verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+    verifyNoInteractions(
+        f.memberships, f.tenants, f.heads, f.scopes, f.sessions, f.targets, f.entitlements);
+  }
+
+  @Test
+  void directProducerKeepsAccountRepositoryFailureRetryableWithoutReadingTargets() {
+    Fixture f = new Fixture(300000L);
+    doThrow(new IllegalStateException("Account repository unavailable"))
+        .when(f.accounts)
+        .findByAccountUuidForUpdate(ACCOUNT);
+
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "AUTH_UNAVAILABLE",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target), directTarget(f.target))));
+
+    verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+    verifyNoInteractions(
+        f.memberships, f.tenants, f.heads, f.scopes, f.sessions, f.targets, f.entitlements);
+  }
+
+  @Test
   void directProducerReportsUnavailableEntitlementWithoutMisclassifyingThePointer() {
     Fixture f = new Fixture(300000L);
     when(f.entitlements.evaluate(TENANT)).thenReturn(f.evaluation(false));
