@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import com.google.protobuf.ByteString;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Context;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
@@ -71,6 +72,7 @@ public final class GameSessionPrivatePreparationProtectionRepository {
     // protection insert. Retrying only an INSERT after 40001 would preserve the stale snapshot.
     long contentionDeadline = System.nanoTime() + CONTENTION_WAIT_NANOS;
     for (int attempt = 0; attempt < 3; ) {
+      requireLiveCaller();
       try {
         return Objects.requireNonNull(
             owner.execute(
@@ -97,6 +99,7 @@ public final class GameSessionPrivatePreparationProtectionRepository {
                   var runtime = current.runtimeAllocation();
                   var selection = current.selection();
                   var target = current.target();
+                  requireLiveCaller();
                   Record inserted =
                       dsl.fetchOne(
                           "INSERT INTO "
@@ -134,7 +137,11 @@ public final class GameSessionPrivatePreparationProtectionRepository {
                 }));
       } catch (RequestContendedException busy) {
         // TransactionTemplate has already rolled back and released its connection.
+        requireLiveCaller();
         long remaining = contentionDeadline - System.nanoTime();
+        var grpcDeadline = Context.current().getDeadline();
+        if (grpcDeadline != null)
+          remaining = Math.min(remaining, grpcDeadline.timeRemaining(TimeUnit.NANOSECONDS));
         if (remaining <= 0)
           throw new ProtectionContendedException("Private source protection request remained busy");
         try {
@@ -148,6 +155,11 @@ public final class GameSessionPrivatePreparationProtectionRepository {
       }
     }
     throw new IllegalStateException("Unreachable protection retry");
+  }
+
+  private static void requireLiveCaller() {
+    if (Context.current().isCancelled())
+      throw new ProtectionContendedException("Private source protection caller was cancelled");
   }
 
   private static final class RequestContendedException extends RuntimeException {}
