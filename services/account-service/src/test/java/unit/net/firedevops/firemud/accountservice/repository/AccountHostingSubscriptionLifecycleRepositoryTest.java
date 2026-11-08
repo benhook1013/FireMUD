@@ -78,7 +78,7 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
         new AccountHostingSubscriptionLifecycleRepository(
             dsl,
             controlledIntents,
-            Clock.fixed(expiresAt.plusSeconds(secondsAfterExpiry), ZoneOffset.UTC),
+            Clock.fixed(expiresAt.minusSeconds(5), ZoneOffset.UTC),
             limits(3, 2, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
             new AccountHostingSubscriptionLifecyclePolicy(
                 Duration.ofSeconds(15),
@@ -102,14 +102,19 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
     String lockedWorkSql =
         "SELECT * FROM subscription_provisioning_work WHERE request_id = ? FOR UPDATE";
     when(dsl.fetchOne(lockedWorkSql, requestId)).thenReturn(retainedWork);
+    var databaseClock = mock(Record.class);
+    when(databaseClock.get("now", OffsetDateTime.class))
+        .thenReturn(expiresAt.plusSeconds(secondsAfterExpiry).atOffset(ZoneOffset.UTC));
+    when(dsl.fetchOne("SELECT clock_timestamp() AS now")).thenReturn(databaseClock);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
     assertThat(controlledRepository.deferUnresolved(claim)).isEqualTo(Disposition.ATTEMPT_EXPIRED);
 
-    // Exactly the owner/retained-work locks are allowed: no SQL writes, intent settlement,
+    // Only owner/retained-work locks and the database clock are read: no SQL writes, settlement,
     // reservation release, or replacement attempt can occur on this return.
     verify(controlledIntents).lockForProvisioningRecovery(requestId, 7L);
     verify(dsl).fetchOne(lockedWorkSql, requestId);
+    verify(dsl).fetchOne("SELECT clock_timestamp() AS now");
     verifyNoMoreInteractions(controlledIntents, dsl);
   }
 
