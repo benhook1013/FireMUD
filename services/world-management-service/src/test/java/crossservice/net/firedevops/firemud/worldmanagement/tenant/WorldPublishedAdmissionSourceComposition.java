@@ -136,7 +136,9 @@ final class WorldPublishedAdmissionSourceComposition {
           }
         };
     Server design = server(pki, "design", policySource);
-    try {
+    // Reverse close order retains shutdown and peer diagnostics as suppressed failures.
+    try (var peerCheck = checkPeerOnClose(policySourcePeerFailure);
+        var designLifetime = stopOnClose(design)) {
       var endpoints = new ServiceEndpointsProperties();
       endpoints.setGameDesignService("localhost:" + design.getPort());
       var channels = new GrpcChannelFactory();
@@ -157,7 +159,7 @@ final class WorldPublishedAdmissionSourceComposition {
                 "gs-server",
                 CanonicalPublishedAdmissionActualOwnerCompositionFixture.receiver(
                     gs, namespace, policyClient, worldClient));
-        try {
+        try (var receiverLifetime = stopOnClose(receiver)) {
           endpoints.setGameSessionService("localhost:" + receiver.getPort());
           try (var accountClient =
               new CanonicalGameplayAdmissionDecisionReadClient(
@@ -232,18 +234,17 @@ final class WorldPublishedAdmissionSourceComposition {
                 redisHost,
                 redisPort);
           }
-        } finally {
-          stop(receiver);
         }
       }
-    } finally {
-      try {
-        stop(design);
-      } finally {
-        // Assert on the test thread, preserving peer diagnostics even if the caller failed.
-        assertThat(policySourcePeerFailure.get()).as("published policy source peer").isNull();
-      }
     }
+  }
+
+  static AutoCloseable checkPeerOnClose(AtomicReference<String> peerFailure) {
+    return () -> assertThat(peerFailure.get()).as("published policy source peer").isNull();
+  }
+
+  static AutoCloseable stopOnClose(Server server) {
+    return () -> stop(server);
   }
 
   private static String peer(String namespace, String service) {
