@@ -6,9 +6,19 @@ This is a non-normative implementation tracker for player access and session. Ca
 
 ## Current Status
 
-PR #3390 currently authenticates LOGIN but direct backend PLAY fails exactly `ERROR ENTITLEMENT_UNAVAILABLE`; LOOK and successful public admission remain unproved. The [temporary CI exception](../../architecture/system-architecture-cicd.md#temporary-pr-3390-play-exception) accepts only that classified failure after held-admission qualification and authenticated cleanup for merge gating. It does not establish runtime success or permit image publication. Remove it with successful fresh-image backend LOGIN/PLAY/LOOK proof after repairing the Account entitlement cutover.
+PR #3390 currently authenticates LOGIN but direct backend PLAY fails exactly `ERROR ENTITLEMENT_UNAVAILABLE`; LOOK and successful public admission remain unproved. The [temporary CI exception](#temporary-pr-3390-play-exception) accepts only that classified failure after held-admission qualification and authenticated cleanup for merge gating. It does not establish runtime success or permit image publication. Remove it with successful fresh-image backend LOGIN/PLAY/LOOK proof after repairing the Account entitlement cutover.
 
 Account initial/current/final creation owners, explicit initial billing-owner consent, private Game Design create/close receivers, and original-bound dispatch/recovery are locally composed and unregistered. Focused receiving proof passes, while physical cross-owner qualification, protected Redis/source custody and public/default registration remain incomplete; proof limits are recorded below.
+
+### Temporary PR 3390 PLAY exception
+
+PR #3390 alone may pass Smoke Gate for the current exact `pull_request` base/head/merge tuple and latest producer attempt when canonical workflow proof establishes successful held-admission denial qualification, successful backend LOGIN, one of the two exact accepted direct-backend PLAY responses (`ERROR ENTITLEMENT_UNAVAILABLE` alone or followed by `Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.`), and successful authenticated cleanup. The runtime producer and original smoke step remain failed, all unrelated failures remain blocking, and image export/publication remain skipped. This is merge-only diagnostic acceptance, never runtime qualification or production activation. Remove the classification, producer marker and consumer exception when the Account entitlement cutover permits the normal backend `LOGIN -> PLAY -> LOOK` smoke to pass.
+
+### Direct-text scope and JOIN identifier cutover
+
+The canonical Account boundary requires non-nil UUID tenant and game-instance identifiers. The held Game Session scope target now takes those UUIDs from `CanonicalPlayableTarget`, and its Account client validates the same canonical shape. JOIN correlation retains exact tenant equality. The numeric transport session identifier remains an independent, bounded positive-long coordinate: its original bytes, including leading zeros, are preserved through scope issuance and JOIN rather than replaced by the proxy connection UUID.
+
+Selected client-wire and Account receiver tests exercise these contracts separately, including malformed identifiers and mismatches. They are not an actual paired Game Session-to-Account RPC or deployed composition proof. The lobby remains unregistered; source custody, genuine cross-service scope/JOIN qualification and public admission remain unfinished. The observed backend PLAY `ENTITLEMENT_UNAVAILABLE` is a separate recorded failure. The temporary CI exception supplies neither successful JOIN/PLAY proof nor runtime activation.
 
 ### Receiving review boundaries
 

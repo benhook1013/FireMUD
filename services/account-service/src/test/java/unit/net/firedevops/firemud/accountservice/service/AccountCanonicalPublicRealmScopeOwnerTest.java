@@ -185,7 +185,7 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
         target.playableStateNamespaceId(),
         target.playableStateScope(),
         target.canonicalGameInstanceId(),
-        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "00042",
         "direct-request");
   }
 

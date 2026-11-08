@@ -166,10 +166,10 @@ public class AccountServiceImpl implements AccountService {
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
 
   private String gameplayDecoyPasswordVerifier;
-  private AccountPublicBootstrapWorldsOwner publicBootstrapWorldsOwner;
-  private AccountCanonicalPublicRealmScopeOwner canonicalPublicRealmScopeOwner;
-  private CanonicalScopeConsumers canonicalScopeConsumers;
-  private AccountBootstrapRosterReadClient accountBootstrapRosterReadClient;
+  private volatile AccountPublicBootstrapWorldsOwner publicBootstrapWorldsOwner;
+  private volatile AccountCanonicalPublicRealmScopeOwner canonicalPublicRealmScopeOwner;
+  private volatile CanonicalScopeConsumers canonicalScopeConsumers;
+  private volatile AccountBootstrapRosterReadClient accountBootstrapRosterReadClient;
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
@@ -1130,7 +1130,9 @@ public class AccountServiceImpl implements AccountService {
         || caller.accountId() == null
         || NIL_ACCOUNT_UUID.equals(caller.accountId())
         || !StringUtils.hasText(caller.sessionId())
-        || AccountUuidText.parseOrNull(caller.sessionId()) == null
+        || caller.sessionId().length() > 32
+        || !caller.sessionId().matches("[0-9]+")
+        || !isPositiveTransportSession(caller.sessionId())
         || !StringUtils.hasText(caller.requestId())
         || request == null
         || !caller.requestId().equals(request.requestId())) {
@@ -1152,6 +1154,14 @@ public class AccountServiceImpl implements AccountService {
         caller.sessionId(),
         request,
         () -> requireCanonicalDirectPeer(consumers));
+  }
+
+  private static boolean isPositiveTransportSession(String value) {
+    try {
+      return Long.parseLong(value) > 0;
+    } catch (NumberFormatException malformed) {
+      return false;
+    }
   }
 
   private void requireCanonicalDirectPeer(CanonicalScopeConsumers consumers) {

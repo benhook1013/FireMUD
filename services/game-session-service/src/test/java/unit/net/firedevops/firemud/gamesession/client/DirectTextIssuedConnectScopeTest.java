@@ -148,13 +148,13 @@ class DirectTextIssuedConnectScopeTest {
 
   private static DirectTextConnectScopeTarget target() {
     return new DirectTextConnectScopeTarget(
-        "22",
+        "22222222-2222-4222-8222-222222222222",
         "demo-world",
         "production",
         "00000000-0000-4000-8000-000000000101",
         "00000000-0000-4000-8000-000000000102",
         "SHARED",
-        "9",
+        "44444444-4444-4444-8444-444444444444",
         7L,
         4L);
   }

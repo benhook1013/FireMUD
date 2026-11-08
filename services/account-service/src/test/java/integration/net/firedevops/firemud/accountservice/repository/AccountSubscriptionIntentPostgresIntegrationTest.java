@@ -17,6 +17,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountPaymentInstrumentRecord.DisplayMetadata;
@@ -1251,8 +1252,10 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
       Context c, AccountSubscriptionCreateRequest request, Runnable controlledAdvance)
       throws Exception {
     CountDownLatch advanced = new CountDownLatch(1);
-    CountDownLatch attempted = new CountDownLatch(1);
+    CountDownLatch contenderStarted = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
+    var holderPid = new AtomicInteger();
+    var contenderPid = new AtomicInteger();
     var executor = Executors.newFixedThreadPool(2);
     try {
       var holder =
@@ -1261,6 +1264,9 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
                   c.tx()
                       .executeWithoutResult(
                           s -> {
+                            holderPid.set(
+                                Objects.requireNonNull(c.dsl().fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class));
                             c.dsl()
                                 .fetchOne(
                                     "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
@@ -1277,10 +1283,26 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
       var contender =
           executor.submit(
               () -> {
-                attempted.countDown();
-                return attemptCreate(c, request);
+                // Classify rejections only after the original create transaction has rolled back.
+                try {
+                  c.tx()
+                      .executeWithoutResult(
+                          s -> {
+                            contenderPid.set(
+                                Objects.requireNonNull(c.dsl().fetchOne("SELECT pg_backend_pid()"))
+                                    .get(0, Integer.class));
+                            contenderStarted.countDown();
+                            c.repository().retainPending(request);
+                          });
+                  return "APPLIED";
+                } catch (ConflictException conflict) {
+                  return "CONFLICT";
+                } catch (FenceRejectedException stale) {
+                  return "FENCED";
+                }
               });
-      assertThat(attempted.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(contenderStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      awaitBlocked(c, contenderPid.get(), holderPid.get());
       release.countDown();
       holder.get(15, TimeUnit.SECONDS);
       assertThat(contender.get(15, TimeUnit.SECONDS)).isEqualTo("FENCED");
@@ -1288,6 +1310,24 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
       release.countDown();
       executor.shutdownNow();
     }
+  }
+
+  private static void awaitBlocked(Context c, int waitingPid, int blockerPid) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      var observed =
+          Objects.requireNonNull(
+              c.setup()
+                  .fetchOne(
+                      "SELECT ? = ANY(pg_blocking_pids(?)) AS blocked", blockerPid, waitingPid),
+              "Exact PostgreSQL blocking identity readback required");
+      if (Boolean.TRUE.equals(observed.get("blocked", Boolean.class))) {
+        return;
+      }
+      Thread.onSpinWait();
+    }
+    throw new IllegalStateException(
+        "Subscription create did not block on the controlled Account owner transaction");
   }
 
   /** Controlled qualified-result shape only; no Stripe or lifecycle producer is claimed. */
