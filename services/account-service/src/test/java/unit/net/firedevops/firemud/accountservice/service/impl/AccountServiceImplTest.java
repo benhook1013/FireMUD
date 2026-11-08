@@ -916,14 +916,48 @@ class AccountServiceImplTest {
     var result = f.browserJoin();
 
     assertTrue(result.replayed());
-    assertEquals(gameplay, result.success());
-    assertEquals(gameplay ? "JOINED" : "TENANT_BILLING_BLOCKED", result.outcomeCode());
+    assertTrue(result.success());
+    assertEquals("JOINED", result.outcomeCode());
     org.mockito.Mockito.verify(f.demos).revalidate(f.demo);
     org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
         .finishCanonicalFailure(
             org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
-    if (!gameplay) verifyNoInteractions(f.terminal);
+    org.mockito.Mockito.verify(f.terminal)
+        .commitCanonicalJoin(f.scope, f.requestId, f.binding, null, null, null);
+  }
+
+  @Test
+  void canonicalCommittedAlreadyActiveRetryPreservesReceiptAfterMembershipBecomesInactive() {
+    var f = canonicalJoinFixture();
+    f.terminal("ALREADY_ACTIVE", 7L, 3L);
+    when(f.pending.status()).thenReturn("COMMITTED");
+    when(f.demo.allowPublicJoin()).thenReturn(false);
+    f.currentMembership.setLifecycleState("INACTIVE");
+    f.currentMembership.setGameplayAdmissionAllowed(false);
+    f.currentMembership.setMembershipVersion(8L);
+    f.currentMembership.setMembershipAuthorityGeneration(4L);
+    f.joined.set(true);
+
+    var result = f.browserJoin();
+
+    assertTrue(result.success());
+    assertTrue(result.replayed());
+    assertEquals("ALREADY_ACTIVE", result.outcomeCode());
+    assertEquals(7L, result.membershipVersion());
+    assertEquals(3L, result.membershipAuthorityGeneration());
+    assertFalse(result.gameplayAdmissionAllowed());
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
+        .bindCanonicalPolicyEvidence(f.requestId, f.scope, f.binding, false, 1L);
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finishCanonicalFailure(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(f.terminal)
+        .commitCanonicalJoin(f.scope, f.requestId, f.binding, null, null, null);
+    verifyNoInteractions(accountAuditOutboxRepository);
   }
 
   @Test
