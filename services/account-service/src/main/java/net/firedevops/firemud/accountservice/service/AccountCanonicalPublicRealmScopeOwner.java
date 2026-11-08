@@ -158,11 +158,11 @@ public final class AccountCanonicalPublicRealmScopeOwner {
           "CONNECT_CONTEXT_INVALID", "Direct caller correlation is invalid");
     }
     try {
-      UUID session = UUID.fromString(caller.sessionId());
-      if (!session.toString().equals(caller.sessionId()) || new UUID(0L, 0L).equals(session)) {
-        throw new IllegalArgumentException("Invalid session correlation");
+      long session = Long.parseLong(caller.sessionId());
+      if (session <= 0 || !caller.sessionId().matches("[0-9]+")) {
+        throw new NumberFormatException("Invalid transport session");
       }
-    } catch (IllegalArgumentException failure) {
+    } catch (NumberFormatException failure) {
       throw new AuthenticationException(
           "CONNECT_CONTEXT_INVALID", "Direct caller session is invalid");
     }

@@ -435,6 +435,4 @@ CI workflows and operators use distinct credentials for each Kubernetes environm
 
 Registry credentials (for GHCR) are shared across environments but access to pull images into each cluster is controlled by Kubernetes secrets and RBAC within that environment.
 
-### Temporary PR 3390 PLAY exception
-
-PR #3390 alone may pass Smoke Gate for the current exact `pull_request` base/head/merge tuple and latest producer attempt when canonical workflow proof establishes successful held-admission denial qualification, successful backend LOGIN, exactly `ERROR ENTITLEMENT_UNAVAILABLE` on direct backend PLAY, and successful authenticated cleanup. The runtime producer and original smoke step remain failed, all unrelated failures remain blocking, and image export/publication remain skipped. This is merge-only diagnostic acceptance, never runtime qualification or production activation. Remove the classification, producer marker and consumer exception when the Account entitlement cutover permits the normal backend `LOGIN -> PLAY -> LOOK` smoke to pass. Capability and proof limits are recorded in the [player access tracker](../project-management/implementation-tracking/player-access-and-session.md).
+The required Smoke Gate needs qualified runtime smoke under the contract above. The [player access tracker](../project-management/implementation-tracking/player-access-and-session.md#temporary-pr-3390-play-exception) records the temporary merge-only limitation for the unfinished cutover; it supplies no runtime qualification or image-publication authority.
