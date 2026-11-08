@@ -41,6 +41,119 @@ test("documentation-only changes use the lightweight path", () => {
   assert.deepEqual(result.affectedServices, []);
 });
 
+test("known service and shared-module documentation selects no heavy module proof", async () => {
+  for (const module of ALL_MODULES.filter((module) => module !== "load-testing")) {
+    for (const path of [`services/${module}/README.md`, `services/${module}/design/README.md`]) {
+      const result = await classifyGithubFiles([path], 1);
+
+      assert.equal(result.runAll, false, path);
+      assert.equal(result.lightweightOnly, true, path);
+      assert.equal(result.docsChanged, true, path);
+      assert.deepEqual(result.affectedModules, [], path);
+      assert.deepEqual(result.affectedServices, [], path);
+      assert.deepEqual(result.bootableModules, [], path);
+    }
+  }
+});
+
+test("Markdown packaged under known service source retains module proof", () => {
+  for (const [path, module, service] of [
+    ["services/account-service/src/main/resources/content/README.md", "account-service", "account-service"],
+    ["services/account-service/src/test/resources/fixtures/README.md", "account-service", "account-service"],
+  ]) {
+    const result = classifyChangeScope([path]);
+
+    assert.equal(result.runAll, false, path);
+    assert.equal(result.lightweightOnly, false, path);
+    assert.equal(result.docsChanged, true, path);
+    assert.deepEqual(result.affectedModules, [module], path);
+    assert.deepEqual(result.affectedServices, service ? [service] : [], path);
+    assert.deepEqual(result.bootableModules, service ? [service] : [], path);
+  }
+
+  const sharedPath = "services/common-platform-core/src/main/resources/schema/README.md";
+  const sharedResult = classifyChangeScope([sharedPath]);
+  assert.equal(sharedResult.runAll, true, sharedPath);
+  assert.equal(sharedResult.lightweightOnly, false, sharedPath);
+  assert.equal(sharedResult.docsChanged, true, sharedPath);
+  assert.deepEqual(sharedResult.affectedModules, ALL_MODULES, sharedPath);
+});
+
+test("service documentation does not add modules to a cumulative runtime diff", async () => {
+  const result = await classifyGithubFiles([
+    "services/common-platform-core/README.md",
+    "services/world-management-service/README.md",
+    "services/account-service/src/main/java/example/Account.java",
+  ], 3);
+
+  assert.equal(result.runAll, false);
+  assert.equal(result.lightweightOnly, false);
+  assert.equal(result.docsChanged, true);
+  assert.deepEqual(result.affectedModules, ["account-service"]);
+  assert.deepEqual(result.affectedServices, ["account-service"]);
+  assert.deepEqual(result.bootableModules, ["account-service"]);
+});
+
+test("service docs never suppress shared runtime, toolchain, or workflow inputs", () => {
+  for (const path of [
+    "services/common-platform-core/src/main/java/example/Shared.java",
+    "gradle/libs.versions.toml",
+    "protos/account.proto",
+    ".github/workflows/ci.yml",
+  ]) {
+    const result = classifyChangeScope(["services/account-service/README.md", path]);
+
+    assert.equal(result.runAll, true, path);
+    assert.equal(result.lightweightOnly, false, path);
+    assert.deepEqual(result.affectedModules, ALL_MODULES, path);
+  }
+});
+
+test("forced and incomplete service-documentation inventories retain complete proof", async () => {
+  const path = "services/common-platform-core/README.md";
+  const forced = classifyChangeScope([path], { forceAll: true });
+  assert.equal(forced.runAll, true);
+  assert.equal(forced.lightweightOnly, false);
+  assert.deepEqual(forced.affectedModules, ALL_MODULES);
+
+  for (const count of [undefined, 2, "1"]) {
+    const result = await classifyGithubFiles([path], count);
+    assert.equal(result.runAll, true);
+    assert.equal(result.lightweightOnly, false);
+    assert.deepEqual(result.affectedModules, ALL_MODULES);
+  }
+  const malformed = await classifyGithubFiles([{ filename: path, previous_filename: "" }], 1);
+  assert.equal(malformed.runAll, true);
+  assert.deepEqual(malformed.affectedModules, ALL_MODULES);
+});
+
+test("unknown-service documentation still fails closed", async () => {
+  const result = await classifyGithubFiles(["services/unknown-service/README.md"], 1);
+
+  assert.equal(result.runAll, true);
+  assert.deepEqual(result.affectedModules, ALL_MODULES);
+  assert.deepEqual(result.affectedServices, ALL_SERVICES);
+});
+
+test("renaming runtime inputs to service docs retains their old runtime selection", async () => {
+  for (const [previous, expectedModules, runAll] of [
+    ["services/account-service/src/main/java/Account.java", ["account-service"], false],
+    ["services/game-session-service/src/main/java/Session.java",
+      ["game-session-service", "account-service"], false],
+    ["services/common-platform-core/src/main/java/Shared.java", ALL_MODULES, true],
+    ["services/unknown-service/src/main/java/Owner.java", ALL_MODULES, true],
+  ]) {
+    const result = await classifyGithubFiles([{
+      filename: "services/account-service/README.md",
+      previous_filename: previous,
+    }], 1);
+
+    assert.equal(result.runAll, runAll, previous);
+    assert.equal(result.lightweightOnly, false, previous);
+    assert.deepEqual(result.affectedModules, expectedModules, previous);
+  }
+});
+
 test("ERD generation remains docs-affecting but never uses the lightweight path", () => {
   const result = classifyChangeScope(["dev-tools/docs/generate-erd.sh"]);
 
