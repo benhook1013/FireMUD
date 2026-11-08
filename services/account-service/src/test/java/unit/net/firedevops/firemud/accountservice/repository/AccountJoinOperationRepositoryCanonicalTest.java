@@ -47,6 +47,36 @@ class AccountJoinOperationRepositoryCanonicalTest {
   }
 
   @Test
+  void firstJoinRejectsNonFirstEventSequenceBeforeOwnerStorageReads() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
+    var repository = new AccountJoinOperationRepository(dsl, scopes);
+
+    assertThatThrownBy(
+            () ->
+                repository.commitCanonicalFirstJoin(
+                    "request-v2", mock(CanonicalJoinScopeV2.class), "caller", proof(2L, 2L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Exact first-JOIN terminal proof required");
+    verifyNoInteractions(dsl, scopes);
+  }
+
+  @Test
+  void firstJoinRejectsNonFirstMembershipRevisionBeforeOwnerStorageReads() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
+    var repository = new AccountJoinOperationRepository(dsl, scopes);
+
+    assertThatThrownBy(
+            () ->
+                repository.commitCanonicalFirstJoin(
+                    "request-v2", mock(CanonicalJoinScopeV2.class), "caller", proof(1L, 3L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Exact first-JOIN terminal proof required");
+    verifyNoInteractions(dsl, scopes);
+  }
+
+  @Test
   void terminalProofRejectsNonpositiveEventOrMembershipRevision() {
     assertThatThrownBy(() -> proof(0L, 2L)).isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> proof(1L, 0L)).isInstanceOf(IllegalArgumentException.class);
@@ -117,8 +147,27 @@ class AccountJoinOperationRepositoryCanonicalTest {
   /** Controlled journal content, not caller authentication or entitlement source evidence. */
   @Test
   void committedNullOutcomeIsClassifiedAsInconsistentTerminalEvidence() {
+    var proof = validProof();
+    var proofWithoutAudit =
+        new CanonicalJoinTerminalProof(
+            proof.eventStreamKey(),
+            proof.eventSequence(),
+            proof.eventId(),
+            proof.eventDigest(),
+            null,
+            null,
+            null,
+            proof.entitlementVersion(),
+            proof.membershipId(),
+            proof.membershipVersion(),
+            proof.membershipAuthorityGeneration());
+    assertThat(evidence(true, "COMMITTED", "JOINED", "AVAILABLE", null, proof, 73L)).isNotNull();
+    assertThat(
+            evidence(
+                true, "COMMITTED", "ALREADY_ACTIVE", "AVAILABLE", null, proofWithoutAudit, 73L))
+        .isNotNull();
     assertThatThrownBy(
-            () -> evidence(true, "COMMITTED", null, "AVAILABLE", null, validProof(), 73L))
+            () -> evidence(true, "COMMITTED", null, "AVAILABLE", null, proofWithoutAudit, 73L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Canonical JOIN terminal evidence is inconsistent");
   }
@@ -219,8 +268,8 @@ class AccountJoinOperationRepositoryCanonicalTest {
         status,
         outcome,
         membershipId,
-        null,
-        null,
+        proof == null ? null : proof.membershipVersion(),
+        proof == null ? null : proof.membershipAuthorityGeneration(),
         proof,
         retained);
   }
