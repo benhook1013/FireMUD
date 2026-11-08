@@ -526,13 +526,24 @@ classifier_paths = (
     "dev-tools/verify-smoke-images.sh",
     "dev-tools/smoke/smoke_common.py",
     "services/game-session-service/websocket-login-look-smoke.sh",
+    "dev-tools/smoke/demo-smoke-defaults.sh",
+    "dev-tools/smoke/held-admission-qualification.sh",
+    "dev-tools/smoke/held_admission_qualification.py",
+    "dev-tools/smoke/run-owned-compose.sh",
+    "dev-tools/certs/ensure-dev-certs.sh",
+    ".env.sample",
+    "docker/docker-compose.yml",
+    "docker/docker-compose.override.yml",
+    "docker/docker-compose.smoke-images.override.yml",
+    "docker/docker-compose.pr-local-minio.override.yml",
+    "docker/docker-compose.grpc-mtls.override.yml",
 )
 classifier_fingerprints = re.search(r"const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});", script)
 if classifier_fingerprints is None:
     raise SystemExit("Smoke Gate must fingerprint the canonical PLAY classifier files")
 classifiers = json.loads(classifier_fingerprints[1])
 if set(classifiers) != set(classifier_paths):
-    raise SystemExit("Smoke Gate PLAY classifier fingerprint paths must match the three canonical files")
+    raise SystemExit("Smoke Gate PLAY classifier fingerprint paths must match the canonical classifier, qualification, cleanup, and configuration inputs")
 classifier_definitions = {}
 for path in classifier_paths:
     classifier_bytes = (root / path).read_bytes()

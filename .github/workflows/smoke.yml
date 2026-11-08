@@ -609,10 +609,22 @@ jobs:
 
             // One canonical producer definition; the contract test reports fingerprint upkeep.
             const canonicalRuntimeWorkflowSha256 = "db0acb4e51630b729eb92362ea3e748f3f96b06d8ef5ca466a718ded67725804";
+            // Include held-admission proof, authenticated cleanup, and their executed inputs.
             const canonicalPlayClassifierSha256 = {
               "dev-tools/verify-smoke-images.sh": "559e0713cc86ab533cc23214e56ece2e7cf4e069d1bb7541a1e09bff36ad4c67",
               "dev-tools/smoke/smoke_common.py": "a1e36948b500ac796295560cb8c22321ebe47eab78be9e1f4d58837053547534",
-              "services/game-session-service/websocket-login-look-smoke.sh": "0a6fbc66f7bf16aaf065bf1228d5190be340ce25543112e39482b9325ad9a90b"
+              "services/game-session-service/websocket-login-look-smoke.sh": "0a6fbc66f7bf16aaf065bf1228d5190be340ce25543112e39482b9325ad9a90b",
+              "dev-tools/smoke/demo-smoke-defaults.sh": "8c9aae1abf005b47af3f313e0d635a666c74776733bcf5278a2e11ac9c8a18fb",
+              "dev-tools/smoke/held-admission-qualification.sh": "b548a773f1786b72d40a3728052a336cb249257a3f40735f005b060812184ed3",
+              "dev-tools/smoke/held_admission_qualification.py": "2d118d7ba6a19dac7d8c717dbbbe25df6f04a3c186a3185135d1bdc5fc75b557",
+              "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
+              "dev-tools/certs/ensure-dev-certs.sh": "30f4ab5c9cb7af7f9d4a477ce923cfad19a319a85b6e05957f7d24eae9baddd2",
+              ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
+              "docker/docker-compose.yml": "f43581c67747dfb732742ecc1c4de631a71a2a41ae535663fb3872a90b68e2f1",
+              "docker/docker-compose.override.yml": "2e720be03f942fd4456d46cea5a127f16106a1056aec6ddaaf52b2bb31b51d75",
+              "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
+              "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
+              "docker/docker-compose.grpc-mtls.override.yml": "dcee047f1492392035d57153ba8dfd6d38de33ca932d327f377440d5813577f0"
             };
             const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
             const workflowPath = ".github/workflows/runtime-images.yml";
