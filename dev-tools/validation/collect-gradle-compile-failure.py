@@ -125,11 +125,9 @@ def sanitized_threads(raw):
         if line.startswith('"'):
             identifiers = re.findall(r'(?:#\d+|(?:tid|nid)=0x[0-9a-f]+)(?=\s|$)', line[line.rfind(chr(34)) + 1:])
             lines.append('thread (name omitted) ' + ' '.join(identifiers))
-        elif re.fullmatch(r'\s*java.lang.Thread.State: [A-Z_]+(?: \([a-z ]+\))?', line):
-            lines.append(line.strip())
-        elif re.fullmatch(r'\s*at [A-Za-z0-9_.$/@+\-]+\([A-Za-z0-9_.$: /\-]+\)', line):
-            lines.append(line.strip())
-        elif re.fullmatch(r'\s*- (?:locked|waiting on|waiting to lock|parking to wait for)\s+<0x[0-9a-f]+> \(a [A-Za-z0-9_.$]+\)', line):
+        elif (re.fullmatch(r'\s*java.lang.Thread.State: [A-Z_]+(?: \([a-z ]+\))?', line)
+              or re.fullmatch(r'\s*at [A-Za-z0-9_.$/@+\-]+\([A-Za-z0-9_.$: /\-]+\)', line)
+              or re.fullmatch(r'\s*- (?:locked|waiting on|waiting to lock|parking to wait for)\s+<0x[0-9a-f]+> \(a [A-Za-z0-9_.$]+\)', line)):
             lines.append(line.strip())
     return '\n'.join(lines)
 
