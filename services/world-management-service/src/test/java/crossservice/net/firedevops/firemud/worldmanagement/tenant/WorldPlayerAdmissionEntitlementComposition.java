@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
@@ -34,6 +36,7 @@ import net.firedevops.firemud.gamesession.client.CanonicalGameplayLoginAccountCl
 import net.firedevops.firemud.gamesession.client.DirectTextIssuedConnectScope;
 import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginPhysicalCompositionFixture;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
@@ -214,20 +217,39 @@ final class WorldPlayerAdmissionEntitlementComposition {
                 entitlementClient.read(
                     lobby, coordinates, transport, UUID.randomUUID(), login, () -> true);
             fixture.assertAdmittingEvidence(joined);
+            var journal = new InitialGameplayLoginCoordinationJournalRepository(gs);
+            var beforeCustodyRefusal = journal.readCommitted(coordinates).orElseThrow();
             assertThatThrownBy(
                     () ->
                         entitlementClient.read(
                             lobby, coordinates, transport, UUID.randomUUID(), login, () -> false))
-                .isInstanceOf(RuntimeException.class);
+                .isExactlyInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure -> {
+                      var status = ((StatusRuntimeException) failure).getStatus();
+                      assertThat(status.getCode()).isEqualTo(Status.Code.CANCELLED);
+                      assertThat(status.getDescription())
+                          .isEqualTo("Account player-admission entitlement read did not complete");
+                    });
+            fixture.assertAdmittingEvidence(joined);
+            assertThat(login.evidence()).isEqualTo(evidence);
+            assertThat(journal.readCommitted(coordinates)).contains(beforeCustodyRefusal);
             assertThat(physicalLogin.abandonOriginalAfterCustodyLoss().status())
                 .isEqualTo(
                     net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwner
                         .Status.ACCOUNT_RETIRED);
+            var beforeClosedResultRefusal = journal.readCommitted(coordinates).orElseThrow();
+            // Cleanup has closed the private result. This proves local disposal refusal,
+            // not an Account-side retired-token read over the wire.
             assertThatThrownBy(
                     () ->
                         entitlementClient.read(
                             lobby, coordinates, transport, UUID.randomUUID(), login, () -> true))
-                .isInstanceOf(RuntimeException.class);
+                .isExactlyInstanceOf(IllegalStateException.class)
+                .hasMessage("Canonical LOGIN private result is closed");
+            fixture.assertAdmittingEvidence(joined);
+            assertThat(login.evidence()).isEqualTo(evidence);
+            assertThat(journal.readCommitted(coordinates)).contains(beforeClosedResultRefusal);
           } catch (RuntimeException | Error failure) {
             failure.addSuppressed(
                 new AssertionError(

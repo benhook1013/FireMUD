@@ -115,6 +115,51 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"absent", "null-id", "zero-id", "wrong-uuid", "null-provenance", "source-id"})
+  void restoreRejectsContradictoryAccountIdentityBeforeLocking(String malformed) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    switch (malformed) {
+      case "null-id" -> fixture.account.setId(null);
+      case "zero-id" -> fixture.account.setId(0L);
+      case "wrong-uuid" -> fixture.account.setAccountUuid(UUID.randomUUID());
+      case "null-provenance" -> fixture.account.setAccountUuidProvenance(null);
+      case "source-id" -> fixture.account.setAccountUuidSourceNumericId(99L);
+      default -> {}
+    }
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_UUID))
+        .thenReturn("absent".equals(malformed) ? Optional.empty() : Optional.of(fixture.account));
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope,
+                    REQUEST_ID,
+                    CALLER_BINDING,
+                    fixture.absenceBaseline,
+                    null,
+                    null,
+                    null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "absent".equals(malformed)
+                ? "Canonical Account identity is absent"
+                : "Canonical Account owner identity is contradictory");
+
+    verifyNoInteractions(
+        fixture.joinOperations,
+        fixture.memberships,
+        fixture.roles,
+        fixture.pairs,
+        fixture.authority,
+        fixture.outbox,
+        fixture.sourceEvidence,
+        fixture.tenantAuthorityEvents,
+        fixture.entitlements);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.CsvSource({
     "request,null",
     "request,empty",
