@@ -196,8 +196,12 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     rejectSql("23514", () -> c.setup().execute("DELETE FROM subscription_provisioning_attempts"));
   }
 
-  @Test
-  void claimRollbackAndStaleReservedWalletCannotLeaveProvisioningWork() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = AccountPaymentInstrumentRecord.State.class,
+      names = {"ATTACHABLE", "UNAVAILABLE"})
+  void claimRollbackAndStaleReservedWalletRetainOneTerminalOperatorItem(
+      AccountPaymentInstrumentRecord.State observedState) {
     Context c = context();
     configuration(c).target("1030").load().migrate();
     Seed seed = seed(c);
@@ -211,20 +215,107 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
             });
     assertThat(count(c, "subscription_provisioning_work")).isZero();
     assertThat(count(c, "subscription_provisioning_attempts")).isZero();
-    assertThat(c.repository().findCurrentByTenant(seed.tenant()).orElseThrow().status())
-        .isEqualTo("pending");
-    c.tx()
-        .executeWithoutResult(
-            s -> advanceWallet(c, seed.instrument().instrumentUuid(), UUID.randomUUID()));
+    var pending = c.repository().findCurrentByTenant(seed.tenant()).orElseThrow();
+    assertThat(pending.status()).isEqualTo("pending");
+    var observed =
+        c.tx()
+            .execute(
+                s ->
+                    new AccountPaymentInstrumentRepository(c.dsl())
+                        .recordAvailability(
+                            new AccountPaymentInstrumentRepository.AvailabilityObservation(
+                                UUID.randomUUID(),
+                                seed.instrument().instrumentUuid(),
+                                seed.owner().accountUuid(),
+                                1L,
+                                observedState,
+                                seed.instrument().display(),
+                                DIGEST)));
+    // Upgrade the original pending intent and its changed wallet without recreating either row.
+    configuration(c).load().migrate();
     assertThatThrownBy(
             () ->
                 c.tx()
                     .execute(
-                        s -> lifecycle(c, start).claim(created.requestId(), 1, UUID.randomUUID())))
+                        s -> lifecycle(c, start).claim(created.requestId(), 2, UUID.randomUUID())))
         .isInstanceOf(FenceRejectedException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx()
+                    .execute(
+                        s ->
+                            lifecycle(c, created.createdAt().minusSeconds(1))
+                                .claim(created.requestId(), 1, UUID.randomUUID())))
+        .isInstanceOf(FenceRejectedException.class);
+    c.tx()
+        .executeWithoutResult(
+            s -> {
+              assertThat(
+                      lifecycle(c, start)
+                          .claim(created.requestId(), 1, UUID.randomUUID())
+                          .disposition())
+                  .isEqualTo(
+                      AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
+              s.setRollbackOnly();
+            });
     assertThat(count(c, "subscription_provisioning_work")).isZero();
-    assertThat(c.repository().findCurrentByTenant(seed.tenant()).orElseThrow().rowVersion())
-        .isOne();
+    assertThat(count(c, "subscription_provisioning_operator_outbox")).isZero();
+    UUID firstAttempt = UUID.randomUUID();
+    for (UUID attempt : List.of(firstAttempt, firstAttempt, UUID.randomUUID())) {
+      var result =
+          Objects.requireNonNull(
+              c.tx().execute(s -> lifecycle(c, start).claim(created.requestId(), 1, attempt)));
+      assertThat(result.disposition())
+          .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
+      assertThat(result.claim()).isNull();
+    }
+    assertThat(
+            Objects.requireNonNull(
+                    c.tx()
+                        .execute(
+                            s ->
+                                lifecycle(c, start.plusSeconds(7200))
+                                    .claim(created.requestId(), 1, UUID.randomUUID())))
+                .disposition())
+        .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
+    assertThat(count(c, "subscription_provisioning_work")).isOne();
+    assertThat(count(c, "subscription_provisioning_attempts")).isZero();
+    assertThat(count(c, "subscription_provider_dispatch_claim")).isZero();
+    assertThat(count(c, "subscription_provider_terminal_resolutions")).isZero();
+    assertThat(count(c, "subscription_provisioning_operator_outbox")).isOne();
+    var work =
+        Objects.requireNonNull(
+            c.setup()
+                .fetchOne(
+                    "SELECT * FROM subscription_provisioning_work WHERE request_id = ?",
+                    created.requestId()));
+    assertThat(work.get("phase", String.class))
+        .isEqualTo("BILLING_RECONCILIATION_TERMINAL_FAILURE");
+    assertThat(work.get("attempt_count", Integer.class)).isZero();
+    assertThat(work.get("row_version", Long.class)).isEqualTo(2L);
+    assertThat(work.get("last_attempt_id")).isNull();
+    var notice =
+        Objects.requireNonNull(
+            c.setup()
+                .fetchOne(
+                    "SELECT * FROM subscription_provisioning_operator_outbox WHERE request_id = ?",
+                    created.requestId()));
+    assertThat(notice.get("reason", String.class)).isEqualTo("RESERVED_INSTRUMENT_CHANGED");
+    assertThat(notice.get("recorded_at")).isEqualTo(work.get("terminal_at"));
+    assertThat(c.repository().findCurrentByTenant(seed.tenant()).orElseThrow()).isEqualTo(pending);
+    assertThat(
+            new AccountPaymentInstrumentRepository(c.dsl())
+                .findByOwner(seed.owner().accountUuid(), seed.instrument().instrumentUuid())
+                .orElseThrow())
+        .isEqualTo(observed);
+    assertThat(
+            Objects.requireNonNull(
+                    c.setup()
+                        .fetchOne(
+                            "SELECT released_at FROM subscription_instrument_reservations WHERE request_id = ?",
+                            created.requestId()))
+                .get("released_at"))
+        .isNull();
   }
 
   @Test

@@ -267,7 +267,6 @@ class AccountTenantAuthoritySourceSelectionPostgresIntegrationTest {
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration", "classpath:db/migration/saga")
-        .target("1030")
         .load()
         .migrate();
     var f = CanonicalHostingSubscriptionTestFixture.create(source);
