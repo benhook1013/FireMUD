@@ -429,9 +429,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         };
 
     var result =
-        (AccountHostingSubscriptionProvisioningService.Committed)
+        (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
             service(f).provision(finalClaim, UUID.randomUUID(), UUID.randomUUID());
-    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
     assertThat(f.transport().creates).isOne();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isEqualTo(3);
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();

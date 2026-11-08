@@ -139,6 +139,9 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
       ReadFence fence,
       StripeHostingSubscriptionObserver.Result observed) {
     requireWritableOwnerTransaction();
+    Objects.requireNonNull(scope, "canonical JOIN scope is required");
+    requireBoundedText(requestId, "canonical JOIN request ID");
+    requireBoundedText(callerBinding, "verified caller binding");
     Account account = accountRepository.findByAccountUuid(scope.accountId()).orElseThrow();
     requireAccountIdentity(account, scope.accountId());
     joinOperationRepository.lockAccount(account.getId());
