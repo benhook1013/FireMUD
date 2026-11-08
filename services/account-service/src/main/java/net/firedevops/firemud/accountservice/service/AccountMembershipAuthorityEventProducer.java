@@ -16,6 +16,7 @@ import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
+import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -157,22 +158,8 @@ public class AccountMembershipAuthorityEventProducer {
     requireBoundedText(requestId, "canonical JOIN request ID", MAX_REQUEST_ID_LENGTH);
     requireBoundedText(callerBinding, "verified JOIN caller binding", MAX_CALLER_BINDING_LENGTH);
     Objects.requireNonNull(previous);
-    if (hosting != null) {
-      Objects.requireNonNull(fence, "Original paid read fence required");
-      Objects.requireNonNull(observed, "Original sealed SDK result required");
-    }
-    var account =
-        accountRepository
-            .findByAccountUuid(scope.accountId())
-            .orElseThrow(() -> new IllegalStateException("Canonical Account identity is absent"));
-    if (account.getId() == null
-        || account.getId() <= 0L
-        || !scope.accountId().equals(account.getAccountUuid())
-        || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
-        || !Objects.equals(account.getAccountUuidSourceNumericId(), account.getId())) {
-      throw new IllegalStateException("Canonical Account owner identity is contradictory");
-    }
-    joinOperationRepository.lockAccount(account.getId());
+    PaidJoinSource paid = hosting == null ? null : new PaidJoinSource(hosting, fence, observed);
+    var account = lockCanonicalAccountOwner(scope.accountId());
     CanonicalJoinOperationEvidence operation =
         joinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId).orElseThrow();
     requireOperationMatchesRequest(scope, requestId, callerBinding, account.getId(), operation);
@@ -234,7 +221,7 @@ public class AccountMembershipAuthorityEventProducer {
         membership,
         provenance,
         tenant);
-    if (hosting == null) {
+    if (paid == null) {
       requireCurrentJoinEntitlement(
           operation,
           demoTenantEntitlementRepository.readCurrent(scope.tenantId()),
@@ -242,7 +229,10 @@ public class AccountMembershipAuthorityEventProducer {
           scope.tenantId());
     } else {
       requireCurrentPaidJoinEntitlement(
-          operation, hosting.readCurrent(fence, observed), tenant, scope.tenantId());
+          operation,
+          paid.hosting().readCurrent(paid.fence(), paid.observed()),
+          tenant,
+          scope.tenantId());
     }
     String stream = membershipStreamKey(scope.accountId(), scope.tenantId());
     Checkpoint prior = authorityOutboxRepository.readCheckpoint(stream).orElseThrow();
@@ -356,20 +346,7 @@ public class AccountMembershipAuthorityEventProducer {
 
     UUID accountUuid = scope.accountId();
     UUID tenantUuid = scope.tenantId();
-    var account =
-        accountRepository
-            .findByAccountUuid(accountUuid)
-            .orElseThrow(() -> new IllegalStateException("Canonical Account identity is absent"));
-    if (account.getId() == null
-        || account.getId() <= 0L
-        || !accountUuid.equals(account.getAccountUuid())
-        || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
-        || !Objects.equals(account.getAccountUuidSourceNumericId(), account.getId())) {
-      throw new IllegalStateException("Canonical Account owner identity is contradictory");
-    }
-    // The operation repository exposes only a retained private row key. Lock its actual Account
-    // owner first, then lock/read the operation before resolving any membership source evidence.
-    joinOperationRepository.lockAccount(account.getId());
+    var account = lockCanonicalAccountOwner(accountUuid);
     CanonicalJoinOperationEvidence operation =
         joinOperationRepository
             .findCanonicalEvidenceForUpdateByRequestId(requestId)
@@ -860,6 +837,24 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Canonical paid first JOIN requires exact current public-join entitlement evidence");
     }
+  }
+
+  private Account lockCanonicalAccountOwner(UUID accountUuid) {
+    var account =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalStateException("Canonical Account identity is absent"));
+    if (account.getId() == null
+        || account.getId() <= 0L
+        || !accountUuid.equals(account.getAccountUuid())
+        || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
+        || !Objects.equals(account.getAccountUuidSourceNumericId(), account.getId())) {
+      throw new IllegalStateException("Canonical Account owner identity is contradictory");
+    }
+    // The operation repository exposes only a retained private row key. Lock its actual Account
+    // owner first, then lock/read the operation before resolving any membership source evidence.
+    joinOperationRepository.lockAccount(account.getId());
+    return account;
   }
 
   private record PaidJoinSource(
