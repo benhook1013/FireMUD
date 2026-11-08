@@ -25,6 +25,9 @@ import java.nio.file.Path;
 import java.security.cert.CertificateEncodingException;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -219,6 +222,35 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
       runtime.meters().close();
     }
     if (entityPostgres.isRunning()) entityPostgres.stop();
+  }
+
+  @org.junit.jupiter.api.Test
+  void failedEntityStartupClosesEveryRegisteredResourceDespiteCleanupFailures() {
+    var failure = new IOException("Entity startup failed");
+    var clientFailure = new IOException("Owner client cleanup failed");
+    var sourceFailure = new IllegalStateException("Source server cleanup failed");
+    var closed = new ArrayList<String>();
+    Deque<AutoCloseable> resources = new ArrayDeque<>();
+    resources.push(() -> closed.add("postgres"));
+    resources.push(
+        () -> {
+          closed.add("source server");
+          throw sourceFailure;
+        });
+    resources.push(
+        () -> {
+          closed.add("owner client");
+          throw clientFailure;
+        });
+    resources.push(() -> closed.add("meters"));
+    resources.push(() -> closed.add("entity server"));
+
+    closeFailedStartup(failure, resources);
+
+    assertThat(closed)
+        .containsExactly("entity server", "meters", "owner client", "source server", "postgres");
+    assertThat(failure.getSuppressed()).containsExactly(clientFailure, sourceFailure);
+    assertThat(resources).isEmpty();
   }
 
   @org.junit.jupiter.api.Test
@@ -814,6 +846,11 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
 
   private static synchronized EntityRuntime requireEntityRuntime() {
     if (entityRuntime != null) return entityRuntime;
+    Deque<AutoCloseable> startedResources = new ArrayDeque<>();
+    startedResources.push(
+        () -> {
+          if (entityPostgres.isRunning()) entityPostgres.stop();
+        });
     try {
       if (!entityPostgres.isRunning()) entityPostgres.start();
       var ds =
@@ -839,6 +876,7 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
       var repository = new CharacterRepository(dsl);
       var reads = new AtomicInteger();
       Server sourceServer = startSourceServer(reads);
+      startedResources.push(() -> stopFixtureServer(sourceServer));
       var endpoints = new ServiceEndpointsProperties();
       endpoints.setGameSessionService("localhost:" + sourceServer.getPort());
       var client =
@@ -847,6 +885,7 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
               TEST_PKI.clientProperties(PKI_DIRECTORY, TEST_PKI.identity("entity-client")),
               new GrpcChannelFactory(),
               TEST_NAMESPACE);
+      startedResources.push(client);
       client.init();
       var service =
           new AccountBootstrapRosterReadService(
@@ -854,6 +893,7 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
               repository,
               manager);
       var meters = new SimpleMeterRegistry();
+      startedResources.push(meters::close);
       var identity = TEST_PKI.identity("entity");
       Server server =
           NettyServerBuilder.forPort(0)
@@ -871,16 +911,37 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
               .addService(
                   ServerInterceptors.intercept(
                       ordinaryReceiver(repository, meters), new GrpcPeerIdentityInterceptor()))
-              .build()
-              .start();
+              .build();
+      startedResources.push(() -> stopFixtureServer(server));
+      server.start();
       entityRuntime =
           new EntityRuntime(
               repository, jdbc, dsl, manager, server, sourceServer, client, reads, meters);
       return entityRuntime;
     } catch (IOException | CertificateEncodingException | RuntimeException failure) {
-      if (entityPostgres.isRunning()) entityPostgres.stop();
+      closeFailedStartup(failure, startedResources);
       throw new IllegalStateException(
           "Could not start the real Entity mTLS owner fixture", failure);
+    }
+  }
+
+  private static void closeFailedStartup(Throwable failure, Deque<AutoCloseable> resources) {
+    boolean interrupted = false;
+    while (!resources.isEmpty()) {
+      try {
+        resources.pop().close();
+      } catch (Exception cleanup) {
+        failure.addSuppressed(cleanup);
+        if (cleanup instanceof InterruptedException) interrupted = true;
+      }
+    }
+    if (interrupted) Thread.currentThread().interrupt();
+  }
+
+  private static void stopFixtureServer(Server server) throws InterruptedException {
+    server.shutdownNow();
+    if (!server.awaitTermination(5, TimeUnit.SECONDS)) {
+      throw new IllegalStateException("Entity fixture gRPC server did not terminate");
     }
   }
 

@@ -786,7 +786,7 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         fixture.logoutAllOperations(),
         fixture.securityStateOperations(),
         fixture.sourceChanges(),
-        null, // connect scopes
+        null, // audit outbox is not on the password-reset path
         null, // join operations
         null, // email login challenges
         null, // realm grants
