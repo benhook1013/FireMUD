@@ -376,15 +376,23 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     } else {
       StubJoinOutcome retained = joinOutcomesByRequestId.get(request.getRequestId());
       if (retained != null) {
-        responseObserver.onNext(
-            retained.request().equals(request)
-                ? retained.response().toBuilder().setReplayed(true).build()
-                : JoinPublicProductionMembershipResponse.newBuilder()
-                    .setError(
-                        ErrorDetail.newBuilder()
-                            .setCode("IDEMPOTENCY_CONFLICT")
-                            .setMessage("Direct-text JOIN request ID conflicts"))
-                    .build());
+        if (retained.request().equals(request)) {
+          var replay = retained.response().toBuilder().setReplayed(true);
+          if (retained.response().getSuccess()) {
+            // A retained membership receipt never preserves historical admission permission.
+            replay.setGameplayAdmissionAllowed(
+                "ACTIVE".equals(membershipLifecycleState.get()) && gameplayAdmissionAllowed.get());
+          }
+          responseObserver.onNext(replay.build());
+        } else {
+          responseObserver.onNext(
+              JoinPublicProductionMembershipResponse.newBuilder()
+                  .setError(
+                      ErrorDetail.newBuilder()
+                          .setCode("IDEMPOTENCY_CONFLICT")
+                          .setMessage("Direct-text JOIN request ID conflicts"))
+                  .build());
+        }
       } else {
         JoinPublicProductionMembershipResponse response = evaluateJoin(caller);
         joinOutcomesByRequestId.put(request.getRequestId(), new StubJoinOutcome(request, response));
