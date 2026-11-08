@@ -495,7 +495,9 @@ trap 'rm -rf "$tmp_dir"' EXIT
 smoke_clock_fixture="$tmp_dir/smoke-clock.js"
 python3 - "$ROOT_DIR" "$smoke_clock_fixture" <<'PY'
 from pathlib import Path
+import base64
 import hashlib
+import json
 import re
 import sys
 import yaml
@@ -520,13 +522,37 @@ if fingerprint is None or fingerprint[1] != expected:
         "Smoke Gate producer fingerprint is stale: after reviewing runtime-images.yml, update "
         f"canonicalRuntimeWorkflowSha256 in smoke.yml to {expected} and rerun this contract."
     )
+classifier_paths = (
+    "dev-tools/verify-smoke-images.sh",
+    "dev-tools/smoke/smoke_common.py",
+    "services/game-session-service/websocket-login-look-smoke.sh",
+)
+classifier_fingerprints = re.search(r"const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});", script)
+if classifier_fingerprints is None:
+    raise SystemExit("Smoke Gate must fingerprint the canonical PLAY classifier files")
+classifiers = json.loads(classifier_fingerprints[1])
+if set(classifiers) != set(classifier_paths):
+    raise SystemExit("Smoke Gate PLAY classifier fingerprint paths must match the three canonical files")
+classifier_definitions = {}
+for path in classifier_paths:
+    classifier_bytes = (root / path).read_bytes()
+    expected = hashlib.sha256(classifier_bytes).hexdigest()
+    if classifiers[path] != expected:
+        raise SystemExit(
+            f"Smoke Gate PLAY classifier fingerprint is stale: after reviewing {path}, update "
+            f"canonicalPlayClassifierSha256 in smoke.yml to {expected} for that path and rerun this contract."
+        )
+    classifier_definitions[path] = {
+        "type": "file", "path": path, "encoding": "base64",
+        "content": base64.b64encode(classifier_bytes).decode("ascii"), "size": len(classifier_bytes),
+    }
+Path(sys.argv[2] + ".classifiers.json").write_text(json.dumps(classifier_definitions))
 producer_job = producer["jobs"]["pr-local-smoke"]
 cancelled_inventory = re.search(
     r"const preExecutionCancelledJobNames = new Set\(\[([\s\S]*?)\]\);", script
 )
 if cancelled_inventory is None:
     raise SystemExit("Smoke Gate must declare its bounded pre-execution cancellation inventory")
-import json
 producer_job_names = [job["name"] for job in producer["jobs"].values()]
 Path(sys.argv[2] + ".cancelled-job-names.json").write_text(json.dumps(producer_job_names))
 if producer_job["name"] != "PR Full-Stack Smoke (runtime-required=${{ needs.image-meta.outputs.runtime_smoke_required }})":
@@ -3415,6 +3441,8 @@ const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const canonicalPlayClassifierSha256 = JSON.parse(script.match(/const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});/)[1]);
+const classifierDefinitions = JSON.parse(fs.readFileSync(process.argv[2] + ".classifiers.json", "utf8"));
 const headSha = "a".repeat(40), baseSha = "b".repeat(40), mergeSha = "c".repeat(40);
 const identity = {headSha, baseSha, mergeSha, baseRef: "develop"};
 const run = {id: 99, run_attempt: 2, event: "pull_request"};
@@ -3432,17 +3460,27 @@ async function verify(mutate = () => {}) {
   const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
     eventHeadRepository: repositoryName,
     currentPullRequest: {state: "open", head: {sha: headSha}, base: {ref: "develop"}, labels: [{name: "canonical-play-transition"}]},
-    definition: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}});
+    definitions: {...classifierDefinitions,
+      [workflowPath]: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}}});
   mutate(data);
+  const contentRequests = [];
   const github = {request: async () => ({data: data.source}), paginate: async () => data.jobs,
     rest: {actions: {getWorkflow: async () => ({data: {id: 7, path: workflowPath, name: "Build Runtime Images"}}),
-      getWorkflowRun: async () => ({data: data.latest})}, pulls: {get: async () => ({data: data.currentPullRequest})}, repos: {getContent: async () => ({data: data.definition})}}};
-  return new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
-    "canonicalRuntimeWorkflowSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+      getWorkflowRun: async () => ({data: data.latest})}, pulls: {get: async () => ({data: data.currentPullRequest})}, repos: {getContent: async ({owner, repo, path, ref}) => {
+        assert.equal(`${owner}/${repo}`, repositoryName);
+        assert.equal(ref, mergeSha, "PLAY classifier attestation must use the immutable verified merge");
+        contentRequests.push(path);
+        if (!data.definitions[path]) throw Object.assign(new Error("definition unavailable"), {status: 404});
+        return {data: data.definitions[path]};
+      }}}};
+  const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
+    "canonicalRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
     `${fn}; return verifyKnownPlayFailure(data.run, data.candidate, data.identity);`)(
-      github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
+      github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}}, "benhook1013", "FireMUD", require, data);
+  if (accepted) assert.deepEqual(contentRequests, [workflowPath, ...Object.keys(classifierDefinitions)]);
+  return accepted;
 }
 // Execute the failed-run branch so proof errors retain the deterministic failure diagnostic.
 const failedStart = script.indexOf('if (matching.conclusion !== "success")');
@@ -3508,6 +3546,17 @@ function markerAccepted(overrides = {}) {
     {"github.event_name": "workflow_run"},
   ]) assert.equal(markerAccepted(overrides), false);
   assert.equal(await verify(), true);
+  for (const path of Object.keys(classifierDefinitions)) {
+    assert.equal(await verify(d => {
+      const altered = Buffer.concat([Buffer.from(d.definitions[path].content, "base64"), Buffer.from("\n# altered classifier\n")]);
+      d.definitions[path].content = altered.toString("base64");
+      d.definitions[path].size = altered.length;
+    }), false, `altered classifier bytes must fail closed: ${path}`);
+    for (const change of [
+      {type: "dir"}, {path: "other-classifier"}, {encoding: "none"}, {content: null}, {size: 0},
+    ]) assert.equal(await verify(d => {Object.assign(d.definitions[path], change);}), false, `${path}: ${JSON.stringify(change)}`);
+    await assert.rejects(verify(d => {delete d.definitions[path];}), /definition unavailable/);
+  }
   for (const stackPr of [3405, 3409, 3407, 3408, 3410]) {
     assert.equal(await verify(d => {d.pr = String(stackPr); d.source.display_title = d.source.display_title.replace("pr-3390", `pr-${stackPr}`);}), true);
   }
@@ -3529,7 +3578,7 @@ function markerAccepted(overrides = {}) {
     d => {d.latest.conclusion = "success"; assert.equal(d.source.conclusion, "failure");},
     d => {d.source.path = ".github/workflows/spoof.yml";},
     d => {d.source.repository.full_name = "attacker/FireMUD";},
-    d => {d.definition.content = Buffer.from("spoof").toString("base64"); d.definition.size = 5;},
+    d => {d.definitions[workflowPath].content = Buffer.from("spoof").toString("base64"); d.definitions[workflowPath].size = 5;},
     d => {d.jobs.push({...d.candidate, id: 124});},
     d => {d.jobs.push({id: 2, status: "completed", conclusion: "failure"});},
     d => {d.jobs[0].steps.push(step("Unrelated failure", "failure"));},
