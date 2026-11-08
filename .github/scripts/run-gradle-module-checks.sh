@@ -8,13 +8,14 @@ readonly PARTITION="${2:-full}"
 if [[ $# -lt 1 || $# -gt 2 || ! "$MODULE" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ || \
   ( "$MODULE" == "account-service" && "$PARTITION" != "full" && ! "$PARTITION" =~ ^[1-4]$ ) || \
   ( "$MODULE" == "game-session-service" && "$PARTITION" != "full" && ! "$PARTITION" =~ ^[1-4]$ ) || \
-  ( "$MODULE" != "account-service" && "$MODULE" != "game-session-service" && $# -eq 2 && "$PARTITION" != "full" ) ]]; then
-  echo "usage: run-gradle-module-checks.sh <module-name> [full|partition] (Account: 1-4; Game Session: 1-4)" >&2
+  ( "$MODULE" == "world-management-service" && "$PARTITION" != "full" && ! "$PARTITION" =~ ^[1-2]$ ) || \
+  ( "$MODULE" != "account-service" && "$MODULE" != "game-session-service" && "$MODULE" != "world-management-service" && $# -eq 2 && "$PARTITION" != "full" ) ]]; then
+  echo "usage: run-gradle-module-checks.sh <module-name> [full|partition] (Account: 1-4; Game Session: 1-4; World: 1-2)" >&2
   exit 64
 fi
 
 declare -a CHECK_ARGS=(-PfullCheck)
-if [[ ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" ) && "$PARTITION" != "full" ]]; then
+if [[ ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" || "$MODULE" == "world-management-service" ) && "$PARTITION" != "full" ]]; then
   SERVICE_DIR="$ROOT_DIR/services/$MODULE"
   PARTITION_DIR="$SERVICE_DIR/build/slow-service-ci-partition"
   declare -a PREPARE_TASKS=(":${MODULE}:testClasses")

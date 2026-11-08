@@ -35,9 +35,11 @@ if '${{ needs.' in script or 'downloadArtifact' in script:
 expected_markers = {
     'Declare Account CI partition count: 4': "${{ matrix.module == 'account-service' }}",
     'Declare Game Session CI partition count: 4': "${{ matrix.module == 'game-session-service' }}",
+    'Declare World CI partition count: 2': "${{ matrix.module == 'world-management-service' }}",
 }
 marker_steps = [
-    step for step in ci['jobs']['build-and-test']['steps']
+    step for group in ('build-and-test-account', 'build-and-test-game-session', 'build-and-test-world')
+    for step in ci['jobs'][group]['steps']
     if step.get('name', '').startswith('Declare ')
     and 'CI partition count:' in step.get('name', '')
 ]
@@ -74,7 +76,7 @@ const pr = {
   base: { ref: 'develop', sha: base, repo: { full_name: repository } },
 };
 const row = (name, id) => ({ id, name, run_id: 70, run_attempt: 1, head_sha: head, status: 'completed', conclusion: 'success', steps: [{ name: 'Harden runner', status: 'completed', conclusion: 'success' }] });
-const jobs = payload.names.filter(name => !name.includes('${{')).map((name, i) => row(name, i + 1));
+const jobs = payload.names.filter(name => !name.includes('${{') && name !== 'World Coverage Aggregate').map((name, i) => row(name, i + 1));
 jobs.push(
   row('Build and Test (account-service / 1)', 90),
   row('Build and Test (account-service / 2)', 92),
@@ -343,11 +345,74 @@ async function noWrites(config, reject = false) {
   const skipped = clone(jobs).filter(x => !x.name.startsWith('Build and Test ('));
   skipped.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';
   skipped.find(x => x.name === 'Game Session Coverage Aggregate').conclusion = 'skipped';
-  skipped.push({ ...row('Build and Test ($' + '{{ matrix.module }} / $' + '{{ matrix.partition }})', 201), conclusion: 'skipped' });
+  skipped.push({ ...row('Build and Test ($' + '{{ matrix.module }} / $' + '{{ matrix.partition }})', 201), conclusion: 'skipped', steps: [] });
+  const groupPlaceholder = (module, id) => ({
+    ...row(`Build and Test (${module} / $` + '{{ matrix.partition }})', id),
+    conclusion: 'skipped', steps: [],
+  });
+  const allGroupsSkipped = [...clone(skipped), groupPlaceholder('account-service', 202), groupPlaceholder('game-session-service', 203)];
+  const groupedSkippedRun = harness({ jobs: allGroupsSkipped }); await groupedSkippedRun.run();
+  assert.equal(groupedSkippedRun.calls.creates.length, 1);
+  // A selected group's real rows may coexist with skipped sibling groups.
+  const accountOnly = clone(jobs).filter(job => !job.name.startsWith('Build and Test (game-session-service') && job.name !== 'Build and Test (common-security / full)');
+  accountOnly.find(job => job.name === 'Game Session Coverage Aggregate').conclusion = 'skipped';
+  accountOnly.push(groupPlaceholder('game-session-service', 202), clone(skipped[skipped.length - 1]));
+  const accountOnlyRun = harness({ jobs: accountOnly }); await accountOnlyRun.run();
+  assert.equal(accountOnlyRun.calls.creates.length, 1);
+  const otherOnly = clone(jobs).filter(job => !job.name.startsWith('Build and Test (account-service') && !job.name.startsWith('Build and Test (game-session-service'));
+  for (const job of otherOnly.filter(job => job.name.endsWith('Coverage Aggregate'))) job.conclusion = 'skipped';
+  otherOnly.push(groupPlaceholder('account-service', 202), groupPlaceholder('game-session-service', 203));
+  const otherOnlyRun = harness({ jobs: otherOnly }); await otherOnlyRun.run();
+  assert.equal(otherOnlyRun.calls.creates.length, 1);
+  await noWrites({ jobs: [...clone(jobs), groupPlaceholder('account-service', 202)] }, true);
+  await noWrites({ jobs: [...clone(allGroupsSkipped), groupPlaceholder('account-service', 204)] }, true);
+  const executedPlaceholder = clone(allGroupsSkipped);
+  executedPlaceholder[executedPlaceholder.length - 1].steps = [{name: 'Run checks', conclusion: 'success'}];
+  await noWrites({ jobs: executedPlaceholder }, true);
   const skippedRun = harness({ jobs: skipped }); await skippedRun.run();
   assert.match(skippedRun.calls.creates[0].body, /Service build\/test matrix: `skipped`/);
   assert.match(skippedRun.calls.creates[0].body, /Account coverage aggregation: `skipped`/);
   assert.match(skippedRun.calls.creates[0].body, /Game Session coverage aggregation: `skipped`/);
+
+  // Historical World full jobs remain valid without a partition aggregate.
+  for (const name of ['Build and Test (world-management-service)', 'Build and Test (world-management-service / full)']) {
+    const historicalWorld = harness({ jobs: [...clone(jobs), row(name, 500)] });
+    await historicalWorld.run();
+    assert.equal(historicalWorld.calls.creates.length, 1);
+  }
+  const worldPair = [1, 2].map(partition => ({
+    ...row(`Build and Test (world-management-service / ${partition})`, 500 + partition),
+    steps: [{ name: 'Declare World CI partition count: 2', status: 'completed', conclusion: 'success' }],
+  }));
+  const worldJobs = [...clone(accountFourWay), ...worldPair, row('World Coverage Aggregate', 503)];
+  const worldRun = harness({ jobs: worldJobs }); await worldRun.run();
+  assert.match(worldRun.calls.creates[0].body, /World coverage aggregation: `success`/);
+  for (const missing of ['Build and Test (world-management-service / 1)', 'Build and Test (world-management-service / 2)', 'World Coverage Aggregate']) {
+    await noWrites({ jobs: clone(worldJobs).filter(job => job.name !== missing) }, true);
+  }
+  for (const mutate of [
+    job => { job.steps = []; },
+    job => { job.steps[0].name = 'Declare World CI partition count: 4'; },
+    job => { job.steps.push(clone(job.steps[0])); },
+    job => { job.steps[0].name = 'Harden runner'; },
+  ]) {
+    const invalid = clone(worldJobs); mutate(invalid.find(job => job.name === 'Build and Test (world-management-service / 2)'));
+    await noWrites({ jobs: invalid }, true);
+  }
+  await noWrites({ jobs: [...clone(worldJobs), row('Build and Test (world-management-service / 3)', 504)] }, true);
+  await noWrites({ jobs: [...clone(worldJobs), clone(worldPair[0])] }, true);
+  await noWrites({ jobs: [...clone(worldJobs), row('Build and Test (world-management-service / full)', 504)] }, true);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out']) {
+    const failed = clone(worldJobs);
+    failed.find(job => job.name === 'Build and Test (world-management-service / 2)').conclusion = conclusion;
+    failed.find(job => job.name === 'World Coverage Aggregate').conclusion = 'skipped';
+    const failedRun = harness({ jobs: failed }); await failedRun.run();
+    assert.match(failedRun.calls.creates[0].body, /World coverage aggregation: `skipped`/);
+  }
+  const worldSkipped = [...clone(allGroupsSkipped), groupPlaceholder('world-management-service', 501),
+    { ...row('World Coverage Aggregate', 503), conclusion: 'skipped' }];
+  const worldSkippedRun = harness({ jobs: worldSkipped }); await worldSkippedRun.run();
+  assert.equal(worldSkippedRun.calls.creates.length, 1);
 
   const legacy = clone(jobs).filter(x =>
     x.name !== 'Account Coverage Aggregate' &&

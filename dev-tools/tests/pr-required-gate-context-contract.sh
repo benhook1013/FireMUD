@@ -992,14 +992,17 @@ head, base = os.environ["HEAD_SHA"], os.environ["BASE_SHA"]
 repo = os.environ["GITHUB_REPOSITORY"]
 title = f"CI — Validation pr-{os.environ['PR_NUMBER']} base-{base} head-{head}"
 names = ["Detect CI-Relevant Changes", "GitHub Workflow Lint", "Buf Generation", "Dev Tools README Contract",
-         "Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})", "Metrics Cardinality Policy Check", "Flyway Migration Sanity Checks",
+         "Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})",
+         "Build and Test (account-service / $" + "{{ matrix.partition }})",
+         "Build and Test (world-management-service / $" + "{{ matrix.partition }})",
+         "Build and Test (game-session-service / $" + "{{ matrix.partition }})", "Metrics Cardinality Policy Check", "Flyway Migration Sanity Checks",
          "gRPC Transport Configuration Sanity Checks", "PostgreSQL Runtime Upgrade Proof", "Validate Documentation",
          "YAML Lint", "Dockerfile Lint", "Helm Render Validation", "Helm Chart Lint", "Python Script Validation",
          "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof",
-         "Account Coverage Aggregate", "Game Session Coverage Aggregate", "Validation Gate"]
+         "Account Coverage Aggregate", "Game Session Coverage Aggregate", "World Coverage Aggregate", "Validation Gate"]
 def step(name, conclusion):
     return {"name": name, "status": "completed", "conclusion": conclusion}
-# Captured incident shape: 19 existing prerequisite jobs never reached a step;
+# Exact split-matrix cancellation shape: 21 prerequisites never reached a step;
 # both slow-service aggregation prerequisites were skipped without running,
 # while the always() gate failed only its enforcement step after cancellation.
 jobs = [{"id": 500 + index, "run_id": 100, "run_attempt": 1, "head_sha": head,
@@ -1021,6 +1024,26 @@ gate["steps"] = [step("Set up job", "success"), step("Pre Harden runner", "succe
                  step("Report dependency-deferred required gate", "skipped"),
                  step("Enforce validation success", "failure"), step("Post Harden runner", "success"),
                  step("Complete job", "success")]
+if scenario == "cancellation-old-shape":
+    jobs = [job for job in jobs if job["name"] not in (
+        "Build and Test (account-service / $" + "{{ matrix.partition }})",
+        "Build and Test (game-session-service / $" + "{{ matrix.partition }})")]
+if scenario == "cancellation-partial-new-shape":
+    jobs = [job for job in jobs if job["name"] !=
+            "Build and Test (game-session-service / $" + "{{ matrix.partition }})"]
+if scenario == "cancellation-pre-world-shape":
+    jobs = [job for job in jobs if job["name"] not in (
+        "Build and Test (world-management-service / $" + "{{ matrix.partition }})",
+        "World Coverage Aggregate")]
+if scenario == "cancellation-world-missing-partition":
+    jobs = [job for job in jobs if job["name"] !=
+            "Build and Test (world-management-service / $" + "{{ matrix.partition }})"]
+if scenario == "cancellation-world-aggregate-executed":
+    world = next(job for job in jobs if job["name"] == "World Coverage Aggregate")
+    world["steps"] = [step("Verify complete World partition and report union", "success")]
+if scenario == "cancellation-world-aggregate-failed":
+    world = next(job for job in jobs if job["name"] == "World Coverage Aggregate")
+    world["conclusion"] = "failure"
 if scenario == "cancellation-real-failure":
     jobs[1]["conclusion"] = "failure"
     jobs[1]["steps"] = [step("Run lint", "failure")]
@@ -1872,7 +1895,7 @@ for scenario in cancellation-only cancellation-pending cancellation-metadata can
     echo "cancellation lost missing-proof behavior: $scenario" >&2; exit 1;
   }
 done
-for scenario in cancellation-later-attempt-failed-source cancellation-real-failure cancellation-hidden-step-failure cancellation-executed-check cancellation-aggregate-executed cancellation-aggregate-failed cancellation-game-session-aggregate-executed cancellation-game-session-aggregate-failed cancellation-gate-other-failure cancellation-unknown-assertion cancellation-timed-out cancellation-action-required cancellation-partial cancellation-wrong-attempt cancellation-wrong-head cancellation-duplicate cancellation-missing-steps cancellation-wrong-app cancellation-check-conflict cancellation-run-conflict; do
+for scenario in cancellation-pre-world-shape cancellation-world-missing-partition cancellation-world-aggregate-executed cancellation-world-aggregate-failed cancellation-old-shape cancellation-partial-new-shape cancellation-later-attempt-failed-source cancellation-real-failure cancellation-hidden-step-failure cancellation-executed-check cancellation-aggregate-executed cancellation-aggregate-failed cancellation-game-session-aggregate-executed cancellation-game-session-aggregate-failed cancellation-gate-other-failure cancellation-unknown-assertion cancellation-timed-out cancellation-action-required cancellation-partial cancellation-wrong-attempt cancellation-wrong-head cancellation-duplicate cancellation-missing-steps cancellation-wrong-app cancellation-check-conflict cancellation-run-conflict; do
   output_file="$tmp_dir/$scenario-output"
   if run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file" >"$tmp_dir/$scenario-log" 2>&1; then
     echo "cancellation suppressed failed or incomplete proof: $scenario" >&2; exit 1
