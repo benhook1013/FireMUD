@@ -11,12 +11,14 @@ check_graph="$TMP_DIR/check-graph"
 report_graph="$TMP_DIR/report-graph"
 account_aggregate_graph="$TMP_DIR/account-aggregate-graph"
 game_session_aggregate_graph="$TMP_DIR/game-session-aggregate-graph"
+world_aggregate_graph="$TMP_DIR/world-aggregate-graph"
 
 bash "$LOCKED_GRADLE" :common-saga:test -PfullCheck --dry-run --no-configuration-cache >"$unit_graph"
 bash "$LOCKED_GRADLE" :common-saga:check -PfullCheck --dry-run --no-configuration-cache >"$check_graph"
 bash "$LOCKED_GRADLE" :common-saga:jacocoTestReport -PfullCheck --dry-run --no-configuration-cache >"$report_graph"
 bash "$LOCKED_GRADLE" :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$account_aggregate_graph"
 bash "$LOCKED_GRADLE" :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$game_session_aggregate_graph"
+bash "$LOCKED_GRADLE" :world-management-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=world-management-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes --dry-run --configuration-cache --configuration-cache-problems=fail >"$world_aggregate_graph"
 
 if grep -Eq '^:common-saga:(integrationTest|crossServiceTest|jacocoTestReport)([[:space:]]|$)' "$unit_graph"; then
   echo "Focused :common-saga:test unexpectedly scheduled categorized tests or the combined report." >&2
@@ -63,6 +65,19 @@ if grep -Eq '^:game-session-service:classes([[:space:]]|$)' "$game_session_aggre
 fi
 grep -Eq '^:game-session-service:jacocoTestReport([[:space:]]|$)' "$game_session_aggregate_graph" || {
   echo "Game Session coverage aggregation did not schedule jacocoTestReport." >&2
+  exit 1
+}
+
+if grep -Eq '^:world-management-service:(test|integrationTest|crossServiceTest)([[:space:]]|$)' "$world_aggregate_graph"; then
+  echo "World coverage aggregation unexpectedly reran a partitioned test task." >&2
+  exit 1
+fi
+if grep -Eq '^:[^ ]*:(classes|compile[^ ]*|test|integrationTest|crossServiceTest)([[:space:]]|$)' "$world_aggregate_graph"; then
+  echo "World coverage aggregation recompiled classes instead of using measured partition classes." >&2
+  exit 1
+fi
+grep -Eq '^:world-management-service:jacocoTestReport([[:space:]]|$)' "$world_aggregate_graph" || {
+  echo "World coverage aggregation did not schedule jacocoTestReport." >&2
   exit 1
 }
 

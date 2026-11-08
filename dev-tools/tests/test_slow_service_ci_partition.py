@@ -300,6 +300,95 @@ def write_compiled_class(directory, class_name, access_flags):
 
 
 class SlowServiceCiPartitionTests(unittest.TestCase):
+    def test_world_all_tasks_compiled_nested_groups_and_new_classes_are_complete(self):
+        module = "world-management-service"
+        historical = PARTITION.load_historical_plan(module)
+        self.assertEqual(historical["partition_count"], 2)
+        document = json.loads(PARTITION.PLAN_PATH.read_text())
+        self.assertEqual(document["weight_provenance"][module]["artifact_id"], 13604416967)
+        self.assertEqual(sum(len(task["classes"]) for task in historical["tasks"].values()), 150)
+        self.assertEqual(sum(metric["cases"] for task in historical["tasks"].values()
+                             for metric in task["metrics_by_partition"].values()), 1016)
+        loads = {p: sum(entry["weight_seconds"] for task in historical["tasks"].values()
+                        for entry in task["classes"].values() if entry["partition"] == p)
+                 for p in (1, 2)}
+        self.assertLess(abs(loads[1] - loads[2]), 0.01)
+        self.assertEqual(set(historical["tasks"]), {"test", "integrationTest", "crossServiceTest"})
+        with tempfile.TemporaryDirectory() as temporary:
+            discovered, flags = {}, {}
+            for task in historical["tasks"]:
+                directory = Path(temporary) / task
+                known = next(iter(historical["tasks"][task]["classes"]))
+                for name in (known, known + "$Nested", "net.example.NewWorldTest", "net.example.NewWorldTest$Nested", "net.example.Fixture"):
+                    write_compiled_class(directory, name, 0x0021)
+                discovered[task] = PARTITION.class_names_from_directories([directory])
+                candidates = {name for name in discovered[task] if PARTITION.is_test_class(name)}
+                flags[task] = PARTITION.test_class_access_flags_from_directories([directory], candidates)
+            plan = PARTITION.build_plan(discovered, SOURCE_SHA, "1", RUN_ID, module,
+                                        class_access_flags_by_task=flags)
+            repeated = PARTITION.build_plan(dict(reversed(list(discovered.items()))), SOURCE_SHA, "1", RUN_ID, module,
+                                            class_access_flags_by_task=flags)
+            self.assertEqual(plan, repeated)
+            manifests = [PARTITION.partition_manifest(plan, p) for p in (1, 2)]
+            PARTITION.validate_partitions(manifests)
+            for task, names in discovered.items():
+                selected = [set(m["tasks"][task]["selected_classes"]) for m in manifests]
+                self.assertEqual(selected[0] | selected[1], names)
+                self.assertFalse(selected[0] & selected[1])
+                self.assertTrue(all("$" not in name for name in names))
+            # Empty selections in an individual task are valid, never a reason to drop that task.
+            empty = copy.deepcopy(manifests)
+            task = "crossServiceTest"
+            for manifest in empty:
+                manifest["tasks"][task]["assignments"] = dict.fromkeys(discovered[task], 1)
+                manifest["tasks"][task]["selected_classes"] = sorted(discovered[task]) if manifest["partition"] == 1 else []
+            PARTITION.validate_partitions(empty)
+
+    def test_world_two_way_provenance_and_aggregate_fail_closed(self):
+        module = "world-management-service"
+        provenance = make_provenance(module)
+        selection = PARTITION.selection_document(provenance, module, RUN_ID, SOURCE_SHA, "2")
+        self.assertEqual(set(selection["resolved"]["partitions"]), {"1", "2"})
+        self.assertEqual(selection["resolved"]["partitions"]["1"]["attempt"], 1)
+        self.assertEqual(selection["resolved"]["partitions"]["2"]["attempt"], 2)
+        for conclusion in ("failure", "cancelled", "timed_out"):
+            bad = copy.deepcopy(provenance)
+            bad["attempts"][-1]["jobs"][1]["conclusion"] = conclusion
+            with self.assertRaises(ValueError):
+                PARTITION.resolve_effective_artifacts(bad, module, RUN_ID, SOURCE_SHA, "2")
+        for mutation in ("missing_job", "missing_artifact", "wrong_source", "wrong_attempt"):
+            bad = copy.deepcopy(provenance)
+            if mutation == "missing_job":
+                for attempt in bad["attempts"]:
+                    attempt["jobs"] = attempt["jobs"][:1]
+                    attempt["total_count"] = 1
+            elif mutation == "missing_artifact":
+                bad["artifacts"]["items"].pop()
+                bad["artifacts"]["total_count"] -= 1
+            elif mutation == "wrong_source":
+                bad["run"]["tested_source_sha"] = "f" * 40
+            else:
+                bad["run"]["run_attempt"] = 3
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                PARTITION.resolve_effective_artifacts(bad, module, RUN_ID, SOURCE_SHA, "2")
+        for mutation in (None, "missing_manifest", "missing_junit", "missing_exec", "unequal_bytecode"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                input_dir, selection_path, verified, artifacts = prepare_aggregate(Path(temporary), module, selection)
+                if mutation == "missing_manifest":
+                    next(artifacts[2].rglob("manifest.json")).unlink()
+                elif mutation == "missing_junit":
+                    next(artifacts[2].glob("test-results/test/*.xml")).unlink()
+                elif mutation == "missing_exec":
+                    (artifacts[2] / "jacoco/test.exec").unlink()
+                elif mutation == "unequal_bytecode":
+                    next(artifacts[2].glob("classes/java/main/**/*.class")).write_bytes(b"mismatched bytes")
+                args = (input_dir, selection_path, verified, module, RUN_ID, SOURCE_SHA, "2")
+                if mutation:
+                    with self.assertRaises(ValueError):
+                        PARTITION.verify_aggregate(*args)
+                else:
+                    self.assertEqual(PARTITION.verify_aggregate(*args), 2)
+
     def test_account_plan_uses_measured_four_way_split_weights(self):
         historical = PARTITION.load_historical_plan("account-service")
         integration = historical["tasks"]["integrationTest"]
@@ -1045,6 +1134,33 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                 ]
                 missing["artifacts"]["total_count"] -= 1
                 with self.assertRaisesRegex(ValueError, f"partition {partition} physical attempt 1 has missing"):
+                    PARTITION.resolve_effective_artifacts(missing, module, RUN_ID, SOURCE_SHA, "2")
+
+    def test_own_complete_partitions_can_aggregate_before_unrelated_jobs_finish(self):
+        for module in ("account-service", "game-session-service"):
+            with self.subTest(module=module):
+                provenance = make_provenance(module)
+                latest = provenance["attempts"][-1]
+                for index, status in enumerate(("queued", "in_progress")):
+                    unrelated = copy.deepcopy(latest["jobs"][0])
+                    unrelated.update(
+                        id=9000 + index, name=f"Build and Test (unrelated-{index} / full)",
+                        status=status, conclusion=None, completed_at=None,
+                    )
+                    latest["jobs"].append(unrelated)
+                    latest["total_count"] += 1
+                resolved = PARTITION.resolve_effective_artifacts(provenance, module, RUN_ID, SOURCE_SHA, "2")
+                self.assertEqual(set(resolved["partitions"]), {"1", "2", "3", "4"})
+                failed = copy.deepcopy(provenance)
+                own = next(item for item in failed["attempts"][-1]["jobs"] if item["name"] == f"Build and Test ({module} / 1)")
+                own["conclusion"] = "failure"
+                with self.assertRaisesRegex(ValueError, "latest effective.*failure"):
+                    PARTITION.resolve_effective_artifacts(failed, module, RUN_ID, SOURCE_SHA, "2")
+                missing = copy.deepcopy(provenance)
+                for attempt in missing["attempts"]:
+                    attempt["jobs"] = [item for item in attempt["jobs"] if item["name"] != f"Build and Test ({module} / 4)"]
+                    attempt["total_count"] = len(attempt["jobs"])
+                with self.assertRaisesRegex(ValueError, "partition 4"):
                     PARTITION.resolve_effective_artifacts(missing, module, RUN_ID, SOURCE_SHA, "2")
 
     def test_four_way_union_and_measured_classes_include_later_partitions(self):

@@ -581,7 +581,9 @@ for job in \
   helm-render-validation \
   docs-check \
   frontend-checks \
-  build-and-test; do
+  build-and-test \
+  build-and-test-account \
+  build-and-test-game-session; do
   assert_job_condition ci.yml "$job" "$required_condition"
 done
 
