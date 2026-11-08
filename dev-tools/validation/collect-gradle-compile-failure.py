@@ -97,11 +97,16 @@ def java_identity(pid, rejection=None):
             arguments = stream.read(8193)
         if len(arguments) > 8192:
             return reject('command-line-limit')
-        arguments = arguments.split(b'\0')
+        arguments = arguments.removesuffix(b'\0').split(b'\0')
         if b'org.gradle.launcher.daemon.bootstrap.GradleDaemon' in arguments:
             role = 'daemon'
-        elif (b'worker.org.gradle.process.internal.worker.GradleWorkerMain' in arguments
-              and any(arg.startswith(b'Gradle Test Executor ') for arg in arguments)):
+        # Gradle 9.8.2 DefaultWorkerProcessBuilder.build adds literal single
+        # quotes around the display-name argument (these are not shell quoting).
+        # Require the complete trailing main/display pair, not an arbitrary argv
+        # substring. Unknown launch shapes remain unselected; never read argfiles.
+        elif (len(arguments) >= 3
+              and arguments[-2] == b'worker.org.gradle.process.internal.worker.GradleWorkerMain'
+              and re.fullmatch(rb"'Gradle Test Executor [1-9][0-9]*'", arguments[-1])):
             role = 'test-worker'
         else:
             return reject('unrecognized-java-role')
