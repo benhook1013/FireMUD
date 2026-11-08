@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const SUPPORTED_MODULES = new Set(["account-service", "game-session-service"]);
+const SUPPORTED_MODULES = new Set(["account-service", "game-session-service", "world-management-service"]);
 const CANONICAL_RUN_NAME = "CI — Validation";
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
