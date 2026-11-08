@@ -64,23 +64,7 @@ public final class WorldPrivatePreparationSourceClient
 
   /** Uses the same absolute budget when a composing World owner performs independent rereads. */
   public Verified read(Scope scope, UUID expectedPreparationRequestId, Deadline overall) {
-    requireNoAmbientSql("Private World source read requires no SQL or synchronization");
-    if (SessionContext.hasAuthenticatedCallerContext()
-        || SessionContext.isInternalService()
-        || SessionContext.getServiceName() != null
-        || SessionContext.getServiceInstanceId() != null)
-      throw new IllegalStateException("Workload-only World context required");
-    Objects.requireNonNull(scope);
-    if (!namespace.equals(scope.targetNamespace()))
-      throw new IllegalArgumentException("Wrong source namespace");
-    Deadline deadline =
-        Objects.requireNonNull(overall)
-            .minimum(
-                Deadline.after(
-                    PrivateWorldPreparationReadGrpcCodec.CALL_DEADLINE_SECONDS, TimeUnit.SECONDS));
-    if (Context.current().getDeadline() != null)
-      deadline = deadline.minimum(Context.current().getDeadline());
-    requireLiveCall(deadline);
+    Deadline deadline = preflight(scope, overall);
     var request =
         new PrivateWorldPreparationReadGrpcCodec.Request(
             UUID.randomUUID(), scope, expectedPreparationRequestId);
@@ -99,6 +83,26 @@ public final class WorldPrivatePreparationSourceClient
 
   /** Uses the same absolute budget when a composing World owner performs independent rereads. */
   public VerifiedBuild readBuild(Scope scope, UUID expectedPreparationRequestId, Deadline overall) {
+    Deadline deadline = preflight(scope, overall);
+    var request =
+        new PrivateWorldPreparationReadGrpcCodec.Request(
+            UUID.randomUUID(), scope, expectedPreparationRequestId);
+    var response =
+        requireInitializedStub("Private World source client is unavailable")
+            .withDeadline(deadline)
+            .withMaxOutboundMessageSize(PrivateWorldPreparationReadGrpcCodec.MAX_REQUEST_WIRE_BYTES)
+            .withMaxInboundMessageSize(
+                PrivateWorldPreparationBuildGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
+            .readPrivateWorldPreparationBuild(
+                PrivateWorldPreparationReadGrpcCodec.toRequest(request));
+    requireLiveCall(deadline);
+    var evidence = PrivateWorldPreparationBuildGrpcCodec.fromResponse(request, response);
+    evidence.source().snapshot().requireCurrentAt(clock.instant());
+    requireLiveCall(deadline);
+    return new VerifiedBuild(evidence);
+  }
+
+  private Deadline preflight(Scope scope, Deadline overall) {
     requireNoAmbientSql("Private World source read requires no SQL or synchronization");
     if (SessionContext.hasAuthenticatedCallerContext()
         || SessionContext.isInternalService()
@@ -116,22 +120,7 @@ public final class WorldPrivatePreparationSourceClient
     if (Context.current().getDeadline() != null)
       deadline = deadline.minimum(Context.current().getDeadline());
     requireLiveCall(deadline);
-    var request =
-        new PrivateWorldPreparationReadGrpcCodec.Request(
-            UUID.randomUUID(), scope, expectedPreparationRequestId);
-    var response =
-        requireInitializedStub("Private World source client is unavailable")
-            .withDeadline(deadline)
-            .withMaxOutboundMessageSize(PrivateWorldPreparationReadGrpcCodec.MAX_REQUEST_WIRE_BYTES)
-            .withMaxInboundMessageSize(
-                PrivateWorldPreparationBuildGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
-            .readPrivateWorldPreparationBuild(
-                PrivateWorldPreparationReadGrpcCodec.toRequest(request));
-    requireLiveCall(deadline);
-    var evidence = PrivateWorldPreparationBuildGrpcCodec.fromResponse(request, response);
-    evidence.source().snapshot().requireCurrentAt(clock.instant());
-    requireLiveCall(deadline);
-    return new VerifiedBuild(evidence);
+    return deadline;
   }
 
   private static void requireLiveCall(Deadline deadline) {
