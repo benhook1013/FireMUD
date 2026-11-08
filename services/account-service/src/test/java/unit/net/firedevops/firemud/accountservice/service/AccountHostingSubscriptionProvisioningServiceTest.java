@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -13,6 +14,7 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -114,6 +116,49 @@ class AccountHostingSubscriptionProvisioningServiceTest {
                 Disposition.ATTEMPT_EXPIRED, providerResult));
     assertThat(transactions.commits).isEqualTo(3);
     verifyNoInteractions(lifecycle);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void refusedDispatchCommitsLocalDeferralWithoutCallingProvider(boolean readbackRefused) {
+    ProviderDispatch prepared = mock(ProviderDispatch.class);
+    if (readbackRefused) {
+      when(repository.prepareProviderDispatch(any(), any())).thenReturn(prepared);
+      when(repository.readProviderDispatch(prepared))
+          .thenThrow(new FenceRejectedException("wallet observation advanced"));
+    } else {
+      when(repository.prepareProviderDispatch(any(), any()))
+          .thenThrow(new FenceRejectedException("wallet observation advanced"));
+    }
+    when(repository.deferUnresolved(claim))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return Disposition.TERMINAL_FAILURE;
+            });
+
+    assertThat(service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
+        .isEqualTo(
+            new AccountHostingSubscriptionProvisioningService.Pending(
+                Disposition.TERMINAL_FAILURE,
+                new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null)));
+    assertThat(transactions.commits).isEqualTo(readbackRefused ? 2 : 1);
+    verify(repository).deferUnresolved(claim);
+    verifyNoInteractions(provider, lifecycle);
+  }
+
+  @Test
+  void refusedDispatchCannotHideStaleClaimSettlementFailure() {
+    when(repository.prepareProviderDispatch(any(), any()))
+        .thenThrow(new FenceRejectedException("dispatch refused"));
+    when(repository.deferUnresolved(claim))
+        .thenThrow(new FenceRejectedException("stale retained attempt"));
+
+    assertThatThrownBy(() -> service.provision(claim, UUID.randomUUID(), UUID.randomUUID()))
+        .isInstanceOf(FenceRejectedException.class)
+        .hasMessage("stale retained attempt");
+    assertThat(transactions.commits).isZero();
+    verifyNoInteractions(provider, lifecycle);
   }
 
   @Test

@@ -71,6 +71,7 @@ class DeploymentRolloutServiceTest {
             "account-service",
             "game-session-service",
             "social-groups-service",
+            "spring-cloud-gateway",
             "game-design-service",
             "world-management-service",
             "entity-management-service",
@@ -81,6 +82,15 @@ class DeploymentRolloutServiceTest {
             readyDeployment(
                 "tcp-proxy-service",
                 Map.of(HostedIdentityContract.TELNET_REVISION_ANNOTATION, "telnet-current"),
+                3L));
+    when(graph.resources().get("spring-cloud-gateway").get())
+        .thenReturn(
+            readyDeployment(
+                "spring-cloud-gateway",
+                Map.of(
+                    HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                    expectedWorkloadRevision(
+                        "grpc-current", "gateway-client-current", "gateway-client-leaf")),
                 3L));
     ArgumentCaptor<Deployment> accountReplacement = ArgumentCaptor.forClass(Deployment.class);
     ArgumentCaptor<Deployment> gameSessionReplacement = ArgumentCaptor.forClass(Deployment.class);
@@ -160,6 +170,8 @@ class DeploymentRolloutServiceTest {
         HostedIdentityContract.GRPC_GAME_SESSION_ROLE, "game-session-current");
     workloadIdentityRevisions.put(
         HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE, "social-groups-current");
+    workloadIdentityRevisions.put(
+        HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE, "gateway-client-current");
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
             .sync(
@@ -261,13 +273,14 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  void sharedGrpcRevisionRollsAllEightDistinctConsumersAndLeavesUnrelatedWorkloadUntouched() {
+  void sharedGrpcRevisionRollsAllNineIdentityConsumersAndLeavesUnrelatedWorkloadUntouched() {
     EnvironmentIdentityPlan plan = planWithConsumers();
     List<String> grpcWorkloads =
         new java.util.ArrayList<>(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
     grpcWorkloads.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
+    grpcWorkloads.add(HostedIdentityContract.GRPC_GATEWAY_WORKLOAD);
     String[] deploymentNames =
         java.util.stream.Stream.concat(
                 java.util.stream.Stream.of("tcp-proxy-service", "logging-admin-service"),
@@ -349,6 +362,7 @@ class DeploymentRolloutServiceTest {
     grpcWorkloads.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
+    grpcWorkloads.add(HostedIdentityContract.GRPC_GATEWAY_WORKLOAD);
     String[] deploymentNames =
         java.util.stream.Stream.concat(
                 java.util.stream.Stream.of("tcp-proxy-service"), grpcWorkloads.stream())
@@ -383,7 +397,7 @@ class DeploymentRolloutServiceTest {
       lockedResources.put(workload, locked);
     }
 
-    assertEquals(8, workloadIdentityRevisions.size());
+    assertEquals(9, workloadIdentityRevisions.size());
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
             .sync(
@@ -424,6 +438,7 @@ class DeploymentRolloutServiceTest {
     grpcWorkloads.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
+    grpcWorkloads.add(HostedIdentityContract.GRPC_GATEWAY_WORKLOAD);
     Map<String, ArgumentCaptor<Deployment>> pendingReplacements = new LinkedHashMap<>();
     Map<String, ReplaceDeletable<Deployment>> workloadLocks = new LinkedHashMap<>();
 
@@ -431,7 +446,8 @@ class DeploymentRolloutServiceTest {
         List.of(
             HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD,
             HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD,
-            HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD)) {
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD,
+            HostedIdentityContract.GRPC_GATEWAY_WORKLOAD)) {
       EnvironmentIdentityPlan plan = planWithConsumers();
       String[] deploymentNames =
           java.util.stream.Stream.concat(
@@ -1262,6 +1278,9 @@ class DeploymentRolloutServiceTest {
     if (HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD.equals(workload)) {
       return HostedIdentityContract.GRPC_GAME_SESSION_ROLE;
     }
+    if (HostedIdentityContract.GRPC_GATEWAY_WORKLOAD.equals(workload)) {
+      return HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE;
+    }
     if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD.equals(workload)) {
       return HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE;
     }
@@ -1274,6 +1293,9 @@ class DeploymentRolloutServiceTest {
     }
     if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
       return "game-session-leaf";
+    }
+    if (HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+      return "gateway-client-leaf";
     }
     if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
       return "social-groups-leaf";

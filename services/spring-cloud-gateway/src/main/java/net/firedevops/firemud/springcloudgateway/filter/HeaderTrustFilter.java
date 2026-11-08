@@ -115,6 +115,15 @@ public final class HeaderTrustFilter implements WebFilter, Ordered {
     final RoutingBundle canonicalRoutingBundle = incomingRoutingBundle;
     final String canonicalLocale = canonicalLocale(exchange.getRequest().getHeaders());
 
+    if (trustedTcpProxy && isGameplayRoute && tcpProxyTrustPolicy.requiresClientCertificate()) {
+      try {
+        VerifiedTcpProxyOrigin.retain(exchange, canonicalClientIp, incomingProxyConnectionId);
+      } catch (RuntimeException malformed) {
+        exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+        return exchange.getResponse().setComplete();
+      }
+    }
+
     ServerWebExchange mutated =
         exchange
             .mutate()

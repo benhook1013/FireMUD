@@ -284,7 +284,7 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
   }
 
   @Test
-  void receivingUpgradeFromParent1036PreservesCanonicalRowsAndHistory() {
+  void firstInvoiceAndCapacityUpgradeFromParent1036Through1040PreservesCanonicalRowsAndHistory() {
     String schema = createSchema("canonical_join_scope_");
     DriverManagerDataSource dataSource = postgres.dataSource(schema);
     Flyway parent = accountFlyway(dataSource, schema, "1036");
@@ -356,29 +356,31 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .doesNotContain(
             "V1037__canonical_join_failure_and_attempt_diagnostics.sql",
             "V1038__canonical_join_existing_membership_terminal.sql",
-            "V1039__hosting_first_invoice_completion.sql");
+            "V1039__hosting_first_invoice_completion.sql",
+            "V1040__account_tenant_capacity_owner.sql");
 
-    Flyway current = accountFlyway(dataSource, schema, null);
+    Flyway current = accountFlyway(dataSource, schema, "1040");
     current.migrate();
     current.validate();
     assertThat(current.info().current().getVersion())
-        .isEqualTo(MigrationVersion.fromVersion("1039"));
+        .isEqualTo(MigrationVersion.fromVersion("1040"));
 
     List<Map<String, Object>> upgradedHistory = flywayHistory(setupDsl);
-    assertThat(upgradedHistory).hasSize(parentHistory.size() + 3);
+    assertThat(upgradedHistory).hasSize(parentHistory.size() + 4);
     assertThat(upgradedHistory.subList(0, parentHistory.size()))
         .containsExactlyElementsOf(parentHistory);
     List<Map<String, Object>> addedHistory =
         upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
     assertThat(addedHistory)
         .extracting(row -> row.get("version"))
-        .containsExactly("1037", "1038", "1039");
+        .containsExactly("1037", "1038", "1039", "1040");
     assertThat(addedHistory)
         .extracting(row -> row.get("script"))
         .containsExactly(
             "V1037__canonical_join_failure_and_attempt_diagnostics.sql",
             "V1038__canonical_join_existing_membership_terminal.sql",
-            "V1039__hosting_first_invoice_completion.sql");
+            "V1039__hosting_first_invoice_completion.sql",
+            "V1040__account_tenant_capacity_owner.sql");
     assertThat(addedHistory)
         .allSatisfy(
             row -> {

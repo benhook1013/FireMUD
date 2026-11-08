@@ -413,6 +413,20 @@ public final class HostedIdentityTestFixtures {
         .getMetadata()
         .getAnnotations()
         .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "cert-manager");
+    stubProjectionAndSource(
+        secretClient,
+        plan,
+        HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE,
+        acceptedData,
+        acceptedData,
+        acceptedData);
+    secretClient
+        .runtimeSecrets()
+        .withName(secretName(plan, HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE))
+        .get()
+        .getMetadata()
+        .getAnnotations()
+        .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "cert-manager");
     SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
     SecretMaterialValidator.MaterialSummary summary =
         new SecretMaterialValidator.MaterialSummary(
@@ -532,6 +546,9 @@ public final class HostedIdentityTestFixtures {
         if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
           yield plan.grpcSocialGroupsSecretName();
         }
+        if (HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+          yield plan.grpcGatewayClientSecretName();
+        }
         if (HostedIdentityContract.isGrpcPublicationRole(role)) {
           yield plan.grpcPublicationSecretName(
               role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length()));
@@ -550,6 +567,9 @@ public final class HostedIdentityTestFixtures {
     }
     if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
       return plan.grpcSocialGroupsSourceSecretName();
+    }
+    if (HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+      return plan.grpcGatewayClientSourceSecretName();
     }
     if (HostedIdentityContract.isGrpcPublicationRole(role)) {
       return plan.grpcPublicationSourceSecretName(grpcPublicationWorkload(role));

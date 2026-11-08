@@ -128,6 +128,101 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void actualCapacityCommitAndAuthenticatedFinalReadFinalizeExactlyOneHold() throws Exception {
+    try (Session session = session()) {
+      var first = session.complete();
+      var recovery =
+          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+              session.capacityOwner, session.dsl, session.capacityRead, CLOCK);
+      var result =
+          recovery.reconcile(
+              session.capacityRequest,
+              net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                  .NoCommitAction.RELEASE);
+      assertThat(result.state())
+          .isEqualTo(
+              net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State
+                  .FINALIZED);
+      assertThat(
+              recovery.reconcile(
+                  session.capacityRequest,
+                  net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                      .NoCommitAction.RELEASE))
+          .isEqualTo(result);
+      assertThat(session.complete()).isEqualTo(first);
+      var usage =
+          session.dsl.fetchSingle(
+              "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+              result.identity().tenantId());
+      assertThat(usage.get("held_units", Long.class)).isZero();
+      assertThat(usage.get("used_units", Long.class)).isOne();
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isOne();
+    }
+  }
+
+  @Test
+  void retainedActualCasEvidenceStillFinalizesCapacityAfterControlledServingRetirement()
+      throws Exception {
+    try (Session session = session()) {
+      var admitted = session.complete();
+      var reservation = session.capacityClient.commit(session.capacityRequest);
+      var before =
+          session.capacityRead.readExact(
+              session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
+      session.gs.removeServingIndexesAfterCapacityRetentionForFault();
+      assertThat(session.gs.physicalSession()).isNull();
+      var after =
+          session.capacityRead.readExact(
+              session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
+      assertThat(after.disposition())
+          .isEqualTo(
+              net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                  .Disposition.COMMITTED);
+      assertThat(after.authoritativeStateDigest())
+          .isEqualTo("sha256:" + admitted.finalSessionSha256());
+      assertThat(after.canonicalOwnerReadback()).containsExactly(before.canonicalOwnerReadback());
+      var recovery =
+          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+              session.capacityOwner, session.dsl, session.capacityRead, CLOCK);
+      assertThat(
+              recovery
+                  .reconcile(
+                      session.capacityRequest,
+                      net.firedevops.firemud.accountservice.service
+                          .AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE)
+                  .state())
+          .isEqualTo(
+              net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State
+                  .FINALIZED);
+    }
+  }
+
+  @Test
+  void missingCapacityInputRefusesBeforeAnyFinalSessionOrReservationMutation() throws Exception {
+    try (Session session = session()) {
+      byte[] candidate = session.gs.physicalSession();
+      assertThatThrownBy(
+              () ->
+                  session.gs.complete(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      System.currentTimeMillis() + 10_000L,
+                      session.capacityClient,
+                      null))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
+    }
+  }
+
+  @Test
   void actualPostActiveSqlConfirmationLossRecoversThroughFreshProtectedFinalRead()
       throws Exception {
     try (Session session = session();
@@ -217,6 +312,14 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private CanonicalGameplayAdmissionDecisionReadClient reverse;
     private AccountOriginalNewFinalAdmissionGrpcReadClient finalRead;
     private AccountGameplayAdmissionLeaseClient client;
+    private net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient;
+    private net.firedevops.firemud.accountservice.client
+            .AccountOriginalNewCapacityExecutionReadClient
+        capacityRead;
+    private net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner capacityOwner;
+    private net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+        capacityRequest;
+    private Server capacityServer;
     private AccountGameplayDelegationTokenRegistry registry;
     private AccountResponseEnvelopeCryptography responseCrypto;
     private DSLContext dsl;
@@ -230,7 +333,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
     private Session() throws Exception {
       try {
-        account = accountFixtures.newFixture(redis.client());
+        account = accountFixtures.newCapacityPlayerEntitlementFixture(redis.client());
         dsl =
             DSL.using(new TransactionAwareDataSourceProxy(account.dataSource), SQLDialect.POSTGRES);
         var manager = new DataSourceTransactionManager(account.dataSource);
@@ -331,6 +434,87 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                 .acquire(requestId, jwt, gs.candidate(), gs.target(), gs.generation())
                 .originalLeaseEvidence();
         gs.installActualCandidate(lease);
+        // Actual retained PLAYER_ADMISSION evaluation, with the same original request and exact
+        // GS target. Published/World captures remain the fixture's explicit controlled sources.
+        var scope = account.capacityScope(gs.target());
+        var selector =
+            new net.firedevops.firemud.common.gamesession
+                .CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector(
+                requestId,
+                scope.accountId(),
+                "test",
+                scope.tenantId(),
+                scope.tenantSlug(),
+                scope.worldSlug(),
+                scope.realmId(),
+                scope.realmSlug(),
+                scope.playableStateNamespaceId(),
+                "SHARED",
+                scope.gameInstanceId(),
+                scope.catalogRevision(),
+                scope.pointerVersion());
+        var evidence =
+            account
+                .playerEntitlementOwner(reverse)
+                .evaluate(
+                    new net.firedevops.firemud.accountservice.service
+                        .AccountPlayerAdmissionEntitlementOwner.Request(
+                        selector, scope.connectScopeId(), GS),
+                    jwt);
+        var binding = gs.candidate();
+        capacityRequest =
+            new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                    new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                        .Identity(scope.tenantId(), requestId, gs.decisionId()),
+                    UUID.randomUUID(),
+                    1,
+                    "test",
+                    new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                        .PlayerContext(
+                        scope.accountId(),
+                        scope.tenantId(),
+                        scope.playableStateNamespaceId(),
+                        scope.gameInstanceId(),
+                        binding.characterId(),
+                        binding.sessionId(),
+                        scope.realmId(),
+                        requestId,
+                        "SHARED"),
+                    net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Operation
+                        .CAPACITY_CREATING,
+                    new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                        .Shape(0, 0, 0),
+                    new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                        .Shape(1, 0, 0),
+                    net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence
+                        .player(evidence),
+                    1L,
+                    null)
+                .withDigest();
+        capacityOwner = account.capacityOwner();
+        capacityServer =
+            new net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService(
+                    capacityOwner, "test")
+                .createUnregisteredServer(
+                    "127.0.0.1:0",
+                    pki.keyManagerFactory(pki.identity("account")),
+                    pki.trustManagerFactory());
+        capacityServer.start();
+        var capacityEndpoints = new ServiceEndpointsProperties();
+        capacityEndpoints.setAccountService("localhost:" + capacityServer.getPort());
+        capacityClient =
+            new net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient(
+                capacityEndpoints,
+                pki.clientProperties(pkiDirectory, pki.identity("gs-client")),
+                new GrpcChannelFactory(),
+                "test",
+                CLOCK);
+        capacityClient.init();
+        capacityRead =
+            new net.firedevops.firemud.accountservice.client
+                .AccountOriginalNewCapacityExecutionReadClient(
+                endpoints, accountTls, new GrpcChannelFactory(), "test", CLOCK);
+        capacityRead.init();
         var finalized = client.finalizeLease(jwt, leaseBytes(), gs.decisionId());
         assertThat(finalized.state())
             .isEqualTo(
@@ -399,7 +583,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     private CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture.Receipt complete() {
-      return gs.complete(client, jwks, jwt, System.currentTimeMillis() + 10_000L);
+      return gs.complete(
+          client, jwks, jwt, System.currentTimeMillis() + 10_000L, capacityClient, capacityRequest);
     }
 
     private Genesis genesis() {
@@ -449,6 +634,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     @Override
     public void close() throws Exception {
       try {
+        if (capacityRead != null) capacityRead.close();
+        if (capacityClient != null) capacityClient.close();
+        if (capacityServer != null) {
+          capacityServer.shutdownNow();
+          if (!capacityServer.awaitTermination(5, TimeUnit.SECONDS))
+            throw new IllegalStateException("Capacity server teardown timed out");
+        }
         if (client != null) client.close();
       } finally {
         try {

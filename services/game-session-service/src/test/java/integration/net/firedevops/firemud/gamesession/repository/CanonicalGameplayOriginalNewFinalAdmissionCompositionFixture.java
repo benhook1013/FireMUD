@@ -262,7 +262,10 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             trust,
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
-            CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
+            Math.max(
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES,
+                net.firedevops.firemud.common.account.capacity
+                    .OriginalNewCapacityExecutionReadGrpcCodec.MAX_REQUEST_BYTES));
     var decisionGuard = new CanonicalGameplayAdmissionDecisionReadWorkloadGuard("test");
     var actualDecisionReceiver =
         new CanonicalGameplayAdmissionDecisionReadGrpcService(
@@ -324,6 +327,19 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             new GrpcPeerIdentityInterceptor(),
             finalGuard,
             new FinalReadCounter()));
+    var capacityGuard =
+        new net.firedevops.firemud.gamesession.security
+            .CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard("test");
+    factory.addService(
+        ServerInterceptors.interceptForward(
+            new net.firedevops.firemud.gamesession.service.impl
+                .CanonicalGameplayOriginalNewCapacityExecutionReadGrpcService(
+                new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                    binding.dsl(), coordination, scripts, CLOCK, tags),
+                capacityGuard,
+                "test"),
+            new GrpcPeerIdentityInterceptor(),
+            capacityGuard));
     server = factory.createServer().start();
     return server;
   }
@@ -573,7 +589,10 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       AccountGameplayAdmissionLeaseClient account,
       AccountPublicJwksCache jwks,
       String originalLoginJwt,
-      long deadline) {
+      long deadline,
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+          capacityRequest) {
     // Recreate the coordinator and its SQL/INITIAL/issuer/final owners on every invocation.
     var issuerSource = binding.currentIssuerSource();
     var issuer =
@@ -593,10 +612,13 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             new CanonicalGameplayOriginalNewBoundCredentialVerifier(jwks, CLOCK),
             new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                 coordination, scripts, CLOCK, tags),
-            CLOCK);
+            CLOCK,
+            capacityClient,
+            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                binding.dsl(), coordination, scripts, CLOCK, tags));
     var result =
         coordinator.completeOriginalNew(
-            decision, originalLoginJwt, regionInstallation, 120_000L, deadline);
+            decision, originalLoginJwt, regionInstallation, 120_000L, deadline, capacityRequest);
     return new Receipt(
         result.transitionId(),
         result.admissionAtMillis(),
@@ -631,6 +653,28 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
 
   public byte[] physicalSession() {
     return administration.sync().get(ascii(candidateInstallation.sessionKey()));
+  }
+
+  /** Controlled post-retention serving loss only, not proof of actual runtime teardown ordering. */
+  public void removeServingIndexesAfterCapacityRetentionForFault() {
+    String state =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT status FROM game_session_original_new_capacity_execution WHERE transition_id = ?",
+                decisionId())
+            .get(0, String.class);
+    if (!"COMMITTED".equals(state))
+      throw new IllegalStateException("Immutable actual outcome must precede this fixture fault");
+    administration
+        .sync()
+        .del(
+            new byte[][] {
+              ascii(candidateInstallation.sessionKey()),
+                  ascii(candidateInstallation.characterIndexKey()),
+              ascii(candidateInstallation.accountTenantIndexKey()),
+                  ascii(candidateInstallation.tenantIndexKey())
+            });
   }
 
   public void removeInitialBarrierForFault() {

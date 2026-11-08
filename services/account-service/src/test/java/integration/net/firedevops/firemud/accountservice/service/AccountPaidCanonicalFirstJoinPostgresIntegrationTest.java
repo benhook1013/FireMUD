@@ -258,7 +258,7 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       input.setUsername("paid-player-" + UUID.randomUUID());
       input.setEmail("paid-player-" + UUID.randomUUID() + "@example.test");
       input.setPasswordHash("controlled-hash");
-      input.setRole("player");
+      // Player role belongs to the canonical tenant membership, not global Account authority.
       Account player =
           Objects.requireNonNull(hosting.transaction().execute(status -> accounts.save(input)));
       var now = hosting.clock().instant();

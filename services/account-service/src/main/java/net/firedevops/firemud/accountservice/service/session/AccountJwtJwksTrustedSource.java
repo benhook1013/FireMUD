@@ -34,6 +34,7 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksS
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.StreamReadFeature;
@@ -304,6 +305,10 @@ public final class AccountJwtJwksTrustedSource
         throw unavailable();
       }
       return result;
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException
+        | TransactionException ownerStateUnavailable) {
+      throw unavailable();
     } catch (RuntimeException ownerStateUnavailable) {
       if (ownerStateUnavailable instanceof SourceUnavailableException unavailable) {
         throw unavailable;

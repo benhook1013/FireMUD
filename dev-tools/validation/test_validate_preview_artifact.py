@@ -1879,6 +1879,10 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                 ],
             },
             {
+                "to": [{"podSelector": {"matchLabels": {"app": "game-session-service"}}}],
+                "ports": [{"protocol": "TCP", "port": 8444}],
+            },
+            {
                 "to": [
                     {
                         "podSelector": {
@@ -2586,6 +2590,16 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
                                         "readOnly": True,
                                     },
                                     {
+                                        "name": "gameplay-client-tls",
+                                        "mountPath": "/gameplay-client-tls",
+                                        "readOnly": True,
+                                    },
+                                    {
+                                        "name": "gameplay-client-trust",
+                                        "mountPath": "/gameplay-client-trust",
+                                        "readOnly": True,
+                                    },
+                                    {
                                         "name": "jwt-signing-keys",
                                         "mountPath": "/var/run/secrets/firemud/jwt",
                                         "readOnly": True,
@@ -2602,6 +2616,23 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
                             {
                                 "name": "grpc-tls",
                                 "secret": {"secretName": "firemud-grpc-tls"},
+                            },
+                            {
+                                "name": "gameplay-client-tls",
+                                "secret": {
+                                    "secretName": "firemud-grpc-spring-cloud-gateway",
+                                    "items": [
+                                        {"key": "tls.crt", "path": "tls.crt"},
+                                        {"key": "tls.key", "path": "tls.key"},
+                                    ],
+                                },
+                            },
+                            {
+                                "name": "gameplay-client-trust",
+                                "secret": {
+                                    "secretName": "firemud-grpc-tls",
+                                    "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                                },
                             },
                             {
                                 "name": "jwt-signing-keys",

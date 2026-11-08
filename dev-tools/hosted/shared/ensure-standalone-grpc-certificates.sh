@@ -31,6 +31,7 @@ workloads=(
   account-service
   game-session-service
   social-groups-service
+  spring-cloud-gateway
 )
 
 write_certificates() {
@@ -53,17 +54,27 @@ spec:
     rotationPolicy: Always
   isCA: false
   revisionHistoryLimit: 1
+EOF
+    if [[ "$workload" != spring-cloud-gateway ]]; then
+      cat <<EOF
   dnsNames:
     - ${dns_name}
     - ${dns_name}.${namespace}
     - ${dns_name}.${namespace}.svc
     - ${dns_name}.${namespace}.svc.cluster.local
+EOF
+    fi
+    cat <<EOF
   uris:
     - spiffe://firemud/ns/${namespace}/sa/${workload}
   usages:
     - digital signature
     - key encipherment
-    - server auth
+EOF
+    if [[ "$workload" != spring-cloud-gateway ]]; then
+      echo '    - server auth'
+    fi
+    cat <<EOF
     - client auth
   encodeUsagesInRequest: true
   issuerRef:

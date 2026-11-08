@@ -746,7 +746,12 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
             () ->
                 fixture.producer.publishPaidCanonicalFirstJoinMembershipChange(
                     fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "unavailable".equals(failure)
+                ? "controlled paid source unavailable"
+                : "Canonical paid first JOIN requires exact current public-join entitlement evidence");
+    verify(hosting).readCurrent(fence, observed);
     verifyNoInteractions(fixture.entitlements);
     verify(fixture.outbox, never())
         .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));

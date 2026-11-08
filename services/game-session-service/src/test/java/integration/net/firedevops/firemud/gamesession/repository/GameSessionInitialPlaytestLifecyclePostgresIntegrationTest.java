@@ -25,6 +25,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
+import net.firedevops.firemud.common.gamesession.CurrentPrivatePlaytestLifecycleReadEvidence;
+import net.firedevops.firemud.common.gamesession.PrivateWorldPreparationReadEvidence;
+import net.firedevops.firemud.common.gamesession.PrivateWorldPreparationReadGrpcCodec;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -40,11 +45,19 @@ import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestL
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.Allocation;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.IdempotencyConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.InitializationMode;
+import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.Preparation;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.ReadState;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.Request;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.Snapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionInitialPlaytestLifecycleRepository.SourceUnavailableException;
+import net.firedevops.firemud.gamesession.repository.GameSessionPrivateFreshCatalogRevisionRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionPrivateFreshCatalogRevisionRepository.AdvanceRequest;
+import net.firedevops.firemud.gamesession.repository.GameSessionPrivateFreshRuntimeAllocationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionPrivateFreshTargetRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionPrivatePreparationProtectionRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionPrivateWorldPreparationBuildReader;
+import net.firedevops.firemud.gamesession.repository.GameSessionPrivateWorldPreparationSourceReader;
+import net.firedevops.firemud.gamesession.repository.GameSessionRuntimeFamilyCatalogRepository;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.awaitility.Awaitility;
@@ -77,6 +90,8 @@ import tools.jackson.databind.json.JsonMapper;
 class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   private static final String NAMESPACE = "initial-playtest-proof";
   private static final String TABLE = "game_session_initial_playtest_preparations";
+  private static final String REVISION_HISTORY = "game_session_private_catalog_revision_history";
+  private static final String REVISION_HEAD = "game_session_current_private_catalog_revisions";
   private static final tools.jackson.databind.ObjectMapper POLICY_JSON =
       JsonMapper.builder().build();
 
@@ -87,6 +102,515 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   @BeforeAll
   static void awaitPostgresReady() {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(postgres);
+  }
+
+  @Test
+  void privateRuntimeIdentityAllocationRetainsExactCurrentSourcesAndHasNoGameplayEffects() {
+    var fixture = runtimeFixture(3600);
+    var context = fixture.context();
+    var owner = new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl());
+    var sourceRows = runtimeSourceRows(context);
+    var allocated = allocateRuntime(context, fixture.request());
+    var result = allocated.snapshot();
+    assertThat(allocated.replayed()).isFalse();
+    assertThat(result.matches(fixture.target())).isTrue();
+    assertThat(result.gameInstanceId())
+        .isNotEqualTo(new UUID(0, 0))
+        .isNotEqualTo(result.realmId())
+        .isNotEqualTo(result.playtestLifecycleId())
+        .isNotEqualTo(result.playableStateNamespaceId());
+    assertThat(result.selectionRequestId()).isEqualTo(fixture.selection().request().requestId());
+    assertThat(result.selectionHeadRevision()).isEqualTo(fixture.selection().headRevision());
+    assertThat(result.selectionRequestDigest()).isEqualTo(fixture.selection().requestDigest());
+    assertThat(result.admissionAllowed()).isFalse();
+    assertThat(owner.readByRequest(fixture.request().requestId())).contains(result);
+    var row =
+        retainedRowWithXmin(
+            context, RUNTIME_ALLOCATIONS, "request_id", result.allocationRequestId());
+    assertThat(allocateRuntime(context, fixture.request()))
+        .isEqualTo(new GameSessionPrivateFreshRuntimeAllocationRepository.Allocation(result, true));
+    var currentRead =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    owner.readForWorldPreparation(
+                        result.preparationRequestId(), result.playtestLifecycleId()));
+    assertThat(currentRead).contains(result);
+    assertThat(
+            retainedRowWithXmin(
+                context, RUNTIME_ALLOCATIONS, "request_id", result.allocationRequestId()))
+        .isEqualTo(row);
+    assertThat(runtimeSourceRows(context)).isEqualTo(sourceRows);
+    assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+  }
+
+  @Test
+  void privateBuildReadProjectsActualRetainedWorldSelectionWithoutChangingOwnerRows() {
+    var fixture = runtimeFixture(3600);
+    var context = fixture.context();
+    allocateRuntime(context, fixture.request());
+    var before = runtimeSourceRows(context);
+    byte[] retainedCarrier =
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT complete_policy_set_evidence FROM game_session_canonical_realm_catalog "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
+                NAMESPACE,
+                context.catalog().tenantId(),
+                context.catalog().realmId())
+            .get("complete_policy_set_evidence", byte[].class);
+    assertThat(retainedCarrier)
+        .containsExactly(RealmPolicyPublishedEvidenceCodec.encode(context.published()));
+    var request =
+        new PrivateWorldPreparationReadGrpcCodec.Request(
+            UUID.randomUUID(),
+            new CurrentPrivatePlaytestLifecycleReadEvidence.Scope(
+                NAMESPACE,
+                fixture.target().tenantId(),
+                fixture.target().worldSlug(),
+                fixture.target().realmSlug()),
+            fixture.preparation().request().requestId());
+    var source =
+        new GameSessionPrivateWorldPreparationSourceReader(
+            new GameSessionCurrentPrivatePlaytestRepository(context.dsl()),
+            context.privateTargets(),
+            new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl()));
+    var reader = new GameSessionPrivateWorldPreparationBuildReader(context.dsl(), source);
+    var build =
+        Objects.requireNonNull(context.transaction().execute(status -> reader.read(request)));
+    assertThat(build.source().source().policyCarrierDigest()).isEqualTo(sha256(retainedCarrier));
+    assertThat(build.source().source().targetPolicy()).isIn(context.published().policies());
+    assertThat(build.selectedWorld())
+        .isEqualTo(
+            GameDesignPublicationOperationBinding.fromStored(context.published().operationBytes())
+                .world());
+    assertThat(build.selectedWorld().request().targetNamespace()).isEqualTo(NAMESPACE);
+    assertThat(build.source().admissionAllowed()).isFalse();
+    assertThat(runtimeSourceRows(context)).isEqualTo(before);
+    assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
+  void privateRuntimeReadsNeverAllocateAndChangedRetryIntentConflictsWithoutWrites() {
+    var fixture = runtimeFixture(3600);
+    var context = fixture.context();
+    var owner = new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl());
+    var absentRead =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    owner.readForWorldPreparation(
+                        fixture.target().preparationRequestId(),
+                        fixture.target().playtestLifecycleId()));
+    assertThat(absentRead).isEmpty();
+    assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
+    var first = allocateRuntime(context, fixture.request());
+    var r = fixture.request();
+    var before = retainedRowWithXmin(context, RUNTIME_ALLOCATIONS, "request_id", r.requestId());
+    for (var changed :
+        List.of(
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                UUID.randomUUID(),
+                r.playtestLifecycleId(),
+                r.realmId(),
+                r.expectedCatalogRevision(),
+                r.expectedCatalogRequestId(),
+                r.expectedCatalogReceiptDigest(),
+                r.expectedSelectionRequestId(),
+                r.expectedSelectionHeadRevision()),
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                r.preparationRequestId(),
+                UUID.randomUUID(),
+                r.realmId(),
+                r.expectedCatalogRevision(),
+                r.expectedCatalogRequestId(),
+                r.expectedCatalogReceiptDigest(),
+                r.expectedSelectionRequestId(),
+                r.expectedSelectionHeadRevision()),
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                r.preparationRequestId(),
+                r.playtestLifecycleId(),
+                UUID.randomUUID(),
+                r.expectedCatalogRevision(),
+                r.expectedCatalogRequestId(),
+                r.expectedCatalogReceiptDigest(),
+                r.expectedSelectionRequestId(),
+                r.expectedSelectionHeadRevision()),
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                r.preparationRequestId(),
+                r.playtestLifecycleId(),
+                r.realmId(),
+                2,
+                r.expectedCatalogRequestId(),
+                r.expectedCatalogReceiptDigest(),
+                r.expectedSelectionRequestId(),
+                r.expectedSelectionHeadRevision()),
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                r.preparationRequestId(),
+                r.playtestLifecycleId(),
+                r.realmId(),
+                r.expectedCatalogRevision(),
+                UUID.randomUUID(),
+                r.expectedCatalogReceiptDigest(),
+                r.expectedSelectionRequestId(),
+                r.expectedSelectionHeadRevision()),
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                r.preparationRequestId(),
+                r.playtestLifecycleId(),
+                r.realmId(),
+                r.expectedCatalogRevision(),
+                r.expectedCatalogRequestId(),
+                "sha256:" + "f".repeat(64),
+                r.expectedSelectionRequestId(),
+                r.expectedSelectionHeadRevision()),
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                r.preparationRequestId(),
+                r.playtestLifecycleId(),
+                r.realmId(),
+                r.expectedCatalogRevision(),
+                r.expectedCatalogRequestId(),
+                r.expectedCatalogReceiptDigest(),
+                UUID.randomUUID(),
+                r.expectedSelectionHeadRevision()),
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+                r.requestId(),
+                r.preparationRequestId(),
+                r.playtestLifecycleId(),
+                r.realmId(),
+                r.expectedCatalogRevision(),
+                r.expectedCatalogRequestId(),
+                r.expectedCatalogReceiptDigest(),
+                r.expectedSelectionRequestId(),
+                2))) {
+      assertThatThrownBy(() -> allocateRuntime(context, changed))
+          .isInstanceOf(
+              GameSessionPrivateFreshRuntimeAllocationRepository.IdempotencyConflictException
+                  .class);
+    }
+    assertThatThrownBy(
+            () ->
+                allocateRuntime(
+                    context,
+                    runtimeRequest(UUID.randomUUID(), fixture.target(), fixture.selection())))
+        .isInstanceOf(
+            GameSessionPrivateFreshRuntimeAllocationRepository.IdempotencyConflictException.class);
+    assertThat(owner.readByRequest(r.requestId())).contains(first.snapshot());
+    assertThat(retainedRowWithXmin(context, RUNTIME_ALLOCATIONS, "request_id", r.requestId()))
+        .isEqualTo(before);
+  }
+
+  @Test
+  void privateRuntimeIdentityRejectsMissingSelectionAndWrongExpectedCurrentSource() {
+    var revision = privateRevisionFixture(3600);
+    var context = revision.context();
+    var target = revision.initialTarget();
+    var expected =
+        new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+            UUID.randomUUID(),
+            target.preparationRequestId(),
+            target.playtestLifecycleId(),
+            target.realmId(),
+            target.catalogRevision(),
+            target.creationRequestId(),
+            target.receiptDigest(),
+            UUID.randomUUID(),
+            1);
+    assertThatThrownBy(() -> allocateRuntime(context, expected))
+        .isInstanceOf(
+            GameSessionPrivateFreshRuntimeAllocationRepository.SourceUnavailableException.class);
+    var selection = selectRuntimeSource(context, target, null);
+    assertThatThrownBy(() -> allocateRuntime(context, expected))
+        .isInstanceOf(
+            GameSessionPrivateFreshRuntimeAllocationRepository.SourceUnavailableException.class);
+    var request = runtimeRequest(UUID.randomUUID(), target, selection);
+    var wrong =
+        new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+            request.requestId(),
+            request.preparationRequestId(),
+            request.playtestLifecycleId(),
+            request.realmId(),
+            2,
+            request.expectedCatalogRequestId(),
+            request.expectedCatalogReceiptDigest(),
+            request.expectedSelectionRequestId(),
+            request.expectedSelectionHeadRevision());
+    assertThatThrownBy(() -> allocateRuntime(context, wrong))
+        .isInstanceOf(
+            GameSessionPrivateFreshRuntimeAllocationRepository.SourceUnavailableException.class);
+    assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
+  }
+
+  @Test
+  void privateRuntimeHistoricalReplaySurvivesSupersessionButCannotQualifyCurrentSource() {
+    var revision = privateRevisionFixture(3600);
+    var context = revision.context();
+    var initial = revision.initialTarget();
+    var firstSelection = selectRuntimeSource(context, initial, null);
+    var firstRequest = runtimeRequest(UUID.randomUUID(), initial, firstSelection);
+    var first = allocateRuntime(context, firstRequest);
+    var owner = new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl());
+    var before =
+        retainedRowWithXmin(context, RUNTIME_ALLOCATIONS, "request_id", firstRequest.requestId());
+    var later = context.advancePrivateRevision(revision.advanceRequest()).snapshot();
+    // Catalog advancement and workflow selection are distinct authorities; a mismatch refuses.
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            owner.readForWorldPreparation(
+                                initial.preparationRequestId(), initial.playtestLifecycleId())))
+        .isInstanceOf(IllegalStateException.class);
+    var wrongSelectionRequest = runtimeRequest(UUID.randomUUID(), later, firstSelection);
+    assertThatThrownBy(() -> allocateRuntime(context, wrongSelectionRequest))
+        .isInstanceOf(
+            GameSessionPrivateFreshRuntimeAllocationRepository.SourceUnavailableException.class);
+    var laterSelection = selectRuntimeSource(context, later, firstSelection);
+    var laterAllocation =
+        allocateRuntime(context, runtimeRequest(UUID.randomUUID(), later, laterSelection));
+    assertThat(laterAllocation.snapshot().realmId()).isEqualTo(first.snapshot().realmId());
+    assertThat(laterAllocation.snapshot().gameInstanceId())
+        .isNotEqualTo(first.snapshot().gameInstanceId());
+    assertThat(laterAllocation.snapshot().playableStateNamespaceId())
+        .isNotEqualTo(first.snapshot().playableStateNamespaceId());
+    assertThat(owner.readByRequest(firstRequest.requestId())).contains(first.snapshot());
+    assertThat(allocateRuntime(context, firstRequest))
+        .isEqualTo(
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Allocation(
+                first.snapshot(), true));
+    assertThatThrownBy(
+            () ->
+                allocateRuntime(
+                    context, runtimeRequest(UUID.randomUUID(), initial, firstSelection)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            retainedRowWithXmin(
+                context, RUNTIME_ALLOCATIONS, "request_id", firstRequest.requestId()))
+        .isEqualTo(before);
+    assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
+  void privateRuntimeExpiryRefusesNewEffectsAndKeepsHistoricalAllocationAndRetry() {
+    var fixture = runtimeFixture(5);
+    var context = fixture.context();
+    var first = allocateRuntime(context, fixture.request());
+    var owner = new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl());
+    var before =
+        retainedRowWithXmin(
+            context, RUNTIME_ALLOCATIONS, "request_id", fixture.request().requestId());
+    awaitExpiry(context, fixture.preparation().request().forkExpiresAt());
+    assertThat(owner.readByRequest(fixture.request().requestId())).contains(first.snapshot());
+    assertThat(allocateRuntime(context, fixture.request()))
+        .isEqualTo(
+            new GameSessionPrivateFreshRuntimeAllocationRepository.Allocation(
+                first.snapshot(), true));
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status ->
+                            owner.readForWorldPreparation(
+                                first.snapshot().preparationRequestId(),
+                                first.snapshot().playtestLifecycleId())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                allocateRuntime(
+                    context,
+                    runtimeRequest(UUID.randomUUID(), fixture.target(), fixture.selection())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            retainedRowWithXmin(
+                context, RUNTIME_ALLOCATIONS, "request_id", fixture.request().requestId()))
+        .isEqualTo(before);
+    var neverAllocated = runtimeFixture(3);
+    awaitExpiry(neverAllocated.context(), neverAllocated.preparation().request().forkExpiresAt());
+    assertThatThrownBy(() -> allocateRuntime(neverAllocated.context(), neverAllocated.request()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(neverAllocated.context().dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
+  }
+
+  @Test
+  void privateRuntimeFinalCommitRejectsExpiryOrSourceChangeAndRollsBackAllocation() {
+    var expiring = runtimeFixture(5);
+    Throwable expired =
+        catchThrowable(
+            () ->
+                expiring
+                    .context()
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          new GameSessionPrivateFreshRuntimeAllocationRepository(
+                                  expiring.context().dsl())
+                              .allocate(expiring.request());
+                          awaitExpiry(
+                              expiring.context(), expiring.preparation().request().forkExpiresAt());
+                        }));
+    assertThat(sqlStateInCauseChain(expired)).isEqualTo("23514");
+    assertThat(expiring.context().dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
+    var changed = runtimeFixture(3600);
+    Throwable superseded =
+        catchThrowable(
+            () ->
+                changed
+                    .context()
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          new GameSessionPrivateFreshRuntimeAllocationRepository(
+                                  changed.context().dsl())
+                              .allocate(changed.request());
+                          // Even a self-consistent re-selection of the same lifecycle changes the
+                          // captured exact head.
+                          selectRuntimeSource(
+                              changed.context(), changed.target(), changed.selection());
+                        }));
+    assertThat(sqlStateInCauseChain(superseded)).isEqualTo("23514");
+    assertThat(changed.context().dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isZero();
+  }
+
+  @Test
+  void privateRuntimeStorageRefusesSelfConsistentForgedSourceAndRetainsImmutableRows() {
+    var fixture = runtimeFixture(3600);
+    var context = fixture.context();
+    allocateRuntime(context, fixture.request());
+    var before =
+        retainedRowWithXmin(
+            context, RUNTIME_ALLOCATIONS, "request_id", fixture.request().requestId());
+    for (String patch :
+        List.of(
+            "{\"canonical_tenant_id\":\"" + UUID.randomUUID() + "\"}",
+            "{\"world_slug\":\"forged-world\"}",
+            "{\"realm_slug\":\"forged-realm\"}",
+            "{\"playable_state_namespace_id\":\"" + UUID.randomUUID() + "\"}",
+            "{\"canonical_version_id\":\"" + UUID.randomUUID() + "\"}",
+            "{\"published_release_bundle_ref\":\"forged-release\"}",
+            "{\"published_release_bundle_digest\":\"sha256:" + "e".repeat(64) + "\"}",
+            "{\"catalog_revision\":2}",
+            "{\"catalog_request_digest\":\"sha256:" + "e".repeat(64) + "\"}",
+            "{\"catalog_receipt_digest\":\"sha256:" + "e".repeat(64) + "\"}",
+            "{\"selection_head_revision\":2}",
+            "{\"selection_request_digest\":\"sha256:" + "e".repeat(64) + "\"}")) {
+      Throwable rejected =
+          catchThrowable(
+              () ->
+                  context
+                      .serializableTransaction()
+                      .executeWithoutResult(
+                          status ->
+                              insertForgedRuntimeAllocation(
+                                  context, fixture.request().requestId(), patch)));
+      assertThat(sqlStateInCauseChain(rejected)).as(patch).isIn("23514", "P0002");
+    }
+    for (String sql :
+        List.of(
+            "UPDATE " + RUNTIME_ALLOCATIONS + " SET game_instance_id=gen_random_uuid()",
+            "DELETE FROM " + RUNTIME_ALLOCATIONS,
+            "TRUNCATE " + RUNTIME_ALLOCATIONS + " CASCADE")) {
+      assertThatThrownBy(() -> context.dsl().execute(sql))
+          .hasMessageContaining("immutable and retained");
+    }
+    assertThat(
+            retainedRowWithXmin(
+                context, RUNTIME_ALLOCATIONS, "request_id", fixture.request().requestId()))
+        .isEqualTo(before);
+    assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
+  void privateRuntimeConcurrentStaleSnapshotRequiresWholeTransactionRetryAndRetainsOneIdentity()
+      throws Exception {
+    var fixture = runtimeFixture(3600);
+    var context = fixture.context();
+    var owner = new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl());
+    var held = new CountDownLatch(1);
+    var snapshotEstablished = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var secondPid = new AtomicInteger();
+    var secondFailure = new AtomicReference<Throwable>();
+    var workers = Executors.newFixedThreadPool(2);
+    try {
+      var first =
+          workers.submit(
+              () ->
+                  context
+                      .serializableTransaction()
+                      .execute(
+                          status -> {
+                            var result = owner.allocate(fixture.request());
+                            held.countDown();
+                            await(release);
+                            return result;
+                          }));
+      await(held);
+      var second =
+          workers.submit(
+              () -> {
+                try {
+                  context
+                      .serializableTransaction()
+                      .executeWithoutResult(
+                          status -> {
+                            assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS)))
+                                .isZero();
+                            secondPid.set(
+                                context
+                                    .dsl()
+                                    .fetchSingle("SELECT pg_backend_pid()")
+                                    .get(0, Integer.class));
+                            snapshotEstablished.countDown();
+                            owner.allocate(fixture.request());
+                          });
+                } catch (Throwable failed) {
+                  secondFailure.set(failed);
+                }
+              });
+      await(snapshotEstablished);
+      awaitAdvisoryLockWait(context, secondPid.get());
+      release.countDown();
+      var committed = Objects.requireNonNull(first.get(60, TimeUnit.SECONDS));
+      second.get(60, TimeUnit.SECONDS);
+      assertThat(sqlStateInCauseChain(secondFailure.get())).isEqualTo("40001");
+      var row =
+          retainedRowWithXmin(
+              context, RUNTIME_ALLOCATIONS, "request_id", fixture.request().requestId());
+      assertThat(allocateRuntime(context, fixture.request()))
+          .isEqualTo(
+              new GameSessionPrivateFreshRuntimeAllocationRepository.Allocation(
+                  committed.snapshot(), true));
+      assertThat(
+              retainedRowWithXmin(
+                  context, RUNTIME_ALLOCATIONS, "request_id", fixture.request().requestId()))
+          .isEqualTo(row);
+      assertThat(context.dsl().fetchCount(DSL.table(RUNTIME_ALLOCATIONS))).isEqualTo(1);
+    } finally {
+      release.countDown();
+      workers.shutdown();
+      if (!workers.awaitTermination(30, TimeUnit.SECONDS)) {
+        workers.shutdownNow();
+        assertThat(workers.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+      }
+    }
   }
 
   @Test
@@ -536,6 +1060,640 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
                             .orElseThrow()));
     assertThat(currentAfterReplay.selection()).isEqualTo(replacementSelection.receipt());
     assertThat(currentAfterReplay.admissionAllowed()).isFalse();
+  }
+
+  @Test
+  void upgradesExistingPrivateAllocationFrom1059WithExactHeadAndRetainedOriginalEvidence() {
+    var context =
+        context(
+            true,
+            List.of(privatePolicy("private-playtest", "source-world", true, false, "ISOLATED")),
+            "1059");
+    var initialRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var initial = context.prepare(initialRequest).preparation();
+    var targetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            UUID.randomUUID(), initialRequest.requestId(), initial.playtestLifecycleId());
+    var target = context.allocatePrivateTarget(targetRequest).snapshot();
+    var selections = new GameSessionCurrentPrivatePlaytestRepository(context.dsl());
+    var scope =
+        new GameSessionCurrentPrivatePlaytestRepository.Scope(
+            NAMESPACE,
+            initialRequest.tenantId(),
+            initialRequest.worldSlug(),
+            initialRequest.realmSlug());
+    var selectionRequest =
+        new GameSessionCurrentPrivatePlaytestRepository.Request(
+            UUID.randomUUID(),
+            scope,
+            initialRequest.requestId(),
+            initial.playtestLifecycleId(),
+            null,
+            null);
+    var selection =
+        Objects.requireNonNull(
+            context.transaction().execute(status -> selections.select(selectionRequest)));
+    var catalogOwner =
+        new GameSessionRuntimeFamilyCatalogRepository(
+            context.dsl(),
+            context.transaction().getTransactionManager(),
+            context.schema(),
+            NAMESPACE);
+    var captureRequest =
+        new net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.Request(
+            UUID.randomUUID(), NAMESPACE);
+    var catalogBefore = catalogOwner.capture(captureRequest);
+    assertThat(catalogBefore.catalog().catalogEpoch()).isEqualTo(3);
+    assertThat(catalogOwner.readExact(captureRequest)).isEqualTo(catalogBefore);
+    var oldRows = new LinkedHashMap<String, List<String>>();
+    for (String table :
+        List.of(
+            "game_session_canonical_realm_catalog",
+            TABLE,
+            "game_session_private_playtest_selections",
+            "game_session_current_private_playtests",
+            "game_session_authored_world_source_intake",
+            "game_session_authored_world_tenant_source_binding",
+            "gameplay_tenant_shared_playable_state_namespace",
+            "game_session_runtime_family_catalog_snapshot")) {
+      oldRows.put(
+          table,
+          context
+              .dsl()
+              .fetch(
+                  "SELECT to_jsonb(r)::TEXT || ':' || xmin::TEXT FROM " + table + " r ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    var oldEpochs =
+        context
+            .dsl()
+            .fetch(
+                "SELECT to_jsonb(e)::TEXT || ':' || xmin::TEXT FROM game_session_runtime_family_catalog_epoch e WHERE catalog_epoch <= 3 ORDER BY catalog_epoch")
+            .getValues(0, String.class);
+    assertThat(oldEpochs).hasSize(3);
+    var oldHistory =
+        context
+            .dsl()
+            .fetch(
+                "SELECT to_jsonb(h)::TEXT || ':' || xmin::TEXT FROM flyway_schema_history h ORDER BY installed_rank")
+            .getValues(0, String.class);
+    assertThat(
+            context
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_regclass('game_session_current_private_catalog_revisions') IS NULL")
+                .get(0, Boolean.class))
+        .isTrue();
+
+    CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            context.dataSource(),
+            context.schema(),
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+        .target("1060")
+        .load()
+        .migrate();
+
+    for (var retained : oldRows.entrySet()) {
+      assertThat(
+              context
+                  .dsl()
+                  .fetch(
+                      "SELECT to_jsonb(r)::TEXT || ':' || xmin::TEXT FROM "
+                          + retained.getKey()
+                          + " r ORDER BY 1")
+                  .getValues(0, String.class))
+          .as("retained upgrade rows: %s", retained.getKey())
+          .isEqualTo(retained.getValue());
+    }
+    assertThat(
+            context
+                .dsl()
+                .fetch(
+                    "SELECT to_jsonb(e)::TEXT || ':' || xmin::TEXT FROM game_session_runtime_family_catalog_epoch e WHERE catalog_epoch <= 3 ORDER BY catalog_epoch")
+                .getValues(0, String.class))
+        .isEqualTo(oldEpochs);
+    var upgradedHistory =
+        context
+            .dsl()
+            .fetch(
+                "SELECT to_jsonb(h)::TEXT || ':' || xmin::TEXT FROM flyway_schema_history h ORDER BY installed_rank")
+            .getValues(0, String.class);
+    assertThat(upgradedHistory).hasSize(oldHistory.size() + 1);
+    assertThat(upgradedHistory.subList(0, oldHistory.size())).isEqualTo(oldHistory);
+    var installed =
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT type, script, checksum, success FROM flyway_schema_history WHERE version = '1060'");
+    assertThat(installed.get("type", String.class)).isEqualTo("SQL");
+    assertThat(installed.get("script", String.class))
+        .isEqualTo("V1060__private_catalog_lifecycle_revisions.sql");
+    assertThat(installed.get("checksum", Integer.class)).isNotNull();
+    assertThat(installed.get("success", Boolean.class)).isTrue();
+    var head =
+        context
+            .dsl()
+            .fetchSingle(
+                "SELECT * FROM " + REVISION_HEAD + " WHERE realm_id = ?", target.realmId());
+    assertThat(head.get("catalog_revision", Long.class)).isEqualTo(1);
+    assertThat(head.get("revision_request_id", UUID.class)).isEqualTo(targetRequest.requestId());
+    assertThat(head.get("preparation_request_id", UUID.class))
+        .isEqualTo(initialRequest.requestId());
+    assertThat(head.get("playtest_lifecycle_id", UUID.class))
+        .isEqualTo(initial.playtestLifecycleId());
+    assertThat(context.dsl().fetchCount(DSL.table(REVISION_HEAD))).isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table(REVISION_HISTORY))).isZero();
+    assertThat(context.prepare(initialRequest)).isEqualTo(new Allocation(initial, true));
+    assertThat(context.allocatePrivateTarget(targetRequest))
+        .isEqualTo(new GameSessionPrivateFreshTargetRepository.Allocation(target, true));
+    var originalSelectionReplay =
+        Objects.requireNonNull(
+            context.transaction().execute(status -> selections.select(selectionRequest)));
+    assertThat(originalSelectionReplay)
+        .isEqualTo(
+            new GameSessionCurrentPrivatePlaytestRepository.SelectionResult(
+                selection.receipt(), true));
+    var revisions = new GameSessionPrivateFreshCatalogRevisionRepository(context.dsl());
+    assertThat(revisions.readCurrent(target.realmId())).contains(target);
+    var currentCatalog =
+        catalogOwner.capture(
+            new net.firedevops.firemud.common.gamesession.GameSessionRuntimeFamilyCatalog.Request(
+                UUID.randomUUID(), NAMESPACE));
+    assertThat(currentCatalog.catalog().catalogEpoch()).isEqualTo(4);
+    assertThat(catalogOwner.readExact(currentCatalog.request())).isEqualTo(currentCatalog);
+    assertThatThrownBy(() -> catalogOwner.readExact(captureRequest))
+        .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+    var laterRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var later = context.prepare(laterRequest).preparation();
+    var advanced =
+        context.advancePrivateRevision(
+            new AdvanceRequest(
+                UUID.randomUUID(),
+                target.realmId(),
+                laterRequest.requestId(),
+                later.playtestLifecycleId(),
+                1,
+                initial.playtestLifecycleId()));
+    assertThat(advanced.snapshot().realmId()).isEqualTo(target.realmId());
+    assertThat(advanced.snapshot().realmSlug()).isEqualTo(target.realmSlug());
+    assertThat(advanced.snapshot().catalogRevision()).isEqualTo(2);
+    assertThat(advanced.snapshot().playableStateNamespaceId())
+        .isEqualTo(later.playableStateNamespaceId());
+    assertThat(advanced.snapshot().admissionAllowed()).isFalse();
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
+  void advancesPrivateCatalogLifecycleWithoutChangingStableRealmOrOriginalEvidence() {
+    var fixture = privateRevisionFixture(3600);
+    var context = fixture.context();
+    var revisions = new GameSessionPrivateFreshCatalogRevisionRepository(context.dsl());
+    var selections = new GameSessionCurrentPrivatePlaytestRepository(context.dsl());
+    var scope =
+        new GameSessionCurrentPrivatePlaytestRepository.Scope(
+            NAMESPACE,
+            context.catalog().tenantId(),
+            fixture.initialRequest().worldSlug(),
+            fixture.initialRequest().realmSlug());
+    var firstSelectionRequest =
+        new GameSessionCurrentPrivatePlaytestRepository.Request(
+            UUID.randomUUID(),
+            scope,
+            fixture.initialRequest().requestId(),
+            fixture.initialPreparation().playtestLifecycleId(),
+            null,
+            null);
+    var firstSelection =
+        Objects.requireNonNull(
+            context.transaction().execute(status -> selections.select(firstSelectionRequest)));
+    String selectionBefore =
+        retainedRowWithXmin(
+            context,
+            "game_session_private_playtest_selections",
+            "request_id",
+            firstSelectionRequest.requestId());
+    var retainedBefore = context.retainedRows();
+    var namespacesBefore = context.namespaceRows();
+    var publicBefore = context.publicCatalogRow();
+    String initialCatalogBefore =
+        privateCatalogRow(context, fixture.initialTargetRequest().requestId());
+    String initialPreparationBefore =
+        retainedRowWithXmin(context, TABLE, "request_id", fixture.initialRequest().requestId());
+    String laterPreparationBefore =
+        retainedRowWithXmin(context, TABLE, "request_id", fixture.laterRequest().requestId());
+
+    var advanced = context.advancePrivateRevision(fixture.advanceRequest());
+    var target = advanced.snapshot();
+    assertThat(advanced.replayed()).isFalse();
+    assertThat(target.realmId()).isEqualTo(fixture.initialTarget().realmId());
+    assertThat(target.realmSlug()).isEqualTo(fixture.initialTarget().realmSlug());
+    assertThat(target.catalogRevision()).isEqualTo(2);
+    assertThat(target.preparationRequestId()).isEqualTo(fixture.laterRequest().requestId());
+    assertThat(target.playtestLifecycleId())
+        .isEqualTo(fixture.laterPreparation().playtestLifecycleId())
+        .isNotEqualTo(fixture.initialTarget().playtestLifecycleId());
+    assertThat(target.playableStateNamespaceId())
+        .isEqualTo(fixture.laterPreparation().playableStateNamespaceId())
+        .isNotEqualTo(fixture.initialTarget().playableStateNamespaceId());
+    assertThat(target.playtestStateGeneration()).isEqualTo(1);
+    assertThat(target.visible()).isFalse();
+    assertThat(target.publicProduction()).isFalse();
+    assertThat(target.preparationState()).isEqualTo("PREPARING");
+    assertThat(target.admissionAllowed()).isFalse();
+    var laterSelectionRequest =
+        new GameSessionCurrentPrivatePlaytestRepository.Request(
+            UUID.randomUUID(),
+            scope,
+            fixture.laterRequest().requestId(),
+            fixture.laterPreparation().playtestLifecycleId(),
+            1L,
+            fixture.initialPreparation().playtestLifecycleId());
+    var laterSelection =
+        Objects.requireNonNull(
+            context.transaction().execute(status -> selections.select(laterSelectionRequest)));
+    assertThat(laterSelection.receipt().headRevision()).isEqualTo(2);
+    var currentSelection =
+        Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(
+                    status ->
+                        selections
+                            .readCurrent(
+                                NAMESPACE, scope.tenantId(), scope.worldSlug(), scope.realmSlug())
+                            .orElseThrow()));
+    assertThat(currentSelection.selection()).isEqualTo(laterSelection.receipt());
+    assertThat(currentSelection.selectedPrepSnapshot().preparation())
+        .isEqualTo(fixture.laterPreparation());
+    assertThat(currentSelection.admissionAllowed()).isFalse();
+    assertThat(revisions.readByRequest(fixture.advanceRequest().requestId())).contains(target);
+    assertThat(
+            revisions.readByPreparation(
+                fixture.laterRequest().requestId(), target.playtestLifecycleId()))
+        .contains(target);
+    assertThat(revisions.readCurrent(target.realmId())).contains(target);
+    var currentWorldTarget =
+        Objects.requireNonNull(
+            context
+                .serializableTransaction()
+                .execute(
+                    status ->
+                        revisions.readForWorldPreparation(
+                            fixture.laterRequest().requestId(), target.playtestLifecycleId())));
+    assertThat(currentWorldTarget).contains(target);
+    assertThat(context.prepare(fixture.initialRequest()))
+        .isEqualTo(new Allocation(fixture.initialPreparation(), true));
+    assertThat(context.prepare(fixture.laterRequest()))
+        .isEqualTo(new Allocation(fixture.laterPreparation(), true));
+    assertThat(context.allocatePrivateTarget(fixture.initialTargetRequest()))
+        .isEqualTo(
+            new GameSessionPrivateFreshTargetRepository.Allocation(fixture.initialTarget(), true));
+    var firstSelectionReplay =
+        Objects.requireNonNull(
+            context.transaction().execute(status -> selections.select(firstSelectionRequest)));
+    assertThat(firstSelectionReplay)
+        .isEqualTo(
+            new GameSessionCurrentPrivatePlaytestRepository.SelectionResult(
+                firstSelection.receipt(), true));
+    assertThat(context.advancePrivateRevision(fixture.advanceRequest()))
+        .isEqualTo(new GameSessionPrivateFreshTargetRepository.Allocation(target, true));
+    assertThat(
+            retainedRowWithXmin(
+                context,
+                "game_session_private_playtest_selections",
+                "request_id",
+                firstSelectionRequest.requestId()))
+        .isEqualTo(selectionBefore);
+    assertThat(
+            retainedRowWithXmin(context, TABLE, "request_id", fixture.initialRequest().requestId()))
+        .isEqualTo(initialPreparationBefore);
+    assertThat(
+            retainedRowWithXmin(context, TABLE, "request_id", fixture.laterRequest().requestId()))
+        .isEqualTo(laterPreparationBefore);
+    assertThat(privateCatalogRow(context, fixture.initialTargetRequest().requestId()))
+        .isEqualTo(initialCatalogBefore);
+    assertThat(context.retainedRows()).isEqualTo(retainedBefore);
+    assertThat(context.namespaceRows()).isEqualTo(namespacesBefore);
+    assertThat(context.publicCatalogRow()).isEqualTo(publicBefore);
+    assertThat(context.dsl().fetchCount(DSL.table(REVISION_HISTORY))).isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table(REVISION_HEAD))).isEqualTo(1);
+    assertThat(context.dsl().fetchCount(DSL.table("game_session_canonical_realm_catalog")))
+        .isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
+  void privateRevisionConflictsDoNotMutateAndHistoricalReplaySurvivesAnotherAdvancement() {
+    var fixture = privateRevisionFixture(3600);
+    var context = fixture.context();
+    var revisions = new GameSessionPrivateFreshCatalogRevisionRepository(context.dsl());
+    var second = context.advancePrivateRevision(fixture.advanceRequest()).snapshot();
+    var thirdRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var third = context.prepare(thirdRequest).preparation();
+    var anotherRealmRequest =
+        context.request(UUID.randomUUID(), "other-playtest", context.now().plusSeconds(3600));
+    var anotherRealm = context.prepare(anotherRealmRequest).preparation();
+    var before = privateRevisionRows(context);
+    var invalid =
+        List.of(
+            new AdvanceRequest(
+                UUID.randomUUID(),
+                second.realmId(),
+                thirdRequest.requestId(),
+                third.playtestLifecycleId(),
+                1,
+                second.playtestLifecycleId()),
+            new AdvanceRequest(
+                UUID.randomUUID(),
+                second.realmId(),
+                thirdRequest.requestId(),
+                third.playtestLifecycleId(),
+                2,
+                fixture.initialPreparation().playtestLifecycleId()),
+            new AdvanceRequest(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                thirdRequest.requestId(),
+                third.playtestLifecycleId(),
+                2,
+                second.playtestLifecycleId()),
+            new AdvanceRequest(
+                UUID.randomUUID(),
+                second.realmId(),
+                anotherRealmRequest.requestId(),
+                anotherRealm.playtestLifecycleId(),
+                2,
+                second.playtestLifecycleId()),
+            new AdvanceRequest(
+                fixture.advanceRequest().requestId(),
+                second.realmId(),
+                thirdRequest.requestId(),
+                third.playtestLifecycleId(),
+                2,
+                second.playtestLifecycleId()),
+            new AdvanceRequest(
+                UUID.randomUUID(),
+                second.realmId(),
+                fixture.laterRequest().requestId(),
+                second.playtestLifecycleId(),
+                2,
+                second.playtestLifecycleId()));
+    for (var request : invalid) {
+      assertThatThrownBy(() -> context.advancePrivateRevision(request))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(privateRevisionRows(context)).isEqualTo(before);
+    }
+    var thirdAdvance =
+        new AdvanceRequest(
+            UUID.randomUUID(),
+            second.realmId(),
+            thirdRequest.requestId(),
+            third.playtestLifecycleId(),
+            2,
+            second.playtestLifecycleId());
+    var thirdTarget = context.advancePrivateRevision(thirdAdvance).snapshot();
+    assertThat(thirdTarget.catalogRevision()).isEqualTo(3);
+    assertThat(thirdTarget.realmId()).isEqualTo(second.realmId());
+    var afterThird = privateRevisionRows(context);
+    assertThat(context.advancePrivateRevision(fixture.advanceRequest()))
+        .isEqualTo(new GameSessionPrivateFreshTargetRepository.Allocation(second, true));
+    assertThat(revisions.readByRequest(fixture.advanceRequest().requestId())).contains(second);
+    assertThat(
+            revisions.readByPreparation(
+                fixture.laterRequest().requestId(), second.playtestLifecycleId()))
+        .contains(second);
+    assertThat(revisions.readCurrent(second.realmId())).contains(thirdTarget);
+    assertThat(
+            context
+                .privateTargets()
+                .readByPreparation(
+                    fixture.initialRequest().requestId(),
+                    fixture.initialPreparation().playtestLifecycleId()))
+        .contains(fixture.initialTarget());
+    assertThat(privateRevisionRows(context)).isEqualTo(afterThird);
+    assertThat(context.dsl().fetchCount(DSL.table(REVISION_HISTORY))).isEqualTo(2);
+    assertThat(context.dsl().fetchCount(DSL.table(REVISION_HEAD))).isEqualTo(1);
+  }
+
+  @Test
+  void privateRevisionSqlGuardsRejectForgedFramesAndMutationOfRetainedHistory() {
+    var fixture = privateRevisionFixture(3600);
+    var context = fixture.context();
+    var second = context.advancePrivateRevision(fixture.advanceRequest()).snapshot();
+    var nextRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var next = context.prepare(nextRequest).preparation();
+    var intended =
+        new AdvanceRequest(
+            UUID.randomUUID(),
+            second.realmId(),
+            nextRequest.requestId(),
+            next.playtestLifecycleId(),
+            2,
+            second.playtestLifecycleId());
+    var before = privateRevisionRows(context);
+    String initialBefore = privateCatalogRow(context, fixture.initialTargetRequest().requestId());
+    String sql =
+        """
+        INSERT INTO game_session_private_catalog_revision_history (
+            realm_id, catalog_revision, request_id, request_preimage, request_digest, receipt_digest,
+            preparation_request_id, playtest_lifecycle_id, playable_state_namespace_id,
+            expected_catalog_revision, expected_current_lifecycle_id)
+        VALUES (?, 3, ?, ?, ?, ?, ?, ?, ?, 2, ?)
+        """;
+    byte[] validPreimage = intended.canonicalPreimage(next.requestDigest());
+    byte[] wrongPreimage =
+        frame(
+            "game-session-private-catalog-revision-request/v1",
+            intended.requestId().toString(),
+            second.realmId().toString(),
+            nextRequest.requestId().toString(),
+            UUID.randomUUID().toString(),
+            "2",
+            second.playtestLifecycleId().toString(),
+            next.requestDigest());
+    Throwable wrongFrame =
+        catchThrowable(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    sql,
+                                    second.realmId(),
+                                    intended.requestId(),
+                                    wrongPreimage,
+                                    sha256(wrongPreimage),
+                                    "sha256:" + "0".repeat(64),
+                                    nextRequest.requestId(),
+                                    next.playtestLifecycleId(),
+                                    next.playableStateNamespaceId(),
+                                    second.playtestLifecycleId())));
+    assertThat(sqlStateInCauseChain(wrongFrame)).isEqualTo("23514");
+    assertThat(databaseFailureSummary(wrongFrame).toLowerCase(java.util.Locale.ROOT))
+        .contains("request");
+    assertThat(privateRevisionRows(context)).isEqualTo(before);
+
+    Throwable wrongReceipt =
+        catchThrowable(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    sql,
+                                    second.realmId(),
+                                    intended.requestId(),
+                                    validPreimage,
+                                    intended.requestDigest(next.requestDigest()),
+                                    "sha256:" + "0".repeat(64),
+                                    nextRequest.requestId(),
+                                    next.playtestLifecycleId(),
+                                    next.playableStateNamespaceId(),
+                                    second.playtestLifecycleId())));
+    assertThat(sqlStateInCauseChain(wrongReceipt)).isEqualTo("23514");
+    assertThat(databaseFailureSummary(wrongReceipt).toLowerCase(java.util.Locale.ROOT))
+        .contains("receipt");
+    assertThat(privateRevisionRows(context)).isEqualTo(before);
+
+    var reusedPreparation =
+        new AdvanceRequest(
+            UUID.randomUUID(),
+            second.realmId(),
+            fixture.initialRequest().requestId(),
+            fixture.initialPreparation().playtestLifecycleId(),
+            2,
+            second.playtestLifecycleId());
+    byte[] reusedPreimage =
+        reusedPreparation.canonicalPreimage(fixture.initialPreparation().requestDigest());
+    Throwable wrongPreparation =
+        catchThrowable(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status ->
+                            context
+                                .dsl()
+                                .execute(
+                                    sql,
+                                    second.realmId(),
+                                    reusedPreparation.requestId(),
+                                    reusedPreimage,
+                                    reusedPreparation.requestDigest(
+                                        fixture.initialPreparation().requestDigest()),
+                                    "sha256:" + "0".repeat(64),
+                                    fixture.initialRequest().requestId(),
+                                    fixture.initialPreparation().playtestLifecycleId(),
+                                    fixture.initialPreparation().playableStateNamespaceId(),
+                                    second.playtestLifecycleId())));
+    assertThat(sqlStateInCauseChain(wrongPreparation)).isEqualTo("23514");
+    assertThat(databaseFailureSummary(wrongPreparation).toLowerCase(java.util.Locale.ROOT))
+        .contains("reuses original");
+    assertThat(privateRevisionRows(context)).isEqualTo(before);
+
+    for (String mutation :
+        List.of(
+            "UPDATE " + REVISION_HISTORY + " SET receipt_digest = receipt_digest",
+            "DELETE FROM " + REVISION_HISTORY,
+            "TRUNCATE " + REVISION_HISTORY,
+            "UPDATE " + REVISION_HEAD + " SET catalog_revision = catalog_revision - 1",
+            "DELETE FROM " + REVISION_HEAD,
+            "TRUNCATE " + REVISION_HEAD,
+            "UPDATE game_session_canonical_realm_catalog SET receipt_digest = receipt_digest",
+            "DELETE FROM game_session_canonical_realm_catalog")) {
+      Throwable refused =
+          catchThrowable(
+              () ->
+                  context
+                      .serializableTransaction()
+                      .executeWithoutResult(status -> context.dsl().execute(mutation)));
+      assertThat(refused).as("retained-history mutation: %s", mutation).isNotNull();
+      assertThat(sqlStateInCauseChain(refused))
+          .as("retained-history mutation: %s", mutation)
+          .isEqualTo("23514");
+      assertThat(privateRevisionRows(context)).isEqualTo(before);
+      assertThat(privateCatalogRow(context, fixture.initialTargetRequest().requestId()))
+          .isEqualTo(initialBefore);
+    }
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
+  void committedPrivateRevisionReplaysAfterExpiryWhileNewAdvancementIsRefused() {
+    var fixture = privateRevisionFixture(5);
+    var context = fixture.context();
+    var revisions = new GameSessionPrivateFreshCatalogRevisionRepository(context.dsl());
+    var second = context.advancePrivateRevision(fixture.advanceRequest()).snapshot();
+    var before = privateRevisionRows(context);
+    awaitExpiry(context, fixture.laterRequest().forkExpiresAt());
+    assertThat(context.read(fixture.laterRequest(), second.playtestLifecycleId()).state())
+        .isEqualTo(ReadState.EXPIRED);
+    assertThat(context.advancePrivateRevision(fixture.advanceRequest()))
+        .isEqualTo(new GameSessionPrivateFreshTargetRepository.Allocation(second, true));
+    assertThat(revisions.readByRequest(fixture.advanceRequest().requestId())).contains(second);
+    assertThat(
+            revisions.readByPreparation(
+                fixture.laterRequest().requestId(), second.playtestLifecycleId()))
+        .contains(second);
+    assertThat(second.admissionAllowed()).isFalse();
+    var expiredRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(5));
+    var expiredPreparation = context.prepare(expiredRequest).preparation();
+    awaitExpiry(context, expiredRequest.forkExpiresAt());
+    var expiredAdvance =
+        new AdvanceRequest(
+            UUID.randomUUID(),
+            second.realmId(),
+            expiredRequest.requestId(),
+            expiredPreparation.playtestLifecycleId(),
+            2,
+            second.playtestLifecycleId());
+    assertThatThrownBy(() -> context.advancePrivateRevision(expiredAdvance))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(revisions.readByRequest(expiredAdvance.requestId())).isEmpty();
+    assertThat(privateRevisionRows(context)).isEqualTo(before);
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+  }
+
+  @Test
+  void privateRevisionCommitExpiryRollsBackHistoryAndHeadTogether() {
+    var fixture = privateRevisionFixture(5);
+    var context = fixture.context();
+    var revisions = new GameSessionPrivateFreshCatalogRevisionRepository(context.dsl());
+    var before = privateRevisionRows(context);
+    Throwable failure =
+        catchThrowable(
+            () ->
+                context
+                    .serializableTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          var allocated = revisions.advance(fixture.advanceRequest());
+                          assertThat(allocated.snapshot().catalogRevision()).isEqualTo(2);
+                          awaitExpiry(context, fixture.laterRequest().forkExpiresAt());
+                        }));
+    assertThat(failure).isNotNull();
+    assertThat(sqlStateInCauseChain(failure)).isEqualTo("23514");
+    assertThat(privateRevisionRows(context)).isEqualTo(before);
+    assertThat(revisions.readByRequest(fixture.advanceRequest().requestId())).isEmpty();
+    assertThat(context.allocatePrivateTarget(fixture.initialTargetRequest()).snapshot())
+        .isEqualTo(fixture.initialTarget());
+    assertThat(context.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThat(context.dsl().fetchCount(DSL.table("game_instances"))).isZero();
   }
 
   @Test
@@ -1640,6 +2798,484 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     }
   }
 
+  @Test
+  void privateSourceProtectionCommitsExactReplayWithoutChangingSourceOrAdmission() {
+    var f = runtimeFixture(3600);
+    allocateRuntime(f.context(), f.request());
+    var source = privateProtectionSource(f);
+    var before = runtimeSourceRows(f.context());
+    var owner = privateProtectionOwner(f.context());
+    UUID request = UUID.randomUUID();
+    var held = owner.acquire(request, source);
+    assertThat(owner.acquire(request, source)).isEqualTo(held);
+    assertThat(owner.readCurrent(request, held.holdId(), held.fence())).isEqualTo(held);
+    assertThat(PrivateWorldPreparationReadGrpcCodec.stableBytes(held.source()))
+        .containsExactly(PrivateWorldPreparationReadGrpcCodec.stableBytes(source));
+    assertThat(held.admissionAllowed()).isFalse();
+    assertThat(runtimeSourceRows(f.context())).isEqualTo(before);
+    assertThat(
+            f.context().dsl().fetchCount(DSL.table("game_session_private_preparation_protection")))
+        .isEqualTo(1);
+    assertThat(f.context().dsl().fetchCount(DSL.table("game_instances"))).isZero();
+    assertThat(f.context().dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    assertThatThrownBy(() -> owner.acquire(UUID.randomUUID(), source))
+        .isInstanceOf(RuntimeException.class);
+    assertThatThrownBy(() -> owner.readCurrent(request, UUID.randomUUID(), held.fence()))
+        .isInstanceOf(
+            GameSessionPrivatePreparationProtectionRepository.ProtectionUnavailableException.class);
+  }
+
+  @Test
+  void pendingPrivateSourceProtectionBlocksBothSupersessionWritersAndCannotBeDeleted() {
+    var f = runtimeFixture(3600);
+    allocateRuntime(f.context(), f.request());
+    var later =
+        f.context()
+            .prepare(
+                f.context()
+                    .request(
+                        UUID.randomUUID(), "private-playtest", f.context().now().plusSeconds(7200)))
+            .preparation();
+    var owner = privateProtectionOwner(f.context());
+    var held = owner.acquire(UUID.randomUUID(), privateProtectionSource(f));
+    var before = runtimeSourceRows(f.context());
+    var select =
+        new GameSessionCurrentPrivatePlaytestRepository.Request(
+            UUID.randomUUID(),
+            new GameSessionCurrentPrivatePlaytestRepository.Scope(
+                NAMESPACE, f.target().tenantId(), f.target().worldSlug(), f.target().realmSlug()),
+            later.request().requestId(),
+            later.playtestLifecycleId(),
+            f.selection().headRevision(),
+            f.selection().playtestLifecycleId());
+    assertThatThrownBy(
+            () ->
+                f.context()
+                    .transaction()
+                    .execute(
+                        status ->
+                            new GameSessionCurrentPrivatePlaytestRepository(f.context().dsl())
+                                .select(select)))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining("unresolved World preparation");
+    var unsupported = new TransactionTemplate(f.context().transaction().getTransactionManager());
+    unsupported.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    assertThatThrownBy(
+            () ->
+                unsupported.execute(
+                    status ->
+                        new GameSessionCurrentPrivatePlaytestRepository(f.context().dsl())
+                            .select(select)))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining("READ COMMITTED or SERIALIZABLE");
+    var advance =
+        new AdvanceRequest(
+            UUID.randomUUID(),
+            f.target().realmId(),
+            later.request().requestId(),
+            later.playtestLifecycleId(),
+            f.target().catalogRevision(),
+            f.target().playtestLifecycleId());
+    assertThatThrownBy(() -> f.context().advancePrivateRevision(advance))
+        .isInstanceOf(RuntimeException.class)
+        .hasStackTraceContaining("unresolved World preparation");
+    for (String sql :
+        List.of(
+            "DELETE FROM game_session_private_preparation_protection",
+            "UPDATE game_session_private_preparation_protection SET source_digest=source_digest",
+            "TRUNCATE game_session_private_preparation_protection")) {
+      assertThatThrownBy(() -> f.context().dsl().execute(sql))
+          .isInstanceOf(RuntimeException.class)
+          .hasStackTraceContaining("without World terminal proof");
+    }
+    assertThat(runtimeSourceRows(f.context())).isEqualTo(before);
+    assertThat(owner.readCurrent(held.requestId(), held.holdId(), held.fence())).isEqualTo(held);
+  }
+
+  @Test
+  void expiredPrivateProtectionRemainsPendingButCannotQualifyCurrentSource() {
+    // The immutable expiry starts before preparation, catalog/selection/runtime allocation and
+    // complete source qualification. Leave room to establish a real committed hold first.
+    var f = runtimeFixture(30);
+    allocateRuntime(f.context(), f.request());
+    var source = privateProtectionSource(f);
+    var owner = privateProtectionOwner(f.context());
+    UUID request = UUID.randomUUID();
+    var held = owner.acquire(request, source);
+    assertThat(f.context().now()).isBefore(f.preparation().request().forkExpiresAt());
+    var retained =
+        retainedRowWithXmin(
+            f.context(), "game_session_private_preparation_protection", "request_id", request);
+    f.context()
+        .dsl()
+        .fetch(
+            "SELECT pg_sleep(GREATEST(0,extract(epoch FROM ?::timestamptz-clock_timestamp()))+0.05)",
+            f.preparation().request().forkExpiresAt().atOffset(java.time.ZoneOffset.UTC));
+    assertThat(owner.acquire(request, source)).isEqualTo(held);
+    assertThatThrownBy(() -> owner.readCurrent(request, held.holdId(), held.fence()))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(
+            f.context().dsl().fetchCount(DSL.table("game_session_private_preparation_protection")))
+        .isEqualTo(1);
+    assertThat(
+            retainedRowWithXmin(
+                f.context(), "game_session_private_preparation_protection", "request_id", request))
+        .isEqualTo(retained);
+    assertThatThrownBy(
+            () ->
+                f.context()
+                    .dsl()
+                    .execute("DELETE FROM game_session_private_preparation_protection"))
+        .isInstanceOf(RuntimeException.class);
+  }
+
+  @Test
+  void competingExactPrivateProtectionAcquisitionsReturnOneCommittedHold() throws Exception {
+    var f = runtimeFixture(3600);
+    allocateRuntime(f.context(), f.request());
+    var source = privateProtectionSource(f);
+    var attempts = new CountDownLatch(2);
+    var attemptedThreads = java.util.concurrent.ConcurrentHashMap.<Long>newKeySet();
+    var observedDsl =
+        DSL.using(
+            f.context()
+                .dsl()
+                .configuration()
+                .derive(
+                    org.jooq.ExecuteListener.onRecordEnd(
+                        execution -> {
+                          String sql = execution.sql();
+                          var record = execution.record();
+                          if (sql != null
+                              && sql.contains("pg_try_advisory_xact_lock")
+                              && record != null
+                              && Boolean.FALSE.equals(record.get("acquired", Boolean.class))
+                              && attemptedThreads.add(Thread.currentThread().threadId()))
+                            attempts.countDown();
+                        })));
+    var owner =
+        new GameSessionPrivatePreparationProtectionRepository(
+            observedDsl, Objects.requireNonNull(f.context().transaction().getTransactionManager()));
+    UUID request = UUID.randomUUID();
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var gate = new CountDownLatch(1);
+      var first =
+          executor.submit(
+              () -> {
+                gate.await();
+                return owner.acquire(request, source);
+              });
+      var second =
+          executor.submit(
+              () -> {
+                gate.await();
+                return owner.acquire(request, source);
+              });
+      // Both callers must encounter a busy request. They must release those SERIALIZABLE
+      // transactions before retrying, rather than retain pre-wait snapshots under a blocking lock.
+      f.context()
+          .transaction()
+          .executeWithoutResult(
+              status -> {
+                f.context()
+                    .dsl()
+                    .fetch(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+                        "private-source-protection/" + request);
+                gate.countDown();
+                try {
+                  assertThat(attempts.await(3, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                  throw new IllegalStateException(interrupted);
+                }
+              });
+      assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(second.get(10, TimeUnit.SECONDS));
+    }
+    assertThat(
+            f.context().dsl().fetchCount(DSL.table("game_session_private_preparation_protection")))
+        .isEqualTo(1);
+  }
+
+  @Test
+  void staleSerializableSelectionWriterCannotMissCommittedPrivateProtection() throws Exception {
+    var f = runtimeFixture(3600);
+    allocateRuntime(f.context(), f.request());
+    var later =
+        f.context()
+            .prepare(
+                f.context()
+                    .request(
+                        UUID.randomUUID(), "private-playtest", f.context().now().plusSeconds(7200)))
+            .preparation();
+    var expected = privateProtectionSource(f);
+    var snapshotTaken = new CountDownLatch(1);
+    var protectionCommitted = new CountDownLatch(1);
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var writer =
+          executor.submit(
+              () ->
+                  catchThrowable(
+                      () ->
+                          f.context()
+                              .serializableTransaction()
+                              .executeWithoutResult(
+                                  status -> {
+                                    f.context()
+                                        .dsl()
+                                        .fetch(
+                                            "SELECT * FROM game_session_current_private_playtests");
+                                    snapshotTaken.countDown();
+                                    try {
+                                      if (!protectionCommitted.await(10, TimeUnit.SECONDS))
+                                        throw new IllegalStateException(
+                                            "Protection did not commit");
+                                    } catch (InterruptedException interrupted) {
+                                      Thread.currentThread().interrupt();
+                                      throw new IllegalStateException(interrupted);
+                                    }
+                                    new GameSessionCurrentPrivatePlaytestRepository(
+                                            f.context().dsl())
+                                        .select(
+                                            new GameSessionCurrentPrivatePlaytestRepository.Request(
+                                                UUID.randomUUID(),
+                                                new GameSessionCurrentPrivatePlaytestRepository
+                                                    .Scope(
+                                                    NAMESPACE,
+                                                    f.target().tenantId(),
+                                                    f.target().worldSlug(),
+                                                    f.target().realmSlug()),
+                                                later.request().requestId(),
+                                                later.playtestLifecycleId(),
+                                                f.selection().headRevision(),
+                                                f.selection().playtestLifecycleId()));
+                                  })));
+      assertThat(snapshotTaken.await(10, TimeUnit.SECONDS)).isTrue();
+      var owner = privateProtectionOwner(f.context());
+      var held = owner.acquire(UUID.randomUUID(), expected);
+      protectionCommitted.countDown();
+      assertThat(writer.get(10, TimeUnit.SECONDS)).isNotNull();
+      assertThat(owner.readCurrent(held.requestId(), held.holdId(), held.fence())).isEqualTo(held);
+    } finally {
+      protectionCommitted.countDown();
+    }
+  }
+
+  private static GameSessionPrivatePreparationProtectionRepository privateProtectionOwner(
+      Context c) {
+    return new GameSessionPrivatePreparationProtectionRepository(
+        c.dsl(), Objects.requireNonNull(c.transaction().getTransactionManager()));
+  }
+
+  private static PrivateWorldPreparationReadEvidence.Snapshot privateProtectionSource(
+      RuntimeFixture f) {
+    var c = f.context();
+    return Objects.requireNonNull(
+        c.transaction()
+            .execute(
+                status ->
+                    new GameSessionPrivateWorldPreparationSourceReader(
+                            new GameSessionCurrentPrivatePlaytestRepository(c.dsl()),
+                            c.privateTargets(),
+                            new GameSessionPrivateFreshRuntimeAllocationRepository(c.dsl()))
+                        .read(
+                            new PrivateWorldPreparationReadGrpcCodec.Request(
+                                UUID.randomUUID(),
+                                new CurrentPrivatePlaytestLifecycleReadEvidence.Scope(
+                                    NAMESPACE,
+                                    f.target().tenantId(),
+                                    f.target().worldSlug(),
+                                    f.target().realmSlug()),
+                                f.preparation().request().requestId()))));
+  }
+
+  private static final String RUNTIME_ALLOCATIONS =
+      "game_session_private_fresh_runtime_allocations";
+
+  private RuntimeFixture runtimeFixture(long lifetimeSeconds) {
+    var context = context(true);
+    var request =
+        context.request(
+            UUID.randomUUID(), "private-playtest", context.now().plusSeconds(lifetimeSeconds));
+    var preparation = context.prepare(request).preparation();
+    var target =
+        context
+            .allocatePrivateTarget(
+                new GameSessionPrivateFreshTargetRepository.Request(
+                    UUID.randomUUID(), request.requestId(), preparation.playtestLifecycleId()))
+            .snapshot();
+    var selection = selectRuntimeSource(context, target, null);
+    return new RuntimeFixture(
+        context,
+        preparation,
+        target,
+        selection,
+        runtimeRequest(UUID.randomUUID(), target, selection));
+  }
+
+  private static GameSessionCurrentPrivatePlaytestRepository.SelectionReceipt selectRuntimeSource(
+      Context context,
+      CanonicalPrivateFreshTargetSnapshot target,
+      GameSessionCurrentPrivatePlaytestRepository.SelectionReceipt previous) {
+    var scope =
+        new GameSessionCurrentPrivatePlaytestRepository.Scope(
+            target.targetNamespace(), target.tenantId(), target.worldSlug(), target.realmSlug());
+    var request =
+        new GameSessionCurrentPrivatePlaytestRepository.Request(
+            UUID.randomUUID(),
+            scope,
+            target.preparationRequestId(),
+            target.playtestLifecycleId(),
+            previous == null ? null : previous.headRevision(),
+            previous == null ? null : previous.playtestLifecycleId());
+    return Objects.requireNonNull(
+            context
+                .transaction()
+                .execute(
+                    status ->
+                        new GameSessionCurrentPrivatePlaytestRepository(context.dsl())
+                            .select(request)))
+        .receipt();
+  }
+
+  private static GameSessionPrivateFreshRuntimeAllocationRepository.Request runtimeRequest(
+      UUID requestId,
+      CanonicalPrivateFreshTargetSnapshot target,
+      GameSessionCurrentPrivatePlaytestRepository.SelectionReceipt selection) {
+    return new GameSessionPrivateFreshRuntimeAllocationRepository.Request(
+        requestId,
+        target.preparationRequestId(),
+        target.playtestLifecycleId(),
+        target.realmId(),
+        target.catalogRevision(),
+        target.creationRequestId(),
+        target.receiptDigest(),
+        selection.request().requestId(),
+        selection.headRevision());
+  }
+
+  private static GameSessionPrivateFreshRuntimeAllocationRepository.Allocation allocateRuntime(
+      Context context, GameSessionPrivateFreshRuntimeAllocationRepository.Request request) {
+    return Objects.requireNonNull(
+        context
+            .serializableTransaction()
+            .execute(
+                status ->
+                    new GameSessionPrivateFreshRuntimeAllocationRepository(context.dsl())
+                        .allocate(request)));
+  }
+
+  private static List<Map<String, Object>> runtimeSourceRows(Context context) {
+    return context
+        .dsl()
+        .fetch(
+            "SELECT 'catalog' AS source,to_jsonb(a)::TEXT AS row,xmin::TEXT AS version"
+                + " FROM game_session_canonical_realm_catalog a UNION ALL SELECT 'preparation',to_jsonb(a)::TEXT,xmin::TEXT"
+                + " FROM game_session_initial_playtest_preparations a UNION ALL SELECT 'selection',to_jsonb(a)::TEXT,xmin::TEXT"
+                + " FROM game_session_private_playtest_selections a UNION ALL SELECT 'selection-head',to_jsonb(a)::TEXT,xmin::TEXT"
+                + " FROM game_session_current_private_playtests a UNION ALL SELECT 'catalog-head',to_jsonb(a)::TEXT,xmin::TEXT"
+                + " FROM game_session_current_private_catalog_revisions a ORDER BY 1,2")
+        .intoMaps();
+  }
+
+  private static void insertForgedRuntimeAllocation(
+      Context context, UUID originalRequestId, String patch) {
+    // Recompute both digests after altering the source fields. Hash self-consistency alone must
+    // never replace exact source/current-head qualification at the database boundary.
+    context
+        .dsl()
+        .execute(
+            "WITH candidate AS (SELECT jsonb_populate_record(NULL::"
+                + RUNTIME_ALLOCATIONS
+                + ",to_jsonb(a)||?::jsonb||jsonb_build_object('request_id',?::uuid,'game_instance_id',?::uuid)) AS a"
+                + " FROM "
+                + RUNTIME_ALLOCATIONS
+                + " a WHERE request_id=?), bytes AS (SELECT (a).*,"
+                + " gs_private_fresh_runtime_request_bytes(a) AS b FROM candidate), intent AS (SELECT"
+                + " jsonb_populate_record(NULL::"
+                + RUNTIME_ALLOCATIONS
+                + ", (to_jsonb(bytes)-'b')||jsonb_build_object("
+                + "'request_preimage','\\x'||encode(b,'hex'),'request_digest','sha256:'||encode(sha256(b),'hex'))) AS a FROM bytes),"
+                + " receipt AS (SELECT jsonb_populate_record(NULL::"
+                + RUNTIME_ALLOCATIONS
+                + ",to_jsonb(a)||jsonb_build_object('receipt_digest',gs_private_fresh_runtime_receipt_digest(a))) AS a FROM intent)"
+                + " INSERT INTO "
+                + RUNTIME_ALLOCATIONS
+                + " SELECT (a).* FROM receipt",
+            patch,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            originalRequestId);
+  }
+
+  private record RuntimeFixture(
+      Context context,
+      Preparation preparation,
+      CanonicalPrivateFreshTargetSnapshot target,
+      GameSessionCurrentPrivatePlaytestRepository.SelectionReceipt selection,
+      GameSessionPrivateFreshRuntimeAllocationRepository.Request request) {}
+
+  private PrivateRevisionFixture privateRevisionFixture(long laterLifetimeSeconds) {
+    Context context =
+        context(
+            true,
+            List.of(
+                privatePolicy("private-playtest", "source-world", true, false, "ISOLATED"),
+                privatePolicy("other-playtest", "source-world", true, false, "ISOLATED")));
+    Request initialRequest =
+        context.request(UUID.randomUUID(), "private-playtest", context.now().plusSeconds(3600));
+    var initialPreparation = context.prepare(initialRequest).preparation();
+    var initialTargetRequest =
+        new GameSessionPrivateFreshTargetRepository.Request(
+            UUID.randomUUID(),
+            initialRequest.requestId(),
+            initialPreparation.playtestLifecycleId());
+    var initialTarget = context.allocatePrivateTarget(initialTargetRequest).snapshot();
+    Request laterRequest =
+        context.request(
+            UUID.randomUUID(), "private-playtest", context.now().plusSeconds(laterLifetimeSeconds));
+    var laterPreparation = context.prepare(laterRequest).preparation();
+    var advanceRequest =
+        new AdvanceRequest(
+            UUID.randomUUID(),
+            initialTarget.realmId(),
+            laterRequest.requestId(),
+            laterPreparation.playtestLifecycleId(),
+            1,
+            initialPreparation.playtestLifecycleId());
+    return new PrivateRevisionFixture(
+        context,
+        initialRequest,
+        initialPreparation,
+        initialTargetRequest,
+        initialTarget,
+        laterRequest,
+        laterPreparation,
+        advanceRequest);
+  }
+
+  private static List<Map<String, Object>> privateRevisionRows(Context context) {
+    return context
+        .dsl()
+        .fetch(
+            "SELECT 'history' AS source, to_jsonb(h)::TEXT AS retained_row, xmin::TEXT AS row_version FROM "
+                + REVISION_HISTORY
+                + " h UNION ALL SELECT 'head', to_jsonb(h)::TEXT, xmin::TEXT FROM "
+                + REVISION_HEAD
+                + " h ORDER BY 1, 2")
+        .intoMaps();
+  }
+
+  private record PrivateRevisionFixture(
+      Context context,
+      Request initialRequest,
+      Preparation initialPreparation,
+      GameSessionPrivateFreshTargetRepository.Request initialTargetRequest,
+      CanonicalPrivateFreshTargetSnapshot initialTarget,
+      Request laterRequest,
+      Preparation laterPreparation,
+      AdvanceRequest advanceRequest) {}
+
   private Context context(boolean withSource) {
     return context(
         withSource,
@@ -1647,6 +3283,11 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   }
 
   private Context context(boolean withSource, List<RealmEntryPolicy> privatePolicies) {
+    return context(withSource, privatePolicies, null);
+  }
+
+  private Context context(
+      boolean withSource, List<RealmEntryPolicy> privatePolicies, String targetVersion) {
     String schema = "initial_playtest_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setUrl(postgres.getJdbcUrl());
@@ -1657,7 +3298,7 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         dataSource,
         schema,
         "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
-        null);
+        targetVersion);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     var transactionManager = new DataSourceTransactionManager(dataSource);
@@ -1669,6 +3310,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
     var privateTargets = new GameSessionPrivateFreshTargetRepository(dsl);
     if (!withSource)
       return new Context(
+          dataSource,
+          schema,
           dsl,
           transaction,
           serializableTransaction,
@@ -1756,6 +3399,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         Objects.requireNonNull(
             transaction.execute(status -> catalogs.createInitialPublicProduction(preparedCatalog)));
     return new Context(
+        dataSource,
+        schema,
         dsl,
         transaction,
         serializableTransaction,
@@ -1831,6 +3476,8 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
   private record DetachedCatalogRow(Map<String, Object> values, List<Field<?>> fields) {}
 
   private record Context(
+      DriverManagerDataSource dataSource,
+      String schema,
       DSLContext dsl,
       TransactionTemplate transaction,
       TransactionTemplate serializableTransaction,
@@ -1887,6 +3534,13 @@ class GameSessionInitialPlaytestLifecyclePostgresIntegrationTest {
         GameSessionPrivateFreshTargetRepository.Request request) {
       return Objects.requireNonNull(
           serializableTransaction.execute(status -> privateTargets.allocate(request)));
+    }
+
+    GameSessionPrivateFreshTargetRepository.Allocation advancePrivateRevision(
+        AdvanceRequest request) {
+      var revisions = new GameSessionPrivateFreshCatalogRevisionRepository(dsl);
+      return Objects.requireNonNull(
+          serializableTransaction.execute(status -> revisions.advance(request)));
     }
 
     GameSessionInitialPlaytestLifecycleRepository.Snapshot read(Request request, UUID lifecycle) {

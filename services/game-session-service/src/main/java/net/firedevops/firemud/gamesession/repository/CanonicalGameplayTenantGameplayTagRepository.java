@@ -42,6 +42,12 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     this.allocationVersion = allocationVersion;
   }
 
+  /** Same canonical owner and configuration, with only this operation's SQL resource boundary. */
+  CanonicalGameplayTenantGameplayTagRepository withCapacityExecutionDsl(DSLContext operationDsl) {
+    return new CanonicalGameplayTenantGameplayTagRepository(
+        operationDsl, workloadNamespace, allocationVersion);
+  }
+
   /** Loads or allocates a mapping only for the persisted candidate of this exact transition. */
   public Assignment assignmentForTransition(UUID transitionId) {
     requireNonNil(transitionId, "transitionId");

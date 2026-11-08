@@ -1046,7 +1046,6 @@ public class AccountServiceImpl implements AccountService {
       CanonicalJoinResult committed =
           commitCanonicalJoin(
               consumers, scope, request.requestId(), callerBinding, prepared, observation);
-      requireCanonicalScopeFresh(consumers, scope);
       CanonicalJoinTerminalProof proof = committed.proof();
       // Publish only after the owner transaction has committed; response loss is exact-retryable.
       return new JoinPublicProductionResult(
@@ -1067,7 +1066,14 @@ public class AccountServiceImpl implements AccountService {
           failure instanceof AuthenticationException authentication
               ? authentication.getCode()
               : "ENTITLEMENT_UNAVAILABLE";
-      recordCanonicalJoinFailure(scope, request.requestId(), callerBinding, code);
+      try {
+        recordCanonicalJoinFailure(scope, request.requestId(), callerBinding, code);
+      } catch (RuntimeException recordFailure) {
+        if (recordFailure != failure) failure.addSuppressed(recordFailure);
+        logger.warn(
+            "Canonical JOIN failure state could not be recorded; cause={}",
+            recordFailure.getClass().getSimpleName());
+      }
       if (failure instanceof AuthenticationException authentication) throw authentication;
       throw new AuthenticationException(
           code, "Canonical JOIN authority is unavailable; retry the same request", failure);

@@ -81,6 +81,37 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 @ExtendWith(OutputCaptureExtension.class)
 class CertificateMaterialServiceTest {
   @Test
+  void gatewayClientUnacceptedProjectionValidatesOnlyClientAuthAndExactUri() {
+    StableBatchFixture fixture = stableBatchFixture();
+    Secret projection =
+        fixture
+            .secretClient()
+            .runtimeSecrets()
+            .withName(fixture.plan().grpcGatewayClientSecretName())
+            .get();
+    projection
+        .getMetadata()
+        .getAnnotations()
+        .remove(HostedIdentityContract.ACCEPTED_REVISION_ANNOTATION);
+
+    CertificateMaterialService.RoleMaterial material = fixture.batch().grpcGatewayClient();
+
+    assertEquals(HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE, material.role());
+    assertEquals(SERIALIZED_IN_FLIGHT, material.state());
+    verify(fixture.validator())
+        .validateIdentity(
+            org.mockito.ArgumentMatchers.any(Secret.class),
+            org.mockito.ArgumentMatchers.eq(List.of()),
+            org.mockito.ArgumentMatchers.eq(
+                List.of("spiffe://firemud/ns/pr-42/sa/spring-cloud-gateway")),
+            org.mockito.ArgumentMatchers.eq("kubernetes.io/tls"),
+            org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.eq(true),
+            org.mockito.ArgumentMatchers.eq(fixture.properties().getGrpcTrustAnchorSha256()));
+    verifyNoInteractions(fixture.grpcGenerator());
+  }
+
+  @Test
   void roleMaterialStatesRetainCanonicalStatusValues() {
     assertEquals("source-ready", SOURCE_READY.statusValue());
     assertEquals("certificate-pending", CERTIFICATE_PENDING.statusValue());
@@ -457,7 +488,8 @@ class CertificateMaterialServiceTest {
             plan.grpcPublicationSecretName("automation-scripting-service"),
             plan.grpcAccountSecretName(),
             plan.grpcGameSessionSecretName(),
-            plan.grpcSocialGroupsSecretName()),
+            plan.grpcSocialGroupsSecretName(),
+            plan.grpcGatewayClientSecretName()),
         java.util.Set.copyOf(read.getAllValues()));
 
     clearInvocations(runtimeSecrets);
@@ -2011,6 +2043,26 @@ class CertificateMaterialServiceTest {
         .thenReturn(socialGroupsSourceResource);
     when(socialGroupsSourceResource.get())
         .thenReturn(certManagerSource(plan, socialGroupsRole, socialGroupsSourceName, data));
+    String gatewayClientRole = HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE;
+    String gatewayClientName = plan.grpcGatewayClientSecretName();
+    String gatewayClientSourceName = plan.grpcGatewayClientSourceSecretName();
+    String gatewayClientRevision = SecretProjectionService.revisionForRole(gatewayClientRole, data);
+    Resource<Secret> gatewayClientProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(gatewayClientName))
+        .thenReturn(gatewayClientProjectionResource);
+    when(gatewayClientProjectionResource.get())
+        .thenReturn(
+            ownedSecret(
+                plan,
+                gatewayClientRole,
+                gatewayClientName,
+                data,
+                acceptedAnnotations(gatewayClientRevision, "1".repeat(64))));
+    Resource<Secret> gatewayClientSourceResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(gatewayClientSourceName))
+        .thenReturn(gatewayClientSourceResource);
+    when(gatewayClientSourceResource.get())
+        .thenReturn(certManagerSource(plan, gatewayClientRole, gatewayClientSourceName, data));
     Secret ownedGrpc =
         ownedSecret(plan, HostedIdentityContract.GRPC_ROLE, plan.grpcSecretName(), data, Map.of());
     Resource<Secret> grpcSourceResource = mock(Resource.class);

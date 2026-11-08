@@ -160,6 +160,61 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .commitCanonicalFirstJoin(REQUEST_ID, fixture.scope, CALLER_BINDING, fixture.expectedProof);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"COMMITTED", "FAILED"})
+  void terminalJoinReturnsStoredEvidenceWithoutReadingOrMutatingCurrentAuthority(String status) {
+    Fixture fixture = new Fixture();
+    var committed = Fixture.terminal(fixture.operation, fixture.expectedProof, status);
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
+        .thenReturn(Optional.of(committed));
+    fixture.startWritableTransaction();
+
+    var result =
+        fixture.coordinator.commitCanonicalJoin(
+            fixture.scope, REQUEST_ID, CALLER_BINDING, null, null, null);
+
+    assertThat(result).isSameAs(committed);
+    InOrder ordered = inOrder(fixture.accounts, fixture.operations);
+    ordered.verify(fixture.accounts).findByAccountUuid(ACCOUNT_ID);
+    ordered.verify(fixture.operations).lockAccount(fixture.account.getId());
+    ordered.verify(fixture.operations).findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID);
+    ordered.verifyNoMoreInteractions();
+    verifyNoInteractions(
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void committedJoinStillRejectsChangedRequestOrCallerBinding(boolean changedRequest) {
+    Fixture fixture = new Fixture();
+    String requestId = changedRequest ? "different-request" : REQUEST_ID;
+    String callerBinding = changedRequest ? CALLER_BINDING : "different-caller";
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(requestId))
+        .thenReturn(Optional.of(Fixture.committed(fixture.operation, fixture.expectedProof)));
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalJoin(
+                    fixture.scope, requestId, callerBinding, null, null, null))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class)
+        .hasMessage("Canonical JOIN intent conflicts");
+    verifyNoInteractions(
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
   @Test
   void changedCallerUnderGlobalRequestIdConflictsBeforeReturningAnyReceipt() {
     Fixture fixture = new Fixture();
@@ -600,6 +655,12 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
 
     private static CanonicalJoinOperationEvidence committed(
         CanonicalJoinOperationEvidence pending, CanonicalJoinTerminalProof proof) {
+      return terminal(pending, proof, "COMMITTED");
+    }
+
+    private static CanonicalJoinOperationEvidence terminal(
+        CanonicalJoinOperationEvidence pending, CanonicalJoinTerminalProof proof, String status) {
+      boolean success = "COMMITTED".equals(status);
       return new CanonicalJoinOperationEvidence(
           pending.requestId(),
           pending.privateAccountId(),
@@ -618,12 +679,12 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
           pending.lastAttemptAuthorityAvailability(),
           pending.lastAttemptFailureCode(),
           pending.callerBoundAuthorityInvalidated(),
-          "COMMITTED",
-          "JOINED",
-          proof.membershipId(),
-          proof.membershipVersion(),
-          proof.membershipAuthorityGeneration(),
-          proof,
+          status,
+          success ? "JOINED" : "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+          success ? proof.membershipId() : null,
+          success ? proof.membershipVersion() : null,
+          success ? proof.membershipAuthorityGeneration() : null,
+          success ? proof : null,
           pending.scopeEvidence());
     }
 

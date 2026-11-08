@@ -155,7 +155,8 @@ SHARED_TRUST_GRPC_WORKLOADS = (
     "social-groups-service",
     *ACCOUNT_GAME_SESSION_GRPC_WORKLOADS,
 )
-GRPC_WORKLOAD_SECRET_CONSUMERS = SHARED_TRUST_GRPC_WORKLOADS
+GATEWAY_CLIENT_WORKLOADS = ("spring-cloud-gateway",)
+GRPC_WORKLOAD_SECRET_CONSUMERS = (*SHARED_TRUST_GRPC_WORKLOADS, *GATEWAY_CLIENT_WORKLOADS)
 GRPC_WORKLOAD_LEAF_SECRET_KEYS = {"tls.crt", "tls.key", "ca.crt"}
 PUBLICATION_GRPC_TRUST_SECRET_NAME = "firemud-grpc-tls"
 PUBLICATION_GRPC_TRUST_SECRET_KEYS = {"ca.crt"}
@@ -974,9 +975,25 @@ def publication_workload_secret_requirements(
     requirements: list[tuple[str, str, set[str]]] = []
     leaf_secret_names: list[str] = []
     for workload in GRPC_WORKLOAD_SECRET_CONSUMERS:
+        client_only = workload in GATEWAY_CLIENT_WORKLOADS
+        leaf_volume_name = "gameplay-client-tls" if client_only else "grpc-tls"
+        trust_volume_name = "gameplay-client-trust" if client_only else "grpc-trust"
+        leaf_root = "/gameplay-client-tls" if client_only else "/tls"
+        trust_root = "/gameplay-client-trust" if client_only else "/grpc-trust"
+        path_names = (
+            (
+                "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH",
+                "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH",
+                "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH",
+            )
+            if client_only
+            else GRPC_TLS_PATH_NAMES
+        )
         is_publication_workload = workload in PUBLICATION_GRPC_WORKLOADS
         workload_label = (
-            "publication workload" if is_publication_workload else "gRPC workload"
+            "Gateway gameplay client"
+            if client_only
+            else "publication workload" if is_publication_workload else "gRPC workload"
         )
         deployments = [
             document
@@ -1010,20 +1027,20 @@ def publication_workload_secret_requirements(
         grpc_volumes = [
             volume
             for volume in volumes
-            if isinstance(volume, dict) and volume.get("name") == "grpc-tls"
+            if isinstance(volume, dict) and volume.get("name") == leaf_volume_name
         ]
         trust_volumes = [
             volume
             for volume in volumes
-            if isinstance(volume, dict) and volume.get("name") == "grpc-trust"
+            if isinstance(volume, dict) and volume.get("name") == trust_volume_name
         ]
         if len(grpc_volumes) != 1:
             raise ValueError(
-                f"Expected exactly one grpc-tls volume for {workload_label} {workload}; found {len(grpc_volumes)}"
+                f"Expected exactly one {leaf_volume_name} volume for {workload_label} {workload}; found {len(grpc_volumes)}"
             )
         if len(trust_volumes) != 1:
             raise ValueError(
-                f"Expected exactly one grpc-trust volume for {workload_label} {workload}; found {len(trust_volumes)}"
+                f"Expected exactly one {trust_volume_name} volume for {workload_label} {workload}; found {len(trust_volumes)}"
             )
         grpc_volume = grpc_volumes[0]
         secret = grpc_volume.get("secret")
@@ -1057,22 +1074,22 @@ def publication_workload_secret_requirements(
             or not leaf_projection_is_valid
         ):
             raise ValueError(
-                f"Rendered {workload_label} {workload} has a malformed grpc-tls Secret volume"
+                f"Rendered {workload_label} {workload} has a malformed {leaf_volume_name} Secret volume"
             )
         if secret_name == workload_mtls_secret_name:
             raise ValueError(
-                f"Rendered {workload_label} {workload} grpc-tls Secret must be distinct from "
+                f"Rendered {workload_label} {workload} {leaf_volume_name} Secret must be distinct from "
                 f"the workload mTLS Secret {workload_mtls_secret_name}"
             )
         if secret_name == PUBLICATION_GRPC_TRUST_SECRET_NAME:
             raise ValueError(
-                f"Rendered {workload_label} {workload} grpc-tls Secret must not use the "
+                f"Rendered {workload_label} {workload} {leaf_volume_name} Secret must not use the "
                 "shared trust Secret firemud-grpc-tls"
             )
         expected_leaf_secret_name = f"firemud-grpc-{workload}"
         if secret_name != expected_leaf_secret_name:
             raise ValueError(
-                f"Rendered {workload_label} {workload} grpc-tls Secret must be "
+                f"Rendered {workload_label} {workload} {leaf_volume_name} Secret must be "
                 f"{expected_leaf_secret_name}; found {secret_name}"
             )
 
@@ -1106,7 +1123,7 @@ def publication_workload_secret_requirements(
         ):
             raise ValueError(
                 f"Rendered {workload_label} {workload} requires the shared CA-only "
-                f"Secret {PUBLICATION_GRPC_TRUST_SECRET_NAME} in its grpc-trust volume"
+                f"Secret {PUBLICATION_GRPC_TRUST_SECRET_NAME} in its {trust_volume_name} volume"
             )
 
         containers = pod_spec.get("containers")
@@ -1130,7 +1147,7 @@ def publication_workload_secret_requirements(
             documents,
             deployment,
             container,
-            relevant_names=set(GRPC_TLS_PATH_NAMES),
+            relevant_names=set(path_names),
         )
         if env_issues:
             raise ValueError(
@@ -1143,6 +1160,35 @@ def publication_workload_secret_requirements(
             raise TypeError(
                 f"Rendered {workload_label} {workload} has no valid container env list"
             )
+        if client_only:
+            namespace_entries = [
+                entry
+                for entry in container_env
+                if isinstance(entry, dict)
+                and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+            ]
+            if namespace_entries != [{
+                "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+            }]:
+                raise ValueError(
+                    "Gateway gameplay client must bind its workload namespace to metadata.namespace"
+                )
+            management_paths = {
+                "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/client.crt",
+                "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/client.key",
+                "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+            }
+            for name, path in management_paths.items():
+                entries = [
+                    entry
+                    for entry in container_env
+                    if isinstance(entry, dict) and entry.get("name") == name
+                ]
+                if entries != [{"name": name, "value": path}]:
+                    raise ValueError(
+                        f"Gateway must preserve management gRPC path {name} as {path}"
+                    )
         declared_grpc_path_names: list[str] = []
         for entry in container_env:
             if not isinstance(entry, dict):
@@ -1150,7 +1196,7 @@ def publication_workload_secret_requirements(
                     f"Rendered {workload_label} {workload} has a malformed container env entry"
                 )
             name = entry.get("name")
-            if name not in GRPC_TLS_PATH_NAMES:
+            if name not in path_names:
                 continue
             declared_grpc_path_names.append(name)
             if not set(entry).issubset({"name", "value", "valueFrom"}):
@@ -1176,13 +1222,11 @@ def publication_workload_secret_requirements(
                 f"Rendered {workload_label} {workload} has ambiguous gRPC TLS path env entries"
             )
 
-        expected_grpc_paths = {
-            "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
-            "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
-            "FIREMUD_GRPC_CA_CERT_PATH": "/grpc-trust/ca.crt",
-        }
+        expected_grpc_paths = dict(
+            zip(path_names, (f"{leaf_root}/tls.crt", f"{leaf_root}/tls.key", f"{trust_root}/ca.crt"))
+        )
         grpc_paths: dict[str, str] = {}
-        for name in GRPC_TLS_PATH_NAMES:
+        for name in path_names:
             path = environment.get(name)
             if (
                 not isinstance(path, str)
@@ -1221,8 +1265,8 @@ def publication_workload_secret_requirements(
                 )
 
         expected_mounts = {
-            "grpc-tls": "/tls",
-            "grpc-trust": "/grpc-trust",
+            leaf_volume_name: leaf_root,
+            trust_volume_name: trust_root,
         }
         validated_mounts: dict[str, dict[str, Any]] = {}
         for volume_name, mount_path in expected_mounts.items():
@@ -1244,13 +1288,13 @@ def publication_workload_secret_requirements(
             validated_mounts[volume_name] = mount
 
         if any(
-            not path_is_under_mount(path, "/tls")
+            not path_is_under_mount(path, leaf_root)
             for path in (
-                grpc_paths["FIREMUD_GRPC_CERT_CHAIN_PATH"],
-                grpc_paths["FIREMUD_GRPC_PRIVATE_KEY_PATH"],
+                grpc_paths[path_names[0]],
+                grpc_paths[path_names[1]],
             )
         ) or not path_is_under_mount(
-            grpc_paths["FIREMUD_GRPC_CA_CERT_PATH"], "/grpc-trust"
+            grpc_paths[path_names[2]], trust_root
         ):
             raise ValueError(
                 f"Rendered {workload_label} {workload} gRPC TLS paths do not match its leaf/trust mount layout"

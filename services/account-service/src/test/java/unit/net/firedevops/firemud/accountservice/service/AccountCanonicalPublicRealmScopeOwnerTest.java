@@ -125,7 +125,33 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
                 "AUTH_UNAVAILABLE",
                 () ->
                     f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
-    verifyNoInteractions(f.scopes, f.sessions, f.targets, f.entitlements);
+    verifyNoInteractions(
+        f.accounts,
+        f.memberships,
+        f.tenants,
+        f.heads,
+        f.scopes,
+        f.sessions,
+        f.targets,
+        f.entitlements);
+  }
+
+  @Test
+  void directProducerReportsUnavailableEntitlementWithoutMisclassifyingThePointer() {
+    Fixture f = new Fixture(300000L);
+    when(f.entitlements.evaluate(TENANT)).thenReturn(f.evaluation(false));
+
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "ENTITLEMENT_UNAVAILABLE",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target), directTarget(f.target))));
+
+    assertThat(f.targetReads.get()).isEqualTo(2);
+    verifyNoInteractions(f.scopes, f.sessions, f.memberships);
   }
 
   @Test
