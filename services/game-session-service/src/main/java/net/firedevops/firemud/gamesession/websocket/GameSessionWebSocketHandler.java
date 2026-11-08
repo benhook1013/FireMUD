@@ -215,11 +215,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       try {
         sendProtocolMessage(
             session,
-            formatResponse(
+            outputProjector.projectCommandResponse(
+                session,
                 command,
                 interpretation,
-                session,
                 interpretation.outputs(),
+                resolveLocaleTag(session),
                 settingsResolver.presentation(null),
                 null));
       } finally {
