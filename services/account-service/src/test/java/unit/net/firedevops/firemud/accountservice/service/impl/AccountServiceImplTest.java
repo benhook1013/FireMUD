@@ -1356,7 +1356,7 @@ class AccountServiceImplTest {
             field.equals("namespace") ? UUID.randomUUID() : f.scope.playableStateNamespaceId(),
             field.equals("scope") ? "ISOLATED" : f.scope.playableStateScope(),
             field.equals("instance") ? UUID.randomUUID() : f.scope.gameInstanceId(),
-            UUID.randomUUID().toString(),
+            "00042",
             f.requestId);
     assertEquals(
         "CONNECT_SCOPE_MISMATCH",
@@ -1671,7 +1671,7 @@ class AccountServiceImplTest {
           scope.playableStateNamespaceId(),
           scope.playableStateScope(),
           scope.gameInstanceId(),
-          UUID.randomUUID().toString(),
+          "00042",
           id);
     }
   }

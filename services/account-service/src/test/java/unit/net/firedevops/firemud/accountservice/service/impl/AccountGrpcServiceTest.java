@@ -89,7 +89,7 @@ class AccountGrpcServiceTest {
   private static final UUID DIRECT_TENANT = UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID DIRECT_INSTANCE =
       UUID.fromString("44444444-4444-4444-8444-444444444444");
-  private static final String DIRECT_SESSION = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  private static final String DIRECT_SESSION = "00042";
   private static final GrpcPeerIdentity GAME_SESSION_PEER =
       new GrpcPeerIdentity(
           "spiffe://firemud/ns/test/sa/game-session-service",

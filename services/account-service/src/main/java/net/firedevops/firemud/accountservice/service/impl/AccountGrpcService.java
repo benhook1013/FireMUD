@@ -327,10 +327,26 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       throw new InvalidRequestException("playableStateScope must be SHARED or ISOLATED", null);
     }
     UUID gameInstanceId = requireCanonicalUuid(context.getGameInstanceId(), "gameInstanceId");
-    String sessionId = requireCanonicalUuid(context.getSessionId(), "sessionId").toString();
+    String sessionId = requireDirectTextTransportSession(context.getSessionId());
     String requestId = requireText(context.getRequestId(), "requestId");
     return new DirectTextCallerContext(
         accountUuid, tenantId, realmId, namespaceId, scope, gameInstanceId, sessionId, requestId);
+  }
+
+  private static String requireDirectTextTransportSession(String value) {
+    if (value == null || value.length() > 32) {
+      throw new InvalidRequestException("sessionId must be a bounded numeric transport ID", null);
+    }
+    try {
+      long session = Long.parseLong(value);
+      if (session <= 0 || !value.matches("[0-9]+")) {
+        throw new NumberFormatException("Invalid transport session");
+      }
+    } catch (NumberFormatException malformed) {
+      throw new InvalidRequestException(
+          "sessionId must be a positive numeric transport ID", malformed);
+    }
+    return value;
   }
 
   private UUID requireCanonicalRealmId(String value) {
