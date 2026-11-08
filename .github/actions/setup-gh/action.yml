@@ -7,6 +7,21 @@ runs:
       id: versions
       uses: ./.github/actions/load-workflow-tool-versions
 
+    - name: Validate supported runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
+          echo "pinned GitHub CLI installer requires a Linux X64 runner" >&2
+          exit 1
+        fi
+
+    - name: Restore pinned GitHub CLI archive
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ runner.temp }}/firemud-gh/${{ steps.versions.outputs.gh-version }}/gh.tar.gz
+        key: firemud-gh-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.gh-version }}-${{ steps.versions.outputs.gh-linux-amd64-sha256 }}
+
     - name: Install pinned GitHub CLI
       shell: bash
       env:
@@ -14,10 +29,6 @@ runs:
         GH_SHA256: ${{ steps.versions.outputs.gh-linux-amd64-sha256 }}
       run: |
         set -euo pipefail
-        if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
-          echo "pinned GitHub CLI installer requires a Linux X64 runner" >&2
-          exit 1
-        fi
         gh_version="${GH_VERSION:?}"
         gh_sha256="${GH_SHA256:?}"
         install_root="${RUNNER_TEMP:?}/firemud-gh/${gh_version}"
@@ -40,13 +51,14 @@ runs:
           mv -fT -- "$temporary_archive" "$archive_path"
           trap - EXIT
         fi
+        # Always verify restored or downloaded bytes before extracting the pinned binary.
+        printf '%s  %s\n' "$gh_sha256" "$archive_path" \
+          | sha256sum --check --status
         rm -rf -- "$extraction_dir"
         mkdir -p -- "$extraction_dir"
         tar -xzf "$archive_path" -C "$extraction_dir" -- "gh_${gh_version}_linux_amd64/bin/gh"
         install -m 0755 "$extraction_dir/gh_${gh_version}_linux_amd64/bin/gh" "$install_dir/gh"
 
-        printf '%s  %s\n' "$gh_sha256" "$archive_path" \
-          | sha256sum --check --status
         reported_version="$("$install_dir/gh" --version | awk 'NR == 1 { print $3 }')"
         if [[ "$reported_version" != "$gh_version" ]]; then
           echo "::error title=GitHub CLI version mismatch::Expected ${gh_version}, but the installed binary reported ${reported_version}." >&2
