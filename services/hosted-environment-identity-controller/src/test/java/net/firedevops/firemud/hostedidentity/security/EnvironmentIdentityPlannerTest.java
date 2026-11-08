@@ -103,6 +103,33 @@ class EnvironmentIdentityPlannerTest {
   }
 
   @Test
+  void workloadDnsNamesUseWorkloadNamesAndKeepGatewayClientWithoutServerNames() {
+    List<String> serverWorkloads =
+        new ArrayList<>(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
+    serverWorkloads.addAll(
+        List.of(
+            HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD,
+            HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD,
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD));
+
+    for (String environment : List.of("pr-42", "dev-demo")) {
+      var plan = planner.plan(environment);
+      assertEquals(
+          List.of(),
+          plan.grpcWorkloadIdentityDnsNames(HostedIdentityContract.GRPC_GATEWAY_WORKLOAD));
+      for (String workload : serverWorkloads) {
+        assertEquals(
+            List.of(
+                workload,
+                workload + "." + plan.runtimeNamespace(),
+                workload + "." + plan.runtimeNamespace() + ".svc",
+                workload + "." + plan.runtimeNamespace() + ".svc.cluster.local"),
+            plan.grpcWorkloadIdentityDnsNames(workload));
+      }
+    }
+  }
+
+  @Test
   void derivesDevDemoWithoutAcceptingUserSuppliedTopology() {
     var plan = planner.plan("dev-demo");
 
