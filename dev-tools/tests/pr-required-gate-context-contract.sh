@@ -3407,6 +3407,7 @@ const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name:
     step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
 async function verify(mutate = () => {}) {
   const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
+    eventHeadRepository: repositoryName,
     currentPullRequest: {state: "open", head: {sha: headSha}, base: {ref: "develop"}, labels: [{name: "canonical-play-transition"}]},
     definition: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}});
   mutate(data);
@@ -3418,7 +3419,7 @@ async function verify(mutate = () => {}) {
     `${fn}; return verifyKnownPlayFailure(data.run, data.candidate, data.identity);`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
-      {payload: {pull_request: {head: {repo: {full_name: repositoryName}}}}}, "benhook1013", "FireMUD", require, data);
+      {payload: {pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}}, "benhook1013", "FireMUD", require, data);
 }
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
@@ -3461,6 +3462,7 @@ function markerAccepted(overrides = {}) {
     d => {d.currentPullRequest.labels = [{name: "other"}];},
     d => {d.currentPullRequest.state = "closed";},
     d => {d.currentPullRequest.head.sha = "d".repeat(40);},
+    d => {d.eventHeadRepository = "fork-owner/FireMUD"; d.source.head_repository.full_name = d.eventHeadRepository;},
     d => {d.currentPullRequest.base.ref = "main";},
     d => {d.identity.baseSha = "d".repeat(40);},
     d => {d.identity.headSha = "d".repeat(40);},

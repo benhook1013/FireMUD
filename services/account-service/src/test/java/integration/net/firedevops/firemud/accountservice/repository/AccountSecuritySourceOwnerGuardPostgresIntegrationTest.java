@@ -303,7 +303,7 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
         logoutOperations,
         securityOperations,
         resetSourceChanges,
-        null, // connect scopes
+        null, // account audit outbox
         null, // join operations
         null, // email login challenges
         null, // realm grants
