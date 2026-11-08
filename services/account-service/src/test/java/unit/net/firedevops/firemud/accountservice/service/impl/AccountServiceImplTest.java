@@ -974,11 +974,54 @@ class AccountServiceImplTest {
     when(accountJoinOperationRepository.finishCanonicalFailure(
             f.requestId, f.scope, f.binding, outcome))
         .thenReturn(f.pending);
+    org.mockito.Mockito.doThrow(new IllegalStateException("Game Session unavailable"))
+        .when(f.targets)
+        .resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any());
     var result = f.browserJoin();
     assertFalse(result.success());
     assertTrue(result.replayed());
     assertEquals(outcome, result.outcomeCode());
-    verifyNoInteractions(f.sources, f.demos, f.hosting, f.observer, f.terminal);
+    verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer, f.terminal);
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
+        .finishCanonicalFailure(f.requestId, f.scope, f.binding, outcome);
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(2))
+        .isAccountSessionActive(f.account.getId(), f.bootstrap);
+  }
+
+  @Test
+  void canonicalFailedRetryStillChecksLockedRequestIdentity() {
+    var f = canonicalJoinFixture();
+    when(f.pending.status()).thenReturn("FAILED");
+    when(f.pending.outcome()).thenReturn("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    when(accountJoinOperationRepository.finishCanonicalFailure(
+            f.requestId, f.scope, f.binding, "PUBLIC_PRODUCTION_ADMISSION_DENIED"))
+        .thenThrow(
+            new AccountJoinOperationRepository.CanonicalJoinOperationConflictException(
+                "Controlled retained identity conflict"));
+    assertEquals(
+        "IDEMPOTENCY_CONFLICT",
+        assertThrows(AuthenticationException.class, f::browserJoin).getCode());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.times(2))
+        .findCanonicalEvidenceForUpdateByRequestId(f.requestId);
+    verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer, f.terminal);
+  }
+
+  @Test
+  void canonicalFailedRetryStillRechecksCallerBeforeLockedReplay() {
+    var f = canonicalJoinFixture();
+    when(f.pending.status()).thenReturn("FAILED");
+    when(sessionService.isAccountSessionActive(f.account.getId(), f.bootstrap))
+        .thenReturn(true, false);
+    assertEquals(
+        "CONNECT_CONTEXT_INVALID",
+        assertThrows(AuthenticationException.class, f::browserJoin).getCode());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finishCanonicalFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    verifyNoInteractions(f.targets, f.sources, f.demos, f.hosting, f.observer, f.terminal);
   }
 
   @ParameterizedTest
