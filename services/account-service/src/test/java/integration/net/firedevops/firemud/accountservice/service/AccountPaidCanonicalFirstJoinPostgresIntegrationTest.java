@@ -3,6 +3,8 @@ package integration.net.firedevops.firemud.accountservice.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
@@ -116,7 +118,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     var original = c.operation();
     c.hosting.providerStatus("canceled");
     var contradictory = c.hosting.observer().observe(c.fence.binding());
-    assertThatThrownBy(() -> c.commit(contradictory)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> c.commit(contradictory))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: provider facts differ from the committed receipt");
+    verifyNoInteractions(c.demos);
     c.assertRolledBack(original);
     c.hosting.providerStatus("active");
     var recovered = c.hosting.observer().observe(c.fence.binding());
@@ -141,7 +146,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     var original = c.operation();
     c.hosting.clock().advance(Duration.ofHours(2));
     var freshSdkResult = c.hosting.observer().observe(c.fence.binding());
-    assertThatThrownBy(() -> c.commit(freshSdkResult)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> c.commit(freshSdkResult))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current receipt is expired or inconsistent");
+    verifyNoInteractions(c.demos);
     c.assertRolledBack(original);
   }
 
@@ -194,6 +202,7 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
     private final CanonicalHostingSubscriptionTestFixture.Fixture hosting;
     private final AccountJoinOperationRepository operations;
     private final AccountAuthorityOutboxRepository outbox;
+    private final AccountDemoTenantEntitlementRepository demos;
     private final AccountMembershipPairAuthorityRepository pairs;
     private final AccountCanonicalFirstJoinTerminalCoordinator coordinator;
     private final CanonicalJoinScopeV2 scope;
@@ -222,9 +231,10 @@ class AccountPaidCanonicalFirstJoinPostgresIntegrationTest {
       var billing = new AccountTenantEntitlementOutboxRepository(dsl);
       var tenantEvents =
           new AccountTenantAuthorityEventRepository(dsl, outbox, billing, fresh, generations);
-      var demos =
-          new AccountDemoTenantEntitlementRepository(
-              dsl, fresh, generations, billing, tenantEvents);
+      demos =
+          spy(
+              new AccountDemoTenantEntitlementRepository(
+                  dsl, fresh, generations, billing, tenantEvents));
       var scopes =
           new AccountConnectScopeRepository(
               dsl,
