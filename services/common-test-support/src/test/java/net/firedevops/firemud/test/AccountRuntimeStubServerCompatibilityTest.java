@@ -584,6 +584,16 @@ class AccountRuntimeStubServerCompatibilityTest {
         assertThat(alreadyActive.getMembershipVersion()).isEqualTo(joined.getMembershipVersion());
         assertThat(stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11")))
             .isEqualTo(after);
+
+        server.denyGameplayAdmission();
+        var nonAdmittingReplay =
+            joined.toBuilder().setReplayed(true).setGameplayAdmissionAllowed(false).build();
+        assertThat(stub.joinPublicProductionMembership(nextRequest)).isEqualTo(nonAdmittingReplay);
+        server.allowGameplayAdmission();
+        server.setMembershipInactive();
+        assertThat(stub.joinPublicProductionMembership(nextRequest)).isEqualTo(nonAdmittingReplay);
+        assertThat(stub.joinPublicProductionMembership(request))
+            .isEqualTo(denied.toBuilder().setReplayed(true).build());
       } finally {
         channel.shutdownNow();
       }

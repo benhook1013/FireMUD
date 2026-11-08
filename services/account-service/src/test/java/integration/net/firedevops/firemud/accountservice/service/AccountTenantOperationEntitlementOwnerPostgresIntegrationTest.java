@@ -163,7 +163,7 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
         .hasCauseInstanceOf(IllegalStateException.class)
         .hasRootCauseMessage("controlled capture rollback");
     assertThat(captures).hasValue(1);
-    assertThat(f.dsl().fetchOne("SELECT to_regclass(?)::text", marker).get(0, String.class))
+    assertThat(f.dsl().fetchSingle("SELECT to_regclass(?)::text", marker).get(0, String.class))
         .isNull();
   }
 
