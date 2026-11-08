@@ -262,7 +262,9 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
       client.init();
       facade.setAccountBootstrapRosterReadClient(client);
       var beforeEmpty = entityRows(entity);
-      assertThat(listBootstrapCharacters(tokenA, scopeA).isEmpty()).isTrue();
+      var emptyRoster = listBootstrapCharacters(tokenA, scopeA);
+      assertThat(emptyRoster.isArray()).isTrue();
+      assertThat(emptyRoster.size()).isZero();
       assertThat(entityRows(entity)).isEqualTo(beforeEmpty);
     }
 
