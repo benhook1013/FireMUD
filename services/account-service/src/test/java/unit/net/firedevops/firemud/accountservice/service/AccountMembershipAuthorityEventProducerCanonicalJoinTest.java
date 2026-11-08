@@ -133,7 +133,8 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
     var fence = mock(ReadFence.class);
     var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
-    when(hosting.readCurrent(fence, observed)).thenReturn(paidReceipt(event, 5L, true));
+    var receipt = paidReceipt(event, 5L, true);
+    when(hosting.readCurrent(fence, observed)).thenReturn(receipt);
     Runnable validate =
         () ->
             fixture.producer.requireCurrentCanonicalJoinPolicy(
