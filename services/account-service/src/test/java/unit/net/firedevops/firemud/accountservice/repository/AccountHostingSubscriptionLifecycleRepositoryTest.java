@@ -79,7 +79,7 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
         new AccountHostingSubscriptionLifecycleRepository(
             dsl,
             controlledIntents,
-            Clock.fixed(expiresAt.plusSeconds(secondsAfterExpiry), ZoneOffset.UTC),
+            Clock.fixed(expiresAt.minusSeconds(5), ZoneOffset.UTC),
             limits(3, 2, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
             new AccountHostingSubscriptionLifecyclePolicy(
                 Duration.ofSeconds(15),
@@ -130,17 +130,22 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
     when(retainedAttempt.get("expires_at", OffsetDateTime.class))
         .thenReturn(expiresAt.atOffset(ZoneOffset.UTC));
     when(dsl.fetchOne(retainedAttemptSql, attemptId)).thenReturn(retainedAttempt);
+    var databaseClock = mock(Record.class);
+    when(databaseClock.get("now", OffsetDateTime.class))
+        .thenReturn(expiresAt.plusSeconds(secondsAfterExpiry).atOffset(ZoneOffset.UTC));
+    when(dsl.fetchOne("SELECT clock_timestamp() AS now")).thenReturn(databaseClock);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
     assertThat(controlledRepository.deferUnresolved(claim)).isEqualTo(Disposition.ATTEMPT_EXPIRED);
 
-    // Only the exact local owner/work locks, retained attempt and lifecycle ownership reads are
-    // allowed: no SQL writes, reservation release, or replacement attempt occur on this return.
+    // Only the exact local owner/work locks, retained attempt, lifecycle ownership and DB clock
+    // are read: no SQL writes, reservation release, or replacement attempt occur on this return.
     verify(controlledIntents).lockForProvisioningSettlement(requestId, 7L);
     verify(controlledIntents).findCreation(requestId);
     verify(dsl).fetchOne(lockedWorkSql, requestId);
     verify(dsl).fetchOne(linksSql, subscriptionId);
     verify(dsl).fetchOne(retainedAttemptSql, attemptId);
+    verify(dsl).fetchOne("SELECT clock_timestamp() AS now");
     verifyNoMoreInteractions(controlledIntents, dsl);
   }
 
