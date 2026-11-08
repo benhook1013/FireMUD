@@ -934,15 +934,22 @@ class AccountServiceImplTest {
         retainedSubscriptionEvidenceRepository);
   }
 
-  @Test
-  void canonicalFailedRetryPreservesTheOriginalOutcomeWithoutMembershipOrPolicyMutation() {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+        "CONNECT_SCOPE_INVALID",
+        "REALM_UNAVAILABLE"
+      })
+  void canonicalFailedRetryPreservesTheOriginalOutcomeWithoutMembershipOrPolicyMutation(
+      String outcome) {
     var f = canonicalJoinFixture();
     when(f.pending.status()).thenReturn("FAILED");
-    when(f.pending.outcome()).thenReturn("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+    when(f.pending.outcome()).thenReturn(outcome);
     var result = f.browserJoin();
     assertFalse(result.success());
     assertTrue(result.replayed());
-    assertEquals("PUBLIC_PRODUCTION_ADMISSION_DENIED", result.outcomeCode());
+    assertEquals(outcome, result.outcomeCode());
     verifyNoInteractions(f.sources, f.demos, f.hosting, f.observer, f.terminal);
   }
 
@@ -1111,6 +1118,93 @@ class AccountServiceImplTest {
         .finishCanonicalFailure(f.requestId, f.scope, f.binding, "CONNECT_SCOPE_MISMATCH");
     org.mockito.Mockito.verify(f.targets, org.mockito.Mockito.times(2))
         .readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(f.terminal);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"retainedTarget", "resolvedSelector", "publishedSelector", "publishedTarget"})
+  void canonicalJoinLocallyVerifiedTargetMismatchIsTerminal(String mismatch) {
+    var f = canonicalJoinFixture();
+    if (mismatch.equals("retainedTarget") || mismatch.equals("resolvedSelector")) {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                var resolved = f.resolve(invocation.getArgument(0), f.target);
+                if (mismatch.equals("retainedTarget")) {
+                  when(f.target.pointerVersion()).thenReturn(f.scope.pointerVersion() + 1L);
+                } else {
+                  when(resolved.selector())
+                      .thenReturn(
+                          org.mockito.Mockito.mock(
+                              net.firedevops.firemud.common.gamesession
+                                  .CanonicalGameplayAdmissionDecisionReadGrpcCodec
+                                  .RetainedTargetSelector.class));
+                }
+                return resolved;
+              })
+          .when(f.targets)
+          .resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any());
+    } else {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                var published =
+                    org.mockito.Mockito.mock(
+                        net.firedevops.firemud.common.gamesession
+                            .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
+                            .class);
+                when(published.selector())
+                    .thenReturn(
+                        mismatch.equals("publishedSelector")
+                            ? org.mockito.Mockito.mock(
+                                net.firedevops.firemud.common.world
+                                    .CanonicalGameplayRosterOwnerReadEvidence.Request.class)
+                            : invocation.getArgument(0));
+                when(published.currentTarget())
+                    .thenReturn(
+                        mismatch.equals("publishedTarget")
+                            ? org.mockito.Mockito.mock(Target.class)
+                            : f.target);
+                return published;
+              })
+          .when(f.targets)
+          .readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any());
+    }
+
+    assertEquals(
+        "CONNECT_SCOPE_MISMATCH",
+        assertThrows(AuthenticationException.class, f::browserJoin).getCode());
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
+        .finishCanonicalFailure(f.requestId, f.scope, f.binding, "CONNECT_SCOPE_MISMATCH");
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .recordCanonicalAttemptFailure(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(f.terminal);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"resolver", "published"})
+  void canonicalJoinRemoteValidationFailureRemainsRetryable(String owner) {
+    var f = canonicalJoinFixture();
+    var failure = new IllegalArgumentException("Remote owner could not validate evidence");
+    if (owner.equals("resolver")) {
+      org.mockito.Mockito.doThrow(failure)
+          .when(f.targets)
+          .resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any());
+    } else {
+      org.mockito.Mockito.doThrow(failure)
+          .when(f.targets)
+          .readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any());
+    }
+    var result = assertThrows(AuthenticationException.class, f::browserJoin);
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", result.getCode());
+    assertSame(failure, result.getCause());
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
+        .recordCanonicalAttemptFailure(
+            f.requestId, f.scope, f.binding, "UNAVAILABLE", "ADMISSION_POINTER_UNAVAILABLE");
     verifyNoInteractions(f.terminal);
   }
 
@@ -2064,7 +2158,7 @@ class AccountServiceImplTest {
       default -> throw new AssertionError(field);
     }
     assertEquals(
-        "ADMISSION_POINTER_UNAVAILABLE",
+        "CONNECT_SCOPE_MISMATCH",
         assertThrows(AuthenticationException.class, f::characters).getCode());
     verifyNoInteractions(f.roster);
   }
