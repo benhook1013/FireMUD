@@ -33,6 +33,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountResponseEnve
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
@@ -201,6 +202,42 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void targetResolutionRefusesChangedRetainedSelectorsWithoutMutatingOwners() throws Exception {
+    try (Session session = session()) {
+      var before = session.durableImage();
+      var request =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(
+              session.targetSelector);
+      for (var changed :
+          java.util.List.of(
+              request.toBuilder().setReadRequestUuid(0, UUID.randomUUID().toString()).build(),
+              request.toBuilder().setAccountUuid(0, UUID.randomUUID().toString()).build(),
+              request.toBuilder().setTenantSlug(0, "other-tenant").build(),
+              request.toBuilder()
+                  .setPointerVersion(
+                      0,
+                      Long.toString(Math.incrementExact(session.targetSelector.pointerVersion())))
+                  .build())) {
+        var selector =
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(changed);
+        assertThatThrownBy(() -> session.reverse.resolvePublishedRealmAdmissionTarget(selector))
+            .isInstanceOfSatisfying(
+                io.grpc.StatusRuntimeException.class,
+                denied ->
+                    assertThat(denied.getStatus().getCode())
+                        .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+      }
+      var wrongNamespace =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
+              request.toBuilder().setTargetNamespace(0, "other").build());
+      assertThatThrownBy(() -> session.reverse.resolvePublishedRealmAdmissionTarget(wrongNamespace))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("configured namespace");
+      assertThat(session.durableImage()).isEqualTo(before);
+    }
+  }
+
+  @Test
   void missingCapacityInputRefusesBeforeAnyFinalSessionOrReservationMutation() throws Exception {
     try (Session session = session()) {
       byte[] candidate = session.gs.physicalSession();
@@ -330,6 +367,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private AccountPublicJwksCache jwks;
     private String jwt;
     private AccountGameplayAdmissionLeaseEvidence lease;
+    private CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector targetSelector;
 
     private Session() throws Exception {
       try {
@@ -437,7 +475,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         // Actual retained PLAYER_ADMISSION evaluation, with the same original request and exact
         // GS target. Published/World captures remain the fixture's explicit controlled sources.
         var scope = account.capacityScope(gs.target());
-        var selector =
+        targetSelector =
             new net.firedevops.firemud.common.gamesession
                 .CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector(
                 requestId,
@@ -459,7 +497,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                 .evaluate(
                     new net.firedevops.firemud.accountservice.service
                         .AccountPlayerAdmissionEntitlementOwner.Request(
-                        selector, scope.connectScopeId(), GS),
+                        targetSelector, scope.connectScopeId(), GS),
                     jwt);
         var binding = gs.candidate();
         capacityRequest =

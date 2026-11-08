@@ -26,6 +26,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class AccountRuntimeStubServerCompatibilityTest {
+  private static final String TENANT_ID = "5c03483e-d14c-4dc4-806e-297cdd209612";
+  private static final String GAME_INSTANCE_ID = "fceab4e7-2922-4e6f-a4f4-dbaab3e25875";
   private static final String REALM_ID = "8a1df0f1-1b57-465e-9c4b-bb34f8153d31";
   private static final String NAMESPACE_ID = "2ea958e0-13a2-41d0-9c39-59a96cf31412";
   private static final Set<String> NON_RUNTIME_METHODS =
@@ -133,10 +135,10 @@ class AccountRuntimeStubServerCompatibilityTest {
         PlayerExecutionContext caller =
             PlayerExecutionContext.newBuilder()
                 .setAccountId(accountUuid)
-                .setTenantId("11")
+                .setTenantId(TENANT_ID)
                 .setRealmId(REALM_ID)
-                .setGameInstanceId("33")
-                .setSessionId("session-1")
+                .setGameInstanceId(GAME_INSTANCE_ID)
+                .setSessionId("1")
                 .setPlayableStateNamespaceId(NAMESPACE_ID)
                 .setPlayableStateScope("SHARED")
                 .setRequestId("join-request-1")
@@ -145,13 +147,13 @@ class AccountRuntimeStubServerCompatibilityTest {
             stub.issueDirectTextConnectScope(
                 IssueDirectTextConnectScopeRequest.newBuilder()
                     .setPlayerContext(caller)
-                    .setTenantId("11")
+                    .setTenantId(TENANT_ID)
                     .setWorldSlug("demo")
                     .setRealmSlug("live")
                     .setRealmId(REALM_ID)
                     .setPlayableStateNamespaceId(NAMESPACE_ID)
                     .setPlayableStateScope("SHARED")
-                    .setGameInstanceId("33")
+                    .setGameInstanceId(GAME_INSTANCE_ID)
                     .setCatalogRevision(1L)
                     .setPointerVersion(1L)
                     .build());
@@ -216,6 +218,18 @@ class AccountRuntimeStubServerCompatibilityTest {
                     .setPlayerContext(
                         validRequest.getPlayerContext().toBuilder().setRequestId("   "))
                     .build(),
+                validRequest.toBuilder()
+                    .setPlayableStateScope("PRIVATE")
+                    .setPlayerContext(
+                        validRequest.getPlayerContext().toBuilder()
+                            .setPlayableStateScope("PRIVATE"))
+                    .build(),
+                validRequest.toBuilder().setWorldSlug("w".repeat(129)).build(),
+                validRequest.toBuilder().setRealmSlug("r".repeat(129)).build(),
+                validRequest.toBuilder()
+                    .setPlayerContext(
+                        validRequest.getPlayerContext().toBuilder().setRequestId("r".repeat(129)))
+                    .build(),
                 validRequest.toBuilder().setCatalogRevision(0L).build(),
                 validRequest.toBuilder().setPointerVersion(-1L).build());
 
@@ -224,6 +238,145 @@ class AccountRuntimeStubServerCompatibilityTest {
           assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
           assertThat(response.getConnectScopeId()).isEmpty();
         }
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "11", "00000000-0000-0000-0000-000000000000",
+        "5C03483E-D14C-4DC4-806E-297CDD209612", "1-1-1-1-1"
+      })
+  void directTextScopeAndJoinRejectNoncanonicalTargetIds(String invalidId) throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
+      String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        var request = validConnectScopeRequest(accountUuid);
+        var caller = request.getPlayerContext();
+        var invalidRequests =
+            List.of(
+                request.toBuilder()
+                    .setTenantId(invalidId)
+                    .setPlayerContext(caller.toBuilder().setTenantId(invalidId))
+                    .build(),
+                request.toBuilder()
+                    .setRealmId(invalidId)
+                    .setPlayerContext(caller.toBuilder().setRealmId(invalidId))
+                    .build(),
+                request.toBuilder()
+                    .setGameInstanceId(invalidId)
+                    .setPlayerContext(caller.toBuilder().setGameInstanceId(invalidId))
+                    .build(),
+                request.toBuilder()
+                    .setPlayableStateNamespaceId(invalidId)
+                    .setPlayerContext(caller.toBuilder().setPlayableStateNamespaceId(invalidId))
+                    .build());
+        var join =
+            JoinPublicProductionMembershipRequest.newBuilder()
+                .setPlayerContext(caller)
+                .setConnectScopeId(stub.issueDirectTextConnectScope(request).getConnectScopeId())
+                .setRequestId(caller.getRequestId())
+                .build();
+        assertThat(stub.joinPublicProductionMembership(join).getSuccess()).isTrue();
+        for (var invalidRequest : invalidRequests) {
+          var scope = stub.issueDirectTextConnectScope(invalidRequest);
+          assertThat(scope.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+          assertThat(scope.getConnectScopeId()).isEmpty();
+          var replay =
+              stub.joinPublicProductionMembership(
+                  join.toBuilder().setPlayerContext(invalidRequest.getPlayerContext()).build());
+          assertThat(replay.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+          assertThat(replay.getSuccess()).isFalse();
+          assertThat(replay.getReplayed()).isFalse();
+        }
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "",
+        "  ",
+        "session-1",
+        "0",
+        "-1",
+        "+1",
+        "1.0",
+        "9223372036854775808",
+        "00000000000000000000000000000000100"
+      })
+  void directTextScopeAndJoinRejectInvalidTransportSessionsBeforeReplay(String session)
+      throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        var request =
+            validConnectScopeRequest(AccountRuntimeStubServer.accountUuidForTestFixture(7L));
+        var invalidCaller = request.getPlayerContext().toBuilder().setSessionId(session).build();
+        var invalidScope =
+            stub.issueDirectTextConnectScope(
+                request.toBuilder().setPlayerContext(invalidCaller).build());
+        assertThat(invalidScope.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+        assertThat(invalidScope.getConnectScopeId()).isEmpty();
+        var join =
+            JoinPublicProductionMembershipRequest.newBuilder()
+                .setPlayerContext(request.getPlayerContext())
+                .setConnectScopeId(stub.issueDirectTextConnectScope(request).getConnectScopeId())
+                .setRequestId(request.getPlayerContext().getRequestId())
+                .build();
+        var invalidJoin = join.toBuilder().setPlayerContext(invalidCaller).build();
+        assertThat(stub.joinPublicProductionMembership(invalidJoin).getError().getCode())
+            .isEqualTo("INVALID_ARGUMENT");
+        assertThat(stub.joinPublicProductionMembership(join).getSuccess()).isTrue();
+        var replay = stub.joinPublicProductionMembership(invalidJoin);
+        assertThat(replay.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+        assertThat(replay.getSuccess()).isFalse();
+        assertThat(replay.getReplayed()).isFalse();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"1", "0001", "9223372036854775807", "00000000000000000000000000000001"})
+  void directTextScopeAndJoinAcceptAccountTransportSessionRange(String session) throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        var request =
+            validConnectScopeRequest(AccountRuntimeStubServer.accountUuidForTestFixture(7L));
+        request =
+            request.toBuilder()
+                .setPlayerContext(request.getPlayerContext().toBuilder().setSessionId(session))
+                .build();
+        var scope = stub.issueDirectTextConnectScope(request);
+        assertThat(scope.getError().getCode()).isEmpty();
+        var join =
+            stub.joinPublicProductionMembership(
+                JoinPublicProductionMembershipRequest.newBuilder()
+                    .setPlayerContext(request.getPlayerContext())
+                    .setConnectScopeId(scope.getConnectScopeId())
+                    .setRequestId(request.getPlayerContext().getRequestId())
+                    .build());
+        assertThat(join.getSuccess()).isTrue();
+        assertThat(join.getTenantId()).isEqualTo(TENANT_ID);
       } finally {
         channel.shutdownNow();
       }
@@ -461,15 +614,16 @@ class AccountRuntimeStubServerCompatibilityTest {
             validConnectScopeRequest(AccountRuntimeStubServer.accountUuidForTestFixture(9L));
         var otherTenantScope =
             scopeRequest.toBuilder()
-                .setTenantId("22")
-                .setPlayerContext(scopeRequest.getPlayerContext().toBuilder().setTenantId("22"))
+                .setTenantId("024c8a59-d3ee-4f64-8276-c4c43a2efe7f")
+                .setPlayerContext(
+                    scopeRequest.getPlayerContext().toBuilder()
+                        .setTenantId("024c8a59-d3ee-4f64-8276-c4c43a2efe7f"))
                 .build();
         var sameScopeNewId = stub.issueDirectTextConnectScope(scopeRequest).getConnectScopeId();
         var conflicts =
             List.of(
                 request.toBuilder()
-                    .setPlayerContext(
-                        request.getPlayerContext().toBuilder().setSessionId("session-2"))
+                    .setPlayerContext(request.getPlayerContext().toBuilder().setSessionId("2"))
                     .build(),
                 request.toBuilder().setConnectScopeId(sameScopeNewId).build(),
                 request.toBuilder()
@@ -548,23 +702,23 @@ class AccountRuntimeStubServerCompatibilityTest {
     PlayerExecutionContext caller =
         PlayerExecutionContext.newBuilder()
             .setAccountId(accountUuid)
-            .setTenantId("11")
+            .setTenantId(TENANT_ID)
             .setRealmId(REALM_ID)
-            .setGameInstanceId("33")
-            .setSessionId("session-1")
+            .setGameInstanceId(GAME_INSTANCE_ID)
+            .setSessionId("1")
             .setPlayableStateNamespaceId(NAMESPACE_ID)
             .setPlayableStateScope("SHARED")
             .setRequestId("join-request-1")
             .build();
     return IssueDirectTextConnectScopeRequest.newBuilder()
         .setPlayerContext(caller)
-        .setTenantId("11")
+        .setTenantId(TENANT_ID)
         .setWorldSlug("demo")
         .setRealmSlug("live")
         .setRealmId(REALM_ID)
         .setPlayableStateNamespaceId(NAMESPACE_ID)
         .setPlayableStateScope("SHARED")
-        .setGameInstanceId("33")
+        .setGameInstanceId(GAME_INSTANCE_ID)
         .setCatalogRevision(1L)
         .setPointerVersion(1L)
         .build();
