@@ -212,29 +212,16 @@ public final class AccountSubscriptionIntentRepository {
    */
   public AccountSubscriptionCurrentRecord lockForLifecycle(
       UUID requestId, long expectedRowVersion) {
-    return lockBinding(requestId, expectedRowVersion, true, true, true);
-  }
-
-  /**
-   * Local settlement only for retained provisioning work. Later wallet observations cannot strand
-   * its original reservation, but this lock never authorizes a claim or provider dispatch.
-   */
-  AccountSubscriptionCurrentRecord lockForProvisioningSettlement(
-      UUID requestId, long expectedRowVersion) {
-    return lockBinding(requestId, expectedRowVersion, true, false, true);
+    return lockBinding(requestId, expectedRowVersion, true, true);
   }
 
   private AccountSubscriptionCurrentRecord lockProvisioningBinding(
       UUID requestId, long expectedRowVersion, boolean allowProvisioning) {
-    return lockBinding(requestId, expectedRowVersion, allowProvisioning, false, false);
+    return lockBinding(requestId, expectedRowVersion, allowProvisioning, false);
   }
 
   private AccountSubscriptionCurrentRecord lockBinding(
-      UUID requestId,
-      long expectedRowVersion,
-      boolean allowProvisioning,
-      boolean lifecycle,
-      boolean allowInstrumentObservation) {
+      UUID requestId, long expectedRowVersion, boolean allowProvisioning, boolean lifecycle) {
     requireWritableTransaction();
     AccountBillingCustomerRecord.requireUuid(requestId);
     if (expectedRowVersion < 1) {
@@ -252,7 +239,7 @@ public final class AccountSubscriptionIntentRepository {
         currentForUpdate(original.tenantId())
             .orElseThrow(() -> new FenceRejectedException("Current subscription is absent"));
     boolean instrumentVersionAndStateMatch =
-        allowInstrumentObservation
+        lifecycle
             ? instrument.rowVersion() >= original.reservedInstrumentVersion()
                 && (instrument.state() == AccountPaymentInstrumentRecord.State.ATTACHABLE
                     || instrument.state() == AccountPaymentInstrumentRecord.State.UNAVAILABLE)
