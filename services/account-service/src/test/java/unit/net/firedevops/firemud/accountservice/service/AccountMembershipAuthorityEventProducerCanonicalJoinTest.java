@@ -160,6 +160,84 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "account-id", "membership-id", "legacy-tenant", "account-uuid", "tenant-uuid",
+        "provenance", "version", "unsorted", "duplicate", "missing-player"
+      })
+  void restoreRejectsUnboundOrNoncanonicalRoleSnapshotBeforeAuthorityReads(String malformed) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    fixture.membership.setMembershipVersion(4L);
+    fixture.membership.setMembershipAuthorityGeneration(2L);
+    var previous =
+        new PairAuthority(
+            ACCOUNT_UUID,
+            TENANT_UUID,
+            fixture.provenance,
+            true,
+            3L,
+            2L,
+            2L,
+            UUID.randomUUID().toString(),
+            DIGEST,
+            true);
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.joinOperations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
+        .thenReturn(Optional.of(fixture.operation(CALLER_BINDING)));
+    when(fixture.pairs.readForUpdate(ACCOUNT_UUID, TENANT_UUID)).thenReturn(Optional.of(previous));
+    when(fixture.memberships.findCanonicalMembershipForUpdate(ACCOUNT_UUID, TENANT_UUID))
+        .thenReturn(Optional.of(fixture.membership));
+    // Deliberately bypass the record's own construction checks to exercise the producer boundary.
+    var roles =
+        mock(
+            RoleSnapshot.class,
+            org.mockito.AdditionalAnswers.delegatesTo(
+                new RoleSnapshot(
+                    17L,
+                    null,
+                    73L,
+                    4L,
+                    List.of("player"),
+                    ACCOUNT_UUID,
+                    TENANT_UUID,
+                    fixture.provenance)));
+    switch (malformed) {
+      case "account-id" -> when(roles.accountId()).thenReturn(18L);
+      case "membership-id" -> when(roles.membershipId()).thenReturn(74L);
+      case "legacy-tenant" -> when(roles.tenantId()).thenReturn(9L);
+      case "account-uuid" -> when(roles.accountUuid()).thenReturn(UUID.randomUUID());
+      case "tenant-uuid" -> when(roles.tenantUuid()).thenReturn(UUID.randomUUID());
+      case "provenance" -> when(roles.tenantProvenance()).thenReturn(null);
+      case "version" -> when(roles.snapshotVersion()).thenReturn(3L);
+      case "unsorted" -> when(roles.roles()).thenReturn(List.of("player", "admin"));
+      case "duplicate" -> when(roles.roles()).thenReturn(List.of("player", "player"));
+      case "missing-player" -> when(roles.roles()).thenReturn(List.of("admin"));
+      default -> throw new AssertionError(malformed);
+    }
+    when(fixture.roles.findForCanonicalUpdate(
+            ACCOUNT_UUID, TENANT_UUID, fixture.provenance, 73L, 4L))
+        .thenReturn(Optional.of(roles));
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING, previous, null, null, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            List.of("unsorted", "duplicate").contains(malformed)
+                ? "Canonical JOIN role snapshot is not canonical"
+                : "Canonical JOIN role snapshot differs from its exact membership source or lacks player role");
+    verifyNoInteractions(
+        fixture.authority,
+        fixture.sourceEvidence,
+        fixture.tenantAuthorityEvents,
+        fixture.entitlements,
+        fixture.outbox);
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.CsvSource({
     "request,null",
     "request,empty",

@@ -313,14 +313,6 @@ def run_transport_session(
             if time.time() >= deadline:
                 raise
             continue
-        except retriable_exceptions as exc:
-            try:
-                session.close()
-            except Exception as close_exc:  # noqa: BLE001 - transport close failures vary by client
-                raise ProbeOperationalFailure(
-                    f"Failed during {session_label}: {exc}; close failed: {close_exc}"
-                ) from exc
-            raise ProbeOperationalFailure(f"Failed during {session_label}: {exc}") from exc
         except PlayEntitlementUnavailable:
             # The temporary CI classification also requires a clean transport close.
             try:
@@ -330,6 +322,14 @@ def run_transport_session(
                     f"Failed to close {session_label} after known PLAY refusal: {close_exc}"
                 ) from close_exc
             raise
+        except retriable_exceptions as exc:
+            try:
+                session.close()
+            except Exception as close_exc:  # noqa: BLE001 - transport close failures vary by client
+                raise ProbeOperationalFailure(
+                    f"Failed during {session_label}: {exc}; close failed: {close_exc}"
+                ) from exc
+            raise ProbeOperationalFailure(f"Failed during {session_label}: {exc}") from exc
         except Exception:
             # A secondary close failure must not hide the primary command failure.
             with contextlib.suppress(Exception):
