@@ -1799,7 +1799,10 @@ class AccountApplicationIntegrationTest {
     }
 
     private String browserScope() {
-      return service.listBootstrapRealms(bootstrap, target.worldSlug()).getFirst().connectScopeId();
+      return service
+          .listBootstrapRealms(bootstrap, target.tenantSlug(), target.worldSlug())
+          .getFirst()
+          .connectScopeId();
     }
 
     private List<net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto> characters(

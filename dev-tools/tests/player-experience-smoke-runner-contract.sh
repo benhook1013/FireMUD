@@ -35,6 +35,7 @@ SMOKE_CONFIG_ENV_UNSETS=(
   -u SMOKE_USERNAME
   -u SMOKE_PASSWORD
   -u PLAYER_EXPERIENCE_WORLD
+  -u PLAYER_EXPERIENCE_TENANT_SLUG
   -u SMOKE_TIMEOUT_SECONDS
   -u SMOKE_STARTUP_WAIT_SECONDS
   -u PLAYER_EXPERIENCE_AUTH_API_BASE
@@ -81,6 +82,33 @@ assert env_config.queryability_freshness_budget_seconds == 7200
 assert env_config.telnet_transport is None
 assert env_config.telnet_server_hostname is None
 assert env_config.telnet_ca_file is None
+
+# Browser world selection remains qualified even when another tenant reuses its slug.
+assert env_config.tenant_slug is None
+with patch.object(runner_module, "http_request_json") as request:
+    try:
+        runner_module.resolve_connect_scope_id(env_config, "bootstrap")
+    except runner_module.ProbeOperationalFailure as exc:
+        assert "PLAYER_EXPERIENCE_TENANT_SLUG" in str(exc)
+    else:
+        raise AssertionError("Bare browser world selector was accepted")
+    request.assert_not_called()
+with patch.dict("os.environ", {"PLAYER_EXPERIENCE_TENANT_SLUG": "tenant-b"}):
+    qualified = runner_module.SmokeConfig.from_env("contract-test", "websocket", None)
+with patch.object(runner_module, "http_request_json", return_value={"data": [
+    {"worldSlug": qualified.world, "tenantSlug": "tenant-a"}
+]}) as request:
+    try:
+        runner_module.require_visible_world(qualified, "bootstrap")
+    except runner_module.ProbeOperationalFailure:
+        pass
+    else:
+        raise AssertionError("Another tenant's world satisfied discovery")
+with patch.object(runner_module, "http_request_json", return_value={"data": [
+    {"realmSlug": qualified.realm_slug, "connectScopeId": "qualified-scope"}
+]}) as request:
+    assert runner_module.resolve_connect_scope_id(qualified, "bootstrap") == "qualified-scope"
+    assert request.call_args.args[0].endswith("/realms?tenantSlug=tenant-b")
 
 runner_module.validate_telnet_transport_config(
     env_config, {"websocket"}, simulate=False

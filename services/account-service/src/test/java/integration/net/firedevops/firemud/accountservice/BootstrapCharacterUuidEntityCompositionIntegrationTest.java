@@ -644,7 +644,8 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
                     accountBaseUrl()
                         + "/auth/bootstrap/worlds/"
                         + SOURCE.target().worldSlug()
-                        + "/realms"))
+                        + "/realms?tenantSlug="
+                        + accountTarget().tenantSlug()))
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
             .GET()
             .build();
@@ -653,7 +654,9 @@ class BootstrapCharacterUuidEntityCompositionIntegrationTest {
       // Preserve the HTTP assertion while exposing an owner/proxy exception otherwise hidden by
       // the public INTERNAL_ERROR projection. This uses the same actual caller and owner setup.
       org.assertj.core.api.Assertions.assertThatCode(
-              () -> facade.listBootstrapRealms(token, SOURCE.target().worldSlug()))
+              () ->
+                  facade.listBootstrapRealms(
+                      token, accountTarget().tenantSlug(), SOURCE.target().worldSlug()))
           .as("REALMS owner composition after HTTP response: %s", response.body())
           .doesNotThrowAnyException();
     }

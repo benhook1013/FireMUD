@@ -130,7 +130,7 @@ Example first-party web flow for a returning member or grant-backed target:
 ```text
 POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
 GET /auth/bootstrap/worlds
-GET /auth/bootstrap/worlds/{world}/realms
+GET /auth/bootstrap/worlds/{world}/realms?tenantSlug={tenantSlug}
 GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters?connectScopeId={scope}
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
 GET /ws/game/** with the Firemud-Connect-Token cookie set by the previous response
@@ -143,7 +143,7 @@ Target-state example first-time public production join (explicit `JOIN`/`Join & 
 ```text
 POST /auth/player-bootstrap { accountIdentifier=player@example.com, secret=<redacted> }
 GET /auth/bootstrap/worlds
-GET /auth/bootstrap/worlds/emberfall/realms
+GET /auth/bootstrap/worlds/emberfall/realms?tenantSlug=emberfall-studio
 POST /auth/bootstrap/join { connectScopeId=cs_emberfall_production_v1, requestId=req-join-1 }
 GET /auth/bootstrap/worlds/emberfall/realms/production/characters?connectScopeId=cs_emberfall_production_v1
 POST /auth/bootstrap/worlds/emberfall/realms/production/characters { connectScopeId=cs_emberfall_production_v1, createCharacterRequestId=char-create-1, name=Mara, descriptorId=emberfall-human-fighter, descriptorVersion=17 }
