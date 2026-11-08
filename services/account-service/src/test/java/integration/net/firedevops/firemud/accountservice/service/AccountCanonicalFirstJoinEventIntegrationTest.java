@@ -349,6 +349,50 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   }
 
   @Test
+  void nullCommittedOutcomeIsRejectedByTerminalReceiptShapeGuard() {
+    Fixture fixture = newFixture();
+    fixture.commitFirstJoin();
+    String nextRequest = fixture.prepareAnotherJoin();
+
+    // Retain a valid current membership witness but omit only the required committed outcome.
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        fixture.dsl.execute(
+                            """
+                            UPDATE account_join_operations pending
+                            SET status = 'COMMITTED', outcome = NULL,
+                                last_attempt_authority_availability = 'AVAILABLE',
+                                membership_id = original.membership_id,
+                                outcome_membership_version = original.outcome_membership_version,
+                                outcome_membership_authority_generation = original.outcome_membership_authority_generation,
+                                membership_authority_outbox_stream_key = original.membership_authority_outbox_stream_key,
+                                membership_authority_outbox_sequence = original.membership_authority_outbox_sequence,
+                                membership_authority_event_id = original.membership_authority_event_id,
+                                membership_authority_event_digest = original.membership_authority_event_digest
+                            FROM account_join_operations original
+                            WHERE pending.request_id = ? AND original.request_id = ?
+                            """,
+                            nextRequest,
+                            fixture.requestId)))
+        .isInstanceOf(RuntimeException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            java.sql.SQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Canonical JOIN terminal receipt is incomplete or noncommitting");
+            });
+
+    var committed = fixture.commitExistingJoin(nextRequest);
+    assertThat(committed.status()).isEqualTo("COMMITTED");
+    assertThat(committed.outcome()).isEqualTo("ALREADY_ACTIVE");
+    assertThat(fixture.countAll("account_audit_outbox")).isEqualTo(1L);
+  }
+
+  @Test
   void closingEnrollmentPreservesAnActiveMembersEventFreeJoinSnapshot() {
     Fixture fixture = newFixture();
     fixture.commitFirstJoin();
