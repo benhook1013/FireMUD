@@ -52,7 +52,7 @@ runs:
         echo "::endgroup::"
 
     - name: 📦 Build Runtime JAR
-      if: ${{ contains(fromJSON(inputs.bootable-modules), inputs.module) && (inputs.module != 'account-service' && inputs.module != 'game-session-service' || inputs.partition == '1') }}
+      if: ${{ contains(fromJSON(inputs.bootable-modules), inputs.module) && (inputs.module != 'account-service' && inputs.module != 'game-session-service' && inputs.module != 'world-management-service' || inputs.partition == '1') }}
       shell: bash
       run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ inputs.module }}:bootJar -PfullCheck
 
@@ -103,7 +103,7 @@ runs:
         path: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', inputs.module) }}
 
     - name: 📤 Upload JUnit Test Results
-      if: ${{ always() && inputs.module != 'account-service' && inputs.module != 'game-session-service' }}
+      if: ${{ always() && inputs.module != 'account-service' && inputs.module != 'game-session-service' && inputs.module != 'world-management-service' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: junit-${{ inputs.module }}-${{ inputs.partition }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}
@@ -112,7 +112,7 @@ runs:
         retention-days: 14
 
     - name: 📤 Upload Slow-Service Partition Reports and Execution Data
-      if: ${{ always() && (inputs.module == 'account-service' || inputs.module == 'game-session-service') }}
+      if: ${{ always() && (inputs.module == 'account-service' || inputs.module == 'game-session-service' || inputs.module == 'world-management-service') }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: slow-service-ci-partition-${{ github.run_id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}-${{ inputs.module }}-partition-${{ inputs.partition }}
