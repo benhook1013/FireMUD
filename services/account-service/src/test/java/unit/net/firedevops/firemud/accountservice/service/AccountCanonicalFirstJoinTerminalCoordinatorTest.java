@@ -285,6 +285,17 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
             fixture.scope, REQUEST_ID, CALLER_BINDING, null, null, null);
 
     assertThat(result).isSameAs(committed);
+    verify(fixture.eventProducer)
+        .requireCurrentCanonicalJoinPolicy(
+            fixture.scope, fixture.operation, true, null, null, null);
+    verify(fixture.audit)
+        .appendCanonicalTenant(
+            fixture.expectedProof.auditEventId(),
+            TENANT_ID.toString(),
+            "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+            fixture.auditPayload);
+    verify(fixture.audit).findExactCanonicalTenantEnvelopeForUpdate(fixture.auditEnvelope);
+    verify(fixture.audit, never()).findCanonicalTenantEnvelopeForUpdate(any());
     InOrder ordered = inOrder(fixture.roles, fixture.eventProducer);
     ordered
         .verify(fixture.roles)
