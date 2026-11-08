@@ -681,17 +681,15 @@ public class AccountServiceImpl implements AccountService {
                       scope.accountId(), scope.tenantId());
               boolean active =
                   member.filter(value -> "ACTIVE".equals(value.getLifecycleState())).isPresent();
-              if (!gameplayAvailable || (!active && !allowPublicJoin)) {
+              if ("PENDING".equals(policyBoundOperation.status())
+                  && (!gameplayAvailable || (!active && !allowPublicJoin))) {
                 String outcome =
                     gameplayAvailable
                         ? "PUBLIC_PRODUCTION_ADMISSION_DENIED"
                         : "TENANT_BILLING_BLOCKED";
-                if ("PENDING".equals(policyBoundOperation.status())) {
-                  accountJoinOperationRepository.finishCanonicalFailure(
-                      requestId, scope, callerBinding, outcome);
-                }
-                return new CanonicalJoinResult(
-                    outcome, null, false, !"PENDING".equals(policyBoundOperation.status()));
+                accountJoinOperationRepository.finishCanonicalFailure(
+                    requestId, scope, callerBinding, outcome);
+                return new CanonicalJoinResult(outcome, null, false, false);
               }
               var committed =
                   consumers
@@ -709,7 +707,7 @@ public class AccountServiceImpl implements AccountService {
                       scope.accountId(), scope.tenantId());
               if ("COMMITTED".equals(policyBoundOperation.status())) {
                 // A committed exact retry returns its original operation proof after the current
-                // policy check above. Membership may have changed since that proof was retained;
+                // policy binding above. Membership may have changed since that proof was retained;
                 // expose only the current admission flag, never use the old proof as admission.
                 return new CanonicalJoinResult(
                     committed.outcome(),
