@@ -33,6 +33,8 @@ import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultExecuteListenerProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
@@ -41,6 +43,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Explicitly unwired immutable graph/2 journal; historical reads never reenter an owner writer. */
 public class WorldCanonicalFrozenTopologyRepository {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(WorldCanonicalFrozenTopologyRepository.class);
   static final int MAX_DEADLINE_READS = 4;
   private static final Semaphore DEADLINE_READ_SLOTS = new Semaphore(MAX_DEADLINE_READS);
   private static final ObjectMapper JSON =
@@ -407,6 +411,11 @@ public class WorldCanonicalFrozenTopologyRepository {
           if (connection != null) provider.release(connection);
         } catch (RuntimeException | Error releaseFailure) {
           connectionReleased = false;
+          LOGGER.warn(
+              "Frozen topology connection return failed; retaining deadline-read slot. Remaining capacity: {} of {}",
+              DEADLINE_READ_SLOTS.availablePermits(),
+              MAX_DEADLINE_READS,
+              releaseFailure);
           if (failure == null) failure = releaseFailure;
           else failure.addSuppressed(releaseFailure);
         } finally {
