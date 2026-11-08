@@ -323,7 +323,17 @@ public class AccountMembershipAuthorityEventProducer {
         || !scope.tenantId().equals(current.scopeEvidence().tenantUuid())) {
       throw new IllegalStateException("Canonical JOIN policy selector changed");
     }
-    var tenant = tenantAuthorityEventRepository.readCurrentByTenant(scope.tenantId());
+    CompositeSnapshot authority =
+        authorityGenerationRepository.readCompositeSnapshot(
+            ACCOUNT_JWT_ISSUER,
+            scope.accountId(),
+            List.of(scope.tenantId()),
+            List.of(scope.tenantId()));
+    var tenant =
+        readCurrentTenantSourceEvent(
+            scope.tenantId(),
+            current.scopeEvidence().tenantProvenance(),
+            only(authority.tenants(), "tenant"));
     if (hosting == null) {
       requireCurrentJoinEntitlement(
           current,

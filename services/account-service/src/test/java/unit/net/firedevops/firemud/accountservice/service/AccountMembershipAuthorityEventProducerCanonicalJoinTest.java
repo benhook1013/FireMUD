@@ -99,6 +99,62 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,current", "true,current",
+    "false,baseline", "true,baseline",
+    "false,generation", "true,generation",
+    "false,source-version", "true,source-version",
+    "false,provenance", "true,provenance"
+  })
+  void alreadyActivePolicyRequiresTenantEventBoundToCurrentAuthorityAndOperation(
+      boolean paid, String evidence) {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    fixture.startWritableTransaction();
+    var event =
+        tenantAuthorityEvent(
+            TENANT_UUID,
+            "provenance".equals(evidence) ? UUID.randomUUID() : TENANT_OPERATION_ID,
+            "generation".equals(evidence) ? 3L : 2L,
+            "source-version".equals(evidence) ? 3L : 2L,
+            1L,
+            1L);
+    when(fixture.tenantAuthorityEvents.readCurrentByTenant(TENANT_UUID)).thenReturn(event);
+    // Both entitlement sources agree with the event, even when its authority or provenance is
+    // stale.
+    when(fixture.entitlements.readCurrent(TENANT_UUID))
+        .thenReturn(fixture.entitlementSnapshot(event));
+    if ("baseline".equals(evidence)) {
+      when(fixture.authority.readCompositeSnapshot(
+              "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID)))
+          .thenReturn(fixture.authoritySnapshot(1L, 1L, 1L, 1L));
+    }
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(hosting.readCurrent(fence, observed)).thenReturn(paidReceipt(event, 5L, true));
+    Runnable validate =
+        () ->
+            fixture.producer.requireCurrentCanonicalJoinPolicy(
+                fixture.scope,
+                fixture.operation(CALLER_BINDING),
+                false,
+                paid ? hosting : null,
+                paid ? fence : null,
+                paid ? observed : null);
+
+    if ("current".equals(evidence)) {
+      validate.run();
+    } else {
+      assertThatThrownBy(validate::run)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("tenant authority evidence");
+    }
+    verifyNoInteractions(fixture.outbox);
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
   @Test
   void restoreRequiresCanonicalScopeBeforeReadingOwnerState() {
     Fixture fixture = new Fixture();
