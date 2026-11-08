@@ -548,6 +548,8 @@ for path in classifier_paths:
     }
 Path(sys.argv[2] + ".classifiers.json").write_text(json.dumps(classifier_definitions))
 producer_job = producer["jobs"]["pr-local-smoke"]
+if producer["jobs"]["image-meta"]["outputs"].get("canonical_play_transition") != "${{ steps.meta.outputs.canonical_play_transition }}":
+    raise SystemExit("Typed-refresh PLAY marker authority must come from verified image metadata")
 cancelled_inventory = re.search(
     r"const preExecutionCancelledJobNames = new Set\(\[([\s\S]*?)\]\);", script
 )
@@ -578,6 +580,8 @@ marker = next(step for step in steps if step.get("name") == "Known canonical tra
 for clause in (
     "always()", "github.event_name == 'pull_request'", "github.repository == 'benhook1013/FireMUD'",
     "contains(github.event.pull_request.labels.*.name, 'canonical-play-transition')", "needs.image-meta.outputs.runtime_smoke_required == 'true'",
+    "github.event_name == 'repository_dispatch'", "github.event.action == 'pr-runtime-base-refresh'",
+    "needs.image-meta.outputs.canonical_play_transition == 'true'",
     "steps.runtime-smoke.outcome == 'failure'", "steps.runtime-cleanup.outcome == 'success'",
     "steps.runtime-smoke.outputs.known_play_failure == 'direct-backend-play-entitlement-unavailable-after-login'",
 ):
@@ -3421,6 +3425,7 @@ const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256
 const canonicalPlayClassifierSha256 = JSON.parse(script.match(/const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});/)[1]);
 const classifierDefinitions = JSON.parse(fs.readFileSync(process.argv[2] + ".classifiers.json", "utf8"));
 const headSha = "a".repeat(40), baseSha = "b".repeat(40), mergeSha = "c".repeat(40);
+const workflowSha = "d".repeat(40);
 const identity = {headSha, baseSha, mergeSha, baseRef: "develop"};
 const run = {id: 99, run_attempt: 2, event: "pull_request"};
 const failures = ["Run credential-free full-stack smoke", "Require successful runtime smoke and authenticated cleanup"];
@@ -3433,19 +3438,31 @@ const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name:
   steps: [...failures.map(name => step(name, "failure")), step("Stop smoke stack", "success"),
     step("Known canonical transition PLAY failure with successful authenticated cleanup", "success"),
     step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
-async function verify(mutate = () => {}) {
+async function verify(mutate = () => {}, event = "pull_request") {
   const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
     eventHeadRepository: repositoryName,
-    currentPullRequest: {state: "open", head: {sha: headSha}, base: {ref: "develop"}, labels: [{name: "canonical-play-transition"}]},
+    currentPullRequest: {state: "open", head: {sha: headSha, repo: {full_name: repositoryName}},
+      base: {ref: "develop", repo: {full_name: repositoryName}}, merge_commit_sha: mergeSha,
+      labels: [{name: "canonical-play-transition"}]},
+    currentBase: {ref: "refs/heads/develop", object: {sha: baseSha}},
     definitions: {...classifierDefinitions,
       [workflowPath]: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}}});
+  if (event === "repository_dispatch") {
+    data.run.event = data.source.event = data.latest.event = event;
+    data.source.head_branch = data.latest.head_branch = "develop";
+    data.source.head_sha = data.latest.head_sha = workflowSha;
+    data.candidate.head_sha = data.jobs[0].head_sha = workflowSha;
+  }
   mutate(data);
   const contentRequests = [];
   const github = {request: async () => ({data: data.source}), paginate: async () => data.jobs,
     rest: {actions: {getWorkflow: async () => ({data: {id: 7, path: workflowPath, name: "Build Runtime Images"}}),
-      getWorkflowRun: async () => ({data: data.latest})}, pulls: {get: async () => ({data: data.currentPullRequest})}, repos: {getContent: async ({owner, repo, path, ref}) => {
+      getWorkflowRun: async () => ({data: data.latest})}, pulls: {get: async () => ({data: data.currentPullRequest})},
+      git: {getRef: async ({ref}) => {assert.equal(ref, `heads/${data.identity.baseRef}`); return {data: data.currentBase};}},
+      repos: {getContent: async ({owner, repo, path, ref}) => {
         assert.equal(`${owner}/${repo}`, repositoryName);
-        assert.equal(ref, mergeSha, "PLAY classifier attestation must use the immutable verified merge");
+        assert.equal(ref, path === workflowPath && event === "repository_dispatch" ? workflowSha : mergeSha,
+          "workflow attestation must use its executed revision; classifier attestation must use the verified merge");
         contentRequests.push(path);
         if (!data.definitions[path]) throw Object.assign(new Error("definition unavailable"), {status: 404});
         return {data: data.definitions[path]};
@@ -3455,7 +3472,8 @@ async function verify(mutate = () => {}) {
     `${fn}; return verifyKnownPlayFailure(data.run, data.candidate, data.identity);`)(
       github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
-      {payload: {pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}}, "benhook1013", "FireMUD", require, data);
+      {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
+      "benhook1013", "FireMUD", require, data);
   if (accepted) assert.deepEqual(contentRequests, [workflowPath, ...Object.keys(classifierDefinitions)]);
   return accepted;
 }
@@ -3464,7 +3482,7 @@ const failedStart = script.indexOf('if (matching.conclusion !== "success")');
 const failedEnd = script.indexOf("const latestIdentity", failedStart);
 const failedBranch = script.slice(failedStart, failedEnd);
 class TerminalGitHubRequestError extends Error {}
-async function failedProof(stage, error) {
+async function failedProof(stage, error, event = "pull_request") {
   const warnings = [], failures = [], outputs = [];
   const github = {paginate: async () => {
     if (stage === "jobs") throw error;
@@ -3476,7 +3494,7 @@ async function failedProof(stage, error) {
     "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
     "isCurrentPullRequestObsolete", "TerminalGitHubRequestError", "core",
     `return (async () => { smokeGatePolling: while (true) { ${failedBranch} break; } })();`);
-  await execute({...source}, repositoryName, github, "benhook1013", "FireMUD", canonicalSmokeJobName,
+  await execute({...source, event}, repositoryName, github, "benhook1013", "FireMUD", canonicalSmokeJobName,
     identity, (_label, call) => call(), async () => {throw error;}, async () => false,
     TerminalGitHubRequestError, core);
   assert.deepEqual(failures, ["Runtime images run 99 did not complete successfully: run=failure"]);
@@ -3487,7 +3505,9 @@ async function failedProof(stage, error) {
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
   "github.event_name": "pull_request", "github.repository": repositoryName,
+  "github.event.action": "pr-runtime-base-refresh",
   "github.event.pull_request.labels.*.name": ["canonical-play-transition"],
+  "needs.image-meta.outputs.canonical_play_transition": "false",
   "needs.image-meta.outputs.runtime_smoke_required": "true",
   "steps.runtime-smoke.outcome": "failure", "steps.runtime-smoke.outputs.known_play_failure": "direct-backend-play-entitlement-unavailable-after-login",
   "steps.runtime-cleanup.outcome": "success",
@@ -3501,8 +3521,10 @@ function markerAccepted(overrides = {}) {
   return new Function("includes", `return (${expression});`)((values, value) => values.includes(value));
 }
 (async () => {
-  for (const stage of ["jobs", "proof", "malformed-jobs"]) {
-    await failedProof(stage, Object.assign(new Error("unavailable"), {status: 404}));
+  for (const event of ["pull_request", "repository_dispatch"]) {
+    for (const stage of ["jobs", "proof", "malformed-jobs"]) {
+      await failedProof(stage, Object.assign(new Error("unavailable"), {status: 404}), event);
+    }
   }
   await failedProof("proof", null);
   for (const stage of ["jobs", "proof"]) {
@@ -3510,6 +3532,15 @@ function markerAccepted(overrides = {}) {
     await assert.rejects(failedProof(stage, terminal), error => error === terminal);
   }
   assert.equal(markerAccepted(), true);
+  const refreshMarker = {"github.event_name": "repository_dispatch",
+    "github.event.pull_request.labels.*.name": [], "needs.image-meta.outputs.canonical_play_transition": "true"};
+  assert.equal(markerAccepted(refreshMarker), true);
+  for (const overrides of [
+    {"github.event.action": "other"}, {"needs.image-meta.outputs.canonical_play_transition": "false"},
+    {"needs.image-meta.outputs.canonical_play_transition": ""}, {"steps.runtime-cleanup.outcome": "failure"},
+    {"steps.runtime-smoke.outputs.known_play_failure": ""}, {"steps.runtime-smoke.outcome": "success"},
+    {"needs.image-meta.outputs.runtime_smoke_required": "false"}, {"github.repository": "attacker/FireMUD"},
+  ]) assert.equal(markerAccepted({...refreshMarker, ...overrides}), false);
   for (const overrides of [
     {"steps.runtime-smoke.outputs.known_play_failure": ""},
     {"steps.runtime-smoke.outputs.known_play_failure": "malformed"},
@@ -3523,6 +3554,7 @@ function markerAccepted(overrides = {}) {
     {"github.event_name": "workflow_run"},
   ]) assert.equal(markerAccepted(overrides), false);
   assert.equal(await verify(), true);
+  assert.equal(await verify(() => {}, "repository_dispatch"), true);
   for (const path of Object.keys(classifierDefinitions)) {
     assert.equal(await verify(d => {
       const altered = Buffer.concat([Buffer.from(d.definitions[path].content, "base64"), Buffer.from("\n# altered classifier\n")]);
@@ -3543,13 +3575,16 @@ function markerAccepted(overrides = {}) {
     d => {d.currentPullRequest.labels = [];},
     d => {d.currentPullRequest.labels = [{name: "other"}];},
     d => {d.currentPullRequest.state = "closed";},
-    d => {d.currentPullRequest.head.sha = "d".repeat(40);},
+    d => {d.currentPullRequest.head.sha = "e".repeat(40);},
+    d => {d.currentPullRequest.head.repo.full_name = "attacker/FireMUD";},
+    d => {d.currentPullRequest.base.repo.full_name = "attacker/FireMUD";},
     d => {d.eventHeadRepository = "fork-owner/FireMUD"; d.source.head_repository.full_name = d.eventHeadRepository;},
     d => {d.currentPullRequest.base.ref = "main";},
     d => {d.identity.baseSha = "d".repeat(40);},
     d => {d.identity.headSha = "d".repeat(40);},
     d => {d.identity.mergeSha = "d".repeat(40);},
-    d => {d.run.event = "repository_dispatch";},
+    d => {d.run.event = "workflow_dispatch";},
+    d => {d.source.event = "workflow_run";},
     d => {d.source.run_attempt = 1;},
     d => {d.latest.run_attempt = 3; assert.equal(d.source.run_attempt, 2);},
     d => {d.latest.conclusion = "success"; assert.equal(d.source.conclusion, "failure");},
@@ -3565,7 +3600,23 @@ function markerAccepted(overrides = {}) {
     d => {d.jobs[0].steps.find(s => s.name.startsWith("Export fixed")).conclusion = "success";},
     d => {d.jobs[0].steps = d.jobs[0].steps.filter(s => !s.name.startsWith("Export fixed"));},
     d => {d.source.conclusion = "success";},
-  ]) assert.equal(await verify(mutate), false, mutate.toString());
+    d => {d.jobs = [];},
+    d => {d.jobs[0].steps = [];},
+    d => {delete d.jobs[0].steps;},
+  ]) {
+    for (const event of ["pull_request", "repository_dispatch"]) {
+      assert.equal(await verify(mutate, event), false, `${event}: ${mutate.toString()}`);
+    }
+  }
+  for (const mutate of [
+    d => {d.source.head_branch = "feature/untrusted";},
+    d => {d.source.head_sha = "invalid";},
+    d => {d.source.event = "pull_request";},
+    d => {d.currentPullRequest.merge_commit_sha = "e".repeat(40);},
+    d => {d.currentBase.object.sha = "e".repeat(40);},
+    d => {d.currentBase.ref = "refs/heads/main";},
+    d => {delete d.currentBase.object;},
+  ]) assert.equal(await verify(mutate, "repository_dispatch"), false, mutate.toString());
   console.log("Canonical PLAY transition exception positive and negative contracts passed.");
 })().catch(error => {console.error(error); process.exitCode = 1;});
 NODE
