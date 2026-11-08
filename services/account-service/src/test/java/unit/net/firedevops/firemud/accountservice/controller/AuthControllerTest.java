@@ -262,18 +262,19 @@ class AuthControllerTest {
   @Test
   void listBootstrapWorldsReturnsVisibleWorlds() throws Exception {
     when(accountService.listBootstrapWorlds("boot123"))
-        .thenReturn(List.of(new BootstrapWorldDto("demo", "Demo World")));
+        .thenReturn(List.of(new BootstrapWorldDto("tenant-demo", "demo", "Demo World")));
 
     mockMvc
         .perform(get("/auth/bootstrap/worlds").header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data[0].tenantSlug").value("tenant-demo"))
         .andExpect(jsonPath("$.data[0].worldSlug").value("demo"));
   }
 
   @Test
   void listBootstrapRealmsReturnsVisibleRealms() throws Exception {
-    when(accountService.listBootstrapRealms("boot123", "demo"))
+    when(accountService.listBootstrapRealms("boot123", "tenant-demo", "demo"))
         .thenReturn(
             List.of(
                 new BootstrapRealmDto(
@@ -296,6 +297,7 @@ class AuthControllerTest {
     mockMvc
         .perform(
             get("/auth/bootstrap/worlds/demo/realms")
+                .param("tenantSlug", "tenant-demo")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
@@ -312,6 +314,16 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.data[0].playableStateScope").value("PLAYABLE_STATE_SCOPE_SHARED"))
         .andExpect(jsonPath("$.data[0].stateScope").value("SHARED"))
         .andExpect(jsonPath("$.data[0].connectScopeId").value("scope-1"));
+  }
+
+  @Test
+  void listBootstrapRealmsRequiresTenantSelector() throws Exception {
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isBadRequest());
+    org.mockito.Mockito.verifyNoInteractions(accountService);
   }
 
   @Test
