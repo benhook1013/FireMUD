@@ -677,6 +677,60 @@ class AccountGrpcServiceTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
+        "tenantId",
+        "realmId",
+        "worldSlug",
+        "realmSlug",
+        "playableStateNamespaceId",
+        "playableStateScope",
+        "gameInstanceId"
+      })
+  void directTextScopeRejectsMissingTargetFieldsEvenWhenCallerMatches(String field) {
+    AccountService owner = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), owner, null, WORKLOAD_NAMESPACE);
+    var target = validScopeRequest().toBuilder();
+    var caller = validPlayerContext().toBuilder();
+    switch (field) {
+      case "tenantId" -> {
+        target.clearTenantId();
+        caller.clearTenantId();
+      }
+      case "realmId" -> {
+        target.clearRealmId();
+        caller.clearRealmId();
+      }
+      case "worldSlug" -> target.clearWorldSlug();
+      case "realmSlug" -> target.clearRealmSlug();
+      case "playableStateNamespaceId" -> {
+        target.clearPlayableStateNamespaceId();
+        caller.clearPlayableStateNamespaceId();
+      }
+      case "playableStateScope" -> {
+        target.clearPlayableStateScope();
+        caller.clearPlayableStateScope();
+      }
+      case "gameInstanceId" -> {
+        target.clearGameInstanceId();
+        caller.clearGameInstanceId();
+      }
+      default -> throw new IllegalArgumentException("Unknown target field: " + field);
+    }
+    RecordingObserver<IssueDirectTextConnectScopeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.issueDirectTextConnectScope(target.setPlayerContext(caller).build(), observer));
+
+    assertTrue(observer.completed());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(owner);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
         "shared-live",
         "C6ED6A44-C7E7-4F18-81FC-078A74E67C07",
         "c6ed6a44c7e74f1881fc078a74e67c07"

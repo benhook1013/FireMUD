@@ -17,6 +17,7 @@ import java.lang.reflect.Type;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -162,8 +163,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
   @Test
   void upgradeRetainsExpiredFirstClaimAsTerminalWithoutInventingDispatchHistory() {
-    Fixture f = fixture("1030");
-    f.clock().advance(Duration.ofHours(1));
+    Fixture f = fixture("1030", Duration.ofSeconds(5));
+    awaitDatabaseTime(f, f.creation().createdAt().plusSeconds(5));
     var failed =
         f.tx().execute(s -> f.owner().claim(f.creation().requestId(), 1, UUID.randomUUID()));
     assertThat(failed.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
@@ -263,7 +264,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     Fixture f = fixture("1032");
     var original = claim(f, 1);
     prepareAndRead(f, original);
-    f.clock().advance(Duration.ofSeconds(11));
+    awaitProvisioningTime(f, "retry_at");
     var before = new java.util.LinkedHashMap<String, List<Map<String, Object>>>();
     for (String table :
         List.of(
@@ -321,7 +322,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     Fixture f = fixture("1032");
     var first = claim(f, 1);
     // Simulate a crash after the worker claim commits but before any dispatch transaction.
-    f.clock().advance(Duration.ofSeconds(11));
+    awaitProvisioningTime(f, "retry_at");
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
     assertThat(f.transport().creates).isZero();
     var second = claim(f, first.subscriptionRowVersion());
@@ -331,7 +332,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(f.tx().execute(s -> f.owner().readProviderDispatch(prepared)).initialCallAllowed())
         .isTrue();
     assertThat(prepareAndRead(f, second).initialCallAllowed()).isFalse();
-    f.clock().advance(Duration.ofSeconds(10));
+    awaitProvisioningTime(f, "lease_expires_at");
     assertThatThrownBy(() -> f.tx().execute(s -> f.owner().readProviderDispatch(prepared)))
         .isInstanceOf(FenceRejectedException.class)
         .hasMessage("Exact live provisioning claim readback rejected");
@@ -341,7 +342,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   void expiredUndispatchedFirstClaimRecoversThroughExactlyOneInitialCreate() {
     Fixture f = fixture("1032");
     var first = claim(f, 1);
-    f.clock().advance(Duration.ofSeconds(11));
+    awaitProvisioningTime(f, "retry_at");
     var second = claim(f, first.subscriptionRowVersion());
     var result =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
@@ -405,9 +406,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   void liveFinalBudgetDispatchSurvivesDisplayRefreshAndCompetingClaim() {
     Fixture f = fixture("1032");
     var first = claim(f, 1);
-    f.clock().advance(Duration.ofSeconds(11));
+    awaitProvisioningTime(f, "retry_at");
     var second = claim(f, first.subscriptionRowVersion());
-    f.clock().advance(Duration.ofSeconds(11));
+    awaitProvisioningTime(f, "retry_at");
     var finalClaim = claim(f, second.subscriptionRowVersion());
     assertThat(finalClaim.attemptNumber()).isEqualTo(3);
     f.transport().duringCreate =
@@ -451,7 +452,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
     assertThat(f.transport().creates).isEqualTo(1);
     f.transport().emptySearchesRemaining = 1;
-    f.clock().advance(Duration.ofSeconds(2));
+    awaitProvisioningTime(f, "retry_at");
     var second = claim(f, first.subscriptionRowVersion());
     var result =
         (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
@@ -480,7 +481,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     f.transport().emptyListsRemaining = 2;
     ProvisioningClaim previous = first;
     for (int attempt = 2; attempt <= 3; attempt++) {
-      f.clock().advance(Duration.ofSeconds(2));
+      awaitProvisioningTime(f, "retry_at");
       previous = claim(f, previous.subscriptionRowVersion());
       var pending =
           (AccountHostingSubscriptionProvisioningService.Pending)
@@ -539,7 +540,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
   @Test
   void displayRefreshAfterClaimRefusesDispatchButRetainedWorkReachesOperatorDeadline() {
-    Fixture f = fixture("1032");
+    Fixture f = fixture("1032", Duration.ofSeconds(5));
     var original = claim(f, 1);
     var originalRows = f.dsl().fetch("SELECT * FROM subscription_create_operations").intoMaps();
     var reservation =
@@ -571,7 +572,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isOne();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
-    f.clock().advance(Duration.ofHours(1));
+    awaitProvisioningTime(f, "deadline_at");
 
     var terminal =
         f.tx()
@@ -610,7 +611,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
   @Test
   void displayRefreshAfterDispatchPreparationRefusesReadbackAndStillAllowsLocalDeadlineFailure() {
-    Fixture f = fixture("1032");
+    Fixture f = fixture("1032", Duration.ofSeconds(5));
     var original = claim(f, 1);
     var prepared =
         f.tx().execute(s -> f.owner().prepareProviderDispatch(original, UUID.randomUUID()));
@@ -622,7 +623,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         .isInstanceOf(FenceRejectedException.class);
     assertThat(f.tx().<Disposition>execute(s -> f.owner().deferUnresolved(original)))
         .isEqualTo(Disposition.WAITING);
-    f.clock().advance(Duration.ofHours(1));
+    awaitProvisioningTime(f, "deadline_at");
     assertThat(f.tx().<Disposition>execute(s -> f.owner().deferUnresolved(original)))
         .isEqualTo(Disposition.TERMINAL_FAILURE);
     assertThat(f.dsl().fetch("SELECT * FROM subscription_provider_dispatch_claim").intoMaps())
@@ -700,7 +701,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   void displayRefreshDoesNotLetStaleWorkerSettleReplacementOrRewriteOriginalBinding() {
     Fixture f = fixture("1032");
     var first = claim(f, 1);
-    f.clock().advance(Duration.ofSeconds(11));
+    awaitProvisioningTime(f, "retry_at");
     var replacement = claim(f, first.subscriptionRowVersion());
     refreshDisplay(f);
     var before = f.dsl().fetch("SELECT * FROM subscription_provisioning_work").intoMaps();
@@ -773,11 +774,49 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   private static ProvisioningClaim claim(Fixture f, long version) {
-    return Objects.requireNonNull(
-        f.tx()
-            .execute(
-                s ->
-                    f.owner().claim(f.creation().requestId(), version, UUID.randomUUID()).claim()));
+    ProvisioningClaim claim =
+        Objects.requireNonNull(
+            f.tx()
+                .execute(
+                    s ->
+                        f.owner()
+                            .claim(f.creation().requestId(), version, UUID.randomUUID())
+                            .claim()));
+    // The controlled provider observation clock follows the real, newly issued DB lease.
+    f.clock().now = claim.claimedAt();
+    return claim;
+  }
+
+  private static void awaitProvisioningTime(Fixture f, String field) {
+    if (!List.of("retry_at", "lease_expires_at", "deadline_at").contains(field)) {
+      throw new IllegalArgumentException("Only retained provisioning deadlines may be awaited");
+    }
+    Instant deadline =
+        Objects.requireNonNull(
+                f.dsl()
+                    .fetchOne(
+                        "SELECT "
+                            + field
+                            + " FROM subscription_provisioning_work WHERE request_id = ?",
+                        f.creation().requestId()))
+            .get(field, OffsetDateTime.class)
+            .toInstant();
+    awaitDatabaseTime(f, deadline);
+  }
+
+  private static void awaitDatabaseTime(Fixture f, Instant deadline) {
+    Instant before =
+        Objects.requireNonNull(f.dsl().fetchOne("SELECT clock_timestamp() AS now"))
+            .get("now", OffsetDateTime.class)
+            .toInstant();
+    assertThat(Duration.between(before, deadline)).isLessThanOrEqualTo(Duration.ofSeconds(12));
+    f.dsl().execute("SELECT pg_sleep_until(?::timestamptz)", deadline.atOffset(ZoneOffset.UTC));
+    Instant after =
+        Objects.requireNonNull(f.dsl().fetchOne("SELECT clock_timestamp() AS now"))
+            .get("now", OffsetDateTime.class)
+            .toInstant();
+    assertThat(after).isAfterOrEqualTo(deadline);
+    f.clock().now = after;
   }
 
   private static AccountHostingSubscriptionProvisioningService service(Fixture f) {
@@ -805,6 +844,10 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   private static Fixture fixture(String target) {
+    return fixture(target, Duration.ofHours(1));
+  }
+
+  private static Fixture fixture(String target, Duration absoluteTimeout) {
     String schema = "hosting_dispatch_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
@@ -934,7 +977,13 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
             intents,
             clock,
             new AccountHostingSubscriptionLifecycleRepository.ReconciliationLimits(
-                4, 3, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
+                4,
+                3,
+                absoluteTimeout.compareTo(Duration.ofSeconds(10)) < 0
+                    ? absoluteTimeout
+                    : Duration.ofSeconds(10),
+                Duration.ofSeconds(1),
+                absoluteTimeout),
             new AccountHostingSubscriptionLifecyclePolicy(
                 Duration.ofSeconds(15),
                 new AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming(
@@ -1066,10 +1115,6 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
     private MutableClock(Instant now) {
       this.now = now;
-    }
-
-    private void advance(Duration duration) {
-      now = now.plus(duration);
     }
 
     @Override
