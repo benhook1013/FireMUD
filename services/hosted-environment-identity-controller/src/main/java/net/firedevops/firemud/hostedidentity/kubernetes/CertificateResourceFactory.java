@@ -152,9 +152,9 @@ public class CertificateResourceFactory {
         plan.grpcIssuer(),
         plan.grpcWorkloadIdentityDnsNames(workload),
         List.of(plan.grpcWorkloadIdentityUriSan(workload)),
-        HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)
-            ? List.of("digital signature", "key encipherment", "client auth")
-            : List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        HostedIdentityContract.grpcWorkloadIdentityServesTls(role)
+            ? List.of("digital signature", "key encipherment", "server auth", "client auth")
+            : List.of("digital signature", "key encipherment", "client auth"),
         HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
         renewBefore);
   }
