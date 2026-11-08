@@ -2,17 +2,24 @@ package unit.net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository.CanonicalConnectScopeEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountJoinOperationRepositoryCanonicalTest {
   private static final String STREAM =
@@ -108,6 +115,37 @@ class AccountJoinOperationRepositoryCanonicalTest {
   }
 
   /** Controlled journal content, not caller authentication or entitlement source evidence. */
+  @Test
+  void committedNullOutcomeIsClassifiedAsInconsistentTerminalEvidence() {
+    assertThatThrownBy(
+            () -> evidence(true, "COMMITTED", null, "AVAILABLE", null, validProof(), 73L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Canonical JOIN terminal evidence is inconsistent");
+  }
+
+  @Test
+  void nullCommitOutcomeIsClassifiedBeforeOwnerStorageReads() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
+    var repository = new AccountJoinOperationRepository(dsl, scopes);
+    boolean active = TransactionSynchronizationManager.isActualTransactionActive();
+    boolean readOnly = TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+    try {
+      assertThatThrownBy(
+              () ->
+                  repository.commitCanonicalJoin(
+                      "request-v2", mock(CanonicalJoinScopeV2.class), "caller", null, validProof()))
+          .isInstanceOf(CanonicalJoinOperationConflictException.class)
+          .hasMessage("Canonical JOIN outcome/proof conflict");
+      verifyNoInteractions(dsl, scopes);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(active);
+      TransactionSynchronizationManager.setCurrentTransactionReadOnly(readOnly);
+    }
+  }
+
   private static CanonicalJoinOperationEvidence evidence(
       boolean bound,
       String status,
