@@ -1781,18 +1781,19 @@ jobs:
             exit 1
           fi
 
-      # Temporary PR #3390 diagnostic evidence, not runtime qualification. The
+      # Canonical-transition diagnostic evidence, not runtime qualification. The
       # original failed step and the final required-smoke failure remain red.
-      - name: Known PR 3390 PLAY failure with successful authenticated cleanup
+      - name: Known canonical transition PLAY failure with successful authenticated cleanup
         if: >-
           ${{ always() && github.event_name == 'pull_request' &&
-          github.repository == 'benhook1013/FireMUD' && github.event.pull_request.number == 3390 &&
+          github.repository == 'benhook1013/FireMUD' &&
+          contains(github.event.pull_request.labels.*.name, 'canonical-play-transition') &&
           needs.image-meta.outputs.runtime_smoke_required == 'true' &&
           steps.runtime-smoke.outcome == 'failure' &&
           steps.runtime-smoke.outputs.known_play_failure == 'direct-backend-play-entitlement-unavailable-after-login' &&
           steps.runtime-cleanup.outcome == 'success' }}
         run: |
-          echo '### Temporary PR #3390 PLAY exception evidence' >> "$GITHUB_STEP_SUMMARY"
+          echo '### Canonical PLAY transition exception evidence' >> "$GITHUB_STEP_SUMMARY"
           echo 'LOGIN succeeded; direct backend PLAY failed: ERROR ENTITLEMENT_UNAVAILABLE. Held-admission qualification and authenticated cleanup passed. No runtime qualification, image export, or publication.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Require successful runtime smoke and authenticated cleanup
