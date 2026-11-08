@@ -74,6 +74,7 @@ jobs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
       candidate_tag: ${{ steps.meta.outputs.candidate_tag }}
       base_image: ${{ steps.meta.outputs.base_image }}
+      canonical_play_transition: ${{ steps.meta.outputs.canonical_play_transition }}
       runtime_smoke_required: ${{ steps.smoke_scope.outputs.runtime_smoke_required }}
       controller_smoke_required: ${{ steps.smoke_scope.outputs.controller_smoke_required }}
     permissions:
@@ -117,6 +118,7 @@ jobs:
           BASE_REF=""
           BASE_SHA=""
           MERGE_SHA=""
+          CANONICAL_PLAY_TRANSITION=false
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
             BASE_REF="$EVENT_BASE_REF"
@@ -218,6 +220,12 @@ jobs:
                 echo "Runtime PR refresh merge commit does not have the exact current base/head parents." >&2
                 exit 1
               }
+            # Only the verified live same-repository PR can authorize this
+            # diagnostic marker; dispatch payload labels carry no authority.
+            if jq -e '(.labels | type) == "array" and any(.labels[]; .name == "canonical-play-transition")' \
+              <<<"$pull_request_json" >/dev/null; then
+              CANONICAL_PLAY_TRANSITION=true
+            fi
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
             [[ "${{ github.event.workflow_run.event }}" == "push" ]] || {
               echo "Runtime branch publication requires a CI push workflow run." >&2
@@ -270,6 +278,7 @@ jobs:
             echo "image_tag=${IMAGE_TAG}"
             echo "candidate_tag=${CANDIDATE_TAG}"
             echo "base_image=${BASE_IMAGE}"
+            echo "canonical_play_transition=${CANONICAL_PLAY_TRANSITION}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify successful CI push for manual publication
@@ -1785,9 +1794,13 @@ jobs:
       # original failed step and the final required-smoke failure remain red.
       - name: Known canonical transition PLAY failure with successful authenticated cleanup
         if: >-
-          ${{ always() && github.event_name == 'pull_request' &&
+          ${{ always() &&
           github.repository == 'benhook1013/FireMUD' &&
-          contains(github.event.pull_request.labels.*.name, 'canonical-play-transition') &&
+          ((github.event_name == 'pull_request' &&
+          contains(github.event.pull_request.labels.*.name, 'canonical-play-transition')) ||
+          (github.event_name == 'repository_dispatch' &&
+          github.event.action == 'pr-runtime-base-refresh' &&
+          needs.image-meta.outputs.canonical_play_transition == 'true')) &&
           needs.image-meta.outputs.runtime_smoke_required == 'true' &&
           steps.runtime-smoke.outcome == 'failure' &&
           steps.runtime-smoke.outputs.known_play_failure == 'direct-backend-play-entitlement-unavailable-after-login' &&
