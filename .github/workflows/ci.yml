@@ -1225,6 +1225,7 @@ jobs:
           path: |
             build/reports/profile/
             build/reports/compile-failure/${{ matrix.module }}/
+            build/reports/gradle-stall/${{ matrix.module }}/
           if-no-files-found: warn
           retention-days: 14
 
