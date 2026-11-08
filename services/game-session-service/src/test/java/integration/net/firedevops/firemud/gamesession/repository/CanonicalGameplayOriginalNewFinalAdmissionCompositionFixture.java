@@ -287,6 +287,42 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
           }
 
           @Override
+          public void resolvePublishedRealmAdmissionTarget(
+              net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTargetRequest
+                  request,
+              io.grpc.stub.StreamObserver<
+                      net.firedevops.firemud.gamesession.v1
+                          .ResolvePublishedRealmAdmissionTargetResponse>
+                  observer) {
+            decisionGuard.requireAccountCaller();
+            final CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector parsed;
+            try {
+              parsed =
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
+                      request);
+            } catch (IllegalArgumentException malformed) {
+              observer.onError(io.grpc.Status.INVALID_ARGUMENT.asRuntimeException());
+              return;
+            }
+            if (!requestId.equals(parsed.readRequestId())
+                || !candidate().accountId().equals(parsed.accountId())) {
+              observer.onError(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
+              return;
+            }
+            try {
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
+                  parsed, target());
+            } catch (IllegalArgumentException changedTarget) {
+              observer.onError(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
+              return;
+            }
+            observer.onNext(
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+                    parsed, target()));
+            observer.onCompleted();
+          }
+
+          @Override
           public void getPublishedRealmAdmissionOwnerRead(
               net.firedevops.firemud.gamesession.v1.GetPublishedRealmAdmissionOwnerReadRequest
                   request,
@@ -311,7 +347,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             observer.onCompleted();
           }
         };
-    // Both handlers authenticate first. The upstream publication and World lifecycle captures
+    // Every handler authenticates first. The upstream publication and World lifecycle captures
     // remain explicitly controlled; the actual retained-decision receiver is unchanged.
     factory.addService(
         ServerInterceptors.interceptForward(
