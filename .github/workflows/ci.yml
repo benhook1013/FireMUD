@@ -1082,7 +1082,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: ${{ matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}
+    timeout-minutes: ${{ matrix.module == 'game-design-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -1100,7 +1100,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate module and retain proof
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/check-gradle-module
         with:
           module: ${{ matrix.module }}
@@ -1154,7 +1154,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate module and retain proof
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/check-gradle-module
         with:
           module: ${{ matrix.module }}
@@ -1194,7 +1194,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate module and retain proof
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/check-gradle-module
         with:
           module: ${{ matrix.module }}
@@ -1234,7 +1234,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate module and retain proof
-        if: ${{ always() }}
+        if: ${{ !cancelled() }}
         uses: ./.github/actions/check-gradle-module
         with:
           module: ${{ matrix.module }}
