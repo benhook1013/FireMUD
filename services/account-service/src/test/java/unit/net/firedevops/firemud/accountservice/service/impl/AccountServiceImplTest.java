@@ -234,11 +234,13 @@ class AccountServiceImplTest {
     RealmScope retained = org.mockito.Mockito.mock(RealmScope.class);
     when(retained.target()).thenReturn(target);
     when(retained.scope()).thenReturn(scope);
-    when(owner.listRealmScopes("canonical-bootstrap", "demo")).thenReturn(List.of(retained));
+    when(owner.listRealmScopes("canonical-bootstrap", "source-tenant", "demo"))
+        .thenReturn(List.of(retained));
     org.mockito.Mockito.clearInvocations(
         accountRepository, sessionService, jwtUtil, retainedSubscriptionEvidenceRepository);
 
-    var result = service.listBootstrapRealms("canonical-bootstrap", "demo").getFirst();
+    var result =
+        service.listBootstrapRealms("canonical-bootstrap", "source-tenant", "demo").getFirst();
 
     assertEquals(scope.worldSlug(), result.worldSlug());
     assertEquals(scope.realmSlug(), result.realmSlug());
@@ -256,7 +258,8 @@ class AccountServiceImplTest {
     assertEquals(scope.connectScopeExpiresAt(), result.connectScopeExpiresAt());
     assertEquals(scope.connectScopeId(), result.connectScopeId());
     assertFalse(result.toString().contains(scope.connectScopeId()));
-    org.mockito.Mockito.verify(owner).listRealmScopes("canonical-bootstrap", "demo");
+    org.mockito.Mockito.verify(owner)
+        .listRealmScopes("canonical-bootstrap", "source-tenant", "demo");
     verifyNoInteractions(
         accountRepository, sessionService, jwtUtil, retainedSubscriptionEvidenceRepository);
   }
@@ -267,7 +270,8 @@ class AccountServiceImplTest {
 
     AuthenticationException failure =
         assertThrows(
-            AuthenticationException.class, () -> service.listBootstrapRealms("bootstrap", "demo"));
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms("bootstrap", "source-tenant", "demo"));
 
     assertEquals("AUTH_UNAVAILABLE", failure.getCode());
     verifyNoInteractions(accountRepository, sessionService);
@@ -286,13 +290,14 @@ class AccountServiceImplTest {
         org.mockito.Mockito.mock(AccountCanonicalPublicRealmScopeOwner.class);
     service.setCanonicalPublicRealmScopeOwner(owner);
     AuthenticationException failure = new AuthenticationException(code, "Canonical source refusal");
-    when(owner.listRealmScopes("bootstrap", "demo")).thenThrow(failure);
+    when(owner.listRealmScopes("bootstrap", "source-tenant", "demo")).thenThrow(failure);
     org.mockito.Mockito.clearInvocations(accountRepository, sessionService);
 
     assertSame(
         failure,
         assertThrows(
-            AuthenticationException.class, () -> service.listBootstrapRealms("bootstrap", "demo")));
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms("bootstrap", "source-tenant", "demo")));
 
     verifyNoInteractions(accountRepository, sessionService);
   }
@@ -307,7 +312,8 @@ class AccountServiceImplTest {
     else TransactionSynchronizationManager.setActualTransactionActive(true);
     try {
       assertThrows(
-          IllegalStateException.class, () -> service.listBootstrapRealms("bootstrap", "demo"));
+          IllegalStateException.class,
+          () -> service.listBootstrapRealms("bootstrap", "source-tenant", "demo"));
       verifyNoInteractions(owner);
     } finally {
       TransactionSynchronizationManager.clear();
@@ -320,7 +326,7 @@ class AccountServiceImplTest {
         org.mockito.Mockito.mock(AccountCanonicalPublicRealmScopeOwner.class);
     service.setCanonicalPublicRealmScopeOwner(owner);
     SessionContext.setContext("e9e3aa54-9712-4e01-8767-f23f3c662e64", List.of(), Map.of());
-    when(owner.listRealmScopes("bootstrap", "demo"))
+    when(owner.listRealmScopes("bootstrap", "source-tenant", "demo"))
         .thenAnswer(
             invocation -> {
               assertTrue(SessionContext.hasAuthenticatedCallerContext());
@@ -328,7 +334,8 @@ class AccountServiceImplTest {
             });
     try {
       assertThrows(
-          IllegalStateException.class, () -> service.listBootstrapRealms("bootstrap", "demo"));
+          IllegalStateException.class,
+          () -> service.listBootstrapRealms("bootstrap", "source-tenant", "demo"));
       assertTrue(SessionContext.hasAuthenticatedCallerContext());
     } finally {
       SessionContext.clear();
@@ -341,7 +348,9 @@ class AccountServiceImplTest {
         org.mockito.Mockito.mock(AccountPublicBootstrapWorldsOwner.class);
     service.setPublicBootstrapWorldsOwner(owner);
     List<BootstrapWorldDto> worlds =
-        List.of(new BootstrapWorldDto("alpha", "Alpha"), new BootstrapWorldDto("zulu", "Zulu"));
+        List.of(
+            new BootstrapWorldDto("tenant-alpha", "alpha", "Alpha"),
+            new BootstrapWorldDto("tenant-zulu", "zulu", "Zulu"));
     when(owner.listWorlds("canonical-bootstrap")).thenReturn(worlds);
     org.mockito.Mockito.clearInvocations(accountRepository, sessionService);
 
@@ -3165,11 +3174,12 @@ class AccountServiceImplTest {
     var owner = org.mockito.Mockito.mock(AccountCanonicalPublicRealmScopeOwner.class);
     service.setCanonicalPublicRealmScopeOwner(owner);
     var refusal = new AuthenticationException(code, "controlled current canonical source refusal");
-    when(owner.listRealmScopes("bootstrap", "demo")).thenThrow(refusal);
+    when(owner.listRealmScopes("bootstrap", "source-tenant", "demo")).thenThrow(refusal);
     assertSame(
         refusal,
         assertThrows(
-            AuthenticationException.class, () -> service.listBootstrapRealms("bootstrap", "demo")));
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms("bootstrap", "source-tenant", "demo")));
     verifyNoInteractions(accountTenantMembershipRepository, accountRealmAccessGrantRepository);
   }
 
@@ -3178,7 +3188,8 @@ class AccountServiceImplTest {
       throws Exception {
     for (var method :
         List.of(
-            AccountServiceImpl.class.getMethod("listBootstrapRealms", String.class, String.class),
+            AccountServiceImpl.class.getMethod(
+                "listBootstrapRealms", String.class, String.class, String.class),
             AccountServiceImpl.class.getMethod(
                 "issueDirectTextConnectScope",
                 DirectTextCallerContext.class,
@@ -3625,8 +3636,8 @@ class AccountServiceImplTest {
 
     var expectedWorlds =
         List.of(
-            new BootstrapWorldDto("demo", "Demo World"),
-            new BootstrapWorldDto("sandbox", "Sandbox World"));
+            new BootstrapWorldDto("tenant-demo", "demo", "Demo World"),
+            new BootstrapWorldDto("tenant-sandbox", "sandbox", "Sandbox World"));
     assertEquals(expectedWorlds, firstCall);
     assertEquals(expectedWorlds, secondCall);
     org.mockito.Mockito.verify(discovery.entitlements(), org.mockito.Mockito.times(2))
@@ -3698,8 +3709,8 @@ class AccountServiceImplTest {
   void bootstrapPublicRealmFacadePreservesEmptyCanonicalOwnerResult() {
     var owner = org.mockito.Mockito.mock(AccountCanonicalPublicRealmScopeOwner.class);
     service.setCanonicalPublicRealmScopeOwner(owner);
-    when(owner.listRealmScopes("bootstrap", "demo")).thenReturn(List.of());
-    assertTrue(service.listBootstrapRealms("bootstrap", "demo").isEmpty());
+    when(owner.listRealmScopes("bootstrap", "source-tenant", "demo")).thenReturn(List.of());
+    assertTrue(service.listBootstrapRealms("bootstrap", "source-tenant", "demo").isEmpty());
     verifyNoInteractions(accountRealmAccessGrantRepository, accountTenantMembershipRepository);
   }
 
@@ -4798,6 +4809,7 @@ class AccountServiceImplTest {
   private static Target publicDiscoveryTarget(UUID tenantId, String worldSlug, String displayName) {
     Target target = org.mockito.Mockito.mock(Target.class);
     when(target.canonicalTenantId()).thenReturn(tenantId);
+    when(target.tenantSlug()).thenReturn("tenant-" + worldSlug);
     when(target.worldSlug()).thenReturn(worldSlug);
     when(target.worldDisplayName()).thenReturn(displayName);
     return target;

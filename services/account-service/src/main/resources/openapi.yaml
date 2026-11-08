@@ -182,7 +182,11 @@ components:
           type: boolean
     BootstrapWorldDto:
       type: object
+      description: Tenant-qualified world selector; worldSlug is not globally unique.
+      required: [tenantSlug, worldSlug, displayName]
       properties:
+        tenantSlug:
+          type: string
         worldSlug:
           type: string
         displayName:
@@ -588,7 +592,7 @@ paths:
           $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/bootstrap/worlds/{worldSlug}/realms:
     get:
-      summary: List caller-visible realms for a selected world
+      summary: List caller-visible realms for a tenant-qualified world
       operationId: listBootstrapRealms
       security:
         - bearerAuth: []
@@ -596,6 +600,12 @@ paths:
         - in: path
           name: worldSlug
           required: true
+          schema:
+            type: string
+        - in: query
+          name: tenantSlug
+          required: true
+          description: Tenant selector from the selected BootstrapWorldDto; required because worldSlug is tenant-scoped.
           schema:
             type: string
       responses:
