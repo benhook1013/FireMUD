@@ -45,8 +45,27 @@ STALL_IDLE_SECONDS = 300
 STALL_BATCH_SECONDS = 90
 STALL_COMMAND_SECONDS = 5
 STALL_MAX_PROCESSES = 8
+STALL_MAX_CANDIDATES = 32
 STALL_DUMP_BYTES = 128 * 1024
 DAEMON_PID = re.compile(rb'The client will now receive all logging from the daemon \(pid: ([0-9]+)\)')
+
+
+def stall_marker(status, fd=2):
+    """Fixed, best-effort status only; never block capture or change shared descriptor flags."""
+    if status not in {'enabled', 'started', 'completed', 'launch-failed', 'setup-failed',
+                      'observer-failed', 'session-unowned', 'deadline', 'cancelled'}:
+        return
+    descriptor = None
+    try:
+        # Reopening proc fd creates a separate description; dup()+F_SETFL would also
+        # make the caller's pipe nonblocking. O_APPEND protects regular-file sinks.
+        descriptor = os.open(f'/proc/self/fd/{fd}', os.O_WRONLY | os.O_NONBLOCK | os.O_APPEND)
+        os.write(descriptor, f'FIREMUD_STALL_OBSERVER status={status}\n'.encode('ascii'))
+    except OSError:
+        pass
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def owns_session(pid):
@@ -57,22 +76,27 @@ def owns_session(pid):
 
 
 def stop_stall_session(signum, frame):
+    stall_marker('deadline', fd=1)
     if owns_session(os.getpid()):
         os.killpg(os.getpid(), signal.SIGKILL)
     raise SystemExit(128 + signum)
 
 
-def java_identity(pid):
+def java_identity(pid, rejection=None):
     """Classify without retaining argv, environment, or arbitrary process names."""
+    def reject(reason):
+        if rejection is not None:
+            rejection['reason'] = reason
+
     try:
         path = PROC_ROOT / str(pid)
         if path.stat().st_uid != os.getuid():
-            return None
+            return reject('different-uid')
         fields = (path / 'stat').read_bytes().rsplit(b')', 1)[1].split()
         with (path / 'cmdline').open('rb') as stream:
             arguments = stream.read(8193)
         if len(arguments) > 8192:
-            return None
+            return reject('command-line-limit')
         arguments = arguments.split(b'\0')
         if b'org.gradle.launcher.daemon.bootstrap.GradleDaemon' in arguments:
             role = 'daemon'
@@ -80,41 +104,72 @@ def java_identity(pid):
               and any(arg.startswith(b'Gradle Test Executor ') for arg in arguments)):
             role = 'test-worker'
         else:
-            return None
+            return reject('unrecognized-java-role')
         executable = (path / 'exe').resolve(strict=True)
         if executable.name != 'java':
-            return None
+            return reject('not-java-executable')
         return {'pid': pid, 'ppid': int(fields[1]), 'start': int(fields[19]),
                 'state': fields[0].decode('ascii'), 'role': role,
                 'cpu_ticks': int(fields[11]) + int(fields[12]), 'rss_pages': int(fields[21]),
                 'jcmd': str(executable.with_name('jcmd'))}
+    except (FileNotFoundError, ProcessLookupError):
+        return reject('exited')
+    except PermissionError:
+        return reject('access-denied')
     except (OSError, ValueError, IndexError, UnicodeError):
-        return None
+        return reject('process-unavailable')
 
 
-def stall_processes(daemon):
+def stall_processes(daemon, coverage=None):
+    if coverage is None:
+        coverage = {}
+    coverage.update({'scope': 'same-uid-direct-daemon-children', 'scan_limit': MAX_VISITED_ENTRIES,
+                     'scan_limit_reached': False, 'entries_examined': 0, 'inspection_errors': 0,
+                     'candidate_limit': STALL_MAX_CANDIDATES, 'candidates': [],
+                     'candidates_omitted': 0, 'selection_counts': {}, 'workers_selected': 0})
     current = java_identity(daemon['pid'])
     if not current or (current['start'], current['role']) != (daemon['start'], 'daemon'):
+        coverage['daemon_identity'] = 'exited-or-changed'
         return []
+    coverage['daemon_identity'] = 'verified'
     result = [current]
-    # Workers are direct daemon children. Do not inspect unrelated JVMs or their arguments.
+    # Scope intentionally remains direct children. Rejected candidates are metadata,
+    # not permission to attach to an unknown JVM or scan its descendants/arguments.
     with os.scandir(PROC_ROOT) as entries:
-        paths = [Path(entry.path) for _, entry in zip(range(MAX_VISITED_ENTRIES), entries)
-                 if entry.name.isdigit()]
-    for path in paths:
-        if not path.name.isdigit():
-            continue
-        try:
-            fields = (path / 'stat').read_bytes().rsplit(b')', 1)[1].split()
-            if int(fields[1]) != daemon['pid']:
+        for _, entry in zip(range(MAX_VISITED_ENTRIES), entries):
+            coverage['entries_examined'] += 1
+            if not entry.name.isdigit():
                 continue
-        except (OSError, ValueError, IndexError):
-            continue
-        worker = java_identity(int(path.name))
-        if worker and worker['role'] == 'test-worker':
-            result.append(worker)
-        if len(result) >= STALL_MAX_PROCESSES:
-            break
+            path = Path(entry.path)
+            try:
+                fields = (path / 'stat').read_bytes().rsplit(b')', 1)[1].split()
+                if int(fields[1]) != daemon['pid'] or path.stat().st_uid != os.getuid():
+                    continue
+                candidate = {'pid': int(entry.name), 'ppid': int(fields[1]),
+                             'start': int(fields[19]), 'state': fields[0].decode('ascii')}
+            except (OSError, ValueError, IndexError, UnicodeError):
+                coverage['inspection_errors'] += 1
+                continue
+            rejection = {}
+            worker = java_identity(candidate['pid'], rejection)
+            reason = rejection.get('reason', 'unrecognized-java-role')
+            if worker and worker['role'] == 'test-worker':
+                if any(worker[key] != candidate[key] for key in ('pid', 'ppid', 'start')):
+                    reason = 'identity-changed'
+                elif len(result) >= STALL_MAX_PROCESSES:
+                    reason = 'attachment-limit'
+                else:
+                    result.append(worker)
+                    coverage['workers_selected'] += 1
+                    reason = 'selected-test-worker'
+            candidate['selection'] = reason
+            counts = coverage['selection_counts']
+            counts[reason] = counts.get(reason, 0) + 1
+            if len(coverage['candidates']) < STALL_MAX_CANDIDATES:
+                coverage['candidates'].append(candidate)
+            else:
+                coverage['candidates_omitted'] += 1
+    coverage['scan_limit_reached'] = coverage['entries_examined'] >= MAX_VISITED_ENTRIES
     return result
 
 
@@ -134,6 +189,9 @@ def sanitized_threads(raw):
 
 def thread_snapshot(identity):
     facts = {key: value for key, value in identity.items() if key != 'jcmd'}
+    # The observed daemon exceeded128KiB; retain later actor frames with a fixed ceiling.
+    dump_limit = STALL_DUMP_BYTES * (4 if identity['role'] == 'daemon' else 1)
+    facts['dump_byte_limit'] = dump_limit
     current = java_identity(identity['pid'])
     # Counters may change; only identity and lineage must remain fixed.
     keys = ('pid', 'ppid', 'start', 'role', 'jcmd')
@@ -154,11 +212,11 @@ def thread_snapshot(identity):
             if remaining <= 0 or not selector.select(remaining):
                 status = 'timeout'
                 break
-            chunk = os.read(process.stdout.fileno(), min(8192, STALL_DUMP_BYTES - len(raw)))
+            chunk = os.read(process.stdout.fileno(), min(8192, dump_limit - len(raw)))
             if not chunk:
                 break
             raw.extend(chunk)
-            if len(raw) >= STALL_DUMP_BYTES:
+            if len(raw) >= dump_limit:
                 status = 'limited'
                 break
         if status == 'complete':
@@ -183,8 +241,10 @@ def thread_snapshot(identity):
 
 
 def collect_stall(root, output, daemon):
-    root = root.resolve()
-    relative = output.absolute().relative_to(root)
+    lexical_root = Path(os.path.abspath(root))
+    relative = Path(os.path.abspath(output)).relative_to(lexical_root)
+    root = lexical_root.resolve()
+    output = root / relative
     cursor = root
     for part in relative.parts:
         cursor /= part
@@ -197,9 +257,11 @@ def collect_stall(root, output, daemon):
     for number in range(2):
         if number:
             time.sleep(max(0, 30 - (time.monotonic() - started)))
-        processes = stall_processes(daemon) if daemon else []
+        coverage = {'daemon_identity': 'unavailable'}
+        processes = stall_processes(daemon, coverage) if daemon else []
         report = {'snapshot': number + 1, 'reason': '300 seconds without Gradle output',
                   'daemon_attribution': 'verified' if processes else 'unavailable',
+                  'worker_coverage': coverage,
                   'process_limit': STALL_MAX_PROCESSES, 'process_limit_reached': len(processes) >= STALL_MAX_PROCESSES,
                   'processes': [thread_snapshot(process) for process in processes]}
         payload = json.dumps(report, indent=2) + '\n'
@@ -234,8 +296,21 @@ class StallObserver:
 
     def tick(self):
         now = time.monotonic()
-        if self.child and now - self.started >= STALL_BATCH_SECONDS:
-            self.close()
+        if self.child:
+            # Observe without reaping: the reserved PID still owns the cleanup group.
+            try:
+                exited = os.waitid(os.P_PID, self.child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            except OSError:
+                stall_marker('observer-failed')
+                self.close()
+                return
+            if exited is not None:
+                if exited.si_status:
+                    stall_marker('observer-failed')
+                self.close()
+            elif now - self.started >= STALL_BATCH_SECONDS:
+                stall_marker('deadline')
+                self.close()
         if self.attempted or now - self.last_activity < STALL_IDLE_SECONDS:
             return
         self.attempted = True
@@ -247,7 +322,7 @@ class StallObserver:
                 start_new_session=True)
             self.started = now
         except OSError:
-            pass  # Diagnostics never change the original check result.
+            stall_marker('launch-failed')  # Never include exception text or paths.
 
     def close(self):
         if self.child:
@@ -571,15 +646,24 @@ def main():
     if args.stall_daemon is not None:
         # Independent ceiling also applies if the capture parent is abruptly killed.
         if not owns_session(os.getpid()):
+            stall_marker('session-unowned', fd=1)
             return 2  # Private mode must be started by our observer, in its own session.
         signal.signal(signal.SIGALRM, stop_stall_session)
         signal.alarm(STALL_BATCH_SECONDS)
-        collect_stall(args.root, args.output, json.loads(args.stall_daemon))
+        stall_marker('started', fd=1)
+        try:
+            collect_stall(args.root, args.output, json.loads(args.stall_daemon))
+        except (OSError, ValueError):
+            stall_marker('setup-failed', fd=1)
+            return 1
+        stall_marker('completed', fd=1)
         return 0
     if args.capture_log is not None:
         observer = StallObserver(args.root, args.stall_output) if args.stall_output else None
         if observer:
+            stall_marker('enabled')
             def stop(signum, frame):
+                stall_marker('cancelled')
                 observer.close()
                 raise SystemExit(128 + signum)
             for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
