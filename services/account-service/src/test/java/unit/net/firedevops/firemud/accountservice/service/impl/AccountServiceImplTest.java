@@ -1444,7 +1444,11 @@ class AccountServiceImplTest {
   void canonicalJoinCurrentAccountLifecycleBlocksAStillLiveBootstrap(AccountLifecycleState state) {
     var f = canonicalJoinFixture();
     f.account.setLifecycleState(state);
-    assertThrows(AuthenticationException.class, f::browserJoin);
+    assertEquals(
+        state == AccountLifecycleState.SECURITY_LOCKED
+            ? "AUTH_ACCOUNT_LOCKED"
+            : "AUTH_INVALID_CREDENTIALS",
+        assertThrows(AuthenticationException.class, f::browserJoin).getCode());
     verifyNoInteractions(f.terminal);
   }
 
@@ -2092,7 +2096,14 @@ class AccountServiceImplTest {
                   new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
                       .Actor(UUID.randomUUID(), "Ada", 12));
             });
-    assertThrows(AuthenticationException.class, f::characters);
+    var failure = assertThrows(AuthenticationException.class, f::characters);
+    assertEquals("AUTH_UNAVAILABLE", failure.getCode());
+    assertEquals("Bootstrap membership changed during discovery", failure.getMessage());
+    org.mockito.Mockito.verify(f.roster)
+        .read(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
     verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
@@ -2331,16 +2342,37 @@ class AccountServiceImplTest {
   }
 
   /**
-   * Denial proof only: PLAYER_CREATED/AUTO/private/ISOLATED positive branches remain unfinished.
+   * Controlled late-owner refusal only; retained resolution still rejects unsupported policies.
+   * PLAYER_CREATED/AUTO/private/ISOLATED positive branches remain unfinished.
    */
   @ParameterizedTest
   @ValueSource(strings = {"PLAYER_CREATED", "AUTO_PROVISIONED"})
-  void canonicalBootstrapCharactersDoesNotPretendUnsupportedPolicyIsAnEmptyRoster(String policy) {
+  void canonicalBootstrapCharactersRejectsUnsupportedPolicyFromLateControlledOwnerRead(
+      String policy) {
     var f = canonicalJoinFixture();
     f.joined.set(true);
-    when(f.target.characterCreationPolicy()).thenReturn(policy);
-    assertThrows(AuthenticationException.class, f::characters);
-    verifyNoInteractions(f.roster);
+    // Retained resolution admits PRESEEDED_ONLY only. Change this controlled owner response
+    // after that check to exercise the facade's own unsupported-policy refusal, not the codec.
+    when(f.targets.readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              when(f.target.characterCreationPolicy()).thenReturn(policy);
+              var published =
+                  org.mockito.Mockito.mock(
+                      net.firedevops.firemud.common.gamesession
+                          .CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence
+                          .class);
+              when(published.selector()).thenReturn(invocation.getArgument(0));
+              when(published.currentTarget()).thenReturn(f.target);
+              return published;
+            });
+    var failure = assertThrows(AuthenticationException.class, f::characters);
+    assertEquals("REALM_UNAVAILABLE", failure.getCode());
+    assertEquals(
+        "Bootstrap actor discovery does not yet support this realm policy", failure.getMessage());
+    org.mockito.Mockito.verify(f.targets)
+        .readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(f.sources, f.demos, f.roster);
   }
 
   @Test
