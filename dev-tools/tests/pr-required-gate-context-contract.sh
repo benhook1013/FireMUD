@@ -3444,6 +3444,31 @@ async function verify(mutate = () => {}) {
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}}, "benhook1013", "FireMUD", require, data);
 }
+// Execute the failed-run branch so proof errors retain the deterministic failure diagnostic.
+const failedStart = script.indexOf('if (matching.conclusion !== "success")');
+const failedEnd = script.indexOf("const latestIdentity", failedStart);
+const failedBranch = script.slice(failedStart, failedEnd);
+class TerminalGitHubRequestError extends Error {}
+async function failedProof(stage, error) {
+  const warnings = [], failures = [], outputs = [];
+  const github = {paginate: async () => {
+    if (stage === "jobs") throw error;
+    return stage === "malformed-jobs" ? {} : [candidate];
+  }};
+  const core = {warning: value => warnings.push(value), setFailed: value => failures.push(value),
+    setOutput: (...value) => outputs.push(value)};
+  const execute = new Function("matching", "repositoryName", "github", "owner", "repo",
+    "canonicalSmokeJobName", "currentIdentity", "withTransientGitHubRetry", "verifyKnownPlayFailure",
+    "isCurrentPullRequestObsolete", "TerminalGitHubRequestError", "core",
+    `return (async () => { smokeGatePolling: while (true) { ${failedBranch} break; } })();`);
+  await execute({...source}, repositoryName, github, "benhook1013", "FireMUD", canonicalSmokeJobName,
+    identity, (_label, call) => call(), async () => {throw error;}, async () => false,
+    TerminalGitHubRequestError, core);
+  assert.deepEqual(failures, ["Runtime images run 99 did not complete successfully: run=failure"]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^Canonical PLAY transition exception proof is unavailable:/);
+  assert.deepEqual(outputs, []);
+}
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
   "github.event_name": "pull_request", "github.repository": repositoryName,
@@ -3461,6 +3486,14 @@ function markerAccepted(overrides = {}) {
   return new Function("includes", `return (${expression});`)((values, value) => values.includes(value));
 }
 (async () => {
+  for (const stage of ["jobs", "proof", "malformed-jobs"]) {
+    await failedProof(stage, Object.assign(new Error("unavailable"), {status: 404}));
+  }
+  await failedProof("proof", null);
+  for (const stage of ["jobs", "proof"]) {
+    const terminal = new TerminalGitHubRequestError("permission denied");
+    await assert.rejects(failedProof(stage, terminal), error => error === terminal);
+  }
   assert.equal(markerAccepted(), true);
   for (const overrides of [
     {"steps.runtime-smoke.outputs.known_play_failure": ""},
