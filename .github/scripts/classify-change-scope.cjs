@@ -174,7 +174,6 @@ function classifyChangeScope(inputFiles, options = {}) {
     (file) =>
       !(file.startsWith("services/") &&
         moduleForFile(file) !== null &&
-        !isServiceSourceMarkdown(file) &&
         isLightweightEligible(file)),
   );
   const runAll =

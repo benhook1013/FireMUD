@@ -107,15 +107,23 @@ class StripeHostingSubscriptionProvisionerTest {
 
   @Test
   void unknownOrExpiredIdempotencyOutcomeNeverAuthorizesAnotherCreate() {
-    Transport missing = transport(search(""));
+    Transport missing = transport(search(""), subscriptionList());
     assertThat(adapter(missing).provision(dispatch(false)))
         .isEqualTo(
             new StripeHostingSubscriptionProvisioner.Pending("PROVIDER_LOOKUP_UNRESOLVED", null));
     assertThat(missing.paths)
         .containsExactly(
-            "/v1/customers/cus_exact", "/v1/payment_methods/pm_exact", "/v1/subscriptions/search");
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions");
     assertThat(missing.methods)
-        .containsExactly(RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
+        .containsExactly(
+            RequestMethod.GET, RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
+    assertThat(missing.params.get(3))
+        .containsEntry("customer", "cus_exact")
+        .containsEntry("status", "all")
+        .containsEntry("limit", 100L);
     Transport lost = transport(search(""), subscription());
     lost.failureAt = 3;
     lost.failure = mock(StripeException.class);
@@ -144,6 +152,73 @@ class StripeHostingSubscriptionProvisionerTest {
     assertThat(recovered.methods)
         .containsExactly(
             RequestMethod.GET, RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @Test
+  void emptySearchUsesBoundedCustomerListOnlyForNonInitialLookup() {
+    Transport recovered = transport(search(""), subscriptionList(subscription()), subscription());
+    var located =
+        (StripeHostingSubscriptionProvisioner.Located)
+            adapter(recovered).provision(dispatch(false));
+    assertThat(located.providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(recovered.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions",
+            "/v1/subscriptions/sub_exact");
+    assertThat(recovered.methods)
+        .containsExactly(
+            RequestMethod.GET,
+            RequestMethod.GET,
+            RequestMethod.GET,
+            RequestMethod.GET,
+            RequestMethod.GET);
+    assertThat(recovered.params.get(3))
+        .containsEntry("customer", "cus_exact")
+        .containsEntry("status", "all")
+        .containsEntry("limit", 100L);
+
+    Transport incomplete = transport(search(""), subscriptionList(true, subscription()));
+    assertThat(adapter(incomplete).provision(dispatch(false)))
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "INCOMPLETE_OR_AMBIGUOUS_PROVIDER_LIST", null));
+    assertThat(incomplete.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions");
+
+    Transport ambiguous =
+        transport(search(""), subscriptionList(subscription() + "," + subscription()));
+    assertThat(adapter(ambiguous).provision(dispatch(false)))
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "INCOMPLETE_OR_AMBIGUOUS_PROVIDER_LIST", null));
+    assertThat(ambiguous.paths)
+        .containsExactly(
+            "/v1/customers/cus_exact",
+            "/v1/payment_methods/pm_exact",
+            "/v1/subscriptions/search",
+            "/v1/subscriptions");
+
+    Transport wrongCustomer =
+        transport(search(""), subscriptionList(subscription().replace("cus_exact", "cus_other")));
+    assertThat(adapter(wrongCustomer).provision(dispatch(false)))
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending(
+                "INCOMPLETE_OR_AMBIGUOUS_PROVIDER_LIST", null));
+    Transport wrongMetadata =
+        transport(
+            search(""),
+            subscriptionList(
+                subscription().replace(OPERATION.toString(), UUID.randomUUID().toString())));
+    assertThat(adapter(wrongMetadata).provision(dispatch(false)))
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending("PROVIDER_LOOKUP_UNRESOLVED", null));
   }
 
   @Test
@@ -323,6 +398,18 @@ class StripeHostingSubscriptionProvisionerTest {
 
   private static String search(String objects) {
     return "{\"object\":\"search_result\",\"has_more\":false,\"data\":[" + objects + "]}";
+  }
+
+  private static String subscriptionList(String... objects) {
+    return subscriptionList(false, objects);
+  }
+
+  private static String subscriptionList(boolean hasMore, String... objects) {
+    return "{\"object\":\"list\",\"has_more\":"
+        + hasMore
+        + ",\"data\":["
+        + String.join(",", objects)
+        + "]}";
   }
 
   private static String subscription() {

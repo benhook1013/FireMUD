@@ -188,6 +188,60 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         fixture.eventProducer);
   }
 
+  @Test
+  void existingJoinRejectsNullScopeBeforeAnyOwnerRead() {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalJoin(
+                    null, REQUEST_ID, CALLER_BINDING, null, null, null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("canonical JOIN scope is required");
+    verifyNoInteractions(
+        fixture.accounts,
+        fixture.operations,
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
+  @Test
+  void existingJoinRejectsUnboundedSelectorsBeforeAnyOwnerRead() {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+
+    for (String requestId : new String[] {null, "", " ", "x".repeat(129)}) {
+      assertThatThrownBy(
+              () ->
+                  fixture.coordinator.commitCanonicalJoin(
+                      fixture.scope, requestId, CALLER_BINDING, null, null, null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("canonical JOIN request ID");
+    }
+    for (String callerBinding : new String[] {null, "", " ", "x".repeat(129)}) {
+      assertThatThrownBy(
+              () ->
+                  fixture.coordinator.commitCanonicalJoin(
+                      fixture.scope, REQUEST_ID, callerBinding, null, null, null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("verified caller binding");
+    }
+    verifyNoInteractions(
+        fixture.accounts,
+        fixture.operations,
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void inactiveJoinRestoresOnlyPlayerWithoutRegrantingRetainedElevatedRoles(
