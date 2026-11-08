@@ -135,7 +135,7 @@ public final class AuthenticatedDirectTextSessions {
         outcome = received;
         credentials = null;
         if (received.status() != InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING)
-          throw unavailable();
+          throw new LoginRejectedException(received.failureCode().orElse("UNAVAILABLE"));
         requireLive();
       } finally {
         java.util.Arrays.fill(ownedSecret, '\0');
@@ -254,6 +254,20 @@ public final class AuthenticatedDirectTextSessions {
         previous.close();
         predecessor = null;
       }
+    }
+  }
+
+  static final class LoginRejectedException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+    private final String code;
+
+    private LoginRejectedException(String code) {
+      super("Authenticated gameplay LOGIN was rejected");
+      this.code = code;
+    }
+
+    String code() {
+      return code;
     }
   }
 
