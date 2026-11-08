@@ -254,7 +254,7 @@ public class CertificateMaterialService {
         new RoleExpectation(
             plan.grpcWorkloadIdentityDnsNames(workload),
             List.of(plan.grpcWorkloadIdentityUriSan(workload)),
-            !HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role),
+            HostedIdentityContract.grpcWorkloadIdentityServesTls(role),
             true,
             "kubernetes.io/tls",
             properties.getGrpcTrustAnchorSha256());

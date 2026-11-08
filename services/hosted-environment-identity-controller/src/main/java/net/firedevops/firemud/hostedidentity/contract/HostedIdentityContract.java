@@ -113,6 +113,13 @@ public final class HostedIdentityContract {
         || isGrpcPublicationRole(role);
   }
 
+  /**
+   * Gateway's workload identity is client-only; the other workload identity roles also serve TLS.
+   */
+  public static boolean grpcWorkloadIdentityServesTls(String role) {
+    return !GRPC_GATEWAY_CLIENT_ROLE.equals(role);
+  }
+
   public static boolean isGrpcPublicationRole(String role) {
     return role != null
         && GRPC_PUBLICATION_WORKLOADS.stream()

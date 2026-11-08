@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.Map;
@@ -14,6 +15,20 @@ import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner
 import org.junit.jupiter.api.Test;
 
 class CertificateResourceFactoryTest {
+  @Test
+  void onlyGatewayWorkloadIdentityRoleIsClientOnly() {
+    var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+
+    assertFalse(
+        HostedIdentityContract.grpcWorkloadIdentityServesTls(
+            HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE));
+    for (String role : plan.grpcWorkloadIdentityCertificateNames().keySet()) {
+      if (!HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+        assertTrue(HostedIdentityContract.grpcWorkloadIdentityServesTls(role), role);
+      }
+    }
+  }
+
   @Test
   void ingressCertificateUsesPublicServerMaterialContract() {
     var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");

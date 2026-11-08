@@ -65,6 +65,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   private final GameplayWebSocketObservability gameplayWebSocketObservability;
   private final Set<BridgeState> activeBridges = ConcurrentHashMap.newKeySet();
   private final AtomicBoolean shuttingDown = new AtomicBoolean();
+  private final AtomicBoolean missingAuthenticatedClientWarningLogged = new AtomicBoolean();
   private final Object lifecycleMonitor = new Object();
   private volatile Mono<Void> shutdownCompletion;
 
@@ -120,6 +121,11 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
     }
     if (origin != null && authenticatedClient == null) {
       activeBridges.remove(state);
+      // This configuration cannot change during the handler's lifetime; do not log every retry.
+      if (missingAuthenticatedClientWarningLogged.compareAndSet(false, true)) {
+        LOG.warn(
+            "Verified TCP Proxy gameplay origin rejected: no authenticated gameplay upstream client is configured; set firemud.gateway.gameplay.bridge.authenticated-upstream-url (logged once per handler)");
+      }
       return downstream.close(BACKEND_UNAVAILABLE);
     }
     HttpHeaders upstreamHeaders = buildUpstreamHeaders(downstream);
