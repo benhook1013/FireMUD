@@ -744,18 +744,23 @@ class AccountApplicationIntegrationTest {
     String token = f.browserScope();
     String request = UUID.randomUUID().toString();
     var intent = new java.util.concurrent.atomic.AtomicReference<String>();
-    Runnable expire =
-        () -> {
-          intent.set(f.operation(request).intentDigest());
-          f.clock.offset = Duration.ofMinutes(3);
-        };
     if (duringProvider) {
-      f.paid.transport().duringRead(expire);
+      f.paid
+          .transport()
+          .duringRead(
+              () -> {
+                intent.set(f.operation(request).intentDigest());
+                f.clock.offset = Duration.ofMinutes(3);
+              });
     } else {
       org.mockito.Mockito.doAnswer(
               invocation -> {
-                var result = invocation.callRealMethod();
-                expire.run();
+                var result =
+                    (AccountJoinOperationRepository.CanonicalJoinOperationEvidence)
+                        invocation.callRealMethod();
+                // Reuse the owner receipt: a new transaction would wait on the owner's locks.
+                intent.set(result.intentDigest());
+                f.clock.offset = Duration.ofMinutes(3);
                 return result;
               })
           .when(f.operations)
