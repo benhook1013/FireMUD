@@ -521,7 +521,7 @@ for job_id, (output, module) in groups.items():
     job = ci["jobs"][job_id]
     name_module = module or "${{ matrix.module }}"
     require_equal(job, ("name",), "Build and Test (" + name_module + " / ${{ matrix.partition }})", job_id)
-    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}"
+    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'game-design-service' && 30 || 20 }}"
     require_equal(job, ("timeout-minutes",), timeout, job_id)
     require_equal(job, ("needs",), ["changes"], job_id)
     require_equal(job, ("strategy", "fail-fast"), "false", job_id)
@@ -530,7 +530,9 @@ for job_id, (output, module) in groups.items():
     require_equal(job, ("permissions",), {"contents": "read", "id-token": "write"}, job_id)
     call = find_step(ci, job_id, "Validate module and retain proof", "ci workflow")
     require_equal(call, ("uses",), "./.github/actions/check-gradle-module", job_id)
-    require_equal(call, ("if",), "${{ always() }}", job_id)
+    # Enter after failures for proof retention, but never start Gradle after cancellation.
+    # The composite's upload guards below retain their independent failure/cancellation policy.
+    require_equal(call, ("if",), "${{ !cancelled() }}", job_id)
     require_equal(call, ("with",), {
         "module": "${{ matrix.module }}", "partition": "${{ matrix.partition }}",
         "java-version": "${{ matrix.java-version }}",
