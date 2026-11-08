@@ -39,6 +39,7 @@ DECLARE
     attempt subscription_provisioning_attempts%ROWTYPE;
     instrument payment_instrument%ROWTYPE;
     customer billing_customer%ROWTYPE;
+    dispatch_at TIMESTAMPTZ;
 BEGIN
     SELECT * INTO STRICT creation FROM subscription_create_operations WHERE request_id = NEW.creation_request_id;
     PERFORM 1 FROM accounts WHERE account_uuid = creation.account_uuid FOR UPDATE;
@@ -48,6 +49,9 @@ BEGIN
     SELECT * INTO STRICT current_row FROM subscription WHERE subscription_id = creation.subscription_id FOR UPDATE;
     SELECT * INTO STRICT work FROM subscription_provisioning_work WHERE request_id = creation.request_id FOR UPDATE;
     SELECT * INTO STRICT attempt FROM subscription_provisioning_attempts WHERE attempt_id = NEW.first_attempt_id;
+    -- Sample after every potentially blocking owner lock. A caller timestamp or transaction-start
+    -- timestamp cannot prove that the original lease is still live at the dispatch boundary.
+    dispatch_at := clock_timestamp();
     IF NEW.classification <> 'FIRST_DISPATCH'
         OR NEW.subscription_id <> creation.subscription_id
         OR NEW.provider_operation_id <> creation.subscription_provisioning_request_id
@@ -65,10 +69,11 @@ BEGIN
         OR instrument.provider_customer_id <> creation.provider_customer_id
         OR customer.state <> 'CONFIRMED' OR customer.provider_customer_id <> creation.provider_customer_id
         OR customer.customer_provisioning_request_id <> creation.customer_provisioning_request_id
-        OR NEW.recorded_at < attempt.claimed_at OR NEW.recorded_at >= attempt.expires_at
-        OR NEW.recorded_at >= work.deadline_at THEN
+        OR dispatch_at < attempt.claimed_at OR dispatch_at >= attempt.expires_at
+        OR dispatch_at >= work.deadline_at THEN
         RAISE EXCEPTION 'Provider dispatch lacks exact live original provisioning fence' USING ERRCODE = '23514';
     END IF;
+    NEW.recorded_at := dispatch_at;
     RETURN NEW;
 END;
 $$;
