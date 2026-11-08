@@ -27,6 +27,7 @@ public final class PrivateWorldPreparationReadGrpcCodec {
   public static final int MAX_REQUEST_WIRE_BYTES = 4096;
   public static final int MAX_RESPONSE_WIRE_BYTES = 65536;
   public static final int CALL_DEADLINE_SECONDS = 5;
+  private static final JsonMapper POLICY_JSON = JsonMapper.builder().build();
   private static final String REQUEST = "game-session-private-world-preparation-request/v1";
   private static final String RESPONSE = "game-session-private-world-preparation-response/v2";
 
@@ -158,7 +159,7 @@ public final class PrivateWorldPreparationReadGrpcCodec {
     UUID commit = uuid(reader.text());
     UUID revision = uuid(reader.text());
     String logical = reader.text();
-    var policy = RealmEntryPolicy.parseCanonical(reader.text(), JsonMapper.builder().build());
+    var policy = RealmEntryPolicy.parseCanonical(reader.text(), POLICY_JSON);
     var source =
         new Source(
             catalogRealm,

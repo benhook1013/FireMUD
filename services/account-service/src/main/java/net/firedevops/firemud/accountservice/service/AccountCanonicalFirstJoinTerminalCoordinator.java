@@ -203,8 +203,8 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
       membership =
           membershipRepository.restoreFreshMembershipForJoin(
               scope.accountId(), scope.tenantId(), membership);
-      List<String> restoredRoles = new java.util.ArrayList<>(roles.roles());
-      if (!restoredRoles.contains("player")) restoredRoles.add("player");
+      // Public enrollment grants only player authority, never retained elevated tenant roles.
+      List<String> restoredRoles = List.of("player");
       roles =
           roleSnapshotRepository.replaceCanonical(
               membership,

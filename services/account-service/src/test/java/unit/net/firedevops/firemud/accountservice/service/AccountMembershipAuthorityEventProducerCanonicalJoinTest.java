@@ -99,6 +99,96 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
   }
 
+  @Test
+  void restoreRequiresCanonicalScopeBeforeReadingOwnerState() {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    null, REQUEST_ID, CALLER_BINDING, fixture.absenceBaseline, null, null, null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("canonical JOIN scope is required");
+
+    fixture.verifyNoOwnerInteractions();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "request,null",
+    "request,empty",
+    "request,blank",
+    "request,oversized",
+    "caller,null",
+    "caller,empty",
+    "caller,blank",
+    "caller,oversized"
+  })
+  void restoreRequiresBoundedRequestSelectorsBeforeReadingOwnerState(
+      String selector, String malformed) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    String invalid =
+        switch (malformed) {
+          case "null" -> null;
+          case "empty" -> "";
+          case "blank" -> " ";
+          case "oversized" -> "x".repeat(129);
+          default -> throw new AssertionError(malformed);
+        };
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope,
+                    "request".equals(selector) ? invalid : REQUEST_ID,
+                    "caller".equals(selector) ? invalid : CALLER_BINDING,
+                    fixture.absenceBaseline,
+                    null,
+                    null,
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            ("request".equals(selector)
+                    ? "canonical JOIN request ID"
+                    : "verified JOIN caller binding")
+                + " must contain 1 to 128 characters");
+
+    fixture.verifyNoOwnerInteractions();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void paidRestoreRequiresOriginalFenceAndSealedResultBeforeReadingOwnerState(
+      boolean missingFence) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = missingFence ? null : mock(ReadFence.class);
+    var observed =
+        missingFence ? mock(StripeHostingSubscriptionObserver.ObservedSubscription.class) : null;
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope,
+                    REQUEST_ID,
+                    CALLER_BINDING,
+                    fixture.absenceBaseline,
+                    hosting,
+                    fence,
+                    observed))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage(
+            missingFence
+                ? "Original paid read fence required"
+                : "Original sealed SDK result required");
+
+    fixture.verifyNoOwnerInteractions();
+    verifyNoInteractions(hosting);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void appendsCanonicalEventReadbackAndFirstPairCasFromLockedOwnerEvidence(boolean paid) {
@@ -971,6 +1061,20 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     private final PairAuthority absenceBaseline =
         new PairAuthority(
             ACCOUNT_UUID, TENANT_UUID, provenance, false, 1L, 1L, 0L, null, null, false);
+
+    private void verifyNoOwnerInteractions() {
+      verifyNoInteractions(
+          accounts,
+          joinOperations,
+          memberships,
+          roles,
+          pairs,
+          authority,
+          outbox,
+          sourceEvidence,
+          tenantAuthorityEvents,
+          entitlements);
+    }
 
     private void arrangePendingFirstJoin() {
       when(accounts.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(account));
