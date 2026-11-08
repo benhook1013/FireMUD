@@ -26,8 +26,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
-import net.firedevops.firemud.accountservice.client.EntityManagementClient;
-import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
@@ -137,8 +135,6 @@ class AccountServiceImplTest {
   @Mock private MailProperties mailProperties;
   private final AccountTokenProperties tokenProperties = new AccountTokenProperties();
   private final JwtAuthProperties jwtAuthProperties = new JwtAuthProperties();
-  @Mock private GameSessionClient gameSessionClient;
-  @Mock private EntityManagementClient entityManagementClient;
   @Mock private SessionService sessionService;
   @Mock private PaymentTransactionRepository paymentTransactionRepository;
   @Mock private RetainedSubscriptionEvidenceRepository retainedSubscriptionEvidenceRepository;
@@ -240,12 +236,7 @@ class AccountServiceImplTest {
     when(retained.scope()).thenReturn(scope);
     when(owner.listRealmScopes("canonical-bootstrap", "demo")).thenReturn(List.of(retained));
     org.mockito.Mockito.clearInvocations(
-        accountRepository,
-        sessionService,
-        gameSessionClient,
-        jwtUtil,
-        accountConnectScopeRepository,
-        retainedSubscriptionEvidenceRepository);
+        accountRepository, sessionService, jwtUtil, retainedSubscriptionEvidenceRepository);
 
     var result = service.listBootstrapRealms("canonical-bootstrap", "demo").getFirst();
 
@@ -267,24 +258,19 @@ class AccountServiceImplTest {
     assertFalse(result.toString().contains(scope.connectScopeId()));
     org.mockito.Mockito.verify(owner).listRealmScopes("canonical-bootstrap", "demo");
     verifyNoInteractions(
-        accountRepository,
-        sessionService,
-        gameSessionClient,
-        jwtUtil,
-        accountConnectScopeRepository,
-        retainedSubscriptionEvidenceRepository);
+        accountRepository, sessionService, jwtUtil, retainedSubscriptionEvidenceRepository);
   }
 
   @Test
-  void bootstrapRealmsWithoutCanonicalCompositionRefusesBeforeLegacySources() {
-    org.mockito.Mockito.clearInvocations(accountRepository, sessionService, gameSessionClient);
+  void bootstrapRealmsWithoutCanonicalCompositionRefusesBeforeAccountOrSessionWork() {
+    org.mockito.Mockito.clearInvocations(accountRepository, sessionService);
 
     AuthenticationException failure =
         assertThrows(
             AuthenticationException.class, () -> service.listBootstrapRealms("bootstrap", "demo"));
 
     assertEquals("AUTH_UNAVAILABLE", failure.getCode());
-    verifyNoInteractions(accountRepository, sessionService, gameSessionClient);
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @ParameterizedTest
@@ -295,20 +281,20 @@ class AccountServiceImplTest {
         "ENTITLEMENT_UNAVAILABLE",
         "ADMISSION_POINTER_UNAVAILABLE"
       })
-  void bootstrapRealmsPreservesCanonicalSourceRefusalWithoutFallback(String code) {
+  void bootstrapRealmsPreservesCanonicalSourceRefusal(String code) {
     AccountCanonicalPublicRealmScopeOwner owner =
         org.mockito.Mockito.mock(AccountCanonicalPublicRealmScopeOwner.class);
     service.setCanonicalPublicRealmScopeOwner(owner);
     AuthenticationException failure = new AuthenticationException(code, "Canonical source refusal");
     when(owner.listRealmScopes("bootstrap", "demo")).thenThrow(failure);
-    org.mockito.Mockito.clearInvocations(accountRepository, sessionService, gameSessionClient);
+    org.mockito.Mockito.clearInvocations(accountRepository, sessionService);
 
     assertSame(
         failure,
         assertThrows(
             AuthenticationException.class, () -> service.listBootstrapRealms("bootstrap", "demo")));
 
-    verifyNoInteractions(accountRepository, sessionService, gameSessionClient);
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @ParameterizedTest
@@ -357,42 +343,42 @@ class AccountServiceImplTest {
     List<BootstrapWorldDto> worlds =
         List.of(new BootstrapWorldDto("alpha", "Alpha"), new BootstrapWorldDto("zulu", "Zulu"));
     when(owner.listWorlds("canonical-bootstrap")).thenReturn(worlds);
-    org.mockito.Mockito.clearInvocations(accountRepository, sessionService, gameSessionClient);
+    org.mockito.Mockito.clearInvocations(accountRepository, sessionService);
 
     assertSame(worlds, service.listBootstrapWorlds("canonical-bootstrap"));
 
     org.mockito.Mockito.verify(owner).listWorlds("canonical-bootstrap");
-    verifyNoInteractions(accountRepository, sessionService, gameSessionClient);
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @Test
-  void bootstrapWorldsWithoutCanonicalCompositionRefusesBeforeLegacyDiscovery() {
-    org.mockito.Mockito.clearInvocations(accountRepository, sessionService, gameSessionClient);
+  void bootstrapWorldsWithoutCanonicalCompositionRefusesBeforeAccountOrSessionWork() {
+    org.mockito.Mockito.clearInvocations(accountRepository, sessionService);
 
     AuthenticationException failure =
         assertThrows(AuthenticationException.class, () -> service.listBootstrapWorlds("bootstrap"));
 
     assertEquals("AUTH_UNAVAILABLE", failure.getCode());
-    verifyNoInteractions(accountRepository, sessionService, gameSessionClient);
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @ParameterizedTest
   @ValueSource(
       strings = {"AUTH_UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE", "ADMISSION_POINTER_UNAVAILABLE"})
-  void bootstrapWorldsPreservesCanonicalSourceFailureWithoutLegacyFallback(String code) {
+  void bootstrapWorldsPreservesCanonicalSourceFailure(String code) {
     AccountPublicBootstrapWorldsOwner owner =
         org.mockito.Mockito.mock(AccountPublicBootstrapWorldsOwner.class);
     service.setPublicBootstrapWorldsOwner(owner);
     AuthenticationException unavailable = new AuthenticationException(code, "Source unavailable");
     when(owner.listWorlds("bootstrap")).thenThrow(unavailable);
-    org.mockito.Mockito.clearInvocations(accountRepository, sessionService, gameSessionClient);
+    org.mockito.Mockito.clearInvocations(accountRepository, sessionService);
 
     assertSame(
         unavailable,
         assertThrows(
             AuthenticationException.class, () -> service.listBootstrapWorlds("bootstrap")));
 
-    verifyNoInteractions(accountRepository, sessionService, gameSessionClient);
+    verifyNoInteractions(accountRepository, sessionService);
   }
 
   @ParameterizedTest
@@ -932,7 +918,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void canonicalJoinWithoutConsumerCompositionRefusesBeforeLegacyIntentOrAuthorityWork() {
+  void canonicalJoinWithoutConsumerCompositionRefusesBeforeAccountIntentOrAuthorityWork() {
     assertEquals(
         "AUTH_UNAVAILABLE",
         assertThrows(
@@ -944,9 +930,7 @@ class AccountServiceImplTest {
     verifyNoInteractions(
         accountRepository,
         accountJoinOperationRepository,
-        accountConnectScopeRepository,
         accountTenantMembershipRepository,
-        gameSessionClient,
         retainedSubscriptionEvidenceRepository);
   }
 
@@ -1742,29 +1726,7 @@ class AccountServiceImplTest {
     assertEquals(f.scope.pointerVersion(), target.getValue().selector().expectedPointerVersion());
     org.mockito.Mockito.verify(f.targets, org.mockito.Mockito.atLeast(2))
         .readPublishedRealmAdmissionOwner(org.mockito.ArgumentMatchers.any());
-    verifyNoInteractions(
-        entityManagementClient, accountJoinOperationRepository, accountAuditOutboxRepository);
-  }
-
-  @Test
-  void canonicalBootstrapCharactersSelectedScopeDoesNotDependOnUnrelatedLegacyRealmDiscovery() {
-    var f = canonicalJoinFixture();
-    f.joined.set(true);
-    when(gameSessionClient.listGameplayRealms(f.scope.worldSlug()))
-        .thenThrow(new IllegalStateException("controlled malformed unrelated legacy discovery"));
-    UUID actor = UUID.randomUUID();
-    when(f.roster.read(
-            org.mockito.ArgumentMatchers.any(),
-            org.mockito.ArgumentMatchers.eq(f.scope.accountId()),
-            org.mockito.ArgumentMatchers.any()))
-        .thenReturn(
-            List.of(
-                new net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient
-                    .Actor(actor, "Selected actor", 17)));
-    assertEquals(
-        List.of(actor.toString()),
-        f.characters().stream().map(value -> value.characterId()).toList());
-    verifyNoInteractions(gameSessionClient, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -1782,8 +1744,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.any(),
             org.mockito.ArgumentMatchers.eq(f.scope.accountId()),
             org.mockito.ArgumentMatchers.any());
-    verifyNoInteractions(
-        entityManagementClient, accountJoinOperationRepository, accountAuditOutboxRepository);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @ParameterizedTest
@@ -1802,11 +1763,7 @@ class AccountServiceImplTest {
     when(f.demo.allowPublicJoin()).thenReturn(open);
     assertEquals(code, assertThrows(AuthenticationException.class, f::characters).getCode());
     org.mockito.Mockito.verify(f.demos, org.mockito.Mockito.atLeastOnce()).revalidate(f.demo);
-    verifyNoInteractions(
-        f.roster,
-        entityManagementClient,
-        accountJoinOperationRepository,
-        accountAuditOutboxRepository);
+    verifyNoInteractions(f.roster, accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -1817,11 +1774,7 @@ class AccountServiceImplTest {
     assertEquals(
         "PUBLIC_PRODUCTION_ADMISSION_DENIED",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        f.roster,
-        entityManagementClient,
-        accountJoinOperationRepository,
-        accountAuditOutboxRepository);
+    verifyNoInteractions(f.roster, accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -1833,7 +1786,7 @@ class AccountServiceImplTest {
     assertEquals(
         "ENTITLEMENT_UNAVAILABLE",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(f.roster, entityManagementClient, accountJoinOperationRepository);
+    verifyNoInteractions(f.roster, accountJoinOperationRepository);
   }
 
   @Test
@@ -1844,7 +1797,7 @@ class AccountServiceImplTest {
     assertEquals(
         "TENANT_BILLING_BLOCKED",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(f.roster, entityManagementClient);
+    verifyNoInteractions(f.roster);
   }
 
   @ParameterizedTest
@@ -1863,7 +1816,7 @@ class AccountServiceImplTest {
                         changed.equals("realm") ? "another-realm" : f.scope.realmSlug(),
                         f.scope.connectScopeId()))
             .getCode());
-    verifyNoInteractions(f.roster, entityManagementClient);
+    verifyNoInteractions(f.roster);
   }
 
   @ParameterizedTest
@@ -1888,21 +1841,21 @@ class AccountServiceImplTest {
                     service.listBootstrapCharacters(
                         token, f.scope.worldSlug(), f.scope.realmSlug(), f.scope.connectScopeId()))
             .getCode());
-    verifyNoInteractions(f.reader, f.targets, f.roster, entityManagementClient);
+    verifyNoInteractions(f.reader, f.targets, f.roster);
   }
 
   @Test
-  void canonicalBootstrapCharactersRejectsInactiveBrowserSessionBeforeTargetOrEntityWork() {
+  void canonicalBootstrapCharactersRejectsInactiveBrowserSessionBeforeTargetOrRosterWork() {
     var f = canonicalJoinFixture();
     when(sessionService.isAccountSessionActive(f.account.getId(), f.bootstrap)).thenReturn(false);
     assertEquals(
         "CONNECT_CONTEXT_INVALID",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(f.reader, f.targets, f.roster, entityManagementClient);
+    verifyNoInteractions(f.reader, f.targets, f.roster);
   }
 
   @Test
-  void canonicalBootstrapCharactersPreservesReaderIdentityRefusalBeforeEntityWork() {
+  void canonicalBootstrapCharactersPreservesReaderIdentityRefusalBeforeRosterWork() {
     var f = canonicalJoinFixture();
     when(f.reader.read(f.scope.accountId(), f.scope.connectScopeId()))
         .thenThrow(
@@ -1911,7 +1864,7 @@ class AccountServiceImplTest {
     assertEquals(
         "CONNECT_SCOPE_INVALID",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(f.targets, f.roster, entityManagementClient);
+    verifyNoInteractions(f.targets, f.roster);
   }
 
   @Test
@@ -1940,8 +1893,7 @@ class AccountServiceImplTest {
     assertEquals(
         "CONNECT_SCOPE_MISMATCH",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -1961,8 +1913,7 @@ class AccountServiceImplTest {
                       .Actor(UUID.randomUUID(), "Ada", 12));
             });
     assertThrows(AuthenticationException.class, f::characters);
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @ParameterizedTest
@@ -1992,8 +1943,7 @@ class AccountServiceImplTest {
             });
     assertEquals(
         "AUTH_UNAVAILABLE", assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -2015,8 +1965,7 @@ class AccountServiceImplTest {
     assertEquals(
         "CONNECT_SCOPE_MISMATCH",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -2042,8 +1991,7 @@ class AccountServiceImplTest {
     assertEquals(
         "ENTITLEMENT_UNAVAILABLE",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -2057,8 +2005,7 @@ class AccountServiceImplTest {
         .thenThrow(new IllegalStateException("controlled Entity discovery unavailable"));
     assertEquals(
         "AUTH_UNAVAILABLE", assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @Test
@@ -2099,8 +2046,7 @@ class AccountServiceImplTest {
     assertEquals(
         "CONNECT_SCOPE_INVALID",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @ParameterizedTest
@@ -2120,7 +2066,7 @@ class AccountServiceImplTest {
     assertEquals(
         "ADMISSION_POINTER_UNAVAILABLE",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(f.roster, entityManagementClient);
+    verifyNoInteractions(f.roster);
   }
 
   @ParameterizedTest
@@ -2132,7 +2078,7 @@ class AccountServiceImplTest {
       if (synchronization) TransactionSynchronizationManager.initSynchronization();
       else TransactionSynchronizationManager.setActualTransactionActive(true);
       assertThrows(IllegalStateException.class, f::characters);
-      verifyNoInteractions(f.reader, f.targets, f.roster, entityManagementClient);
+      verifyNoInteractions(f.reader, f.targets, f.roster);
     } finally {
       TransactionSynchronizationManager.clear();
     }
@@ -2157,8 +2103,7 @@ class AccountServiceImplTest {
     assertEquals(
         "CONNECT_CONTEXT_INVALID",
         assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @ParameterizedTest
@@ -2174,8 +2119,7 @@ class AccountServiceImplTest {
         .thenThrow(
             io.grpc.Status.fromCode(io.grpc.Status.Code.valueOf(status)).asRuntimeException());
     assertEquals(code, assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(
-        accountJoinOperationRepository, accountAuditOutboxRepository, entityManagementClient);
+    verifyNoInteractions(accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   /**
@@ -2203,7 +2147,7 @@ class AccountServiceImplTest {
     when(f.reader.read(f.scope.accountId(), f.scope.connectScopeId())).thenReturn(isolated);
     assertEquals(
         "REALM_UNAVAILABLE", assertThrows(AuthenticationException.class, f::characters).getCode());
-    verifyNoInteractions(f.targets, f.roster, entityManagementClient);
+    verifyNoInteractions(f.targets, f.roster);
   }
 
   /**
@@ -2216,7 +2160,7 @@ class AccountServiceImplTest {
     f.joined.set(true);
     when(f.target.characterCreationPolicy()).thenReturn(policy);
     assertThrows(AuthenticationException.class, f::characters);
-    verifyNoInteractions(f.roster, entityManagementClient);
+    verifyNoInteractions(f.roster);
   }
 
   @Test
@@ -2953,7 +2897,6 @@ class AccountServiceImplTest {
         accountRepository,
         sessionService,
         accountTenantMembershipRepository,
-        accountConnectScopeRepository,
         accountAuditOutboxRepository);
   }
 
@@ -2975,11 +2918,7 @@ class AccountServiceImplTest {
         refusal,
         assertThrows(
             AuthenticationException.class, () -> service.listBootstrapRealms("bootstrap", "demo")));
-    verifyNoInteractions(
-        gameSessionClient,
-        accountTenantMembershipRepository,
-        accountRealmAccessGrantRepository,
-        accountConnectScopeRepository);
+    verifyNoInteractions(accountTenantMembershipRepository, accountRealmAccessGrantRepository);
   }
 
   @Test
@@ -3272,11 +3211,7 @@ class AccountServiceImplTest {
     assertEquals(f.scope.connectScopeExpiresAt(), result.connectScopeExpiresAt());
     org.mockito.Mockito.verify(owner).issueDirectTextScope(caller, target);
     verifyNoInteractions(
-        accountConnectScopeRepository,
-        sessionService,
-        f.sources,
-        accountJoinOperationRepository,
-        accountAuditOutboxRepository);
+        sessionService, f.sources, accountJoinOperationRepository, accountAuditOutboxRepository);
   }
 
   @ParameterizedTest
@@ -3315,21 +3250,20 @@ class AccountServiceImplTest {
                         f.scope.catalogRevision(),
                         f.scope.pointerVersion()))));
     verifyNoInteractions(
-        accountConnectScopeRepository,
         accountJoinOperationRepository,
         accountTenantMembershipRepository,
         accountAuditOutboxRepository);
   }
 
   @Test
-  void directScopeWithoutCanonicalCompositionRefusesBeforeLegacySources() {
+  void directScopeWithoutCanonicalCompositionRefusesBeforeAccountWork() {
     assertEquals(
         "AUTH_UNAVAILABLE",
         assertThrows(
                 AuthenticationException.class,
                 () -> service.issueDirectTextConnectScope(null, null))
             .getCode());
-    verifyNoInteractions(accountRepository, gameSessionClient, accountConnectScopeRepository);
+    verifyNoInteractions(accountRepository);
   }
 
   @ParameterizedTest
@@ -3509,16 +3443,12 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void bootstrapPublicRealmFacadeDoesNotFallBackToPrivateGrantOrNumericDiscovery() {
+  void bootstrapPublicRealmFacadePreservesEmptyCanonicalOwnerResult() {
     var owner = org.mockito.Mockito.mock(AccountCanonicalPublicRealmScopeOwner.class);
     service.setCanonicalPublicRealmScopeOwner(owner);
     when(owner.listRealmScopes("bootstrap", "demo")).thenReturn(List.of());
     assertTrue(service.listBootstrapRealms("bootstrap", "demo").isEmpty());
-    verifyNoInteractions(
-        gameSessionClient,
-        accountRealmAccessGrantRepository,
-        accountTenantMembershipRepository,
-        accountConnectScopeRepository);
+    verifyNoInteractions(accountRealmAccessGrantRepository, accountTenantMembershipRepository);
   }
 
   @Test

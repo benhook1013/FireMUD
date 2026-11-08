@@ -166,10 +166,10 @@ public class AccountServiceImpl implements AccountService {
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
 
   private String gameplayDecoyPasswordVerifier;
-  private AccountPublicBootstrapWorldsOwner publicBootstrapWorldsOwner;
-  private AccountCanonicalPublicRealmScopeOwner canonicalPublicRealmScopeOwner;
-  private CanonicalScopeConsumers canonicalScopeConsumers;
-  private AccountBootstrapRosterReadClient accountBootstrapRosterReadClient;
+  private volatile AccountPublicBootstrapWorldsOwner publicBootstrapWorldsOwner;
+  private volatile AccountCanonicalPublicRealmScopeOwner canonicalPublicRealmScopeOwner;
+  private volatile CanonicalScopeConsumers canonicalScopeConsumers;
+  private volatile AccountBootstrapRosterReadClient accountBootstrapRosterReadClient;
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
