@@ -85,7 +85,7 @@ public final class AuthenticatedDirectTextCommandReceiver {
                 });
         // LOGIN and JOIN are not admission. Until the canonical binding owner is qualified, the
         // retired numeric entitlement route must never be selected by this protected receiver.
-        case PLAY -> failure("ENTITLEMENT_UNAVAILABLE", "Canonical gameplay admission unavailable");
+        case PLAY -> failure("ADMISSION_UNAVAILABLE", "Canonical gameplay admission unavailable");
         case LOGOUT -> success("Logged out");
         default -> failure("FEATURE_UNAVAILABLE", "Command unavailable");
       };
