@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.websocket;
 
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
@@ -87,6 +88,18 @@ public final class AuthenticatedDirectTextCommandReceiver {
         case PLAY -> failure("ENTITLEMENT_UNAVAILABLE", "Canonical gameplay admission unavailable");
         case LOGOUT -> success("Logged out");
         default -> failure("FEATURE_UNAVAILABLE", "Command unavailable");
+      };
+    } catch (AuthenticatedDirectTextSessions.LoginRejectedException rejected) {
+      return switch (rejected.code()) {
+        case AuthenticationErrorCodes.INVALID_CREDENTIALS ->
+            failure("INVALID_CREDENTIALS", "Invalid credentials");
+        case AuthenticationErrorCodes.ACCOUNT_LOCKED ->
+            failure("ACCOUNT_LOCKED", "Account is locked");
+        case AuthenticationErrorCodes.RETRY_LATER ->
+            failure("RETRY_LATER", "Too many failed attempts; try again later");
+        case "IDEMPOTENCY_CONFLICT", "RESPONSE_RECOVERY_EXPIRED" ->
+            failure(rejected.code(), "Login rejected");
+        default -> failure("UNAVAILABLE", "Authenticated gameplay authority unavailable");
       };
     } catch (RuntimeException unavailable) {
       return failure("UNAVAILABLE", "Authenticated gameplay authority unavailable");

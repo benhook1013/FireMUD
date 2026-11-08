@@ -218,7 +218,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           return bridgeUpstreamSession(downstream, upstream, state);
         };
     Mono<Void> sessionLifecycle =
-        "wss".equals(upstreamUri.getScheme()) && authenticatedClient != null
+        authenticatedClient != null && upstreamUri.equals(authenticatedClient.upstream())
             ? authenticatedClient.execute(upstreamHeaders, upstreamHandler)
             : client.execute(upstreamUri, upstreamHeaders, upstreamHandler);
     return Mono.when(connected.asMono().timeout(UPSTREAM_CONNECT_TIMEOUT), sessionLifecycle)
