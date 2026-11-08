@@ -95,6 +95,7 @@ class LegacySubscriptionContainmentTest {
           public void onCompleted() {}
         };
     for (String workload : List.of("game-session-service", "world-management-service")) {
+      response.set(null);
       Context context =
           Context.ROOT.withValue(
               GrpcPeerIdentity.CONTEXT_KEY,

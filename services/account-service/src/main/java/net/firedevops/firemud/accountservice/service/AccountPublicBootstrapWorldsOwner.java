@@ -67,7 +67,6 @@ public final class AccountPublicBootstrapWorldsOwner {
           new IllegalStateException("Canonical public target collection changed during discovery"));
     }
 
-    rejectAmbiguousWorldSlugs(initialTargets);
     requireSameCaller(originalCaller, verifyCaller(bootstrapToken));
     requireFreshEvaluations(initialByTenant, evaluated);
 
@@ -76,10 +75,14 @@ public final class AccountPublicBootstrapWorldsOwner {
       AccountPublicBootstrapEntitlementOwner.Evaluation evaluation =
           evaluated.get(target.canonicalTenantId());
       if (evaluation.gameplayAvailable()) {
-        visible.add(new BootstrapWorldDto(target.worldSlug(), target.worldDisplayName()));
+        visible.add(
+            new BootstrapWorldDto(
+                target.tenantSlug(), target.worldSlug(), target.worldDisplayName()));
       }
     }
-    visible.sort(Comparator.comparing(BootstrapWorldDto::worldSlug));
+    visible.sort(
+        Comparator.comparing(BootstrapWorldDto::worldSlug)
+            .thenComparing(BootstrapWorldDto::tenantSlug));
     return List.copyOf(visible);
   }
 
@@ -172,18 +175,6 @@ public final class AccountPublicBootstrapWorldsOwner {
       }
     }
     return Map.copyOf(byTenant);
-  }
-
-  private void rejectAmbiguousWorldSlugs(List<Target> completeTargets) {
-    Map<String, UUID> tenantsByWorldSlug = new HashMap<>();
-    for (Target target : completeTargets) {
-      UUID previousTenant =
-          tenantsByWorldSlug.putIfAbsent(target.worldSlug(), target.canonicalTenantId());
-      if (previousTenant != null && !previousTenant.equals(target.canonicalTenantId())) {
-        throw admissionPointerUnavailable(
-            new IllegalStateException("Public world slug is ambiguous across canonical tenants"));
-      }
-    }
   }
 
   private void requireSameCaller(VerifiedCaller original, VerifiedCaller current) {
