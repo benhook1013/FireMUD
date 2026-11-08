@@ -86,6 +86,7 @@ paths:
         schema: {type: string, format: uuid}
     get:
       operationId: getAccountHostingFirstInvoice
+      summary: Read the exact first-invoice checkout state
       x-runtime-status: isolated_only_default_off
       description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
       responses:
@@ -102,6 +103,7 @@ paths:
         schema: {type: string, format: uuid}
     post:
       operationId: reauthenticateAccountHostingFirstInvoice
+      summary: Reauthenticate the first-invoice billing owner
       x-runtime-status: isolated_only_default_off
       description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
       responses:
@@ -118,6 +120,7 @@ paths:
         schema: {type: string, format: uuid}
     post:
       operationId: confirmAccountHostingFirstInvoice
+      summary: Confirm the original first-invoice payment
       x-runtime-status: isolated_only_default_off
       description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
       responses:
@@ -134,6 +137,7 @@ paths:
         schema: {type: string, format: uuid}
     post:
       operationId: renewAccountHostingFirstInvoice
+      summary: Renew authorization for the original first-invoice checkout
       x-runtime-status: isolated_only_default_off
       description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
       responses:
@@ -145,6 +149,7 @@ paths:
   /api/account/billing/hosting/webhook:
     post:
       operationId: receiveAccountHostingFirstInvoiceSignedEvent
+      summary: Forward an exact raw provider-signed first-invoice event
       x-runtime-status: isolated_only_default_off
       security: []
       description: Separately authenticated exact-byte provider signed event, at most 256 KiB. Forwards one signature header over verified HTTPS without retry or redirects.
