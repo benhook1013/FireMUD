@@ -1047,6 +1047,33 @@ class SlowServiceCiPartitionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, f"partition {partition} physical attempt 1 has missing"):
                     PARTITION.resolve_effective_artifacts(missing, module, RUN_ID, SOURCE_SHA, "2")
 
+    def test_own_complete_partitions_can_aggregate_before_unrelated_jobs_finish(self):
+        for module in ("account-service", "game-session-service"):
+            with self.subTest(module=module):
+                provenance = make_provenance(module)
+                latest = provenance["attempts"][-1]
+                for index, status in enumerate(("queued", "in_progress")):
+                    unrelated = copy.deepcopy(latest["jobs"][0])
+                    unrelated.update(
+                        id=9000 + index, name=f"Build and Test (unrelated-{index} / full)",
+                        status=status, conclusion=None, completed_at=None,
+                    )
+                    latest["jobs"].append(unrelated)
+                    latest["total_count"] += 1
+                resolved = PARTITION.resolve_effective_artifacts(provenance, module, RUN_ID, SOURCE_SHA, "2")
+                self.assertEqual(set(resolved["partitions"]), {"1", "2", "3", "4"})
+                failed = copy.deepcopy(provenance)
+                own = next(item for item in failed["attempts"][-1]["jobs"] if item["name"] == f"Build and Test ({module} / 1)")
+                own["conclusion"] = "failure"
+                with self.assertRaisesRegex(ValueError, "latest effective.*failure"):
+                    PARTITION.resolve_effective_artifacts(failed, module, RUN_ID, SOURCE_SHA, "2")
+                missing = copy.deepcopy(provenance)
+                for attempt in missing["attempts"]:
+                    attempt["jobs"] = [item for item in attempt["jobs"] if item["name"] != f"Build and Test ({module} / 4)"]
+                    attempt["total_count"] = len(attempt["jobs"])
+                with self.assertRaisesRegex(ValueError, "partition 4"):
+                    PARTITION.resolve_effective_artifacts(missing, module, RUN_ID, SOURCE_SHA, "2")
+
     def test_four_way_union_and_measured_classes_include_later_partitions(self):
         module = "game-session-service"
         plan = make_plan(module)
