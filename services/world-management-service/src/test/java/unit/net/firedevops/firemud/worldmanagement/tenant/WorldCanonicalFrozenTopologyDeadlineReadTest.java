@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.google.protobuf.util.JsonFormat;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
@@ -54,6 +58,7 @@ import org.jooq.tools.jdbc.MockConnection;
 import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -285,6 +290,10 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
       Thread.yield();
     }
     capacity.release();
+    var logger = (Logger) LoggerFactory.getLogger(WorldCanonicalFrozenTopologyRepository.class);
+    var appender = new ListAppender<ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
     boolean resourceStopped = false;
     try {
       try {
@@ -298,6 +307,15 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
         fixture.awaitReleased();
         resourceStopped = true;
       }
+      assertThat(appender.list)
+          .anySatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage())
+                    .contains("retaining deadline-read slot", "Remaining capacity: 0 of 4");
+                assertThat(event.getThrowableProxy().getMessage())
+                    .isEqualTo("Controlled connection return failed");
+              });
       assertThat(fixture.releaseAttempts.get()).isEqualTo(1);
       assertThat(capacity.availablePermits()).isZero();
       assertThatThrownBy(
@@ -319,6 +337,8 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
         }
       } finally {
         capacity.release(reserved);
+        logger.detachAppender(appender);
+        appender.stop();
       }
     }
   }
