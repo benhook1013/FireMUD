@@ -69,6 +69,14 @@ if [[ -z "$CHECK_LOG" ]]; then
     '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
     ":${MODULE}:check" "${CHECK_ARGS[@]}" --profile
 fi
+declare -a CAPTURE_ARGS=()
+# Observe Account's stalled forks only on an isolated hosted Linux runner.
+if [[ "$MODULE" == "account-service" && "$PARTITION" != "full" &&
+  "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
+  "${RUNNER_OS:-}" == Linux ]]; then
+  CAPTURE_ARGS+=(--root "$ROOT_DIR" --stall-output
+    "$ROOT_DIR/build/reports/gradle-stall/$MODULE/partition-$PARTITION")
+fi
 set +e
 bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
   --runner "$ROOT_DIR/gradlew" -- \
@@ -78,7 +86,7 @@ bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
   "${CHECK_ARGS[@]}" \
   --profile --info --console=plain 2>&1 | \
   (
-    python3 "$ROOT_DIR/dev-tools/validation/collect-gradle-compile-failure.py" --capture-log "$CHECK_LOG"
+    python3 "$ROOT_DIR/dev-tools/validation/collect-gradle-compile-failure.py" --capture-log "$CHECK_LOG" "${CAPTURE_ARGS[@]}"
     capture_status=$?
     if (( capture_status != 0 )); then
       cat >/dev/null
