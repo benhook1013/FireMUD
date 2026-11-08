@@ -1881,6 +1881,54 @@ assert len(close_failure_attempts) == 1
 assert close_failure_attempts[0].closed is True
 
 
+def test_known_play_exception_precedes_retriable_exceptions():
+    for retriable in (OSError, smoke_common.ProbeOperationalFailure, RuntimeError):
+        for close_fails in (False, True):
+            opened = []
+            failure = smoke_common.PlayEntitlementUnavailable("ERROR ENTITLEMENT_UNAVAILABLE")
+
+            class KnownPlaySession:
+                closed = False
+
+                def close(self):
+                    self.closed = True
+                    if close_fails:
+                        raise OSError("close failed")
+
+            def open_session():
+                session = KnownPlaySession()
+                opened.append(session)
+                return session
+
+            def execute_session(_session):
+                raise failure
+
+            try:
+                run_transport_session(
+                    open_session,
+                    execute_session,
+                    "known PLAY session",
+                    retry_window_seconds=1,
+                    retry_interval_seconds=0,
+                    retriable_exceptions=(retriable,),
+                )
+            except smoke_common.ProbeOperationalFailure as exc:
+                if close_fails:
+                    assert type(exc) is smoke_common.ProbeOperationalFailure
+                    assert "Failed to close known PLAY session after known PLAY refusal" in str(exc)
+                    assert isinstance(exc.__cause__, OSError)
+                    assert str(exc.__cause__) == "close failed"
+                else:
+                    assert exc is failure
+            else:
+                raise AssertionError("Known PLAY refusal was concealed")
+            assert len(opened) == 1
+            assert opened[0].closed is True
+
+
+test_known_play_exception_precedes_retriable_exceptions()
+
+
 known_play_failure = smoke_common.PlayEntitlementUnavailable("ERROR ENTITLEMENT_UNAVAILABLE")
 
 
