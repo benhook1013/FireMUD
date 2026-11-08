@@ -174,6 +174,17 @@ class WorldCanonicalFrozenTopologyDeadlineReadTest {
   @Test
   void abandonedAcquisitionsRemainCappedWithoutAQueue() throws Exception {
     int count = WorldCanonicalFrozenTopologyRepository.MAX_DEADLINE_READS;
+    var field =
+        WorldCanonicalFrozenTopologyRepository.class.getDeclaredField("DEADLINE_READ_SLOTS");
+    field.setAccessible(true);
+    var capacity = (Semaphore) field.get(null);
+    var isolationBudget = Deadline.after(5, TimeUnit.SECONDS);
+    while (!capacity.tryAcquire(count)) {
+      if (isolationBudget.isExpired())
+        throw new AssertionError("Prior read resources are still owned");
+      Thread.yield();
+    }
+    capacity.release(count);
     var fixture = new Fixture(0, count);
     fixture.acquireGate = new CountDownLatch(1);
     List<CompletableFuture<Optional<WorldCanonicalFrozenTopology>>> reads = new ArrayList<>();
