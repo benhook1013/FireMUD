@@ -16,7 +16,6 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
@@ -106,11 +105,12 @@ final class WorldPlayerAdmissionEntitlementComposition {
                     loginOwner.authenticateReceiver(namespace), new GrpcPeerIdentityInterceptor()))
             .build()
             .start();
-    try {
+    try (var loginLifetime = WorldPublishedAdmissionSourceComposition.stopOnClose(loginServer)) {
       Server entitlementServer =
           fixture.receiver().createUnregisteredServer("127.0.0.1:0", keys, trust);
       entitlementServer.start();
-      try {
+      try (var entitlementLifetime =
+          WorldPublishedAdmissionSourceComposition.stopOnClose(entitlementServer)) {
         var loginEndpoints = new ServiceEndpointsProperties();
         loginEndpoints.setAccountService("localhost:" + loginServer.getPort());
         var entitlementEndpoints = new ServiceEndpointsProperties();
@@ -257,16 +257,7 @@ final class WorldPlayerAdmissionEntitlementComposition {
             throw failure;
           }
         }
-      } finally {
-        stop(entitlementServer);
       }
-    } finally {
-      stop(loginServer);
     }
-  }
-
-  private static void stop(Server server) throws InterruptedException {
-    server.shutdownNow();
-    assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
   }
 }
