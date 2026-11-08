@@ -211,10 +211,8 @@ public class AccountMembershipAuthorityEventProducer {
                 membership.getId(),
                 membership.getMembershipVersion())
             .orElseThrow();
-    if (roles.snapshotVersion() != membership.getMembershipVersion()
-        || !roles.roles().contains("player")) {
-      throw new IllegalStateException("Restore event requires exact current player roles");
-    }
+    List<String> exactRoles =
+        requireCanonicalJoinRoleSnapshot(scope, membership, provenance, roles);
     CompositeSnapshot authority =
         authorityGenerationRepository.readCompositeSnapshot(
             ACCOUNT_JWT_ISSUER,
@@ -286,7 +284,7 @@ public class AccountMembershipAuthorityEventProducer {
                       membershipEventPreimage(
                           scope,
                           membership,
-                          roles.roles(),
+                          exactRoles,
                           authority,
                           sources,
                           tenant,
@@ -404,7 +402,8 @@ public class AccountMembershipAuthorityEventProducer {
                 membership.getMembershipVersion())
             .orElseThrow(
                 () -> new IllegalStateException("Canonical first-JOIN role snapshot is absent"));
-    List<String> exactRoles = requireFirstJoinRoleSnapshot(scope, membership, provenance, roles);
+    List<String> exactRoles =
+        requireCanonicalJoinRoleSnapshot(scope, membership, provenance, roles);
 
     PairAuthority pair =
         pairAuthorityRepository
@@ -874,7 +873,7 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
-  private static List<String> requireFirstJoinRoleSnapshot(
+  private static List<String> requireCanonicalJoinRoleSnapshot(
       CanonicalJoinScopeV2 scope,
       AccountTenantMembership membership,
       VerifiedTenantProvenance provenance,
@@ -889,7 +888,7 @@ public class AccountMembershipAuthorityEventProducer {
     if (roles.accountId() != membership.getAccount().getId()
         || roles.tenantId() != null
         || roles.membershipId() != membership.getId()
-        || roles.snapshotVersion() != 2L
+        || roles.snapshotVersion() != membership.getMembershipVersion()
         || !scope.accountId().equals(roles.accountUuid())
         || !scope.tenantId().equals(roles.tenantUuid())
         || !provenance.equals(roles.tenantProvenance())

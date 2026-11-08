@@ -1002,7 +1002,7 @@ names = ["Detect CI-Relevant Changes", "GitHub Workflow Lint", "Buf Generation",
          "Account Coverage Aggregate", "Game Session Coverage Aggregate", "World Coverage Aggregate", "Validation Gate"]
 def step(name, conclusion):
     return {"name": name, "status": "completed", "conclusion": conclusion}
-# Exact split-matrix cancellation shape: 21 prerequisites never reached a step;
+# Exact split-matrix cancellation shape: 25 prerequisites never reached a step;
 # both slow-service aggregation prerequisites were skipped without running,
 # while the always() gate failed only its enforcement step after cancellation.
 jobs = [{"id": 500 + index, "run_id": 100, "run_attempt": 1, "head_sha": head,
