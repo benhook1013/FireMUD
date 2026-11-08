@@ -389,7 +389,9 @@ public final class AccountPlayerAdmissionSharedEntitlementFixture {
   private void requireCurrentTarget(RealmScope issued, CanonicalJoinScopeV2 scope) {
     var selector =
         new RetainedTargetSelector(
-            UUID.randomUUID(),
+            UUID.nameUUIDFromBytes(
+                ("first-join-target-selector/v1:" + scope.connectScopeId())
+                    .getBytes(StandardCharsets.UTF_8)),
             scope.accountId(),
             namespace,
             scope.tenantId(),
