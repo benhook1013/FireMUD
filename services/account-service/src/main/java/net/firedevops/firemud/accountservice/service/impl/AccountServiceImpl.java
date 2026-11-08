@@ -662,8 +662,9 @@ public class AccountServiceImpl implements AccountService {
                 allowPublicJoin = demo.allowPublicJoin();
                 entitlementVersion = demo.entitlementVersion();
               }
-              accountJoinOperationRepository.bindCanonicalPolicyEvidence(
-                  requestId, scope, callerBinding, allowPublicJoin, entitlementVersion);
+              CanonicalJoinOperationEvidence policyBoundOperation =
+                  accountJoinOperationRepository.bindCanonicalPolicyEvidence(
+                      requestId, scope, callerBinding, allowPublicJoin, entitlementVersion);
               Optional<AccountTenantMembership> member =
                   accountTenantMembershipRepository.findFreshMembershipForUpdate(
                       scope.accountId(), scope.tenantId());
@@ -691,13 +692,24 @@ public class AccountServiceImpl implements AccountService {
                           prepared.fence(),
                           observation);
               requireCanonicalScopeFresh(consumers, scope);
-              var currentMembership =
-                  accountTenantMembershipRepository
-                      .findFreshMembershipForUpdate(scope.accountId(), scope.tenantId())
-                      .orElseThrow();
-              if (currentMembership.getMembershipVersion()
+              Optional<AccountTenantMembership> currentMembership =
+                  accountTenantMembershipRepository.findFreshMembershipForUpdate(
+                      scope.accountId(), scope.tenantId());
+              if ("COMMITTED".equals(policyBoundOperation.status())) {
+                // A committed exact retry returns its original operation proof after the current
+                // policy check above. Membership may have changed since that proof was retained;
+                // expose only the current admission flag, never use the old proof as admission.
+                return new CanonicalJoinResult(
+                    committed.outcome(),
+                    committed.terminalProof(),
+                    currentMembership
+                        .map(AccountTenantMembership::isGameplayAdmissionAllowed)
+                        .orElse(false));
+              }
+              AccountTenantMembership committedMembership = currentMembership.orElseThrow();
+              if (committedMembership.getMembershipVersion()
                       != committed.terminalProof().membershipVersion()
-                  || currentMembership.getMembershipAuthorityGeneration()
+                  || committedMembership.getMembershipAuthorityGeneration()
                       != committed.terminalProof().membershipAuthorityGeneration()) {
                 throw new IllegalStateException(
                     "Canonical JOIN result differs from current membership");
@@ -705,7 +717,7 @@ public class AccountServiceImpl implements AccountService {
               return new CanonicalJoinResult(
                   committed.outcome(),
                   committed.terminalProof(),
-                  currentMembership.isGameplayAdmissionAllowed());
+                  committedMembership.isGameplayAdmissionAllowed());
             }));
   }
 

@@ -658,6 +658,49 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   }
 
   @Test
+  void browserFacadeReplaysCommittedJoinProofAfterMembershipBecomesInactive() {
+    Fixture fixture = newFixture();
+    BrowserFacade browser = fixture.browserFacade();
+    var selected =
+        browser.service().listBootstrapRealms(browser.bootstrapToken(), "world").getFirst();
+    String requestId = UUID.randomUUID().toString();
+    var request =
+        new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
+            selected.connectScopeId(), requestId);
+
+    var original = browser.service().joinPublicProduction(browser.bootstrapToken(), request);
+    fixture.seedControlledInactiveOwnerSnapshot();
+    var replay = browser.service().joinPublicProduction(browser.bootstrapToken(), request);
+
+    assertThat(original.success()).isTrue();
+    assertThat(original.outcomeCode()).isEqualTo("JOINED");
+    assertThat(original.membershipVersion()).isEqualTo(2L);
+    assertThat(original.membershipAuthorityGeneration()).isEqualTo(1L);
+    assertThat(original.gameplayAdmissionAllowed()).isTrue();
+    assertThat(replay.success()).isTrue();
+    assertThat(replay.outcomeCode()).isEqualTo(original.outcomeCode());
+    assertThat(replay.membershipId()).isEqualTo(original.membershipId());
+    assertThat(replay.membershipVersion()).isEqualTo(original.membershipVersion());
+    assertThat(replay.membershipAuthorityGeneration())
+        .isEqualTo(original.membershipAuthorityGeneration());
+    assertThat(replay.gameplayAdmissionAllowed()).isFalse();
+    assertThat(replay.replayed()).isTrue();
+
+    var currentMembership =
+        fixture.inTransaction(
+            () ->
+                fixture
+                    .memberships
+                    .findFreshMembershipForUpdate(
+                        fixture.account.getAccountUuid(), fixture.tenantUuid)
+                    .orElseThrow());
+    assertThat(currentMembership.getLifecycleState()).isEqualTo("INACTIVE");
+    assertThat(currentMembership.getMembershipVersion()).isEqualTo(3L);
+    assertThat(currentMembership.getMembershipAuthorityGeneration()).isEqualTo(2L);
+    assertThat(currentMembership.isGameplayAdmissionAllowed()).isFalse();
+  }
+
+  @Test
   void directFacadeComposesItsOwnAuthenticatedProducerWithRealV2ReaderAndJoinOwners() {
     Fixture fixture = newFixture();
     BrowserFacade composed = fixture.browserFacade();

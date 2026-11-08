@@ -5,6 +5,7 @@ import com.stripe.model.StripeSearchResult;
 import com.stripe.model.Subscription;
 import com.stripe.net.RequestOptions;
 import com.stripe.param.SubscriptionCreateParams;
+import com.stripe.param.SubscriptionListParams;
 import com.stripe.param.SubscriptionSearchParams;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Clock;
@@ -21,6 +22,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * actor authorization, update/cancel command, runtime registration or entitlement is supplied.
  */
 public final class StripeHostingSubscriptionProvisioner {
+  private static final long MAX_PROVIDER_SUBSCRIPTIONS_PER_CUSTOMER = 100L;
+
   private final com.stripe.StripeClient stripe;
   private final Clock clock;
   private final RequestOptions requestOptions;
@@ -111,33 +114,71 @@ public final class StripeHostingSubscriptionProvisioner {
       Subscription candidate;
       if (matches.getData().isEmpty()) {
         if (!dispatch.initialCallAllowed()) {
-          return new Pending("PROVIDER_LOOKUP_UNRESOLVED", null);
+          if (!live(dispatch)) {
+            return new Pending("DISPATCH_LEASE_EXPIRED", null);
+          }
+          var listed =
+              stripe
+                  .subscriptions()
+                  .list(
+                      SubscriptionListParams.builder()
+                          .setCustomer(creation.providerCustomerId())
+                          .setStatus(SubscriptionListParams.Status.ALL)
+                          .setLimit(MAX_PROVIDER_SUBSCRIPTIONS_PER_CUSTOMER)
+                          .build(),
+                      requestOptions);
+          if (listed == null
+              || listed.getData() == null
+              || !Boolean.FALSE.equals(listed.getHasMore())
+              || listed.getData().size() > MAX_PROVIDER_SUBSCRIPTIONS_PER_CUSTOMER) {
+            return new Pending("INCOMPLETE_OR_AMBIGUOUS_PROVIDER_LIST", null);
+          }
+          candidate = null;
+          for (Subscription listedCandidate : listed.getData()) {
+            if (listedCandidate == null) {
+              return new Pending("INCOMPLETE_OR_AMBIGUOUS_PROVIDER_LIST", null);
+            }
+            if (metadata.equals(listedCandidate.getMetadata())) {
+              if (!creation.providerCustomerId().equals(listedCandidate.getCustomer())) {
+                return new Pending("INCOMPLETE_OR_AMBIGUOUS_PROVIDER_LIST", null);
+              }
+              if (candidate != null) {
+                return new Pending("INCOMPLETE_OR_AMBIGUOUS_PROVIDER_LIST", null);
+              }
+              candidate = listedCandidate;
+            }
+          }
+          if (candidate == null) {
+            return new Pending("PROVIDER_LOOKUP_UNRESOLVED", null);
+          }
+        } else {
+          if (!live(dispatch)) {
+            return new Pending("DISPATCH_LEASE_EXPIRED", null);
+          }
+          candidate =
+              stripe
+                  .subscriptions()
+                  .create(
+                      SubscriptionCreateParams.builder()
+                          .setCustomer(creation.providerCustomerId())
+                          .setDefaultPaymentMethod(dispatch.providerPaymentMethodId())
+                          .setCollectionMethod(
+                              SubscriptionCreateParams.CollectionMethod.CHARGE_AUTOMATICALLY)
+                          .setPaymentBehavior(
+                              SubscriptionCreateParams.PaymentBehavior.DEFAULT_INCOMPLETE)
+                          .addItem(
+                              SubscriptionCreateParams.Item.builder()
+                                  .setPrice(creation.planQuote().providerPriceId())
+                                  .setQuantity(creation.planQuote().providerQuantity())
+                                  .build())
+                          .putAllMetadata(metadata)
+                          .build(),
+                      requestOptions
+                          .toBuilderFullCopy()
+                          .setIdempotencyKey(
+                              creation.subscriptionProvisioningRequestId().toString())
+                          .build());
         }
-        if (!live(dispatch)) {
-          return new Pending("DISPATCH_LEASE_EXPIRED", null);
-        }
-        candidate =
-            stripe
-                .subscriptions()
-                .create(
-                    SubscriptionCreateParams.builder()
-                        .setCustomer(creation.providerCustomerId())
-                        .setDefaultPaymentMethod(dispatch.providerPaymentMethodId())
-                        .setCollectionMethod(
-                            SubscriptionCreateParams.CollectionMethod.CHARGE_AUTOMATICALLY)
-                        .setPaymentBehavior(
-                            SubscriptionCreateParams.PaymentBehavior.DEFAULT_INCOMPLETE)
-                        .addItem(
-                            SubscriptionCreateParams.Item.builder()
-                                .setPrice(creation.planQuote().providerPriceId())
-                                .setQuantity(creation.planQuote().providerQuantity())
-                                .build())
-                        .putAllMetadata(metadata)
-                        .build(),
-                    requestOptions
-                        .toBuilderFullCopy()
-                        .setIdempotencyKey(creation.subscriptionProvisioningRequestId().toString())
-                        .build());
       } else {
         candidate = matches.getData().getFirst();
       }
