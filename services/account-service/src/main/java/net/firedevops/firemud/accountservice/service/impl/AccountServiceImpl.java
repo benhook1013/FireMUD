@@ -1066,15 +1066,19 @@ public class AccountServiceImpl implements AccountService {
     try {
       CanonicalJoinPreparation prepared =
           prepareCanonicalJoin(consumers, scope, request.requestId(), callerBinding);
-      Target target = readCanonicalScopeTarget(consumers, scope);
-      // The SDK's sealed result crosses source transactions; provider I/O never runs under SQL.
-      StripeHostingSubscriptionObserver.Result observation =
-          prepared.fence() == null
-              ? null
-              : consumers.observer().observe(prepared.fence().binding());
-      if (!target.equals(readCanonicalScopeTarget(consumers, scope))) {
-        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+      StripeHostingSubscriptionObserver.Result observation = null;
+      if (!"FAILED".equals(prepared.operation().status())) {
+        Target target = readCanonicalScopeTarget(consumers, scope);
+        // The SDK's sealed result crosses source transactions; provider I/O never runs under SQL.
+        observation =
+            prepared.fence() == null
+                ? null
+                : consumers.observer().observe(prepared.fence().binding());
+        if (!target.equals(readCanonicalScopeTarget(consumers, scope))) {
+          throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+        }
       }
+      // Terminal failures need no remote authority, but retain caller and locked identity checks.
       recheckCaller.run();
       CanonicalJoinResult committed =
           commitCanonicalJoin(

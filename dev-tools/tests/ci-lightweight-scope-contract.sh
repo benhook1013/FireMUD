@@ -736,6 +736,18 @@ require_equal(
 require_contains(gradle_profile_step, ("with", "path"), "build/reports/profile/", "ci workflow")
 require_equal(gradle_profile_step, ("with", "retention-days"), "14", "ci workflow")
 
+aggregate_action = load_workflow(str(Path(sys.argv[1]).parents[1] / "actions/aggregate-slow-service-coverage/action.yml"))
+require_equal(aggregate_action, ("runs", "using"), "composite", "coverage action")
+for key in ("module", "module-label"):
+    require_equal(aggregate_action, ("inputs", key, "required"), "true", "coverage action")
+aggregate_steps = aggregate_action["runs"]["steps"]
+for step in aggregate_steps:
+    if "run" in step:
+        require_equal(step, ("shell",), "bash", "coverage action")
+    if "checkout@" in step.get("uses", ""):
+        raise SystemExit("coverage checkout must remain in the owning job")
+aggregate_ci = copy.deepcopy(ci)
+
 for module, job_id, display, prefix in (
     ("account-service", "account-coverage-aggregate", "Account", "ACCOUNT"),
     ("game-session-service", "game-session-coverage-aggregate", "Game Session", "GAME_SESSION"),
@@ -751,10 +763,24 @@ for module, job_id, display, prefix in (
         "ci workflow",
     )
     require_equal(aggregate_job, ("permissions",), {"actions": "read", "contents": "read"}, "ci workflow")
-    aggregate_java = find_step(ci, job_id, f"Set Up Java for {display} Coverage Aggregation", "ci workflow")
+    require_equal(aggregate_job, ("timeout-minutes",), "30", "ci workflow")
+    steps = aggregate_job["steps"]
+    if len(steps) != 3 or "harden-runner@" not in steps[0].get("uses", ""):
+        raise SystemExit("coverage jobs must harden, check out, then aggregate")
+    checkout = steps[1]
+    if "actions/checkout@" not in checkout.get("uses", ""):
+        raise SystemExit("coverage checkout must precede the local composite")
+    require_equal(checkout, ("with", "ref"), "${{ github.sha }}", "ci workflow")
+    require_equal(checkout, ("with", "persist-credentials"), "false", "ci workflow")
+    require_equal(checkout, ("with", "fetch-depth"), "2", "ci workflow")
+    require_equal(steps[2], ("uses",), "./.github/actions/aggregate-slow-service-coverage", "ci workflow")
+    require_equal(steps[2], ("with",), {"module": module, "module-label": display}, "ci workflow")
+    recipe = json.dumps(aggregate_steps).replace("${{ inputs.module }}", module).replace("${{ inputs.module-label }}", display)
+    aggregate_ci["jobs"][job_id]["steps"] = steps[:2] + json.loads(recipe)
+    aggregate_java = find_step(aggregate_ci, job_id, f"Set Up Java for {display} Coverage Aggregation", "ci workflow")
     require_equal(aggregate_java, ("with", "java-version"), "25", "ci workflow")
     require_equal(aggregate_java, ("with", "distribution"), "temurin", "ci workflow")
-    capture = find_step(ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
+    capture = find_step(aggregate_ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
     require_equal(capture, ("env", "CI_MODULE"), module, "ci workflow")
     require_equal(
         capture,
@@ -781,20 +807,20 @@ for module, job_id, display, prefix in (
         "module: process.env.CI_MODULE",
         "ci workflow",
     )
-    select = find_step(ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
+    select = find_step(aggregate_ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
     require_contains(select, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts", "ci workflow")
     require_contains(select, ("run",), f"--module {module}", "ci workflow")
-    download = find_step(ci, job_id, f"Download all effective {display} partition artifacts", "ci workflow")
+    download = find_step(aggregate_ci, job_id, f"Download all effective {display} partition artifacts", "ci workflow")
     require_equal(download, ("continue-on-error",), "true", "ci workflow")
     require_equal(download, ("with", "artifact-ids"), "${{ steps.selection.outputs.artifact_ids }}", "ci workflow")
-    verify = find_step(ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
+    verify = find_step(aggregate_ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
     require_contains(verify, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate", "ci workflow")
     require_contains(
         verify, ("run",),
         f"--verified-classes-dir services/{module}/build/slow-service-ci-verified-classes",
         "ci workflow",
     )
-    merge = find_step(ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
+    merge = find_step(aggregate_ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
     require_contains(
         merge, ("run",),
         f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module} -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes",
@@ -820,7 +846,7 @@ for module, job_id, display, prefix in (
     )
 
 # Execute the shared provenance helper with strict, offline GitHub API mocks.
-# This covers both service callers, identity aliases, pagination, and refusal paths.
+# This covers all service callers, identity aliases, pagination, and refusal paths.
 helper_path = Path(sys.argv[1]).resolve().parents[2] / ".github/scripts/capture-slow-service-provenance.cjs"
 if not helper_path.is_file():
     raise SystemExit(f"ci workflow: missing shared provenance helper: {helper_path}")
@@ -831,7 +857,7 @@ for module, job_id, display in (
     ("world-management-service", "world-coverage-aggregate", "World"),
 ):
     capture = find_step(
-        ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow"
+        aggregate_ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow"
     )
     capture_scripts.append({"module": module, "script": capture["with"]["script"]})
 capture_node = r"""
@@ -1368,10 +1394,12 @@ for flag, result, aggregate in (
 gate_case({"CHANGES_RESULT": "failure"}, False)
 gate_case({"WORKFLOW_LINT": "failure"}, False)
 gate_case({"OTHER_MODULES_AFFECTED": "false", "ACCOUNT_MODULE_AFFECTED": "false",
-           "GAME_SESSION_MODULE_AFFECTED": "false", "AFFECTED_MODULES": "[]",
+           "GAME_SESSION_MODULE_AFFECTED": "false", "WORLD_MODULE_AFFECTED": "false",
+           "AFFECTED_MODULES": "[]",
            "BUILD_AND_TEST": "skipped", "BUILD_AND_TEST_ACCOUNT": "skipped",
            "BUILD_AND_TEST_GAME_SESSION": "skipped", "ACCOUNT_COVERAGE_AGGREGATE": "skipped",
-           "GAME_SESSION_COVERAGE_AGGREGATE": "skipped"}, True)
+           "GAME_SESSION_COVERAGE_AGGREGATE": "skipped", "BUILD_AND_TEST_WORLD": "skipped",
+           "WORLD_COVERAGE_AGGREGATE": "skipped"}, True)
 require_equal(
     gate_enforcement_steps[0],
     ("env", "POSTGRES_RUNTIME_PROOF_CHANGED"),

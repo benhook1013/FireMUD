@@ -1262,94 +1262,11 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: 🐍 Set Up Python
-        uses: ./.github/actions/setup-python
+      - name: Aggregate complete Account coverage
+        uses: ./.github/actions/aggregate-slow-service-coverage
         with:
-          requirements: none
-
-      - name: Capture Account partition job and artifact provenance
-        id: provenance
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          CI_RUN_ID: ${{ github.run_id }}
-          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF_NAME: ${{ github.ref_name }}
-          CI_SOURCE_SHA: ${{ github.sha }}
-          CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          CI_PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
-          CI_MODULE: account-service
-        with:
-          script: |
-            const captureSlowServiceProvenance = require(
-              require("node:path").join(process.env.GITHUB_WORKSPACE,
-                ".github/scripts/capture-slow-service-provenance.cjs"),
-            );
-            await captureSlowServiceProvenance({
-              github,
-              context,
-              env: process.env,
-              module: process.env.CI_MODULE,
-            });
-
-      - name: Select Account artifacts from latest effective job outcomes
-        id: selection
-        env:
-          PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
-          SELECTION_PATH: services/account-service/build/slow-service-ci-partition-selection.json
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
-            --module account-service \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --provenance-json "$PROVENANCE_PATH" \
-            --selection-json "$SELECTION_PATH" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Download all effective Account partition artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        continue-on-error: true
-        with:
-          artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
-          path: services/account-service/build/slow-service-ci-partition-inputs
-          merge-multiple: false
-
-      - name: Verify complete Account partition and report union
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
-            --module account-service \
-            --input-dir services/account-service/build/slow-service-ci-partition-inputs \
-            --verified-classes-dir services/account-service/build/slow-service-ci-verified-classes \
-            --selection-json services/account-service/build/slow-service-ci-partition-selection.json \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
-
-      - name: ⚙️ Set Up Java for Account Coverage Aggregation
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: 'temurin'
-          java-version: 25
-
-      - name: ⚙️ Set Up Gradle for Account Coverage Aggregation
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: Merge complete Account JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
-
-      - name: 📤 Upload Complete Account Coverage Report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: jacoco-account-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: services/account-service/build/reports/jacoco/test/
-          if-no-files-found: error
-          retention-days: 14
+          module: account-service
+          module-label: Account
 
   game-session-coverage-aggregate:
     name: Game Session Coverage Aggregate
@@ -1373,96 +1290,12 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: 🐍 Set Up Python
-        uses: ./.github/actions/setup-python
+      - name: Aggregate complete Game Session coverage
+        uses: ./.github/actions/aggregate-slow-service-coverage
         with:
-          requirements: none
+          module: game-session-service
+          module-label: Game Session
 
-      - name: Capture Game Session partition job and artifact provenance
-        id: provenance
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          CI_RUN_ID: ${{ github.run_id }}
-          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF_NAME: ${{ github.ref_name }}
-          CI_SOURCE_SHA: ${{ github.sha }}
-          CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          CI_PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
-          CI_MODULE: game-session-service
-        with:
-          script: |
-            const captureSlowServiceProvenance = require(
-              require("node:path").join(process.env.GITHUB_WORKSPACE,
-                ".github/scripts/capture-slow-service-provenance.cjs"),
-            );
-            await captureSlowServiceProvenance({
-              github,
-              context,
-              env: process.env,
-              module: process.env.CI_MODULE,
-            });
-
-      - name: Select Game Session artifacts from latest effective job outcomes
-        id: selection
-        env:
-          PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
-          SELECTION_PATH: services/game-session-service/build/slow-service-ci-partition-selection.json
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
-            --module game-session-service \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --provenance-json "$PROVENANCE_PATH" \
-            --selection-json "$SELECTION_PATH" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Download all effective Game Session partition artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        continue-on-error: true
-        with:
-          artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
-          path: services/game-session-service/build/slow-service-ci-partition-inputs
-          merge-multiple: false
-
-      - name: Verify complete Game Session partition and report union
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
-            --module game-session-service \
-            --input-dir services/game-session-service/build/slow-service-ci-partition-inputs \
-            --verified-classes-dir services/game-session-service/build/slow-service-ci-verified-classes \
-            --selection-json services/game-session-service/build/slow-service-ci-partition-selection.json \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
-
-      - name: ⚙️ Set Up Java for Game Session Coverage Aggregation
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: 'temurin'
-          java-version: 25
-
-      - name: ⚙️ Set Up Gradle for Game Session Coverage Aggregation
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: Merge complete Game Session JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
-
-      - name: 📤 Upload Complete Game Session Coverage Report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: jacoco-game-session-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: services/game-session-service/build/reports/jacoco/test/
-          if-no-files-found: error
-          retention-days: 14
-
-  # Final gating and PR reporting
   world-coverage-aggregate:
     name: World Coverage Aggregate
     needs: [changes, build-and-test-world]
@@ -1485,94 +1318,11 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: 🐍 Set Up Python
-        uses: ./.github/actions/setup-python
+      - name: Aggregate complete World coverage
+        uses: ./.github/actions/aggregate-slow-service-coverage
         with:
-          requirements: none
-
-      - name: Capture World partition job and artifact provenance
-        id: provenance
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          CI_RUN_ID: ${{ github.run_id }}
-          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF_NAME: ${{ github.ref_name }}
-          CI_SOURCE_SHA: ${{ github.sha }}
-          CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          CI_PROVENANCE_PATH: services/world-management-service/build/slow-service-ci-partition-provenance.json
-          CI_MODULE: world-management-service
-        with:
-          script: |
-            const captureSlowServiceProvenance = require(
-              require("node:path").join(process.env.GITHUB_WORKSPACE,
-                ".github/scripts/capture-slow-service-provenance.cjs"),
-            );
-            await captureSlowServiceProvenance({
-              github,
-              context,
-              env: process.env,
-              module: process.env.CI_MODULE,
-            });
-
-      - name: Select World artifacts from latest effective job outcomes
-        id: selection
-        env:
-          PROVENANCE_PATH: services/world-management-service/build/slow-service-ci-partition-provenance.json
-          SELECTION_PATH: services/world-management-service/build/slow-service-ci-partition-selection.json
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
-            --module world-management-service \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --provenance-json "$PROVENANCE_PATH" \
-            --selection-json "$SELECTION_PATH" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Download all effective World partition artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        continue-on-error: true
-        with:
-          artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
-          path: services/world-management-service/build/slow-service-ci-partition-inputs
-          merge-multiple: false
-
-      - name: Verify complete World partition and report union
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
-            --module world-management-service \
-            --input-dir services/world-management-service/build/slow-service-ci-partition-inputs \
-            --verified-classes-dir services/world-management-service/build/slow-service-ci-verified-classes \
-            --selection-json services/world-management-service/build/slow-service-ci-partition-selection.json \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
-
-      - name: ⚙️ Set Up Java for World Coverage Aggregation
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: 'temurin'
-          java-version: 25
-
-      - name: ⚙️ Set Up Gradle for World Coverage Aggregation
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: Merge complete World JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :world-management-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=world-management-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
-
-      - name: 📤 Upload Complete World Coverage Report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: jacoco-world-management-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: services/world-management-service/build/reports/jacoco/test/
-          if-no-files-found: error
-          retention-days: 14
+          module: world-management-service
+          module-label: World
 
   # Final gating and PR reporting
   validation-gate:
