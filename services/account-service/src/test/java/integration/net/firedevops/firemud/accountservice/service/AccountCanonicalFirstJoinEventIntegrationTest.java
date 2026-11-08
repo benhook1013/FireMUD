@@ -671,7 +671,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
             target.playableStateNamespaceId(),
             target.playableStateScope(),
             target.canonicalGameInstanceId(),
-            UUID.randomUUID().toString(),
+            "2001",
             requestId);
     var selected =
         new net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget(
