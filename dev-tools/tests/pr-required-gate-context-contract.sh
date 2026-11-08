@@ -548,10 +548,10 @@ if guard["env"] != {
 }:
     raise SystemExit("Terminal guard must consume native Actions outcomes, never command-written outputs")
 Path(sys.argv[2] + ".guard").write_text(guard["with"]["script"])
-marker = next(step for step in steps if step.get("name") == "Known PR 3390 PLAY failure with successful authenticated cleanup")
+marker = next(step for step in steps if step.get("name") == "Known canonical transition PLAY failure with successful authenticated cleanup")
 for clause in (
     "always()", "github.event_name == 'pull_request'", "github.repository == 'benhook1013/FireMUD'",
-    "github.event.pull_request.number == 3390", "needs.image-meta.outputs.runtime_smoke_required == 'true'",
+    "contains(github.event.pull_request.labels.*.name, 'canonical-play-transition')", "needs.image-meta.outputs.runtime_smoke_required == 'true'",
     "steps.runtime-smoke.outcome == 'failure'", "steps.runtime-cleanup.outcome == 'success'",
     "steps.runtime-smoke.outputs.known_play_failure == 'direct-backend-play-entitlement-unavailable-after-login'",
 ):
@@ -3393,7 +3393,7 @@ const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
 const headSha = "a".repeat(40), baseSha = "b".repeat(40), mergeSha = "c".repeat(40);
-const identity = {headSha, baseSha, mergeSha};
+const identity = {headSha, baseSha, mergeSha, baseRef: "develop"};
 const run = {id: 99, run_attempt: 2, event: "pull_request"};
 const failures = ["Run credential-free full-stack smoke", "Require successful runtime smoke and authenticated cleanup"];
 const step = (name, conclusion) => ({name, conclusion, status: "completed"});
@@ -3403,35 +3403,38 @@ const source = {...run, status: "completed", conclusion: "failure", path: workfl
 const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name: canonicalSmokeJobName,
   status: "completed", conclusion: "failure", check_run_url: `https://api.github.com/repos/${repositoryName}/check-runs/123`,
   steps: [...failures.map(name => step(name, "failure")), step("Stop smoke stack", "success"),
-    step("Known PR 3390 PLAY failure with successful authenticated cleanup", "success"),
+    step("Known canonical transition PLAY failure with successful authenticated cleanup", "success"),
     step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
 async function verify(mutate = () => {}) {
-  const data = structuredClone({pr: "3390", run, identity, source, candidate, jobs: [candidate], latest: {...source},
+  const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
+    currentPullRequest: {state: "open", head: {sha: headSha}, base: {ref: "develop"}, labels: [{name: "canonical-play-transition"}]},
     definition: {type: "file", path: workflowPath, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}});
   mutate(data);
   const github = {request: async () => ({data: data.source}), paginate: async () => data.jobs,
     rest: {actions: {getWorkflow: async () => ({data: {id: 7, path: workflowPath, name: "Build Runtime Images"}}),
-      getWorkflowRun: async () => ({data: data.latest})}, repos: {getContent: async () => ({data: data.definition})}}};
+      getWorkflowRun: async () => ({data: data.latest})}, pulls: {get: async () => ({data: data.currentPullRequest})}, repos: {getContent: async () => ({data: data.definition})}}};
   return new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
     "canonicalRuntimeWorkflowSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
     `${fn}; return verifyKnownPlayFailure(data.run, data.candidate, data.identity);`)(
-      github, data.pr, repositoryName, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
+      github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {pull_request: {head: {repo: {full_name: repositoryName}}}}}, "benhook1013", "FireMUD", require, data);
 }
 const markerExpression = fs.readFileSync(process.argv[2] + ".marker", "utf8").trim().slice(3, -2);
 const markerValues = {
   "github.event_name": "pull_request", "github.repository": repositoryName,
-  "github.event.pull_request.number": 3390, "needs.image-meta.outputs.runtime_smoke_required": "true",
+  "github.event.pull_request.labels.*.name": ["canonical-play-transition"],
+  "needs.image-meta.outputs.runtime_smoke_required": "true",
   "steps.runtime-smoke.outcome": "failure", "steps.runtime-smoke.outputs.known_play_failure": "direct-backend-play-entitlement-unavailable-after-login",
   "steps.runtime-cleanup.outcome": "success",
 };
 function markerAccepted(overrides = {}) {
-  let expression = markerExpression.replace("always()", "true");
+  let expression = markerExpression.replace("always()", "true")
+    .replace("contains(", "includes(");
   for (const [key, value] of Object.entries({...markerValues, ...overrides})) {
     expression = expression.replaceAll(key, JSON.stringify(value));
   }
-  return new Function(`return (${expression});`)();
+  return new Function("includes", `return (${expression});`)((values, value) => values.includes(value));
 }
 (async () => {
   assert.equal(markerAccepted(), true);
@@ -3442,12 +3445,23 @@ function markerAccepted(overrides = {}) {
     {"steps.runtime-cleanup.outcome": "failure"},
     {"steps.runtime-cleanup.outcome": "skipped"},
     {"needs.image-meta.outputs.runtime_smoke_required": "false"},
-    {"github.event.pull_request.number": 3391},
+    {"github.event.pull_request.labels.*.name": []},
+    {"github.repository": "attacker/FireMUD"},
     {"github.event_name": "repository_dispatch"},
+    {"github.event_name": "workflow_run"},
   ]) assert.equal(markerAccepted(overrides), false);
   assert.equal(await verify(), true);
+  for (const stackPr of [3405, 3409, 3407, 3408, 3410]) {
+    assert.equal(await verify(d => {d.pr = String(stackPr); d.source.display_title = d.source.display_title.replace("pr-3390", `pr-${stackPr}`);}), true);
+  }
   for (const mutate of [
     d => {d.pr = "3391";},
+    d => {d.consumerRepository = "attacker/FireMUD";},
+    d => {d.currentPullRequest.labels = [];},
+    d => {d.currentPullRequest.labels = [{name: "other"}];},
+    d => {d.currentPullRequest.state = "closed";},
+    d => {d.currentPullRequest.head.sha = "d".repeat(40);},
+    d => {d.currentPullRequest.base.ref = "main";},
     d => {d.identity.baseSha = "d".repeat(40);},
     d => {d.identity.headSha = "d".repeat(40);},
     d => {d.identity.mergeSha = "d".repeat(40);},
@@ -3462,12 +3476,12 @@ function markerAccepted(overrides = {}) {
     d => {d.jobs.push({id: 2, status: "completed", conclusion: "failure"});},
     d => {d.jobs[0].steps.push(step("Unrelated failure", "failure"));},
     d => {d.jobs[0].steps.find(s => s.name === "Stop smoke stack").conclusion = "failure";},
-    d => {d.jobs[0].steps.find(s => s.name.startsWith("Known PR")).conclusion = "skipped";},
-    d => {d.jobs[0].steps = d.jobs[0].steps.filter(s => !s.name.startsWith("Known PR"));},
+    d => {d.jobs[0].steps.find(s => s.name.startsWith("Known canonical transition")).conclusion = "skipped";},
+    d => {d.jobs[0].steps = d.jobs[0].steps.filter(s => !s.name.startsWith("Known canonical transition"));},
     d => {d.jobs[0].steps.find(s => s.name.startsWith("Export fixed")).conclusion = "success";},
     d => {d.jobs[0].steps = d.jobs[0].steps.filter(s => !s.name.startsWith("Export fixed"));},
     d => {d.source.conclusion = "success";},
   ]) assert.equal(await verify(mutate), false, mutate.toString());
-  console.log("Temporary PR 3390 PLAY exception positive and negative contracts passed.");
+  console.log("Canonical PLAY transition exception positive and negative contracts passed.");
 })().catch(error => {console.error(error); process.exitCode = 1;});
 NODE
