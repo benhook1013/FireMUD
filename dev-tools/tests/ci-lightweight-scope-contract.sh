@@ -35,7 +35,7 @@ for expected in \
   'declare -a PREPARE_TASKS=(":${MODULE}:testClasses")' \
   'PREPARE_TASKS+=(":${MODULE}:${task_name}Classes")' \
   'CHECK_ARGS+=("-PslowServiceCiPartitionModule=$MODULE" "-PslowServiceCiPartition=$PARTITION")' \
-  'Account: 1-4; Game Session: 1-4' \
+  'Account: 1-4; Game Session: 1-4; World: 1-2' \
   'bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"'; do
   require_contains "$MODULE_CHECK_WRAPPER" "$expected"
 done
@@ -100,7 +100,7 @@ raise SystemExit(0)
         ("account-service", str(partition)) for partition in range(1, 5)
     ] + [
         ("game-session-service", str(partition)) for partition in range(1, 5)
-    ]
+    ] + [("world-management-service", str(partition)) for partition in range(1, 3)]
     for module, partition in partitioned_cases:
         result, entries = invoke(module, partition)
         if result.returncode != 0:
@@ -135,7 +135,7 @@ raise SystemExit(0)
         if "-PfullCheck" not in check or any(value not in check for value in expected_check_properties):
             raise SystemExit(f"{module}/{partition} lost its full-check selector arguments")
 
-    for module in ("account-service", "game-session-service", "common-security"):
+    for module in ("account-service", "game-session-service", "world-management-service", "common-security"):
         result, entries = invoke(module, "full")
         if result.returncode != 0:
             raise SystemExit(f"full check entrypoint rejected {module}: {result.stderr}")
@@ -153,6 +153,8 @@ raise SystemExit(0)
         ("account-service", "5"),
         ("game-session-service", "0"),
         ("game-session-service", "5"),
+        ("world-management-service", "0"),
+        ("world-management-service", "3"),
         ("common-security", "3"),
         ("bad_module", "full"),
     ):
@@ -234,7 +236,7 @@ process.stdout.write(JSON.stringify(rows));
                 "modules": modules,
                 "assignment": match.group(0).strip(),
                 "partition_set": partition_set.group(0).strip(),
-                "groups": "\n".join(re.findall(r"(?m)^.*outputs\.(?:other|account|game_session)_module_check_matrix = .*;$", script)),
+                "groups": "\n".join(re.findall(r"(?m)^.*outputs\.(?:other|account|game_session|world)_module_check_matrix = .*;$", script)),
                 "output": output,
             }),
         )
@@ -513,12 +515,13 @@ groups = {
     "build-and-test": ("other_module_check_matrix", None),
     "build-and-test-account": ("account_module_check_matrix", "account-service"),
     "build-and-test-game-session": ("game_session_module_check_matrix", "game-session-service"),
+    "build-and-test-world": ("world_module_check_matrix", "world-management-service"),
 }
 for job_id, (output, module) in groups.items():
     job = ci["jobs"][job_id]
     name_module = module or "${{ matrix.module }}"
     require_equal(job, ("name",), "Build and Test (" + name_module + " / ${{ matrix.partition }})", job_id)
-    timeout = "60" if module == "account-service" else "90" if module == "game-session-service" else "${{ matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}"
+    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}"
     require_equal(job, ("timeout-minutes",), timeout, job_id)
     require_equal(job, ("needs",), ["changes"], job_id)
     require_equal(job, ("strategy", "fail-fast"), "false", job_id)
@@ -593,7 +596,7 @@ require_contains(
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    'const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4 };',
+    'const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4, "world-management-service": 2 };',
     "ci workflow",
 )
 for expected in (
@@ -610,7 +613,7 @@ all_modules = [
     "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
     "world-management-service", "hosted-environment-identity-controller", "load-testing",
 ]
-for selected in ([], ["account-service"], ["game-session-service"],
+for selected in ([], ["account-service"], ["game-session-service"], ["world-management-service"],
                  ["account-service", "game-session-service", "common-security"], all_modules):
     complete = evaluate_module_check_matrix(ci_compute_step, selected)
     split = []
@@ -618,15 +621,15 @@ for selected in ([], ["account-service"], ["game-session-service"],
         require_equal(ci, ("jobs", "changes", "outputs", output),
                       "${{ steps.compute.outputs." + output + " }}", "ci workflow")
         rows = evaluate_module_check_matrix(ci_compute_step, selected, output)
-        expected = [row for row in complete if (row["module"] == module if module else row["module"] not in {"account-service", "game-session-service"})]
+        expected = [row for row in complete if (row["module"] == module if module else row["module"] not in {"account-service", "game-session-service", "world-management-service"})]
         if rows != expected:
             raise SystemExit(f"Matrix group {output} changed existing partition identities")
         split.extend(rows)
     key = lambda row: (row["module"], row["partition"], row["java-version"])
     if sorted(map(key, split)) != sorted(map(key, complete)) or len(set(map(key, split))) != len(complete):
         raise SystemExit("Split matrices must preserve exactly the original disjoint work")
-    if selected == all_modules and len(split) != 26:
-        raise SystemExit("Complete selection must retain 4 Account + 4 GS + 18 other jobs")
+    if selected == all_modules and len(split) != 27:
+        raise SystemExit("Complete selection must retain 4 Account + 4 GS + 2 World + 17 other jobs")
 
 java_setup_step = find_step(module_ci, "build-and-test", "Set Up Java", "ci workflow")
 require_equal(
@@ -642,7 +645,7 @@ runtime_jar_step = find_step(
 require_equal(
     runtime_jar_step,
     ("if",),
-    "${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' || matrix.partition == '1') }}",
+    "${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' && matrix.module != 'world-management-service' || matrix.partition == '1') }}",
     "ci workflow",
 )
 require_equal(
@@ -674,7 +677,7 @@ junit_results_step = find_step(
 require_equal(
     junit_results_step,
     ("if",),
-    "${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' }}",
+    "${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' && matrix.module != 'world-management-service' }}",
     "ci workflow",
 )
 require_equal(
@@ -703,7 +706,7 @@ slow_partition_artifact_step = find_step(
 )
 require_equal(
     slow_partition_artifact_step, ("if",),
-    "${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service') }}",
+    "${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service' || matrix.module == 'world-management-service') }}",
     "ci workflow",
 )
 require_equal(
@@ -736,9 +739,10 @@ require_equal(gradle_profile_step, ("with", "retention-days"), "14", "ci workflo
 for module, job_id, display, prefix in (
     ("account-service", "account-coverage-aggregate", "Account", "ACCOUNT"),
     ("game-session-service", "game-session-coverage-aggregate", "Game Session", "GAME_SESSION"),
+    ("world-management-service", "world-coverage-aggregate", "World", "WORLD"),
 ):
     aggregate_job = value_at(ci, ("jobs", job_id), "ci workflow")
-    group_id = "build-and-test-" + ("account" if module == "account-service" else "game-session")
+    group_id = "build-and-test-" + ("account" if module == "account-service" else "world" if module == "world-management-service" else "game-session")
     require_equal(aggregate_job, ("needs",), ["changes", group_id], "ci workflow")
     require_contains(aggregate_job, ("if",), f"needs.{group_id}.result == 'success'", "ci workflow")
     require_contains(
@@ -824,6 +828,7 @@ capture_scripts = []
 for module, job_id, display in (
     ("account-service", "account-coverage-aggregate", "Account"),
     ("game-session-service", "game-session-coverage-aggregate", "Game Session"),
+    ("world-management-service", "world-coverage-aggregate", "World"),
 ):
     capture = find_step(
         ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow"
@@ -838,8 +843,8 @@ const owner = "example", repository = "firemud", runId = 70;
 const testedMerge = "a".repeat(40), nativeHead = "b".repeat(40), baseSha = "c".repeat(40);
 const wrongSha = "d".repeat(40);
 const repositoryFullName = `${owner}/${repository}`;
-const coreJobRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  Array.from({ length: 4 }, (_, index) => index + 1).map(partition => ({
+const coreJobRows = ["account-service", "game-session-service", "world-management-service"].flatMap((module, index) =>
+  Array.from({ length: module === "world-management-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
     id: 100 + index * 10 + partition, run_id: runId, head_sha: nativeHead,
     name: `Build and Test (${module} / ${partition})`, status: "completed",
     conclusion: "success", started_at: "2026-10-30T01:00:00Z",
@@ -851,8 +856,8 @@ const jobRows = coreJobRows.concat(Array.from({ length: 97 }, (_, index) => ({
   name: `Unrelated completed job ${index}`, status: "completed", conclusion: "success",
   started_at: "2026-10-30T01:00:00Z", completed_at: "2026-10-30T02:00:00Z",
 })));
-const coreArtifactRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  Array.from({ length: 4 }, (_, index) => index + 1).map(partition => ({
+const coreArtifactRows = ["account-service", "game-session-service", "world-management-service"].flatMap((module, index) =>
+  Array.from({ length: module === "world-management-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
     id: 700 + index * 10 + partition,
     name: `slow-service-ci-partition-${runId}-${testedMerge}-attempt-1-${module}-partition-${partition}`,
     expired: false, size_in_bytes: 1024, created_at: "2026-10-30T02:00:00Z",
@@ -984,8 +989,8 @@ async function runFor(embedded, options = {}) {
 }
 
 (async () => {
-  assert.equal(jobRows.length, 105);
-  assert.equal(artifactRows.length, 105);
+  assert.equal(jobRows.length, 107);
+  assert.equal(artifactRows.length, 107);
   for (const embedded of input.scripts) {
     assert.ok(embedded.script.includes("capture-slow-service-provenance.cjs"));
     assert.ok(embedded.script.includes("module: process.env.CI_MODULE"));
@@ -1073,7 +1078,7 @@ async function runFor(embedded, options = {}) {
       { label: "wrong attempt", options: { eventName: "pull_request", runAttempt: 1, apiRunAttempt: 2 } },
       { label: "wrong repository", options: { eventName: "pull_request", runRepository: "other/repository" } },
       { label: "wrong dispatch title", options: { eventName: "workflow_dispatch", refName: "release/2026", runName: "CI — Validation develop" } },
-      { label: "unsupported module", options: { eventName: "pull_request", module: "world-management-service" } },
+      { label: "unsupported module", options: { eventName: "pull_request", module: "unsupported-service" } },
     ];
     for (const { label, options } of wrongIdentityCases) {
       const result = await runFor(embedded, options);
@@ -1157,7 +1162,7 @@ if re.findall(r"options\.release\.set\((\d+)\)", gradle_build) != ["25", "25"]:
 buf_java_setup = find_step(ci, "buf-check", "Set up Java for remote generator compatibility proof", "ci workflow")
 require_equal(buf_java_setup, ("with", "java-version"), "25", "ci workflow")
 for expected in (
-    'val slowServiceCiPartitionCounts = mapOf("account-service" to 4, "game-session-service" to 4)',
+    'val slowServiceCiPartitionCounts = mapOf("account-service" to 4, "game-session-service" to 4, "world-management-service" to 2)',
     'providers.gradleProperty("slowServiceCiPartitionModule").orNull',
     'if ((slowServiceCiPartition == null) != (slowServiceCiPartitionModule == null))',
     'slowServiceCiPartitionCounts[slowServiceCiPartitionModule]',
@@ -1328,14 +1333,15 @@ for group_id in groups:
     require_list_item(ci, ("jobs", "validation-gate", "needs"), group_id, "ci workflow")
 for variable, job_id in (("BUILD_AND_TEST", "build-and-test"),
                          ("BUILD_AND_TEST_ACCOUNT", "build-and-test-account"),
-                         ("BUILD_AND_TEST_GAME_SESSION", "build-and-test-game-session")):
+                         ("BUILD_AND_TEST_GAME_SESSION", "build-and-test-game-session"),
+                         ("BUILD_AND_TEST_WORLD", "build-and-test-world")):
     require_equal(gate, ("env", variable), "${{ needs." + job_id + ".result }}", "ci workflow")
 require_equal(gate, ("env", "OTHER_MODULES_AFFECTED"),
               "${{ needs.changes.outputs.other_module_check_matrix != '[]' }}", "ci workflow")
 base_env = {name: "success" for name in gate["env"]}
 for name in ("DOCS_CHANGED", "FRONTEND_CHANGED", "PYTHON_CHANGED", "DESIGN_DOCS_CHANGED",
              "VALIDATION_PYTHON_CHANGED", "POSTGRES_RUNTIME_PROOF_CHANGED",
-             "ACCOUNT_MODULE_AFFECTED", "GAME_SESSION_MODULE_AFFECTED", "OTHER_MODULES_AFFECTED"):
+             "ACCOUNT_MODULE_AFFECTED", "GAME_SESSION_MODULE_AFFECTED", "WORLD_MODULE_AFFECTED", "OTHER_MODULES_AFFECTED"):
     base_env[name] = "true"
 base_env["LIGHTWEIGHT_ONLY"] = "false"
 base_env["AFFECTED_MODULES"] = '["account-service","game-session-service","common-security"]'
@@ -1348,6 +1354,7 @@ for flag, result, aggregate in (
     ("OTHER_MODULES_AFFECTED", "BUILD_AND_TEST", None),
     ("ACCOUNT_MODULE_AFFECTED", "BUILD_AND_TEST_ACCOUNT", "ACCOUNT_COVERAGE_AGGREGATE"),
     ("GAME_SESSION_MODULE_AFFECTED", "BUILD_AND_TEST_GAME_SESSION", "GAME_SESSION_COVERAGE_AGGREGATE"),
+    ("WORLD_MODULE_AFFECTED", "BUILD_AND_TEST_WORLD", "WORLD_COVERAGE_AGGREGATE"),
 ):
     for outcome in ("failure", "cancelled", "skipped", "timed_out", ""):
         gate_case({result: outcome}, False)
