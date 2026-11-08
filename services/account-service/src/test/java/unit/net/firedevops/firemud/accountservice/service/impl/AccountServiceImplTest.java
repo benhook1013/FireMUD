@@ -1272,6 +1272,8 @@ class AccountServiceImplTest {
     }
     var result = assertThrows(AuthenticationException.class, f::browserJoin);
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", result.getCode());
+    assertEquals(
+        "Gameplay target authority is unavailable; retry the same request", result.getMessage());
     assertSame(failure, result.getCause());
     org.mockito.Mockito.verify(accountJoinOperationRepository)
         .recordCanonicalAttemptFailure(
@@ -3026,7 +3028,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapWorldsDoesNotMaskUnexpectedJwtParserRuntimeFailure() {
+  void listBootstrapWorldsMapsUnexpectedJwtParserFailureToUnavailableWithCause() {
     JwtUtil jwtUtil = org.mockito.Mockito.mock(JwtUtil.class);
     IllegalStateException parserFailure = new IllegalStateException("boom");
     when(jwtUtil.parseToken("boom-token")).thenThrow(parserFailure);
