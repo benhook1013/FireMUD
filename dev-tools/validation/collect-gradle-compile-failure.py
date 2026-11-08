@@ -10,6 +10,7 @@ import selectors
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from collections import deque
 from pathlib import Path
@@ -38,14 +39,263 @@ def safe_file(root, path):
         return False
 
 
-def capture_log(source, destination, path):
+# Account CI-only observation. No build process is signalled or restarted.
+PROC_ROOT = Path('/proc')
+STALL_IDLE_SECONDS = 300
+STALL_BATCH_SECONDS = 90
+STALL_COMMAND_SECONDS = 5
+STALL_MAX_PROCESSES = 8
+STALL_DUMP_BYTES = 128 * 1024
+DAEMON_PID = re.compile(rb'The client will now receive all logging from the daemon \(pid: ([0-9]+)\)')
+
+
+def owns_session(pid):
+    try:
+        return os.getpgid(pid) == pid and os.getsid(pid) == pid
+    except ProcessLookupError:
+        return False
+
+
+def stop_stall_session(signum, frame):
+    if owns_session(os.getpid()):
+        os.killpg(os.getpid(), signal.SIGKILL)
+    raise SystemExit(128 + signum)
+
+
+def java_identity(pid):
+    """Classify without retaining argv, environment, or arbitrary process names."""
+    try:
+        path = PROC_ROOT / str(pid)
+        if path.stat().st_uid != os.getuid():
+            return None
+        fields = (path / 'stat').read_bytes().rsplit(b')', 1)[1].split()
+        with (path / 'cmdline').open('rb') as stream:
+            arguments = stream.read(8193)
+        if len(arguments) > 8192:
+            return None
+        arguments = arguments.split(b'\0')
+        if b'org.gradle.launcher.daemon.bootstrap.GradleDaemon' in arguments:
+            role = 'daemon'
+        elif (b'worker.org.gradle.process.internal.worker.GradleWorkerMain' in arguments
+              and any(arg.startswith(b'Gradle Test Executor ') for arg in arguments)):
+            role = 'test-worker'
+        else:
+            return None
+        executable = (path / 'exe').resolve(strict=True)
+        if executable.name != 'java':
+            return None
+        return {'pid': pid, 'ppid': int(fields[1]), 'start': int(fields[19]),
+                'state': fields[0].decode('ascii'), 'role': role,
+                'cpu_ticks': int(fields[11]) + int(fields[12]), 'rss_pages': int(fields[21]),
+                'jcmd': str(executable.with_name('jcmd'))}
+    except (OSError, ValueError, IndexError, UnicodeError):
+        return None
+
+
+def stall_processes(daemon):
+    current = java_identity(daemon['pid'])
+    if not current or (current['start'], current['role']) != (daemon['start'], 'daemon'):
+        return []
+    result = [current]
+    # Workers are direct daemon children. Do not inspect unrelated JVMs or their arguments.
+    with os.scandir(PROC_ROOT) as entries:
+        paths = [Path(entry.path) for _, entry in zip(range(MAX_VISITED_ENTRIES), entries)
+                 if entry.name.isdigit()]
+    for path in paths:
+        if not path.name.isdigit():
+            continue
+        try:
+            fields = (path / 'stat').read_bytes().rsplit(b')', 1)[1].split()
+            if int(fields[1]) != daemon['pid']:
+                continue
+        except (OSError, ValueError, IndexError):
+            continue
+        worker = java_identity(int(path.name))
+        if worker and worker['role'] == 'test-worker':
+            result.append(worker)
+        if len(result) >= STALL_MAX_PROCESSES:
+            break
+    return result
+
+
+def sanitized_threads(raw):
+    """Allow only stack/state/monitor syntax; thread names and diagnostic prose are private."""
+    lines = []
+    for line in raw.decode('utf-8', errors='replace').splitlines():
+        if line.startswith('"'):
+            identifiers = re.findall(r'(?:#\d+|(?:tid|nid)=0x[0-9a-f]+)(?=\s|$)', line[line.rfind(chr(34)) + 1:])
+            lines.append('thread (name omitted) ' + ' '.join(identifiers))
+        elif re.fullmatch(r'\s*java.lang.Thread.State: [A-Z_]+(?: \([a-z ]+\))?', line):
+            lines.append(line.strip())
+        elif re.fullmatch(r'\s*at [A-Za-z0-9_.$/@+\-]+\([A-Za-z0-9_.$: /\-]+\)', line):
+            lines.append(line.strip())
+        elif re.fullmatch(r'\s*- (?:locked|waiting on|waiting to lock|parking to wait for)\s+<0x[0-9a-f]+> \(a [A-Za-z0-9_.$]+\)', line):
+            lines.append(line.strip())
+    return '\n'.join(lines)
+
+
+def thread_snapshot(identity):
+    facts = {key: value for key, value in identity.items() if key != 'jcmd'}
+    current = java_identity(identity['pid'])
+    # Counters may change; only identity and lineage must remain fixed.
+    keys = ('pid', 'ppid', 'start', 'role', 'jcmd')
+    if not current or any(current[key] != identity[key] for key in keys):
+        return {**facts, 'status': 'exited-or-changed'}
+    process = None
+    selector = selectors.DefaultSelector()
+    raw = bytearray()
+    status = 'complete'
+    try:
+        process = subprocess.Popen([identity['jcmd'], str(identity['pid']), 'Thread.print', '-l'],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL)
+        selector.register(process.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + STALL_COMMAND_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                status = 'timeout'
+                break
+            chunk = os.read(process.stdout.fileno(), min(8192, STALL_DUMP_BYTES - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+            if len(raw) >= STALL_DUMP_BYTES:
+                status = 'limited'
+                break
+        if status == 'complete':
+            process.wait(timeout=max(0.01, deadline - time.monotonic()))
+            if process.returncode:
+                status = 'failed'
+    except subprocess.TimeoutExpired:
+        status = 'timeout'
+    except OSError:
+        status = 'unavailable'
+    finally:
+        selector.close()
+        if process is not None:
+            if process.poll() is None:
+                process.kill()  # Only our jcmd helper, never the target JVM.
+            process.wait()
+            process.stdout.close()
+    current = java_identity(identity['pid'])
+    if not current or any(current[key] != identity[key] for key in keys):
+        return {**facts, 'status': 'exited-or-changed'}
+    return {**facts, 'status': status, 'threads': sanitized_threads(raw)}
+
+
+def collect_stall(root, output, daemon):
+    root = root.resolve()
+    relative = output.absolute().relative_to(root)
+    cursor = root
+    for part in relative.parts:
+        cursor /= part
+        if cursor.is_symlink():
+            raise ValueError('Stall evidence must not traverse symlinks')
+    output.mkdir(parents=True, exist_ok=True)
+    # Each invocation owns a fresh directory; never overwrite prior evidence.
+    target = Path(tempfile.mkdtemp(prefix='observation-', dir=output))
+    started = time.monotonic()
+    for number in range(2):
+        if number:
+            time.sleep(max(0, 30 - (time.monotonic() - started)))
+        processes = stall_processes(daemon) if daemon else []
+        report = {'snapshot': number + 1, 'reason': '300 seconds without Gradle output',
+                  'daemon_attribution': 'verified' if processes else 'unavailable',
+                  'process_limit': STALL_MAX_PROCESSES, 'process_limit_reached': len(processes) >= STALL_MAX_PROCESSES,
+                  'processes': [thread_snapshot(process) for process in processes]}
+        payload = json.dumps(report, indent=2) + '\n'
+        (target / f'snapshot-{number + 1}.json').write_text(payload)
+        # Independent child output: a blocked log sink cannot stall Gradle capture.
+        print('FIREMUD_STALL_SNAPSHOT ' + json.dumps(
+            {key: value for key, value in report.items() if key != 'processes'}), flush=True)
+        for process in report['processes']:
+            print(json.dumps({key: value for key, value in process.items() if key != 'threads'}), flush=True)
+            print(process.get('threads', ''), flush=True)
+
+
+class StallObserver:
+    """One independent, bounded diagnostic batch; capture remains the sole build-output reader."""
+    def __init__(self, root, output):
+        self.root, self.output = root, output
+        self.last_activity = time.monotonic()
+        self.prefix = b''
+        self.daemon = None
+        self.child = None
+        self.started = None
+        self.attempted = False
+
+    def observe(self, chunk):
+        self.last_activity = time.monotonic()
+        data = self.prefix + chunk
+        for match in DAEMON_PID.finditer(data):
+            candidate = java_identity(int(match[1]))
+            if candidate and candidate['role'] == 'daemon':
+                self.daemon = candidate
+        self.prefix = data[-256:]
+
+    def tick(self):
+        now = time.monotonic()
+        if self.child and now - self.started >= STALL_BATCH_SECONDS:
+            self.close()
+        if self.attempted or now - self.last_activity < STALL_IDLE_SECONDS:
+            return
+        self.attempted = True
+        try:
+            self.child = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), '--stall-daemon',
+                 json.dumps(self.daemon), '--root', str(self.root), '--output', str(self.output)],
+                stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+            self.started = now
+        except OSError:
+            pass  # Diagnostics never change the original check result.
+
+    def close(self):
+        if self.child:
+            # The session contains only this observer and its jcmd helpers.
+            # Always reap its group, including a helper surviving an observer error.
+            try:
+                if owns_session(self.child.pid):
+                    os.killpg(self.child.pid, signal.SIGKILL)
+                    self.child.wait()
+                else:
+                    self.child.poll()  # Reap if exited; never wait on an unowned process.
+            except ProcessLookupError:
+                self.child.wait()
+            self.child = None
+
+
+def capture_chunks(source, observer):
+    if observer is None:
+        reader = getattr(source, 'read1', source.read)
+        while chunk := reader(64 * 1024):
+            yield chunk
+        return
+    selector = selectors.DefaultSelector()
+    selector.register(source, selectors.EVENT_READ)
+    try:
+        while True:
+            observer.tick()
+            if not selector.select(1):
+                continue
+            chunk = os.read(source.fileno(), 64 * 1024)
+            if not chunk:
+                break
+            observer.observe(chunk)
+            yield chunk
+    finally:
+        selector.close()
+        observer.close()
+
+
+def capture_log(source, destination, path, observer=None):
     """Forward immediately; retain only a bounded tail, even if capture fails."""
     tail = deque()
     length = 0
     forwarding = True
     failed = False
-    reader = getattr(source, 'read1', source.read)
-    while chunk := reader(64 * 1024):
+    for chunk in capture_chunks(source, observer):
         if forwarding:
             try:
                 destination.write(chunk)
@@ -317,9 +567,26 @@ def main():
     parser.add_argument('--log', type=Path)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--check-exit', type=int)
+    parser.add_argument('--stall-output', type=Path)
+    parser.add_argument('--stall-daemon')
     args = parser.parse_args()
+    if args.stall_daemon is not None:
+        # Independent ceiling also applies if the capture parent is abruptly killed.
+        if not owns_session(os.getpid()):
+            return 2  # Private mode must be started by our observer, in its own session.
+        signal.signal(signal.SIGALRM, stop_stall_session)
+        signal.alarm(STALL_BATCH_SECONDS)
+        collect_stall(args.root, args.output, json.loads(args.stall_daemon))
+        return 0
     if args.capture_log is not None:
-        return capture_log(sys.stdin.buffer, sys.stdout.buffer, args.capture_log)
+        observer = StallObserver(args.root, args.stall_output) if args.stall_output else None
+        if observer:
+            def stop(signum, frame):
+                observer.close()
+                raise SystemExit(128 + signum)
+            for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                signal.signal(signum, stop)
+        return capture_log(sys.stdin.buffer, sys.stdout.buffer, args.capture_log, observer)
     if any(value is None for value in (args.root, args.log, args.output, args.check_exit)):
         parser.error('collection requires --root, --log, --output and --check-exit')
     if 0 < args.check_exit < 128:
