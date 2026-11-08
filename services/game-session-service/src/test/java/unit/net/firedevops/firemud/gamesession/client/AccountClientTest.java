@@ -554,7 +554,14 @@ class AccountClientTest {
           .isEqualTo("AUTH_UNAVAILABLE");
     }
     for (String tenant :
-        List.of("", "tenant", "0", "23", " 22", "022", "33333333-3333-4333-8333-333333333333")) {
+        List.of(
+            "",
+            "tenant",
+            "22",
+            "00000000-0000-0000-0000-000000000000",
+            "22222222-2222-4222-8222-22222222222A",
+            " " + directTextTarget().tenantId(),
+            "33333333-3333-4333-8333-333333333333")) {
       when(fixture.initialStub().joinPublicProductionMembership(any()))
           .thenReturn(success.toBuilder().setTenantId(tenant).build());
       assertThat(join(fixture.client(), directTextContext()).getError().getCode())
