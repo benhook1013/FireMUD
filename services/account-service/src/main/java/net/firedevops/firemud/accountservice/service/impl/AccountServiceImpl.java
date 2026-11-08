@@ -572,7 +572,9 @@ public class AccountServiceImpl implements AccountService {
       throw failure;
     } catch (RuntimeException failure) {
       throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE", STALE_CONNECT_SCOPE_MESSAGE, failure);
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Gameplay target authority is unavailable; retry the same request",
+          failure);
     }
   }
 
