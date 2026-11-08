@@ -145,7 +145,8 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
     CanonicalJoinOperationEvidence operation =
         joinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId).orElseThrow();
     requireExactOperation(operation, account.getId(), scope, requestId, callerBinding);
-    if ("COMMITTED".equals(operation.status()) || "FAILED".equals(operation.status())) {
+    // Definitive FAILED receipts are replayed by the adapter before policy evaluation.
+    if ("COMMITTED".equals(operation.status())) {
       return operation;
     }
     if (!"PENDING".equals(operation.status())) {
