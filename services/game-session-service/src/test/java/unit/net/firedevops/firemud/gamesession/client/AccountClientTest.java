@@ -176,13 +176,15 @@ class AccountClientTest {
     var context = directTextContext();
     for (var mismatched :
         List.of(
-            context.toBuilder().setTenantId("23").build(),
+            context.toBuilder().setTenantId("33333333-3333-4333-8333-333333333333").build(),
             context.toBuilder().setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce902").build(),
             context.toBuilder()
                 .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328f")
                 .build(),
             context.toBuilder().setPlayableStateScope("ISOLATED").build(),
-            context.toBuilder().setGameInstanceId("10").build())) {
+            context.toBuilder()
+                .setGameInstanceId("55555555-5555-4555-8555-555555555555")
+                .build())) {
       assertThat(
               client
                   .issueDirectTextConnectScope(mismatched, directTextTarget())
@@ -526,7 +528,8 @@ class AccountClientTest {
       assertThat(join(fixture.client(), directTextContext()).getError().getCode())
           .isEqualTo("AUTH_UNAVAILABLE");
     }
-    for (String tenant : List.of("", "tenant", "0", "23", " 22", "022")) {
+    for (String tenant :
+        List.of("", "tenant", "0", "23", " 22", "022", "33333333-3333-4333-8333-333333333333")) {
       when(fixture.initialStub().joinPublicProductionMembership(any()))
           .thenReturn(success.toBuilder().setTenantId(tenant).build());
       assertThat(join(fixture.client(), directTextContext()).getError().getCode())
@@ -604,7 +607,10 @@ class AccountClientTest {
     when(fixture.initialStub().joinPublicProductionMembership(any()))
         .thenThrow(Status.UNAVAILABLE.asRuntimeException());
     when(fixture.retryStub().joinPublicProductionMembership(any()))
-        .thenReturn(joinSuccess("JOINED", true).toBuilder().setTenantId("23").build());
+        .thenReturn(
+            joinSuccess("JOINED", true).toBuilder()
+                .setTenantId("33333333-3333-4333-8333-333333333333")
+                .build());
 
     assertThat(join(fixture.client(), directTextContext()).getError().getCode())
         .isEqualTo("AUTH_UNAVAILABLE");
