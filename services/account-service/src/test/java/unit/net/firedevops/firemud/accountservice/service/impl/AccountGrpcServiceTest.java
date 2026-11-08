@@ -390,8 +390,17 @@ class AccountGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", invalid.response().getError().getCode());
   }
 
-  @Test
-  void joinPublicProductionMembershipPreservesStoredFailureOutcome() {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "CONNECT_SCOPE_MISMATCH",
+        "CONNECT_SCOPE_INVALID",
+        "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+        "TENANT_BILLING_BLOCKED",
+        "IDEMPOTENCY_CONFLICT",
+        "ENTITLEMENT_UNAVAILABLE"
+      })
+  void joinPublicProductionMembershipPreservesStoredFailureOutcome(String outcome) {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
@@ -402,15 +411,7 @@ class AccountGrpcServiceTest {
                 Mockito.any(JoinPublicProductionRequest.class)))
         .thenReturn(
             new JoinPublicProductionResult(
-                false,
-                "ENTITLEMENT_UNAVAILABLE",
-                ACCOUNT_UUID,
-                DIRECT_TENANT,
-                0L,
-                0L,
-                0L,
-                false,
-                true));
+                false, outcome, ACCOUNT_UUID, DIRECT_TENANT, 0L, 0L, 0L, false, true));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
@@ -421,7 +422,7 @@ class AccountGrpcServiceTest {
 
     assertTrue(observer.completed());
     assertFalse(observer.response().getSuccess());
-    assertEquals("ENTITLEMENT_UNAVAILABLE", observer.response().getOutcomeCode());
+    assertEquals(outcome, observer.response().getOutcomeCode());
     assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
     assertEquals(DIRECT_TENANT.toString(), observer.response().getTenantId());
     assertEquals("0", observer.response().getMembershipId());

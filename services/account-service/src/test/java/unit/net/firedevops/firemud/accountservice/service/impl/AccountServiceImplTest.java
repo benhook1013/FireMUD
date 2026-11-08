@@ -1310,6 +1310,46 @@ class AccountServiceImplTest {
     verifyNoInteractions(f.terminal);
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void canonicalJoinExpiryAtCommitGatesDoesNotRewritePendingIntent(boolean afterCoordinator) {
+    var f = canonicalJoinFixture();
+    var clock = org.mockito.Mockito.mock(Clock.class);
+    when(clock.instant())
+        .thenAnswer(
+            invocation ->
+                Instant.parse(f.scope.evaluatedAt())
+                    .plusSeconds(!afterCoordinator || f.joined.get() ? 120 : 1));
+    f.compose(clock);
+
+    assertEquals(
+        "CONNECT_SCOPE_INVALID",
+        assertThrows(AuthenticationException.class, f::browserJoin).getCode());
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
+        .insertCanonicalIntent(f.requestId, f.scope, f.binding);
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finishCanonicalFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .recordCanonicalAttemptFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    // This mock-level proof observes rollback invocation, not physical SQL rollback.
+    org.mockito.Mockito.verify(transactionManager).rollback(org.mockito.ArgumentMatchers.any());
+    if (afterCoordinator) {
+      org.mockito.Mockito.verify(f.terminal)
+          .commitCanonicalJoin(f.scope, f.requestId, f.binding, null, null, null);
+    } else {
+      verifyNoInteractions(f.terminal);
+    }
+  }
+
   @Test
   void canonicalJoinReturnsCommittedReceiptWhenScopeExpiresAfterCommit() {
     var f = canonicalJoinFixture();

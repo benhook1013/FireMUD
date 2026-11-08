@@ -1121,13 +1121,17 @@ public class AccountServiceImpl implements AccountService {
 
   private void recordCanonicalJoinFailure(
       CanonicalJoinScopeV2 scope, String requestId, String callerBinding, String failureCode) {
+    // Expiry is terminal for this caller attempt, not a new durable operation outcome. The
+    // reader rejects the same expired scope without rewriting its retained intent; preserve
+    // that behavior when time crosses the boundary during provider I/O or the commit gate.
+    if ("CONNECT_SCOPE_INVALID".equals(failureCode)) return;
     joinTransactionTemplate.executeWithoutResult(
         status -> {
           lockCanonicalScopeAccount(scope);
           Optional<CanonicalJoinOperationEvidence> found =
               accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId);
           if (found.isEmpty() || !"PENDING".equals(found.orElseThrow().status())) return;
-          if (List.of("CONNECT_SCOPE_MISMATCH", "CONNECT_SCOPE_INVALID").contains(failureCode)) {
+          if ("CONNECT_SCOPE_MISMATCH".equals(failureCode)) {
             accountJoinOperationRepository.finishCanonicalFailure(
                 requestId, scope, callerBinding, failureCode);
           } else {
