@@ -111,10 +111,15 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
   }
 
   public Mono<Void> execute(HttpHeaders headers, WebSocketHandler handler) {
-    ReactorNettyWebSocketClient current = client;
-    if (current == null)
-      throw new IllegalStateException("Authenticated gameplay client unavailable");
-    return current.execute(upstream, headers, handler);
+    return Mono.defer(
+        () -> {
+          ReactorNettyWebSocketClient current = client;
+          if (current == null) {
+            return Mono.error(
+                new IllegalStateException("Authenticated gameplay client unavailable"));
+          }
+          return current.execute(upstream, headers, handler);
+        });
   }
 
   public URI upstream() {

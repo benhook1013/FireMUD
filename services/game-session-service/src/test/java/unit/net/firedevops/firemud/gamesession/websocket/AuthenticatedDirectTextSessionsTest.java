@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +33,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketSession;
 
 /** Process-local custody proof with controlled Account result/cleanup sources, not admission. */
@@ -86,7 +88,7 @@ class AuthenticatedDirectTextSessionsTest {
           .isEqualTo("Authenticated gameplay authority unavailable");
     }
     verify(outcome, never()).withOwnedPrivateResult(any());
-    sessions.close(socket);
+    sessions.close(socket, CloseStatus.NORMAL);
     verify(outcome).close();
   }
 
@@ -107,7 +109,7 @@ class AuthenticatedDirectTextSessionsTest {
 
     assertThat(secret).containsOnly('\0');
     verify(outcome, never()).close();
-    sessions.close(socket);
+    sessions.close(socket, CloseStatus.NORMAL);
     verify(outcome).close();
   }
 
@@ -124,7 +126,7 @@ class AuthenticatedDirectTextSessionsTest {
             connection.<Boolean>withLogin(
                 (original, result) -> {
                   assertThat(result).isSameAs(fixture.result());
-                  assertThatThrownBy(() -> sessions.close(socket))
+                  assertThatThrownBy(() -> sessions.close(socket, CloseStatus.NORMAL))
                       .isInstanceOf(IllegalStateException.class);
                   assertThatThrownBy(sessions::closeAll).isInstanceOf(IllegalStateException.class);
                   assertThat(sessions.require(socket)).isSameAs(connection);
@@ -135,7 +137,7 @@ class AuthenticatedDirectTextSessionsTest {
     assertThatThrownBy(
             () -> connection.withCurrent(fixture.original(), fixture.result(), transport -> true))
         .isInstanceOf(IllegalStateException.class);
-    sessions.close(socket);
+    sessions.close(socket, CloseStatus.NORMAL);
     verify(fixture.cleanup()).abandonAndRetire(fixture.original());
     assertThatThrownBy(fixture.result()::compactJwtBytes).isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> sessions.require(socket)).isInstanceOf(IllegalStateException.class);
@@ -161,16 +163,18 @@ class AuthenticatedDirectTextSessionsTest {
                         return true;
                       }));
       assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-      var closer = executor.submit(() -> sessions.close(socket));
+      var closer = executor.submit(() -> sessions.close(socket, CloseStatus.NORMAL));
       for (int i = 0; i < 1000 && connection.isCurrent(); i++) Thread.sleep(1);
       assertThat(connection.isCurrent()).isFalse();
       assertThat(closer.isDone()).isFalse();
       verify(fixture.cleanup(), never()).abandonAndRetire(any());
+      verify(socket, never()).close(any());
       release.countDown();
       assertThatThrownBy(() -> borrower.get(5, TimeUnit.SECONDS))
           .hasCauseInstanceOf(IllegalStateException.class);
       closer.get(5, TimeUnit.SECONDS);
       verify(fixture.cleanup()).abandonAndRetire(fixture.original());
+      verify(socket).close(CloseStatus.NORMAL);
     } finally {
       release.countDown();
     }
@@ -210,9 +214,10 @@ class AuthenticatedDirectTextSessionsTest {
       var current = sessions.require(replacement);
       assertThatThrownBy(() -> current.withLogin((original, result) -> true))
           .isInstanceOf(IllegalStateException.class);
-      sessions.close(socket);
+      verify(socket).close(new CloseStatus(1012, "backend_generation_closed"));
+      sessions.close(socket, CloseStatus.NORMAL);
       assertThat(sessions.require(replacement)).isSameAs(current);
-      sessions.close(replacement);
+      sessions.close(replacement, CloseStatus.NORMAL);
       verify(fixture.cleanup()).abandonAndRetire(fixture.original());
     } finally {
       release.countDown();
@@ -313,10 +318,34 @@ class AuthenticatedDirectTextSessionsTest {
       shutdown.get(5, TimeUnit.SECONDS);
       verify(firstFixture.cleanup()).abandonAndRetire(firstFixture.original());
       verify(secondFixture.cleanup()).abandonAndRetire(secondFixture.original());
+      verify(first).close(new CloseStatus(1012, "backend_generation_closed"));
+      verify(second).close(new CloseStatus(1012, "backend_generation_closed"));
       assertThatThrownBy(() -> sessions.open(newSocket)).isInstanceOf(IllegalStateException.class);
     } finally {
       release.countDown();
     }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"1000, logout", "1011, internal_error"})
+  void callerCloseStatusIsRetainedAfterExactOriginalCleanup(int code, String reason)
+      throws Exception {
+    var socket = socket();
+    sessions.open(socket);
+    var fixture = fixture();
+    var connection = sessions.require(socket);
+    connection.login(fixture.owner(), "player@example.test", "secret".toCharArray());
+    var status = new CloseStatus(code, reason);
+
+    sessions.close(socket, status);
+    sessions.close(socket, new CloseStatus(1012, "backend_generation_closed"));
+
+    var order = inOrder(fixture.cleanup(), socket);
+    order.verify(fixture.cleanup()).abandonAndRetire(fixture.original());
+    order.verify(socket).close(status);
+    verify(socket, org.mockito.Mockito.times(1)).close(any());
+    assertThat(connection.isCurrent()).isFalse();
+    assertThatThrownBy(fixture.result()::compactJwtBytes).isInstanceOf(IllegalStateException.class);
   }
 
   private static WebSocketSession socket() throws Exception {
