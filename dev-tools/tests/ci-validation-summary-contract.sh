@@ -37,7 +37,8 @@ expected_markers = {
     'Declare Game Session CI partition count: 4': "${{ matrix.module == 'game-session-service' }}",
 }
 marker_steps = [
-    step for step in ci['jobs']['build-and-test']['steps']
+    step for group in ('build-and-test-account', 'build-and-test-game-session')
+    for step in ci['jobs'][group]['steps']
     if step.get('name', '').startswith('Declare ')
     and 'CI partition count:' in step.get('name', '')
 ]
@@ -343,7 +344,30 @@ async function noWrites(config, reject = false) {
   const skipped = clone(jobs).filter(x => !x.name.startsWith('Build and Test ('));
   skipped.find(x => x.name === 'Account Coverage Aggregate').conclusion = 'skipped';
   skipped.find(x => x.name === 'Game Session Coverage Aggregate').conclusion = 'skipped';
-  skipped.push({ ...row('Build and Test ($' + '{{ matrix.module }} / $' + '{{ matrix.partition }})', 201), conclusion: 'skipped' });
+  skipped.push({ ...row('Build and Test ($' + '{{ matrix.module }} / $' + '{{ matrix.partition }})', 201), conclusion: 'skipped', steps: [] });
+  const groupPlaceholder = (module, id) => ({
+    ...row(`Build and Test (${module} / $` + '{{ matrix.partition }})', id),
+    conclusion: 'skipped', steps: [],
+  });
+  const allGroupsSkipped = [...clone(skipped), groupPlaceholder('account-service', 202), groupPlaceholder('game-session-service', 203)];
+  const groupedSkippedRun = harness({ jobs: allGroupsSkipped }); await groupedSkippedRun.run();
+  assert.equal(groupedSkippedRun.calls.creates.length, 1);
+  // A selected group's real rows may coexist with skipped sibling groups.
+  const accountOnly = clone(jobs).filter(job => !job.name.startsWith('Build and Test (game-session-service') && job.name !== 'Build and Test (common-security / full)');
+  accountOnly.find(job => job.name === 'Game Session Coverage Aggregate').conclusion = 'skipped';
+  accountOnly.push(groupPlaceholder('game-session-service', 202), clone(skipped[skipped.length - 1]));
+  const accountOnlyRun = harness({ jobs: accountOnly }); await accountOnlyRun.run();
+  assert.equal(accountOnlyRun.calls.creates.length, 1);
+  const otherOnly = clone(jobs).filter(job => !job.name.startsWith('Build and Test (account-service') && !job.name.startsWith('Build and Test (game-session-service'));
+  for (const job of otherOnly.filter(job => job.name.endsWith('Coverage Aggregate'))) job.conclusion = 'skipped';
+  otherOnly.push(groupPlaceholder('account-service', 202), groupPlaceholder('game-session-service', 203));
+  const otherOnlyRun = harness({ jobs: otherOnly }); await otherOnlyRun.run();
+  assert.equal(otherOnlyRun.calls.creates.length, 1);
+  await noWrites({ jobs: [...clone(jobs), groupPlaceholder('account-service', 202)] }, true);
+  await noWrites({ jobs: [...clone(allGroupsSkipped), groupPlaceholder('account-service', 204)] }, true);
+  const executedPlaceholder = clone(allGroupsSkipped);
+  executedPlaceholder[executedPlaceholder.length - 1].steps = [{name: 'Run checks', conclusion: 'success'}];
+  await noWrites({ jobs: executedPlaceholder }, true);
   const skippedRun = harness({ jobs: skipped }); await skippedRun.run();
   assert.match(skippedRun.calls.creates[0].body, /Service build\/test matrix: `skipped`/);
   assert.match(skippedRun.calls.creates[0].body, /Account coverage aggregation: `skipped`/);

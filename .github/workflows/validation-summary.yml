@@ -157,9 +157,11 @@ jobs:
               "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
               "world-management-service", "hosted-environment-identity-controller", "load-testing",
             ]);
-            const placeholders = new Set([
-              "Build and Test ($" + "{{ matrix.module }})",
-              "Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})",
+            const placeholders = new Map([
+              ["Build and Test ($" + "{{ matrix.module }})", "legacy"],
+              ["Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})", "other"],
+              ["Build and Test (account-service / $" + "{{ matrix.partition }})", "account-service"],
+              ["Build and Test (game-session-service / $" + "{{ matrix.partition }})", "game-session-service"],
             ]);
             const aggregateNames = new Map([
               ["account-service", "Account Coverage Aggregate"],
@@ -185,7 +187,7 @@ jobs:
                 }
                 matrix.push({ job, module, partition: partition || null });
               } else if (placeholders.has(job.name) && job.conclusion === "skipped") {
-                matrix.push({ job, placeholder: true });
+                matrix.push({ job, placeholder: placeholders.get(job.name) });
               } else {
                 throw new Error("Unknown Validation source job: " + job.name);
               }
@@ -244,8 +246,14 @@ jobs:
                 invalidSlowServiceMatrix = true;
               }
             }
+            const invalidPlaceholder = matrix.some(entry => entry.placeholder && (
+              entry.job.steps?.some(step => step.conclusion !== "skipped") ||
+              (entry.placeholder === "legacy" ? matrix.length !== 1 :
+                matrix.some(candidate => candidate.module &&
+                  (entry.placeholder === "other" ? !slowServices.has(candidate.module) : candidate.module === entry.placeholder)))
+            ));
             if (!matrix.length || new Set(matrix.map(entry => entry.job.name)).size !== matrix.length ||
-                (matrix.some(entry => entry.placeholder) && matrix.length !== 1) ||
+                invalidPlaceholder ||
                 duplicateUnpartitionedModule || invalidSlowServiceMatrix) {
               throw new Error("Missing or ambiguous module matrix");
             }

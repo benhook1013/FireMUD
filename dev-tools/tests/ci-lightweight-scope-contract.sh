@@ -166,6 +166,7 @@ PY
 python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" "$ROOT_DIR/build.gradle.kts" <<'PY'
 import copy
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -202,7 +203,7 @@ def require_equal(mapping, path, expected, label):
         )
 
 
-def evaluate_module_check_matrix(step, modules):
+def evaluate_module_check_matrix(step, modules, output="module_check_matrix"):
     script = value_at(step, ("with", "script"), "ci workflow")
     match = re.search(
         r"(?ms)^[ \t]*outputs\.module_check_matrix = .*?^[ \t]*\);",
@@ -220,7 +221,7 @@ def evaluate_module_check_matrix(step, modules):
 const fs = require("node:fs");
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const outputs = { affected_modules: input.modules };
-const rows = new Function("outputs", `${input.partition_set}\n${input.assignment}\nreturn outputs.module_check_matrix;`)(outputs);
+const rows = new Function("outputs", `${input.partition_set}\n${input.assignment}\n${input.groups}\nreturn outputs[${JSON.stringify(input.output)}];`)(outputs);
 process.stdout.write(JSON.stringify(rows));
 """
     try:
@@ -233,6 +234,8 @@ process.stdout.write(JSON.stringify(rows));
                 "modules": modules,
                 "assignment": match.group(0).strip(),
                 "partition_set": partition_set.group(0).strip(),
+                "groups": "\n".join(re.findall(r"(?m)^.*outputs\.(?:other|account|game_session)_module_check_matrix = .*;$", script)),
+                "output": output,
             }),
         )
         rows = json.loads(result.stdout)
@@ -488,9 +491,56 @@ security = load_workflow(sys.argv[2])
 preview = load_workflow(sys.argv[3])
 zap = load_workflow(sys.argv[4])
 ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
+module_action = load_workflow(str(Path(sys.argv[1]).parents[1] / "actions/check-gradle-module/action.yml"))
+require_equal(module_action, ("runs", "using"), "composite", "module action")
+if set(module_action["inputs"]) != {"module", "partition", "java-version", "bootable-modules"}:
+    raise SystemExit("Module recipe must declare its complete explicit input boundary")
+recipe_text = json.dumps(module_action["runs"]["steps"])
+if "matrix." in recipe_text or "needs." in recipe_text:
+    raise SystemExit("Composite must not depend on inaccessible caller context")
+for step in module_action["runs"]["steps"]:
+    if "run" in step and step.get("shell") != "bash":
+        raise SystemExit("Composite run steps need explicit Bash")
+# Compare the extracted recipe with the existing exact command/artifact contracts
+# after substituting only its explicit caller-input boundary.
+normalized_recipe = recipe_text.replace("inputs.java-version", "matrix.java-version").replace("inputs.module", "matrix.module").replace("inputs.partition", "matrix.partition").replace("inputs.bootable-modules", "needs.changes.outputs.bootable_modules")
+module_ci = {"jobs": {"build-and-test": {"steps": json.loads(normalized_recipe)}}}
+codec_step = find_step(ci, "build-and-test", "Upload Coverage to Codecov", "ci workflow")
+require_equal(codec_step, ("continue-on-error",), "true", "native Codecov")
+require_equal(codec_step, ("timeout-minutes",), "2", "native Codecov")
+module_ci["jobs"]["build-and-test"]["steps"].append(codec_step)
+groups = {
+    "build-and-test": ("other_module_check_matrix", None),
+    "build-and-test-account": ("account_module_check_matrix", "account-service"),
+    "build-and-test-game-session": ("game_session_module_check_matrix", "game-session-service"),
+}
+for job_id, (output, module) in groups.items():
+    job = ci["jobs"][job_id]
+    name_module = module or "${{ matrix.module }}"
+    require_equal(job, ("name",), "Build and Test (" + name_module + " / ${{ matrix.partition }})", job_id)
+    timeout = "60" if module == "account-service" else "90" if module == "game-session-service" else "${{ matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}"
+    require_equal(job, ("timeout-minutes",), timeout, job_id)
+    require_equal(job, ("needs",), ["changes"], job_id)
+    require_equal(job, ("strategy", "fail-fast"), "false", job_id)
+    require_equal(job, ("strategy", "matrix"), {"include": "${{ fromJSON(needs.changes.outputs." + output + ") }}"}, job_id)
+    require_contains(job, ("if",), "needs.changes.outputs." + output + " != '[]'", job_id)
+    require_equal(job, ("permissions",), {"contents": "read", "id-token": "write"}, job_id)
+    call = find_step(ci, job_id, "Validate module and retain proof", "ci workflow")
+    require_equal(call, ("uses",), "./.github/actions/check-gradle-module", job_id)
+    require_equal(call, ("if",), "${{ always() }}", job_id)
+    require_equal(call, ("with",), {
+        "module": "${{ matrix.module }}", "partition": "${{ matrix.partition }}",
+        "java-version": "${{ matrix.java-version }}",
+        "bootable-modules": "${{ needs.changes.outputs.bootable_modules }}",
+    }, job_id)
+    if find_step(ci, job_id, "Upload Coverage to Codecov", job_id) != codec_step:
+        raise SystemExit("All callers must share the same bounded optional Codecov upload")
+    checkout = find_step(ci, job_id, "Checkout Code", job_id)
+    require_equal(checkout, ("with",), {"fetch-depth": "2", "persist-credentials": "false"}, job_id)
+
 
 module_checks_step = find_step(
-    ci, "build-and-test", "Run Gradle Checks", "ci workflow"
+    module_ci, "build-and-test", "Run Gradle Checks", "ci workflow"
 )
 require_equal(
     module_checks_step,
@@ -509,7 +559,7 @@ require_equal(
 require_equal(
     ci,
     ("jobs", "build-and-test", "strategy", "matrix", "include"),
-    "${{ fromJSON(needs.changes.outputs.module_check_matrix) }}",
+    "${{ fromJSON(needs.changes.outputs.other_module_check_matrix) }}",
     "ci workflow",
 )
 matrix_config = value_at(ci, ("jobs", "build-and-test", "strategy", "matrix"), "ci workflow")
@@ -553,7 +603,32 @@ for expected in (
     '"java-version": 25',
 ):
     require_contains(ci_compute_step, ("with", "script"), expected, "ci workflow")
-java_setup_step = find_step(ci, "build-and-test", "Set Up Java", "ci workflow")
+all_modules = [
+    "common-data-runtime", "common-platform-core", "common-saga", "common-temporal", "common-security",
+    "common-test-support", "common-web-support", "account-service", "automation-scripting-service",
+    "entity-management-service", "game-design-service", "game-logic-service", "game-session-service",
+    "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
+    "world-management-service", "hosted-environment-identity-controller", "load-testing",
+]
+for selected in ([], ["account-service"], ["game-session-service"],
+                 ["account-service", "game-session-service", "common-security"], all_modules):
+    complete = evaluate_module_check_matrix(ci_compute_step, selected)
+    split = []
+    for _, (output, module) in groups.items():
+        require_equal(ci, ("jobs", "changes", "outputs", output),
+                      "${{ steps.compute.outputs." + output + " }}", "ci workflow")
+        rows = evaluate_module_check_matrix(ci_compute_step, selected, output)
+        expected = [row for row in complete if (row["module"] == module if module else row["module"] not in {"account-service", "game-session-service"})]
+        if rows != expected:
+            raise SystemExit(f"Matrix group {output} changed existing partition identities")
+        split.extend(rows)
+    key = lambda row: (row["module"], row["partition"], row["java-version"])
+    if sorted(map(key, split)) != sorted(map(key, complete)) or len(set(map(key, split))) != len(complete):
+        raise SystemExit("Split matrices must preserve exactly the original disjoint work")
+    if selected == all_modules and len(split) != 26:
+        raise SystemExit("Complete selection must retain 4 Account + 4 GS + 18 other jobs")
+
+java_setup_step = find_step(module_ci, "build-and-test", "Set Up Java", "ci workflow")
 require_equal(
     java_setup_step,
     ("with", "java-version"),
@@ -562,7 +637,7 @@ require_equal(
 )
 
 runtime_jar_step = find_step(
-    ci, "build-and-test", "Build Runtime JAR", "ci workflow"
+    module_ci, "build-and-test", "Build Runtime JAR", "ci workflow"
 )
 require_equal(
     runtime_jar_step,
@@ -584,7 +659,7 @@ require_equal(
 )
 
 test_logs_step = find_step(
-    ci, "build-and-test", "Upload Test Logs if Failed", "ci workflow"
+    module_ci, "build-and-test", "Upload Test Logs if Failed", "ci workflow"
 )
 require_equal(
     test_logs_step,
@@ -594,7 +669,7 @@ require_equal(
 )
 
 junit_results_step = find_step(
-    ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
+    module_ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
 )
 require_equal(
     junit_results_step,
@@ -622,7 +697,7 @@ require_equal(
 )
 
 slow_partition_artifact_step = find_step(
-    ci, "build-and-test",
+    module_ci, "build-and-test",
     "Upload Slow-Service Partition Reports and Execution Data",
     "ci workflow",
 )
@@ -646,7 +721,7 @@ for artifact_path in (
     require_contains(slow_partition_artifact_step, ("with", "path"), artifact_path, "ci workflow")
 
 gradle_profile_step = find_step(
-    ci, "build-and-test", "Upload Gradle Task Profile", "ci workflow"
+    module_ci, "build-and-test", "Upload Gradle Task Profile", "ci workflow"
 )
 require_equal(gradle_profile_step, ("if",), "always()", "ci workflow")
 require_equal(
@@ -663,8 +738,9 @@ for module, job_id, display, prefix in (
     ("game-session-service", "game-session-coverage-aggregate", "Game Session", "GAME_SESSION"),
 ):
     aggregate_job = value_at(ci, ("jobs", job_id), "ci workflow")
-    require_equal(aggregate_job, ("needs",), ["changes", "build-and-test"], "ci workflow")
-    require_contains(aggregate_job, ("if",), "needs.build-and-test.result == 'success'", "ci workflow")
+    group_id = "build-and-test-" + ("account" if module == "account-service" else "game-session")
+    require_equal(aggregate_job, ("needs",), ["changes", group_id], "ci workflow")
+    require_contains(aggregate_job, ("if",), f"needs.{group_id}.result == 'success'", "ci workflow")
     require_contains(
         aggregate_job, ("if",),
         f"contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), '{module}')",
@@ -1035,7 +1111,7 @@ try:
 except (OSError, subprocess.CalledProcessError) as exc:
     raise SystemExit(f"ci workflow: shared provenance capture fixture failed: {exc}") from exc
 
-coverage_report_step = find_step(ci, "build-and-test", "Upload Coverage Report", "ci workflow")
+coverage_report_step = find_step(module_ci, "build-and-test", "Upload Coverage Report", "ci workflow")
 require_equal(
     coverage_report_step, ("with", "name"),
     "jacoco-${{ matrix.module }}-${{ matrix.partition }}-report-${{ github.sha }}-attempt-${{ github.run_attempt }}",
@@ -1246,6 +1322,49 @@ gate_enforcement_steps = [
 ]
 if len(gate_enforcement_steps) != 1:
     raise SystemExit("ci workflow: expected one Validation Gate enforcement step")
+# Execute the real enforcement shell with controlled upstream outcomes, without CI or Gradle.
+gate = gate_enforcement_steps[0]
+for group_id in groups:
+    require_list_item(ci, ("jobs", "validation-gate", "needs"), group_id, "ci workflow")
+for variable, job_id in (("BUILD_AND_TEST", "build-and-test"),
+                         ("BUILD_AND_TEST_ACCOUNT", "build-and-test-account"),
+                         ("BUILD_AND_TEST_GAME_SESSION", "build-and-test-game-session")):
+    require_equal(gate, ("env", variable), "${{ needs." + job_id + ".result }}", "ci workflow")
+require_equal(gate, ("env", "OTHER_MODULES_AFFECTED"),
+              "${{ needs.changes.outputs.other_module_check_matrix != '[]' }}", "ci workflow")
+base_env = {name: "success" for name in gate["env"]}
+for name in ("DOCS_CHANGED", "FRONTEND_CHANGED", "PYTHON_CHANGED", "DESIGN_DOCS_CHANGED",
+             "VALIDATION_PYTHON_CHANGED", "POSTGRES_RUNTIME_PROOF_CHANGED",
+             "ACCOUNT_MODULE_AFFECTED", "GAME_SESSION_MODULE_AFFECTED", "OTHER_MODULES_AFFECTED"):
+    base_env[name] = "true"
+base_env["LIGHTWEIGHT_ONLY"] = "false"
+base_env["AFFECTED_MODULES"] = '["account-service","game-session-service","common-security"]'
+def gate_case(changes, expected):
+    result = subprocess.run(["bash", "-e", "-c", gate["run"]], env={**os.environ, **base_env, **changes}, capture_output=True, text=True)
+    if (result.returncode == 0) != expected:
+        raise SystemExit(f"Validation Gate fixture {changes} unexpectedly returned {result.returncode}: {result.stdout} {result.stderr}")
+gate_case({}, True)
+for flag, result, aggregate in (
+    ("OTHER_MODULES_AFFECTED", "BUILD_AND_TEST", None),
+    ("ACCOUNT_MODULE_AFFECTED", "BUILD_AND_TEST_ACCOUNT", "ACCOUNT_COVERAGE_AGGREGATE"),
+    ("GAME_SESSION_MODULE_AFFECTED", "BUILD_AND_TEST_GAME_SESSION", "GAME_SESSION_COVERAGE_AGGREGATE"),
+):
+    for outcome in ("failure", "cancelled", "skipped", "timed_out", ""):
+        gate_case({result: outcome}, False)
+    unaffected = {flag: "false", result: "skipped"}
+    if aggregate:
+        unaffected[aggregate] = "skipped"
+        for outcome in ("failure", "cancelled", "skipped"):
+            gate_case({aggregate: outcome}, False)
+    gate_case(unaffected, True)
+    gate_case({**unaffected, result: "failure"}, False)
+gate_case({"CHANGES_RESULT": "failure"}, False)
+gate_case({"WORKFLOW_LINT": "failure"}, False)
+gate_case({"OTHER_MODULES_AFFECTED": "false", "ACCOUNT_MODULE_AFFECTED": "false",
+           "GAME_SESSION_MODULE_AFFECTED": "false", "AFFECTED_MODULES": "[]",
+           "BUILD_AND_TEST": "skipped", "BUILD_AND_TEST_ACCOUNT": "skipped",
+           "BUILD_AND_TEST_GAME_SESSION": "skipped", "ACCOUNT_COVERAGE_AGGREGATE": "skipped",
+           "GAME_SESSION_COVERAGE_AGGREGATE": "skipped"}, True)
 require_equal(
     gate_enforcement_steps[0],
     ("env", "POSTGRES_RUNTIME_PROOF_CHANGED"),
