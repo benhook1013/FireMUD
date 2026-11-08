@@ -153,7 +153,14 @@ public class AccountMembershipAuthorityEventProducer {
       ReadFence fence,
       StripeHostingSubscriptionObserver.Result observed) {
     requireWritableOwnerTransaction();
+    Objects.requireNonNull(scope, "canonical JOIN scope is required");
+    requireBoundedText(requestId, "canonical JOIN request ID", MAX_REQUEST_ID_LENGTH);
+    requireBoundedText(callerBinding, "verified JOIN caller binding", MAX_CALLER_BINDING_LENGTH);
     Objects.requireNonNull(previous);
+    if (hosting != null) {
+      Objects.requireNonNull(fence, "Original paid read fence required");
+      Objects.requireNonNull(observed, "Original sealed SDK result required");
+    }
     var account = accountRepository.findByAccountUuid(scope.accountId()).orElseThrow();
     joinOperationRepository.lockAccount(account.getId());
     CanonicalJoinOperationEvidence operation =

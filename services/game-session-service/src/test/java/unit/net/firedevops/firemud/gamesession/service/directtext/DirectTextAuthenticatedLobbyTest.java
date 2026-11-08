@@ -667,7 +667,7 @@ class DirectTextAuthenticatedLobbyTest {
         .setSuccess(true)
         .setOutcomeCode("JOINED")
         .setAccountId(ACCOUNT.toString())
-        .setTenantId("101")
+        .setTenantId("22222222-2222-4222-8222-222222222222")
         .setMembershipId("90")
         .setMembershipVersion(3)
         .setMembershipAuthorityGeneration(1)
@@ -679,7 +679,7 @@ class DirectTextAuthenticatedLobbyTest {
     return new CanonicalPlayableTarget(
         "gameplay",
         "studio",
-        UUID.randomUUID(),
+        UUID.fromString("22222222-2222-4222-8222-222222222222"),
         "forest",
         display,
         UUID.randomUUID(),

@@ -394,6 +394,43 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
+  void liveFinalBudgetDispatchSurvivesDisplayRefreshAndCompetingClaim() {
+    Fixture f = fixture("1032");
+    var first = claim(f, 1);
+    f.clock().advance(Duration.ofSeconds(11));
+    var second = claim(f, first.subscriptionRowVersion());
+    f.clock().advance(Duration.ofSeconds(11));
+    var finalClaim = claim(f, second.subscriptionRowVersion());
+    assertThat(finalClaim.attemptNumber()).isEqualTo(3);
+    f.transport().duringCreate =
+        () -> {
+          refreshDisplay(f);
+          var competing =
+              f.tx()
+                  .execute(
+                      s ->
+                          f.owner()
+                              .claim(
+                                  f.creation().requestId(),
+                                  finalClaim.subscriptionRowVersion(),
+                                  UUID.randomUUID()));
+          assertThat(competing.disposition()).isEqualTo(Disposition.WAITING);
+          assertThat(competing.claim()).isNull();
+          assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox")))
+              .isZero();
+        };
+
+    var result =
+        (AccountHostingSubscriptionProvisioningService.Committed)
+            service(f).provision(finalClaim, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(f.transport().creates).isOne();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isEqualTo(3);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isOne();
+  }
+
+  @Test
   void lostCreateResponseRecoversAfterTransientEmptySearchWithoutRecreating() {
     Fixture f = fixture("1032");
     f.transport().loseCreateResponse = true;
@@ -1020,6 +1057,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     private final Clock clock;
     private boolean exists;
     private boolean loseCreateResponse;
+    private Runnable duringCreate;
     private int emptySearchesRemaining;
     private int searches;
     private int creates;
@@ -1093,6 +1131,11 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
                         creation.planQuote().providerPriceId(),
                         "quantity",
                         creation.planQuote().providerQuantity())));
+        if (duringCreate != null) {
+          Runnable action = duringCreate;
+          duringCreate = null;
+          action.run();
+        }
         if (loseCreateResponse) {
           throw org.mockito.Mockito.mock(StripeException.class);
         }

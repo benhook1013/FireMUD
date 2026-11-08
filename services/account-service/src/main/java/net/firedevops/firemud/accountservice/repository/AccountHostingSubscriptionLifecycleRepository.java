@@ -1346,6 +1346,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     if (!now.isBefore(instant(work, "deadline_at"))) {
       return fail(work, "ABSOLUTE_DEADLINE", now);
     }
+    if ("CLAIMED".equals(work.get("phase", String.class))
+        && now.isBefore(instant(work, "lease_expires_at"))) {
+      return new ClaimResult(Disposition.WAITING, null);
+    }
     if (work.get("attempt_count", Integer.class) >= work.get("max_attempts", Integer.class)) {
       return fail(work, "ATTEMPT_BUDGET", now);
     }

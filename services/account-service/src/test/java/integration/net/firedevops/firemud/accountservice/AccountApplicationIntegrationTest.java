@@ -2211,7 +2211,7 @@ class AccountApplicationIntegrationTest {
 
   private static final class FixtureClock extends Clock {
     private final Clock delegate;
-    private Duration offset = Duration.ZERO;
+    private volatile Duration offset = Duration.ZERO;
 
     private FixtureClock(Clock delegate) {
       this.delegate = delegate;
