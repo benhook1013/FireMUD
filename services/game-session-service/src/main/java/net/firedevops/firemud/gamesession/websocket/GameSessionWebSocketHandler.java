@@ -189,7 +189,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
     if (authenticatedDirectText(session)) {
-      authenticatedSessions.close(session);
+      authenticatedSessions.close(session, status);
       return;
     }
     parseNumericSessionId(resolveTransportSessionId(session))
@@ -224,7 +224,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 settingsResolver.presentation(null),
                 null));
       } finally {
-        if (command.type() == TextCommandType.LOGOUT) authenticatedSessions.close(session);
+        if (command.type() == TextCommandType.LOGOUT)
+          authenticatedSessions.close(session, new CloseStatus(1000, "logout"));
       }
       return;
     }
@@ -299,7 +300,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   @Override
   public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
-    if (authenticatedDirectText(session)) authenticatedSessions.close(session);
+    if (authenticatedDirectText(session))
+      authenticatedSessions.close(session, new CloseStatus(1011, "internal_error"));
     super.handleTransportError(session, exception);
   }
 

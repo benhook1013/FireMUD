@@ -28,6 +28,8 @@ import org.springframework.web.socket.WebSocketSession;
 @Component
 public final class AuthenticatedDirectTextSessions {
   private static final String ATTRIBUTE = AuthenticatedDirectTextSessions.class.getName();
+  private static final CloseStatus GENERATION_CLOSED =
+      new CloseStatus(1012, "backend_generation_closed");
   private final Map<String, Connection> current = new ConcurrentHashMap<>();
   private final Object lifecycleMonitor = new Object();
   private boolean shuttingDown;
@@ -41,7 +43,7 @@ public final class AuthenticatedDirectTextSessions {
       shuttingDown = true;
       current.clear();
     }
-    connections.forEach(Connection::close);
+    connections.forEach(connection -> connection.close(GENERATION_CLOSED));
   }
 
   public void open(WebSocketSession socket) {
@@ -62,7 +64,7 @@ public final class AuthenticatedDirectTextSessions {
     replacement.drainPredecessor();
     if (current.get(ingress.transport().transportSessionId()) == replacement && socket.isOpen())
       replacement.live.set(true);
-    else replacement.close();
+    else replacement.close(GENERATION_CLOSED);
   }
 
   public Connection require(WebSocketSession socket) {
@@ -75,12 +77,13 @@ public final class AuthenticatedDirectTextSessions {
     return connection;
   }
 
-  public void close(WebSocketSession socket) {
+  public void close(WebSocketSession socket, CloseStatus status) {
+    Objects.requireNonNull(status, "Close status required");
     Object value = socket.getAttributes().get(ATTRIBUTE);
     if (value instanceof Connection connection && connection.socket == socket) {
       connection.requireExternalLifecycle();
       current.remove(connection.ingress.transport().transportSessionId(), connection);
-      connection.close();
+      connection.close(status);
     }
   }
 
@@ -199,7 +202,7 @@ public final class AuthenticatedDirectTextSessions {
       if (!isCurrent()) throw unavailable();
     }
 
-    private void close() {
+    private void close(CloseStatus status) {
       requireExternalLifecycle();
       if (!closing.compareAndSet(false, true)) {
         while (closingThread == null) Thread.onSpinWait();
@@ -232,7 +235,7 @@ public final class AuthenticatedDirectTextSessions {
           lifetime.writeLock().unlock();
         }
         try {
-          if (socket.isOpen()) socket.close(new CloseStatus(1012, "backend_generation_closed"));
+          if (socket.isOpen()) socket.close(status);
         } catch (IOException ignored) {
           // Custody was already revoked and drained before the best-effort transport close.
         }
@@ -251,7 +254,7 @@ public final class AuthenticatedDirectTextSessions {
     private void drainPredecessor() {
       var previous = predecessor;
       if (previous != null) {
-        previous.close();
+        previous.close(GENERATION_CLOSED);
         predecessor = null;
       }
     }
