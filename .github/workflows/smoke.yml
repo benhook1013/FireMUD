@@ -608,7 +608,7 @@ jobs:
             }
 
             // One canonical producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "e337cb510a2ac861f823e62ad4e31026ab1c0734f4103f21b4d98a14c30eefb4";
+            const canonicalRuntimeWorkflowSha256 = "db0acb4e51630b729eb92362ea3e748f3f96b06d8ef5ca466a718ded67725804";
             const canonicalPlayClassifierSha256 = {
               "dev-tools/verify-smoke-images.sh": "559e0713cc86ab533cc23214e56ece2e7cf4e069d1bb7541a1e09bff36ad4c67",
               "dev-tools/smoke/smoke_common.py": "a1e36948b500ac796295560cb8c22321ebe47eab78be9e1f4d58837053547534",
@@ -783,7 +783,7 @@ jobs:
             // Canonical-transition diagnostic acceptance never becomes passing producer proof.
             async function verifyKnownPlayFailure(run, candidate, identity) {
               if (repositoryName !== "benhook1013/FireMUD" ||
-                  run.event !== "pull_request") return false;
+                  !["pull_request", "repository_dispatch"].includes(run.event)) return false;
               if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
               const { data: source } = await withTransientGitHubRetry(
                 "exact runtime workflow attempt lookup",
@@ -798,13 +798,17 @@ jobs:
                 source.status !== "completed" || source.conclusion !== "failure" ||
                 source.path !== workflowPath || source.repository?.full_name !== repositoryName ||
                 !positiveInteger(source.workflow_id) || source.display_title !== expectedTitle ||
-                source.event !== "pull_request"
+                source.event !== run.event
               ) return false;
               const expectedHeadRepository = context.payload.pull_request.head.repo?.full_name;
               if (typeof expectedHeadRepository !== "string" ||
                   expectedHeadRepository !== repositoryName ||
                   source.head_repository?.full_name !== expectedHeadRepository) return false;
-              if (source.head_sha !== identity.headSha) return false;
+              if (source.event === "pull_request" && source.head_sha !== identity.headSha) return false;
+              if (source.event === "repository_dispatch" && (
+                source.head_branch !== context.payload.repository.default_branch ||
+                !/^[0-9a-f]{40}$/.test(source.head_sha ?? "")
+              )) return false;
               const { data: workflow } = await withTransientGitHubRetry(
                 "runtime workflow identity lookup",
                 () => github.rest.actions.getWorkflow({ owner, repo, workflow_id: source.workflow_id })
@@ -845,14 +849,18 @@ jobs:
                     (step.conclusion === "failure" && !expectedFailures.includes(step.name))) ||
                   jobs.some((other) => other.id !== job.id &&
                     (other.status !== "completed" || !["success", "skipped"].includes(other.conclusion)))) return false;
-              // The workflow and classifier bytes must all belong to the verified PR test merge.
+              // Typed refresh workflow authority is its native default-branch revision;
+              // the executed classifier source still belongs to the verified PR merge.
+              const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
               for (const [path, expectedSha256] of Object.entries({
                 [workflowPath]: canonicalRuntimeWorkflowSha256,
                 ...canonicalPlayClassifierSha256,
               })) {
                 const { data: definition } = await withTransientGitHubRetry(
                   `immutable PLAY classifier definition lookup: ${path}`,
-                  () => github.rest.repos.getContent({ owner, repo, path, ref: identity.mergeSha })
+                  () => github.rest.repos.getContent({
+                    owner, repo, path, ref: path === workflowPath ? workflowSha : identity.mergeSha,
+                  })
                 );
                 if (definition.type !== "file" || definition.path !== path ||
                     definition.encoding !== "base64" || typeof definition.content !== "string") return false;
@@ -867,17 +875,29 @@ jobs:
               );
               if (latest.id !== source.id || latest.run_attempt !== source.run_attempt ||
                   latest.status !== "completed" || latest.conclusion !== "failure") return false;
-              // The producer marker attests the source event label under the fingerprinted
-              // workflow. Recheck the live PR label here so removal closes the exception.
+              // The fingerprinted marker attests the PR event label or the typed
+              // refresh's verified live PR label. Removal closes either exception.
               const { data: currentPullRequest } = await withTransientGitHubRetry(
                 "current canonical transition label lookup",
                 () => github.rest.pulls.get({ owner, repo, pull_number: Number(prNumber) })
               );
-              return currentPullRequest.state === "open" &&
+              if (!(currentPullRequest.state === "open" &&
+                currentPullRequest.head?.repo?.full_name === repositoryName &&
+                currentPullRequest.base?.repo?.full_name === repositoryName &&
                 currentPullRequest.head?.sha === identity.headSha &&
                 currentPullRequest.base?.ref === identity.baseRef &&
                 Array.isArray(currentPullRequest.labels) &&
-                currentPullRequest.labels.some((label) => label?.name === "canonical-play-transition");
+                currentPullRequest.labels.some((label) => label?.name === "canonical-play-transition"))) return false;
+              if (source.event === "repository_dispatch") {
+                if (currentPullRequest.merge_commit_sha !== identity.mergeSha) return false;
+                const { data: currentBase } = await withTransientGitHubRetry(
+                  "current canonical transition base ref lookup",
+                  () => github.rest.git.getRef({ owner, repo, ref: `heads/${identity.baseRef}` })
+                );
+                if (currentBase.ref !== `refs/heads/${identity.baseRef}` ||
+                    currentBase.object?.sha !== identity.baseSha) return false;
+              }
+              return true;
             }
 
             // Commit objects are immutable; mutable PR/base reads stay fresh.
@@ -1182,7 +1202,7 @@ jobs:
                     return;
                   }
                   if (matching.conclusion === "failure" && repositoryName === "benhook1013/FireMUD" &&
-                      matching.event === "pull_request") {
+                      ["pull_request", "repository_dispatch"].includes(matching.event)) {
                     let knownPlayVerified = false;
                     try {
                       const jobs = await withTransientGitHubRetry("canonical transition PLAY failure jobs lookup", () =>

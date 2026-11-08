@@ -100,20 +100,20 @@ class CaptureTests(unittest.TestCase):
             fields = ['0'] * 22
             fields[0], fields[1], fields[19] = 'S', str(parent), '42'
             (base / 'stat').write_text(f'{pid} (java) ' + ' '.join(fields))
-            (base / 'cmdline').write_bytes(b'java\0' + main + b'\0' + display + b'\0SECRET\0')
+            (base / 'cmdline').write_bytes(b'java\0-Dfixture=SECRET\0' + main + b'\0' + display + b'\0')
             (base / 'exe').symlink_to(executable or java)
         process(100, 1, b'org.gradle.launcher.daemon.bootstrap.GradleDaemon')
         for pid in (101, 102):
             process(pid, 100, b'worker.org.gradle.process.internal.worker.GradleWorkerMain',
-                    b'Gradle Test Executor 4')
+                    b"'Gradle Test Executor 4'")
         process(103, 999, b'worker.org.gradle.process.internal.worker.GradleWorkerMain',
-                b'Gradle Test Executor 5')
+                b"'Gradle Test Executor 5'")
         process(104, 100, b'other.JavaMain')
         process(105, 100, b'SECRET' * 2000)
         process(106, 101, b'worker.org.gradle.process.internal.worker.GradleWorkerMain',
-                b'Gradle Test Executor 6')
+                b"'Gradle Test Executor 6'")
         process(107, 100, b'worker.org.gradle.process.internal.worker.GradleWorkerMain',
-                b'Gradle Test Executor 7', self.write('jdk/bin/not-java'))
+                b"'Gradle Test Executor 7'", self.write('jdk/bin/not-java'))
         with patch.object(CAPTURE, 'PROC_ROOT', proc):
             daemon = CAPTURE.java_identity(100)
             coverage = {}
@@ -141,6 +141,46 @@ class CaptureTests(unittest.TestCase):
             with patch.object(Path, 'open', side_effect=PermissionError('SECRET')):
                 self.assertIsNone(CAPTURE.java_identity(101, reason))
             self.assertEqual({'reason': 'access-denied'}, reason)
+
+    def test_stall_worker_launch_shape_is_exact_and_bounded(self):
+        proc = self.root / 'proc'
+        base = proc / '123'
+        base.mkdir(parents=True)
+        java = self.write('jdk/bin/java')
+        (base / 'exe').symlink_to(java)
+        fields = ['0'] * 22
+        fields[0], fields[1], fields[19] = 'S', '100', '42'
+        (base / 'stat').write_text('123 (java) ' + ' '.join(fields))
+        main = b'worker.org.gradle.process.internal.worker.GradleWorkerMain'
+        label = b"'Gradle Test Executor 3'"
+        # The classpath @file precedes the explicit main and is never opened.
+        valid = [b'java', b'-Xmx512m', b'@/unreadable/classpath', main, label]
+        cases = [
+            (valid, True),
+            ([b'java', main, b"'Gradle Worker Daemon 3'"], False),
+            ([b'java', main, b'Gradle Test Executor 3'], False),
+            ([b'java', main, b'"Gradle Test Executor 3"'], False),
+            ([b'java', main, b"'Gradle Test Executor 3' suffix"], False),
+            ([b'java', main, b"'Gradle Test Executor 0'"], False),
+            ([b'java', main, b"'Gradle Test Executor -3'"], False),
+            ([b'java', main, b"'Gradle Test Executor 3\n'"], False),
+            ([b'java', main + b'Extra', label], False),
+            ([b'java', b'-Dmain=' + main, label], False),
+            ([b'java', main, b'unrelated', label], False),
+            ([*valid, b'extra'], False),
+            ([b'java', b'@/unreadable/launch'], False),
+            ([b'java', b'-Dsecret=' + b'x' * 8192, main, label], False),
+        ]
+        with patch.object(CAPTURE, 'PROC_ROOT', proc):
+            for index, (argv, accepted) in enumerate(cases):
+                with self.subTest(case=index):
+                    (base / 'cmdline').write_bytes(b'\0'.join(argv) + b'\0')
+                    result = CAPTURE.java_identity(123)
+                    self.assertEqual(accepted, result is not None)
+                    if result:
+                        self.assertEqual('test-worker', result['role'])
+                        self.assertNotIn('argv', result)
+                        self.assertNotIn('classpath', json.dumps(result))
 
     def test_stall_coverage_distinguishes_no_children_from_no_attribution(self):
         daemon = self.stall_identity()
@@ -374,8 +414,8 @@ class CaptureTests(unittest.TestCase):
         observer.observe.assert_called_once_with(b'original output\n')
         observer.close.assert_called_once()
 
-    def test_module_wrapper_serializes_only_numbered_account_checks_including_fallback(self):
-        for module, partition, expected in [('account-service', '4', [2, 1]),
+    def test_module_wrapper_uses_two_workers_including_fallback(self):
+        for module, partition, expected in [('account-service', '4', [2, 2]),
                                             ('account-service', 'full', [2]),
                                             ('game-session-service', '4', [2, 2]),
                                             ('world-management-service', 'full', [2])]:

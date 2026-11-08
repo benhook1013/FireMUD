@@ -6,13 +6,18 @@ import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import net.firedevops.firemud.gamesession.service.AccountPublicJwksReadClient;
 import net.firedevops.firemud.gamesession.service.GameSessionAccountPublicJwksSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -74,7 +79,9 @@ public class GameSessionAccountPublicJwksConfiguration {
 
   /** Owns only this opt-in's bounded public-key refresh, never generic runtime scheduling. */
   static final class PublicJwksRefresh implements AutoCloseable {
+    private static final Logger LOG = LoggerFactory.getLogger(PublicJwksRefresh.class);
     private final ScheduledExecutorService executor;
+    private final AtomicBoolean terminalRejectionReported = new AtomicBoolean();
 
     PublicJwksRefresh(AccountPublicJwksCache cache, Duration maximumAge) {
       this(
@@ -97,9 +104,13 @@ public class GameSessionAccountPublicJwksConfiguration {
           () -> {
             try {
               cache.refresh();
-            } catch (RuntimeException denied) {
-              // The cache retains its fail-closed state. A public-source outage never extends key
-              // age.
+            } catch (SourceUnavailableException unavailable) {
+              LOG.warn("Account public JWKS refresh unavailable: SOURCE_UNAVAILABLE");
+            } catch (InvalidJwksException rejected) {
+              if (terminalRejectionReported.compareAndSet(false, true)) {
+                LOG.error(
+                    "Account public JWKS cache refused until explicit requalification: SOURCE_REJECTED");
+              }
             }
           },
           delayMillis,
