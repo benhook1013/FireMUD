@@ -583,7 +583,8 @@ for job in \
   frontend-checks \
   build-and-test \
   build-and-test-account \
-  build-and-test-game-session; do
+  build-and-test-game-session \
+  build-and-test-world; do
   assert_job_condition ci.yml "$job" "$required_condition"
 done
 
