@@ -269,27 +269,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       IssueDirectTextConnectScopeRequest request,
       StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
-    if (caller.getAccountId().isBlank()
-        || resolveRegisteredAccountId(caller.getAccountId()) == null
-        || caller.getTenantId().isBlank()
-        || caller.getRealmId().isBlank()
-        || caller.getRequestId().isBlank()
-        || caller.getGameInstanceId().isBlank()
-        || caller.getPlayableStateNamespaceId().isBlank()
-        || caller.getPlayableStateScope().isBlank()
-        || request.getTenantId().isBlank()
-        || request.getRealmId().isBlank()
-        || request.getGameInstanceId().isBlank()
-        || request.getWorldSlug().isBlank()
-        || request.getRealmSlug().isBlank()
-        || request.getPlayableStateNamespaceId().isBlank()
-        || request.getPlayableStateScope().isBlank()
+    if (!isValidDirectTextCaller(caller)
+        || !isBoundedText(request.getWorldSlug(), 128)
+        || !isBoundedText(request.getRealmSlug(), 128)
         || request.getCatalogRevision() <= 0
         || request.getPointerVersion() <= 0
-        || !isCanonicalUuid(caller.getRealmId())
-        || !isCanonicalUuid(request.getRealmId())
-        || !isCanonicalUuid(caller.getPlayableStateNamespaceId())
-        || !isCanonicalUuid(request.getPlayableStateNamespaceId())
         || !caller.getTenantId().equals(request.getTenantId())
         || !caller.getRealmId().equals(request.getRealmId())
         || !caller.getGameInstanceId().equals(request.getGameInstanceId())
@@ -331,10 +315,37 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       return false;
     }
     try {
-      return UUID.fromString(value).toString().equals(value);
+      UUID parsed = UUID.fromString(value);
+      return !parsed.equals(new UUID(0L, 0L)) && parsed.toString().equals(value);
     } catch (IllegalArgumentException ex) {
       return false;
     }
+  }
+
+  private boolean isValidDirectTextCaller(PlayerExecutionContext caller) {
+    return resolveRegisteredAccountId(caller.getAccountId()) != null
+        && isCanonicalUuid(caller.getTenantId())
+        && isCanonicalUuid(caller.getRealmId())
+        && isCanonicalUuid(caller.getGameInstanceId())
+        && isCanonicalUuid(caller.getPlayableStateNamespaceId())
+        && Set.of("SHARED", "ISOLATED").contains(caller.getPlayableStateScope())
+        && isPositiveTransportSession(caller.getSessionId())
+        && isBoundedText(caller.getRequestId(), 128);
+  }
+
+  private static boolean isPositiveTransportSession(String value) {
+    if (value.length() > 32 || !value.matches("[0-9]+")) {
+      return false;
+    }
+    try {
+      return Long.parseLong(value) > 0;
+    } catch (NumberFormatException ex) {
+      return false;
+    }
+  }
+
+  private static boolean isBoundedText(String value, int maximumLength) {
+    return !value.isBlank() && value.length() <= maximumLength;
   }
 
   @Override
@@ -343,13 +354,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       StreamObserver<JoinPublicProductionMembershipResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
     StubConnectScope scope = connectScopesById.get(request.getConnectScopeId());
-    if (request.getConnectScopeId().isBlank()
-        || request.getRequestId().isBlank()
+    if (!isBoundedText(request.getConnectScopeId(), 2048)
+        || !isBoundedText(request.getRequestId(), 128)
         || !request.getRequestId().equals(caller.getRequestId())
-        || caller.getAccountId().isBlank()
-        || resolveRegisteredAccountId(caller.getAccountId()) == null
-        || caller.getTenantId().isBlank()
-        || caller.getSessionId().isBlank()
+        || !isValidDirectTextCaller(caller)
         || scope == null
         || !scope.expiresAt().isAfter(clock.instant())
         || !scope.accountId().equals(caller.getAccountId())

@@ -29,6 +29,25 @@ import org.springframework.web.socket.WebSocketSession;
 /** Wire-selector routing with controlled owners, not source qualification or admission proof. */
 class AuthenticatedDirectTextCommandReceiverTest {
   @Test
+  void authenticatedLoginWithoutOwnerRefusesBeforeDispatch() {
+    var fixture = fixture();
+    var command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("player@example.test", "transient-secret"),
+            "LOGIN player@example.test transient-secret");
+    assertThat(command.credentialsPayload()).isPresent();
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("Authenticated gameplay authority unavailable");
+    verifyNoInteractions(fixture.connection, fixture.lobby, fixture.selections);
+  }
+
+  @Test
   void joinUsesOneFriendlyWorldSelectorButDispatchesOnlyTheRetainedScope() {
     var fixture = fixture();
     when(fixture.lobby.join(null, null, fixture.connection))
