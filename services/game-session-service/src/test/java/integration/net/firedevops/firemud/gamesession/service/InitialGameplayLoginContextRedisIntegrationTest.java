@@ -83,11 +83,11 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.Disposition;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.ProofKind;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginJournalSnapshot;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.AcknowledgementPolicy;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.Profile;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
@@ -609,9 +609,15 @@ class InitialGameplayLoginContextRedisIntegrationTest {
                   .isEqualTo(original.callerContextId().toString());
               return receipt;
             });
-    var owner = cleanup(client(provider, authority, 1), account);
+    // This positive closure proof allows replica fsync under shared-runner load.
+    // Insufficient-acknowledgement cases retain their separate short failure deadline.
+    var owner =
+        cleanup(
+            client(provider, authority, new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000)),
+            account);
     owner.reserve(original);
     assertThat(owner.abandonAndRetire(original).status())
+        .as("physical cleanup closure observations: %s", provider.traces)
         .isEqualTo(InitialGameplayLoginCleanupOwner.Status.ACCOUNT_RETIRED);
     assertThat(authority.active).isFalse();
     authority.condition = "unavailable";
@@ -860,14 +866,11 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource,
+        schema,
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        null);
     journal =
         new InitialGameplayLoginCoordinationJournalRepository(
             DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES));

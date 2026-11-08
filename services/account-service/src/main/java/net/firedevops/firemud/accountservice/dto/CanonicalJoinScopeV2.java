@@ -60,6 +60,11 @@ public record CanonicalJoinScopeV2(
     connectScopeExpiresAt = requireUtcRfc3339("connectScopeExpiresAt", connectScopeExpiresAt);
   }
 
+  @Override
+  public String toString() {
+    return "CanonicalJoinScopeV2[connectScopeId=<redacted>]";
+  }
+
   private static UUID requireNonNilUuid(String field, UUID value) {
     if (value == null || NIL_UUID.equals(value)) {
       throw new IllegalArgumentException(field + " must be a canonical non-nil UUID");

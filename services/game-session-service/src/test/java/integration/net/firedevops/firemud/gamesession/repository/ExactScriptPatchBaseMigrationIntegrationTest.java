@@ -81,7 +81,10 @@ class ExactScriptPatchBaseMigrationIntegrationTest {
               + "'coord-1', 'followup-1', 'region-a', 1, 'region-b', 1, 'REMOTE_APPLIED', "
               + "CURRENT_TIMESTAMP, 'legacy-patch', 7, 9)");
 
-      Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+      CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+              dataSource, "public", MIGRATION_LOCATION)
+          .load()
+          .migrate();
 
       var legacyGameplayCommand =
           dsl.fetchOne(

@@ -59,10 +59,13 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssoc
 import net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistry;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -78,6 +81,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -85,12 +89,15 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Native PostgreSQL PREPARING-only World owner proof with controlled upstream wire inputs.
  *
  * <p>GDS/GS values and certificate commitments are stipulated constructor data. This proves actual
- * World owner allocation, materialization and readback, not authenticated producers or TLS.
+ * World owner allocation, materialization and readback, not authenticated producers or TLS. The
+ * installation artifact and its held source are synthetic receiving-fixture prerequisites, not
+ * evidence of genuine external installation completeness or custody.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -293,6 +300,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
 
   private Context controlledPeerContext;
   private Context previousPeerContext;
+  private WorldRuntimeInstallationRegistry controlledInstallation;
 
   @BeforeEach
   void attachControlledGsContext() {
@@ -309,6 +317,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                     "game-session-service"))
             .withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, certificate);
     previousPeerContext = controlledPeerContext.attach();
+    controlledInstallation = registerControlledInstallation();
   }
 
   @AfterEach
@@ -394,8 +403,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   @Test
   void packageOwnerPreparationRestartAndFreshObservationRetainAllRowsAndXmin() {
     var evidence = controlledEvidence();
-    var prepared =
-        RunOwnedWorldFixtureLifecycleTestFactory.prepare(nativeService(evidence), evidence);
+    var prepared = prepareWithInstallation(nativeService(evidence), evidence);
     assertThat(prepared.status()).isEqualTo("PREPARING");
     assertThat(prepared.lifecycleEpoch()).isEqualTo(1L);
     var gameSession = evidence.gameSessionAssociation();
@@ -427,7 +435,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertPresetContent(association);
     var original = allRows(dsl);
     var fresh = RunOwnedWorldFixtureEvidenceTestFixtures.freshObservation(evidence);
-    var replay = RunOwnedWorldFixtureLifecycleTestFactory.prepare(nativeService(fresh), fresh);
+    var replay = prepareWithInstallation(nativeService(fresh), fresh);
     assertThat(replay).isEqualTo(prepared);
     assertThat(replay.tenantId()).isEqualTo(gameSession.gameSessionTenantId());
     assertThat(replay.gameInstanceId()).isEqualTo(gameSession.gameInstanceId());
@@ -458,8 +466,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   @Test
   void fixtureAssociationRejectsEveryWorldCopyMismatchThroughTheOwnerTransaction() {
     var retainedEvidence = controlledEvidence();
-    RunOwnedWorldFixtureLifecycleTestFactory.prepare(
-        nativeService(retainedEvidence), retainedEvidence);
+    prepareWithInstallation(nativeService(retainedEvidence), retainedEvidence);
 
     var evidence = controlledEvidence();
     var sourceRepository = new WorldAuthoredSourceIntakeRepository(dsl);
@@ -573,6 +580,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(beforeInsertTriggers.indexOf(triggerName))
           .isLessThan(beforeInsertTriggers.indexOf(ownerCopyValidator));
 
+      controlledInstallation.withLaunchOwners(
+          evidence.gameSessionAssociation().gameInstanceUuid(), () -> null);
       var originalRows = allRows(dsl);
       for (String field :
           List.of(
@@ -588,7 +597,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
               "remap_set_id")) {
         assertSqlState(
             () ->
-                ownerTransaction()
+                ownerTransaction(evidence)
                     .executeWithoutResult(
                         status -> {
                           dsl.fetchOne(
@@ -625,8 +634,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                       () -> {
                         ready.countDown();
                         await(release);
-                        return RunOwnedWorldFixtureLifecycleTestFactory.prepare(
-                            firstOwner, evidence);
+                        return prepareWithInstallation(firstOwner, evidence);
                       }));
       Future<WorldInstanceLifecycleSnapshotDto> second =
           executor.submit(
@@ -635,8 +643,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                       () -> {
                         ready.countDown();
                         await(release);
-                        return RunOwnedWorldFixtureLifecycleTestFactory.prepare(
-                            secondOwner, evidence);
+                        return prepareWithInstallation(secondOwner, evidence);
                       }));
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
       release.countDown();
@@ -684,10 +691,12 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
             evidence.launchDescriptor().versionStateEpoch());
     var version = ownerTransaction().execute(status -> versionOwner.acceptFresh(intake, state));
+    controlledInstallation.withLaunchOwners(
+        evidence.gameSessionAssociation().gameInstanceUuid(), () -> null);
     var original = allRows(dsl);
     assertThatThrownBy(
             () ->
-                ownerTransaction()
+                ownerTransaction(evidence)
                     .executeWithoutResult(
                         status -> {
                           new WorldDesignPublicationFenceRepository(dsl, sourceOwner)
@@ -747,7 +756,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var fixtureFence = new WorldDesignPublicationFenceRepository(dsl, sourceOwner);
     var fixtureRequest = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
     var allocatedFixture =
-        ownerTransaction()
+        ownerTransaction(evidence)
             .execute(
                 status -> {
                   fixtureFence.lockOpen(binding(intake, version));
@@ -762,7 +771,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     savepoint.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
 
     var materialized =
-        ownerTransaction()
+        ownerTransaction(evidence)
             .execute(
                 status -> {
                   var result =
@@ -814,7 +823,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   void fixturePreparingCannotActivateAcquireHoldsPlaceActorsOrReuseConsumedManifests()
       throws Exception {
     var evidence = controlledEvidence();
-    RunOwnedWorldFixtureLifecycleTestFactory.prepare(nativeService(evidence), evidence);
+    prepareWithInstallation(nativeService(evidence), evidence);
     var association =
         associationRepository()
             .readRunOwnedFixtureAssociation(
@@ -1063,11 +1072,45 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .isEqualTo(originalRows.get(entry.getKey()));
 
-      // Create and materialize a controlled schema-3 fixture through the existing World owners at
-      // the V1041 checkpoint, then preserve that real fixture while advancing to V1042.8.
+      // The current producer includes the nullable V1049 private-operation field. Replay the
+      // exact V1041 request shape here, without changing the installed exact-row SQL guard.
+      // All other owner operations still use real PostgreSQL, and current-schema tests retain
+      // the unadapted producer. This is controlled historical-request proof, not current wiring.
+      AtomicInteger historicalRequests = new AtomicInteger();
+      DSLContext historicalFixtureConnection =
+          DSL.using(
+              connection
+                  .configuration()
+                  .derive(
+                      new DefaultExecuteListener() {
+                        @Override
+                        public void bindEnd(ExecuteContext context) {
+                          if (!"SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)"
+                              .equals(context.sql())) return;
+                          ObjectNode row =
+                              (ObjectNode)
+                                  objectMapper.readTree(
+                                      (String)
+                                          Objects.requireNonNull(context.query())
+                                              .getBindValues()
+                                              .getFirst());
+                          assertThat(row.has("private_fresh_operation_id")).isTrue();
+                          assertThat(row.get("private_fresh_operation_id").isNull()).isTrue();
+                          row.remove("private_fresh_operation_id");
+                          try {
+                            Objects.requireNonNull(context.statement())
+                                .setString(1, objectMapper.writeValueAsString(row));
+                          } catch (java.sql.SQLException exception) {
+                            throw new IllegalStateException(
+                                "Cannot bind controlled V1041 fixture request", exception);
+                          }
+                          historicalRequests.incrementAndGet();
+                        }
+                      }));
+      // Materialize through the real World owners at V1041, then retain rows and xmin on upgrade.
       var fixtureAssociations =
           new WorldCanonicalInstanceAssociationRepository(
-              connection,
+              historicalFixtureConnection,
               new WorldCompleteLaunchBindingRepository(connection),
               sourceOwner,
               versionOwner);
@@ -1097,6 +1140,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                     evidence, fixtureRequest, intake, version);
               });
       assertThat(allocatedFixture).isNotNull();
+      assertThat(historicalRequests).hasValue(1);
       var fixtureAssociation =
           fixtureAssociations.readRunOwnedFixtureAssociation(evidence, fixtureRequest);
       var fixturePlan = RunOwnedWorldFixedPresetResources.plan(fixtureAssociation, intake, version);
@@ -1443,8 +1487,84 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       var retainedRowsAtDefaultFrontierOriginalColumns =
           new LinkedHashMap<>(allRowsWithoutNewServerStamps(connection));
       retainedRowsAtDefaultFrontierOriginalColumns.remove(HISTORY);
+      for (String addedCatalog :
+          List.of(
+              "world_runtime_family_classification",
+              "world_runtime_family_catalog_epoch",
+              "world_runtime_family_catalog_snapshot")) {
+        assertThat(retainedRowsAtDefaultFrontierOriginalColumns.remove(addedCatalog))
+            .as("new additive catalog table %s is installed", addedCatalog)
+            .isNotNull();
+      }
+      assertThat(
+              connection
+                  .fetch(
+                      "SELECT catalog_epoch FROM world_runtime_family_catalog_epoch ORDER BY catalog_epoch")
+                  .getValues(0, Long.class))
+          .as("V1046 through V1050 install five consecutive catalog epochs")
+          .containsExactly(1L, 2L, 3L, 4L, 5L);
+      assertThat(
+              connection
+                  .fetchSingle("SELECT count(*) FROM world_runtime_family_catalog_snapshot")
+                  .get(0, Long.class))
+          .isZero();
+      for (String addedRegistry :
+          List.of(
+              "world_runtime_installation_registration",
+              "world_runtime_installation_current",
+              "world_runtime_required_owner_snapshot")) {
+        assertThat(retainedRowsAtDefaultFrontierOriginalColumns.remove(addedRegistry))
+            .as("new additive registry table %s is installed and empty", addedRegistry)
+            .isNotNull()
+            .isEmpty();
+      }
+      for (String addedPrivateTable :
+          List.of(
+              "world_private_fresh_operation",
+              "world_private_instance_association",
+              "world_private_fresh_terminal",
+              "world_private_fresh_execution_manifest")) {
+        assertThat(retainedRowsAtDefaultFrontierOriginalColumns.remove(addedPrivateTable))
+            .as("new additive private FRESH table %s is installed and empty", addedPrivateTable)
+            .isNotNull()
+            .isEmpty();
+      }
+      for (String extendedTable :
+          List.of("world_instance", "world_canonical_instance_topology_identity")) {
+        assertThat(
+                connection
+                    .fetchSingle(
+                        "SELECT data_type, is_nullable, column_default FROM information_schema.columns "
+                            + "WHERE table_schema = ? AND table_name = ? "
+                            + "AND column_name = 'private_fresh_operation_id'",
+                        schema,
+                        extendedTable)
+                    .intoArray())
+            .as(
+                "the V1049 private-operation column on %s is nullable without a default",
+                extendedTable)
+            .containsExactly("uuid", "YES", null);
+        assertThat(
+                connection
+                    .fetch(
+                        "SELECT private_fresh_operation_id FROM " + DSL.name(schema, extendedTable))
+                    .getValues(0, UUID.class))
+            .as("retained %s rows have no backfilled private operation", extendedTable)
+            .isNotEmpty()
+            .containsOnlyNulls();
+        // Only the explicitly asserted additive NULL column is omitted from the old-row image.
+        retainedRowsAtDefaultFrontierOriginalColumns.put(
+            extendedTable,
+            connection
+                .fetch(
+                    "SELECT (to_jsonb(retained) - 'private_fresh_operation_id')::text "
+                        + "|| ':xmin=' || retained.xmin::text FROM "
+                        + DSL.name(schema, extendedTable)
+                        + " retained ORDER BY 1")
+                .getValues(0, String.class));
+      }
       assertThat(retainedRowsAtDefaultFrontierOriginalColumns)
-          .as("all retained original row values and xmin from V1042.8 through the V1042.11 repairs")
+          .as("all retained original row values and xmin from V1042.8 through the default frontier")
           .isEqualTo(retainedRowsAt10428);
       var retainedRowsAtDefaultFrontier = new LinkedHashMap<>(allRows(connection));
       retainedRowsAtDefaultFrontier.remove(HISTORY);
@@ -1585,7 +1705,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(allRows(connection).get("world_instance"))
           .as(
               "fixture row remains byte-for-byte and xmin stable after denied lifecycle metadata writes")
-          .isEqualTo(retainedRowsAt10428.get("world_instance"));
+          .isEqualTo(retainedRowsAtDefaultFrontier.get("world_instance"));
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(
@@ -1848,7 +1968,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             descriptor.versionStateEpoch(),
             null);
     WorldCanonicalInstanceAssociation allocated =
-        ownerTransaction()
+        ownerTransaction(evidence)
             .execute(
                 status -> {
                   fenceRepository.lockOpen(binding);
@@ -1941,6 +2061,23 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     allocationAssociation.put("canonical_game_instance_id", rejectedCanonicalId);
     allocationAssociation.put("control_plane_request_id", rejectedOperationId);
 
+    assertThat(allocationWorld).containsEntry("private_fresh_operation_id", null);
+    Map<String, Object> incompleteAllocationWorld = new LinkedHashMap<>(allocationWorld);
+    incompleteAllocationWorld.remove("private_fresh_operation_id");
+    assertSqlState(
+        () ->
+            ownerTransaction()
+                .executeWithoutResult(
+                    status ->
+                        dsl.fetchSingle(
+                            "SELECT world_allocate_run_owned_fixture_instance(?::jsonb, ?::jsonb)",
+                            json(incompleteAllocationWorld),
+                            json(allocationAssociation))),
+        "P0001",
+        "Fixture allocation requires complete exact owner row values");
+    assertThat(resourceCount()).isEqualTo(before);
+    assertNoPendingManifests(rejectedWorldId);
+
     Map<String, Object> changedAllocationWorld = new LinkedHashMap<>(allocationWorld);
     changedAllocationWorld.put("game_session_tenant_id", gs.gameSessionTenantId() + 1);
     assertSqlState(
@@ -2009,7 +2146,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertThat(resourceCount()).isEqualTo(before);
 
     var result =
-        ownerTransaction()
+        ownerTransaction(evidence)
             .execute(
                 status -> {
                   fenceRepository.lockOpen(binding);
@@ -2172,7 +2309,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             "SELECT to_jsonb(p)::text || p.xmin::text FROM world_canonical_instance_preparation p WHERE world_instance_id = ?",
             worldId);
     var replayResult =
-        ownerTransaction()
+        ownerTransaction(evidence)
             .execute(
                 status -> {
                   fenceRepository.lockOpen(binding);
@@ -3142,6 +3279,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1044");
     versions.add("1044.1");
     versions.add("1045");
+    versions.add("1046");
+    versions.add("1047");
+    versions.add("1048");
+    versions.add("1049");
+    versions.add("1050");
     return List.copyOf(versions);
   }
 
@@ -3235,6 +3377,112 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     return transaction;
+  }
+
+  /** Hold only the explicit synthetic installation while the existing actual owner commits. */
+  private TransactionTemplate ownerTransaction(RunOwnedCanonicalWorldLaunchEvidence evidence) {
+    TransactionTemplate transaction =
+        new TransactionTemplate(transactionManager) {
+          @Override
+          public <T> T execute(TransactionCallback<T> action) {
+            return controlledInstallation.withLaunchOwners(
+                evidence.gameSessionAssociation().gameInstanceUuid(), () -> super.execute(action));
+          }
+        };
+    transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    return transaction;
+  }
+
+  private WorldInstanceLifecycleSnapshotDto prepareWithInstallation(
+      WorldLifecycleCommandServiceImpl service, RunOwnedCanonicalWorldLaunchEvidence evidence) {
+    return controlledInstallation.withLaunchOwners(
+        evidence.gameSessionAssociation().gameInstanceUuid(),
+        () -> RunOwnedWorldFixtureLifecycleTestFactory.prepare(service, evidence));
+  }
+
+  private WorldRuntimeInstallationRegistry registerControlledInstallation() {
+    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    var artifact = objectMapper.createObjectNode();
+    artifact.put("schema", "firemud-runtime-installation-inventory/v1");
+    artifact.put(
+        "artifactId",
+        UUID.nameUUIDFromBytes((schema + ":synthetic-artifact").getBytes(StandardCharsets.UTF_8))
+            .toString());
+    artifact.put(
+        "installationId",
+        UUID.nameUUIDFromBytes(
+                (schema + ":synthetic-installation").getBytes(StandardCharsets.UTF_8))
+            .toString());
+    artifact.put("environment", "local-dev");
+    artifact.put("generation", "synthetic-fixture-installation-v1");
+    artifact.put("clusterUid", "synthetic-cluster");
+    artifact.put("namespaceUid", "synthetic-namespace");
+    artifact.put("namespace", "dev");
+    artifact.put("sourceCommit", "a".repeat(40));
+    artifact.put("renderedManifestDigest", "sha256:" + "a".repeat(64));
+    artifact.put("declarationsDigest", "sha256:" + "b".repeat(64));
+    var executor = artifact.putObject("executor");
+    executor.put("identity", "synthetic-world-fixed-preset-fixture/v1");
+    executor.put("versionDigest", "sha256:" + "c".repeat(64));
+    var bindings = artifact.putObject("inputBindings");
+    for (String category :
+        List.of(
+            "migrations",
+            "configurations",
+            "mountedResources",
+            "secretContracts",
+            "externalBindings")) bindings.putArray(category);
+    var member = artifact.putArray("members").addObject();
+    member.put("workloadApiVersion", "v1");
+    member.put("workloadKind", "Pod");
+    member.put("workloadNamespace", "dev");
+    member.put("workloadName", "synthetic-world");
+    member.put("containerKind", "APPLICATION");
+    member.put("containerName", "world");
+    member.put("image", "registry.example/synthetic/world@sha256:" + "d".repeat(64));
+    member.put("ownerId", "world-management-service");
+    member.put("ownership", "RUNTIME_OWNER");
+    var source = member.putArray("catalogSources").addObject();
+    source.put("sourceId", "synthetic-world-sql");
+    source.put("contract", "synthetic/world/catalog/v1");
+    source.put("epoch", "1");
+    source.put("digest", "sha256:" + "e".repeat(64));
+    var family = member.putArray("families").addObject();
+    family.put("familyId", "synthetic-world-state");
+    family.put("catalogSourceId", "synthetic-world-sql");
+    family.put("replacementClass", "S3");
+    var cleanup = family.putObject("cleanupContract");
+    for (String field : List.of("operation", "requestIdentity", "acknowledgement", "retention"))
+      cleanup.put(field, "synthetic/world/" + field + "/v1");
+    byte[] exact = objectMapper.writeValueAsBytes(artifact);
+    var registry =
+        new WorldRuntimeInstallationRegistry(
+            dsl,
+            transactionManager,
+            schema,
+            "dev",
+            () ->
+                new WorldRuntimeInstallationRegistry.HeldInstallation() {
+                  private boolean closed;
+
+                  @Override
+                  public byte[] exactArtifactBytes() {
+                    return exact.clone();
+                  }
+
+                  @Override
+                  public void requireCurrent() {
+                    if (closed)
+                      throw new IllegalStateException("Synthetic installation hold is closed");
+                  }
+
+                  @Override
+                  public void close() {
+                    closed = true;
+                  }
+                });
+    registry.register();
+    return registry;
   }
 
   private void assertFixedPresetReadbackMode(

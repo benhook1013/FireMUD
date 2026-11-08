@@ -40,6 +40,7 @@ import net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPoin
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalLaunchPreparationRequest;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayRosterReferenceRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
@@ -1275,6 +1276,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         String v1011Guard = launchGuardProjection(predecessor, true);
         migration(predecessor, null).migrate();
         migration(predecessor, null).validate();
+        assertPrivateCatalogColumnsNull(predecessor, prepared.catalog().creationRequestId());
         assertV1013RetentionLaunchForeignKey(predecessor);
         assertV1040CompletionForeignKeyTriggers(predecessor);
         assertThat(
@@ -1845,6 +1847,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   /** Entire original source, namespace, catalog, runtime, launch and original-pin heap evidence. */
   private static String predecessorSourceProjection(Fixture fixture) {
+    String privateCatalogColumns =
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> "'" + column + "'")
+            .collect(java.util.stream.Collectors.joining(", "));
     return fixture
         .dsl
         .fetchSingle(
@@ -1855,13 +1861,37 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY canonical_tenant_id) FROM game_session_tenant_canonical_claim source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY to_jsonb(source)::TEXT) FROM game_session_tenant_scope_reservation source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY canonical_tenant_id) FROM gameplay_tenant_shared_playable_state_namespace source),"
-                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest']) ORDER BY realm_id) FROM game_session_canonical_realm_catalog source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest'] - ARRAY["
+                + privateCatalogColumns
+                + "]) ORDER BY realm_id) FROM game_session_canonical_realm_catalog source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY id) FROM game_instances source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest']) ORDER BY game_instance_id) FROM game_session_canonical_instance_launch source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_operator_attempt source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_template_association_pin source),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_launch_descriptor_pin source))::TEXT AS projection")
         .get("projection", String.class);
+  }
+
+  private static void assertPrivateCatalogColumnsNull(Fixture fixture, UUID creationRequestId) {
+    String columns =
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> "'" + column + "'")
+            .collect(java.util.stream.Collectors.joining(", "));
+    String nullChecks =
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> "to_jsonb(catalog) -> '" + column + "' = 'null'::jsonb")
+            .collect(java.util.stream.Collectors.joining(" AND "));
+    var row =
+        fixture.dsl.fetchSingle(
+            "SELECT jsonb_exists_all(to_jsonb(catalog), ARRAY["
+                + columns
+                + "]) AS has_all_columns, ("
+                + nullChecks
+                + ") AS all_null FROM game_session_canonical_realm_catalog catalog "
+                + "WHERE creation_request_id = ?",
+            creationRequestId);
+    assertThat(row.get("has_all_columns", Boolean.class)).isTrue();
+    assertThat(row.get("all_null", Boolean.class)).isTrue();
   }
 
   private static void seedPre1006ExpectedClosedTerminal(
@@ -2391,12 +2421,10 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static Flyway migration(Fixture fixture, String target) {
     String schema = fixture.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
     var configuration =
-        Flyway.configure()
-            .dataSource(Objects.requireNonNull(fixture.transactionManager.getDataSource()))
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
+        CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            Objects.requireNonNull(fixture.transactionManager.getDataSource()),
+            schema,
+            MIGRATION_LOCATION);
     if (target != null) {
       configuration.target(MigrationVersion.fromVersion(target));
     }
@@ -2569,17 +2597,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    var migration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
-    if (targetVersion != null) {
-      migration.target(MigrationVersion.fromVersion(targetVersion));
-    }
-    migration.load().migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, targetVersion);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);

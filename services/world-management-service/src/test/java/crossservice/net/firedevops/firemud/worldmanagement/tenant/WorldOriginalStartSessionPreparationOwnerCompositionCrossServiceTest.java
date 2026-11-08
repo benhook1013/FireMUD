@@ -284,7 +284,8 @@ import tools.jackson.databind.json.JsonMapper;
  * stable Redis deployment-incarnation evidence, and loopback PKI remain controlled test inputs;
  * this does not establish genuine Human issuer/environment authority, production PKI, registered
  * endpoint activation, or runtime admission. The small test-only World socket invokes the typed
- * preparation owner directly, not assembly.
+ * preparation owner directly, not assembly. The exact runtime installation artifact and held source
+ * below are synthetic fixtures, not genuine external installation/custody evidence.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -348,6 +349,20 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   void actualOwnersPrepareAndReplayOneExactOriginalOperation(
       long reservationClaimFence, @TempDir Path proofDirectory) throws Exception {
     compose(Refusal.NONE, reservationClaimFence, proofDirectory);
+  }
+
+  @Test
+  void actualCommittedPreparationRetryReturnsAfterInstallationRegistryAdvances() throws Exception {
+    compose(
+        Refusal.NONE,
+        9_007_199_254_740_993L,
+        temporary,
+        ActivationFailure.NONE,
+        false,
+        false,
+        false,
+        false,
+        true);
   }
 
   @Test
@@ -536,6 +551,29 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       boolean abortCanonicalInitialAdmission,
       boolean playerCreatedPlacement)
       throws Exception {
+    compose(
+        refusal,
+        reservationClaimFence,
+        proofDirectory,
+        activationFailure,
+        exerciseCanonicalInitialAdmissionHold,
+        exerciseCoupledCanonicalInitialAdmission,
+        abortCanonicalInitialAdmission,
+        playerCreatedPlacement,
+        false);
+  }
+
+  private void compose(
+      Refusal refusal,
+      long reservationClaimFence,
+      Path proofDirectory,
+      ActivationFailure activationFailure,
+      boolean exerciseCanonicalInitialAdmissionHold,
+      boolean exerciseCoupledCanonicalInitialAdmission,
+      boolean abortCanonicalInitialAdmission,
+      boolean playerCreatedPlacement,
+      boolean advanceInstallationBeforeRetry)
+      throws Exception {
     if (abortCanonicalInitialAdmission && !exerciseCoupledCanonicalInitialAdmission) {
       throw new IllegalArgumentException("Admission abort proof requires the coupled owner path");
     }
@@ -555,7 +593,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 proofDirectory.resolve("account"),
                 tenant);
         var world = database(WORLD, "world-management-service", true);
-        var gs = database(GS, "game-session-service", false)) {
+        var gs = database(GS, "game-session-service", true)) {
       var issuer =
           new AccountOriginalStartSessionAuthorizationProofFixture(
               account, proofDirectory.resolve("issuer"), NAMESPACE);
@@ -893,7 +931,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         return held;
                       },
                   new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(
-                      historicalAccount, historicalGs));
+                      historicalAccount, historicalGs),
+                  world.installationRegistry());
           var result = new AtomicReference<WorldCanonicalInstancePreparation.Result>();
           var ownerRefusal = new AtomicReference<RuntimeException>();
           var recovering = new AtomicBoolean();
@@ -961,7 +1000,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   world.dsl(),
                   activationTransactionFault == null ? world.manager() : activationTransactionFault,
                   lifecycleRepository);
-          var activationService = new WorldCanonicalInstanceActivationService(activationRepository);
+          var activationService =
+              new WorldCanonicalInstanceActivationService(
+                  activationRepository, world.installationRegistry());
           var acquiredActivationProtection =
               new AtomicReference<AccountStartSessionActivationProtectionEvidence>();
           var accountProtectionRowsAfterAcquisition =
@@ -1027,7 +1068,10 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     "world_canonical_instance_association",
                     "world_canonical_instance_preparation",
                     "world_canonical_instance_execution",
-                    "world_canonical_instance_activation_fence");
+                    "world_canonical_instance_activation_fence",
+                    "world_runtime_installation_registration",
+                    "world_runtime_installation_current",
+                    "world_runtime_required_owner_snapshot");
             Map<String, List<String>> accountBefore =
                 rows(
                     issuer.sourceDsl(),
@@ -1123,9 +1167,73 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         .startLocation());
             assertThat(prepared.runtimeRoomInstanceId()).isPositive();
             assertThat(prepared.runtimeRoomInstanceId()).isGreaterThan(127L);
+            assertThat(
+                    world
+                        .dsl()
+                        .fetchSingle(
+                            "SELECT s.required_owners="
+                                + "world_runtime_required_owners(r.artifact_bytes)"
+                                + " AND s.registry_revision=c.revision"
+                                + " AND s.artifact_digest=r.artifact_digest"
+                                + " AND jsonb_array_length(s.required_owners)=1"
+                                + " AND s.required_owners->0->>'ownerId'='world-management-service'"
+                                + " FROM world_runtime_required_owner_snapshot s"
+                                + " JOIN world_runtime_installation_current c"
+                                + " ON c.target_namespace=s.target_namespace"
+                                + " JOIN world_runtime_installation_registration r ON r.revision=c.revision"
+                                + " WHERE s.canonical_game_instance_id=?",
+                            input.canonicalGameInstanceId())
+                        .get(0, Boolean.class))
+                .as(
+                    "complete exact synthetic installation owner fixture frozen before materialization")
+                .isTrue();
             var after = rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
             var protectedAccount =
                 rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new));
+            if (advanceInstallationBeforeRetry) {
+              long firstRevision =
+                  world
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT revision FROM world_runtime_installation_current WHERE target_namespace=?",
+                          NAMESPACE)
+                      .get(0, Long.class);
+              long frozenRevision =
+                  world
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT registry_revision FROM world_runtime_required_owner_snapshot WHERE canonical_game_instance_id=?",
+                          input.canonicalGameInstanceId())
+                      .get(0, Long.class);
+              assertThat(frozenRevision).isEqualTo(firstRevision);
+
+              var advancedRegistration = advanceInstallationRegistry(world);
+              assertThat(advancedRegistration.revision()).isGreaterThan(firstRevision);
+              assertThat(
+                      world
+                          .dsl()
+                          .fetchSingle(
+                              "SELECT revision FROM world_runtime_installation_current WHERE target_namespace=?",
+                              NAMESPACE)
+                          .get(0, Long.class))
+                  .isEqualTo(advancedRegistration.revision());
+              assertThat(
+                      world
+                          .dsl()
+                          .fetchSingle(
+                              "SELECT registry_revision FROM world_runtime_required_owner_snapshot WHERE canonical_game_instance_id=?",
+                              input.canonicalGameInstanceId())
+                          .get(0, Long.class))
+                  .isEqualTo(firstRevision);
+              var afterAdvance = rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
+              assertThat(afterAdvance.get("world_runtime_installation_registration"))
+                  .hasSize(after.get("world_runtime_installation_registration").size() + 1);
+              assertThat(afterAdvance.get("world_runtime_installation_current"))
+                  .isNotEqualTo(after.get("world_runtime_installation_current"));
+              assertThat(afterAdvance.get("world_runtime_required_owner_snapshot"))
+                  .isEqualTo(after.get("world_runtime_required_owner_snapshot"));
+              after = afterAdvance;
+            }
             ClientCalls.blockingUnaryCall(
                 channel,
                 method,
@@ -1151,6 +1259,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             assertThat(
                     repository.readExactExecution(identity.get()).operation().orElseThrow().state())
                 .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED);
+            if (advanceInstallationBeforeRetry) {
+              return;
+            }
             var evidence = input.gameSessionReadEvidence();
             var lifecycleReadRequest =
                 new WorldCanonicalInstanceLifecycleEvidence.Request(
@@ -1470,12 +1581,24 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   };
               if (activationFailure
                   == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE) {
-                assertThatThrownBy(() -> activationRepository.activateProtected(protection, held))
+                assertThatThrownBy(
+                        () ->
+                            world
+                                .installationRegistry()
+                                .withLaunchOwners(
+                                    activationRequest.canonicalGameInstanceId(),
+                                    () -> activationRepository.activateProtected(protection, held)))
                     .isInstanceOfSatisfying(
                         TransientDataAccessResourceException.class,
                         failure -> assertSuppressedTerminalReadbackFailure(failure));
               } else {
-                assertThatThrownBy(() -> activationRepository.activateProtected(protection, held))
+                assertThatThrownBy(
+                        () ->
+                            world
+                                .installationRegistry()
+                                .withLaunchOwners(
+                                    activationRequest.canonicalGameInstanceId(),
+                                    () -> activationRepository.activateProtected(protection, held)))
                     .isInstanceOfSatisfying(
                         IllegalStateException.class,
                         failure -> {
@@ -3161,7 +3284,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           return currentEntityTarget;
         };
 
-    try (var entityDatabase = database(GS, "entity-management-service", false)) {
+    try (var entityDatabase = database(GS, "entity-management-service", true)) {
       var characterRepository =
           transactionalCharacterRepository(
               new CharacterRepository(entityDatabase.dsl()), entityDatabase.manager());
@@ -4653,18 +4776,142 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var write = new TransactionTemplate(manager);
     write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    return new Database(
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    WorldRuntimeInstallationRegistry installation = null;
+    if ("world-management-service".equals(service)) {
+      // This is a stipulated one-workload installation solely for this receiving-owner proof.
+      // Real Account/GS/mTLS behavior remains exercised independently; none supplies global
+      // installed membership, deployment completeness or production source custody.
+      byte[] artifact = controlledInstallationArtifact(schema);
+      installation =
+          new WorldRuntimeInstallationRegistry(
+              dsl,
+              manager,
+              schema,
+              NAMESPACE,
+              () ->
+                  new WorldRuntimeInstallationRegistry.HeldInstallation() {
+                    private boolean closed;
+
+                    @Override
+                    public byte[] exactArtifactBytes() {
+                      return artifact.clone();
+                    }
+
+                    @Override
+                    public void requireCurrent() {
+                      if (closed)
+                        throw new IllegalStateException("Synthetic installation hold is closed");
+                    }
+
+                    @Override
+                    public void close() {
+                      closed = true;
+                    }
+                  });
+      installation.register();
+    }
+    return new Database(schema, dsl, manager, write, installation);
+  }
+
+  private static WorldRuntimeInstallationRegistry.Registration advanceInstallationRegistry(
+      Database world) {
+    byte[] artifact = controlledInstallationArtifact(world.schema(), "synthetic-installation-v2");
+    var advancedRegistry =
+        new WorldRuntimeInstallationRegistry(
+            world.dsl(),
+            world.manager(),
+            world.schema(),
+            NAMESPACE,
+            () ->
+                new WorldRuntimeInstallationRegistry.HeldInstallation() {
+                  @Override
+                  public byte[] exactArtifactBytes() {
+                    return artifact.clone();
+                  }
+
+                  @Override
+                  public void requireCurrent() {}
+
+                  @Override
+                  public void close() {}
+                });
+    return advancedRegistry.register();
+  }
+
+  private static byte[] controlledInstallationArtifact(String schema) {
+    return controlledInstallationArtifact(
+        schema, "synthetic-installation-v1", schema + ":artifact", schema + ":installation");
+  }
+
+  private static byte[] controlledInstallationArtifact(String schema, String generation) {
+    return controlledInstallationArtifact(
         schema,
-        DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES),
-        manager,
-        write);
+        generation,
+        schema + ":" + generation + ":artifact",
+        schema + ":" + generation + ":installation");
+  }
+
+  private static byte[] controlledInstallationArtifact(
+      String schema, String generation, String artifactName, String installationName) {
+    var artifact = JSON.createObjectNode();
+    artifact.put("schema", "firemud-runtime-installation-inventory/v1");
+    artifact.put(
+        "artifactId",
+        UUID.nameUUIDFromBytes(artifactName.getBytes(StandardCharsets.UTF_8)).toString());
+    artifact.put(
+        "installationId",
+        UUID.nameUUIDFromBytes(installationName.getBytes(StandardCharsets.UTF_8)).toString());
+    artifact.put("environment", "local-dev");
+    artifact.put("generation", generation);
+    artifact.put("clusterUid", "synthetic-cluster");
+    artifact.put("namespaceUid", "synthetic-namespace");
+    artifact.put("namespace", NAMESPACE);
+    artifact.put("sourceCommit", "a".repeat(40));
+    artifact.put("renderedManifestDigest", "sha256:" + "a".repeat(64));
+    artifact.put("declarationsDigest", "sha256:" + "b".repeat(64));
+    var executor = artifact.putObject("executor");
+    executor.put("identity", "synthetic-world-receiving-fixture/v1");
+    executor.put("versionDigest", "sha256:" + "c".repeat(64));
+    var bindings = artifact.putObject("inputBindings");
+    for (String category :
+        List.of(
+            "migrations",
+            "configurations",
+            "mountedResources",
+            "secretContracts",
+            "externalBindings")) bindings.putArray(category);
+    var member = artifact.putArray("members").addObject();
+    member.put("workloadApiVersion", "v1");
+    member.put("workloadKind", "Pod");
+    member.put("workloadNamespace", NAMESPACE);
+    member.put("workloadName", "synthetic-world");
+    member.put("containerKind", "APPLICATION");
+    member.put("containerName", "world");
+    member.put("image", "registry.example/synthetic/world@sha256:" + "d".repeat(64));
+    member.put("ownerId", "world-management-service");
+    member.put("ownership", "RUNTIME_OWNER");
+    var source = member.putArray("catalogSources").addObject();
+    source.put("sourceId", "synthetic-world-sql");
+    source.put("contract", "synthetic/world/catalog/v1");
+    source.put("epoch", "1");
+    source.put("digest", "sha256:" + "e".repeat(64));
+    var family = member.putArray("families").addObject();
+    family.put("familyId", "synthetic-world-state");
+    family.put("catalogSourceId", "synthetic-world-sql");
+    family.put("replacementClass", "S3");
+    var cleanup = family.putObject("cleanupContract");
+    for (String field : List.of("operation", "requestIdentity", "acknowledgement", "retention"))
+      cleanup.put(field, "synthetic/world/" + field + "/v1");
+    return JSON.writeValueAsBytes(artifact);
   }
 
   private record Database(
       String schema,
       DSLContext dsl,
       DataSourceTransactionManager manager,
-      TransactionTemplate write)
+      TransactionTemplate write,
+      WorldRuntimeInstallationRegistry installationRegistry)
       implements AutoCloseable {
     @Override
     public void close() {

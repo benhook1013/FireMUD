@@ -268,9 +268,9 @@ class AccountGameplayAdmissionCallerVerifierTest {
       when(fixture.currentIssuanceOwner.requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI))
           .thenReturn(mismatchedCandidate);
 
-      IllegalStateException failure =
+      AccountGameplayAdmissionCallerVerifier.CallerUnavailableException failure =
           assertThrows(
-              IllegalStateException.class,
+              AccountGameplayAdmissionCallerVerifier.CallerUnavailableException.class,
               () -> fixture.verifier.verifyPresentedCompactToken(compactJwt));
 
       assertNull(failure.getCause());
@@ -281,13 +281,68 @@ class AccountGameplayAdmissionCallerVerifierTest {
   }
 
   @Test
+  void currentIssuanceRefusalUsesSanitizedTypedCallerUnavailableFailure() throws Exception {
+    Fixture fixture = new Fixture();
+    String compactJwt = fixture.signedToken(signingPair, fixture.initialClaims());
+    when(fixture.currentIssuanceOwner.requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI))
+        .thenThrow(new AccountGameplayDelegationCommittedIssuanceOwner.OwnerUnavailableException());
+
+    assertUnavailable(fixture.verifier, compactJwt);
+
+    verify(fixture.currentIssuanceOwner).requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI);
+  }
+
+  @Test
+  void actualTrustedJwksOutagesRemainTypedBeforePinningAndDuringKeyLoading() throws Exception {
+    for (boolean alreadyPinned : List.of(false, true)) {
+      Fixture fixture = new Fixture();
+      String compactJwt = fixture.signedToken(signingPair, fixture.initialClaims());
+      if (alreadyPinned) {
+        fixture.trustedJwksSource.sourceIdentity();
+      }
+      when(fixture.configMapClient.observe())
+          .thenThrow(new AccountJwtJwksConfigMapClient.ApiFailureException(503));
+
+      assertUnavailable(fixture.verifier, compactJwt);
+
+      verifyNoInteractions(fixture.currentIssuanceOwner);
+    }
+  }
+
+  @Test
+  void unexpectedTrustedSourceAndCurrentnessFaultsRemainSanitizedInternalFailures()
+      throws Exception {
+    for (boolean sourceFault : List.of(false, true)) {
+      Fixture fixture = new Fixture();
+      String compactJwt = fixture.signedToken(signingPair, fixture.initialClaims());
+      var unexpected = new NullPointerException("private unexpected detail: " + compactJwt);
+      if (sourceFault) {
+        when(fixture.configMapClient.observe()).thenThrow(unexpected);
+      } else {
+        when(fixture.currentIssuanceOwner.requireCurrentActiveCommittedCandidateByJti(TOKEN_JTI))
+            .thenThrow(unexpected);
+      }
+
+      IllegalStateException failure =
+          assertThrows(
+              IllegalStateException.class,
+              () -> fixture.verifier.verifyPresentedCompactToken(compactJwt));
+
+      assertEquals(IllegalStateException.class, failure.getClass());
+      assertEquals("Account gameplay caller verification failed", failure.getMessage());
+      assertNull(failure.getCause());
+      assertFalse(failure.toString().contains(compactJwt));
+    }
+  }
+
+  @Test
   void refusesAmbientTransactionBeforeTrustedSourceOrCurrentnessReads() {
     Fixture fixture = new Fixture();
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    IllegalStateException failure =
+    AccountGameplayAdmissionCallerVerifier.CallerUnavailableException failure =
         assertThrows(
-            IllegalStateException.class,
+            AccountGameplayAdmissionCallerVerifier.CallerUnavailableException.class,
             () -> fixture.verifier.verifyPresentedCompactToken("credential-not-retained"));
 
     assertNull(failure.getCause());
@@ -301,9 +356,10 @@ class AccountGameplayAdmissionCallerVerifierTest {
 
   private static void assertUnavailable(
       AccountGameplayAdmissionCallerVerifier verifier, String compactJwt) {
-    IllegalStateException failure =
+    AccountGameplayAdmissionCallerVerifier.CallerUnavailableException failure =
         assertThrows(
-            IllegalStateException.class, () -> verifier.verifyPresentedCompactToken(compactJwt));
+            AccountGameplayAdmissionCallerVerifier.CallerUnavailableException.class,
+            () -> verifier.verifyPresentedCompactToken(compactJwt));
     assertNull(failure.getCause());
     assertEquals("Account gameplay caller verification is unavailable", failure.getMessage());
     assertFalse(failure.toString().contains(compactJwt));

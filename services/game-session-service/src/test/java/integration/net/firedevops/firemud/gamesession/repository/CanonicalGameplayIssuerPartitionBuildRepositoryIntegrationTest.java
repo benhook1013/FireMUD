@@ -25,8 +25,6 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransi
 import net.firedevops.firemud.gamesession.binding.CanonicalIssuerReservationFenceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
@@ -2175,27 +2173,13 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   }
 
   private static void migrateThrough1037(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1037"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1037");
   }
 
   private static void migrateThrough1038(TestSchema testSchema) {
-    Flyway.configure()
-        .dataSource(testSchema.dataSource())
-        .schemas(testSchema.schema())
-        .defaultSchema(testSchema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1038"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        testSchema.dataSource(), testSchema.schema(), MIGRATION_LOCATION, "1038");
   }
 
   private static void migrateThrough1044_1(TestSchema testSchema) {
@@ -2216,26 +2200,12 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
   private static TestSchema newLegacyIssuerTestSchema(String prefix) {
     String schema = CanonicalGameplayIssuerTestFixtures.schemaName(prefix);
     DriverManagerDataSource dataSource = dataSource(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1022"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, "1022");
     DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     establishActualLegacyDisposition(dsl);
     insertLegacyReservationBeforeIssuerStringConversion(dsl);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     return new TestSchema(schema, dataSource, dsl);
   }
 

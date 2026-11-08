@@ -381,6 +381,10 @@ jobs:
         with:
           requirements: ${{ (needs.changes.outputs.lightweight_only == 'true' && needs.changes.outputs.design_docs_changed == 'true' && needs.changes.outputs.validation_python_changed != 'true') && 'yaml' || 'ci' }}
 
+      - name: Run installation inventory offline vectors
+        if: ${{ needs.changes.outputs.lightweight_only != 'true' }}
+        run: python3 dev-tools/deploy/test-runtime-installation-inventory.py
+
       - name: Set up Node for Python Markdown contracts
         if: ${{ needs.changes.outputs.lightweight_only != 'true' || needs.changes.outputs.validation_python_changed == 'true' }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -1066,8 +1070,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Allow 90 minutes for the full Game Session native issuer suites; retain Account 60, World 40 and Game Design 30.
-    timeout-minutes: ${{ matrix.module == 'game-session-service' && 90 || matrix.module == 'account-service' && 60 || matrix.module == 'world-management-service' && 40 || matrix.module == 'game-design-service' && 30 || 20 }}
+    # Allow 90 minutes for the full Game Session native issuer suites; retain Account 60, allow World 60, and retain Game Design 30.
+    timeout-minutes: ${{ matrix.module == 'game-session-service' && 90 || matrix.module == 'account-service' && 60 || matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -1098,6 +1102,12 @@ jobs:
         uses: ./.github/actions/setup-python
         with:
           requirements: none
+
+      - name: Set up Python for installation inventory composition
+        if: ${{ matrix.module == 'game-design-service' }}
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: yaml
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6

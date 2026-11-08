@@ -22,6 +22,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
@@ -31,7 +32,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartin
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -541,14 +541,7 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);

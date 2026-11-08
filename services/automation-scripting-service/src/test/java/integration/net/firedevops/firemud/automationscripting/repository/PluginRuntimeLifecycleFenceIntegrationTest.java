@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -62,9 +63,10 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
     DriverManagerDataSource dataSource = dataSource(schema);
     Flyway.configure()
         .dataSource(dataSource)
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(schema)
         .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
         .load()
         .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
@@ -606,9 +608,10 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
   private void migrateExistingSchemaToLatest(String targetSchema) {
     Flyway.configure()
         .dataSource(dataSource(targetSchema))
-        .locations(MIGRATION_LOCATION)
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
         .schemas(targetSchema)
         .defaultSchema(targetSchema)
+        .placeholders(Map.of("serviceSchema", targetSchema))
         .load()
         .migrate();
   }

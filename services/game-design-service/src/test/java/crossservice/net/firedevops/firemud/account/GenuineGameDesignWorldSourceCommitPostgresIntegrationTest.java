@@ -691,15 +691,18 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     data.setSchema(schema);
-    Flyway.configure()
-        .dataSource(data)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations(migrations(service))
-        .load()
-        .migrate();
+    var flyway =
+        Flyway.configure()
+            .dataSource(data)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations(migrations(service));
+    if ("world-management".equals(service)) {
+      flyway.locations(migrations(service), migrations("common-saga") + "/saga");
+    }
+    flyway.load().migrate();
     return new Store(
         DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES),
         new DataSourceTransactionManager(data));
@@ -710,7 +713,10 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         current != null;
         current = current.getParent()) {
       Path target =
-          current.resolve("services/" + service + "-service/src/main/resources/db/migration");
+          current.resolve(
+              "services/"
+                  + ("common-saga".equals(service) ? service : service + "-service")
+                  + "/src/main/resources/db/migration");
       if (Files.isDirectory(target)) return "filesystem:" + target;
     }
     throw new IllegalStateException("Owner migration directory unavailable");

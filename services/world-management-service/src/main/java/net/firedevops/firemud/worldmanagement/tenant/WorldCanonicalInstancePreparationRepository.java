@@ -108,15 +108,77 @@ public final class WorldCanonicalInstancePreparationRepository {
   }
 
   /**
-   * Runs the one owner transaction, then independently reads its committed immutable result. The
-   * Account source-protection handle remains open through the transaction manager's commit path;
-   * the stored original Game Session lease is checked separately at actual World admission.
+   * Read-only hint used solely to avoid applying fresh-installation preflight to a historical
+   * COMMITTED retry. It is not authenticated replay or execution authority: the unchanged held
+   * verifier and exact participation-bound retained-result read remain mandatory afterward.
    */
-  public Result materialize(
+  public boolean hasRetainedCommittedCandidate(
+      Input input, WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput operation) {
+    Objects.requireNonNull(input, "input");
+    Objects.requireNonNull(operation, "operation");
+    requireNoActiveTransaction("World committed preparation candidate read");
+    String exactInput = inputJson(input);
+    String inputDigest = digest(exactInput.getBytes(StandardCharsets.UTF_8));
+    var evidence = input.gameSessionReadEvidence();
+    return Boolean.TRUE.equals(
+        readTransaction.execute(
+            status -> {
+              applyDatabaseTimeouts();
+              return dsl.fetchExists(
+                  dsl.selectOne()
+                      .from("world_canonical_instance_execution")
+                      .where(
+                          "target_namespace=? AND canonical_tenant_id=? AND control_plane_request_id=?"
+                              + " AND canonical_game_instance_id=? AND operation_state='COMMITTED'"
+                              + " AND original_post_authorization_tuple=?"
+                              + " AND original_post_authorization_tuple_sha256=?"
+                              + " AND game_session_owner_mutation_id=? AND game_session_owner_attempt_id=?"
+                              + " AND game_session_owner_fence=? AND preparation_input_digest=?"
+                              + " AND preparation_input_json=? AND original_attempt_evidence_bytes IS NOT NULL",
+                          evidence.targetNamespace(),
+                          evidence.canonicalTenantId(),
+                          evidence.controlPlaneRequestId(),
+                          input.canonicalGameInstanceId(),
+                          operation.originalPostAuthorizationTuple(),
+                          HexFormat.of()
+                              .formatHex(sha256(operation.originalPostAuthorizationTuple())),
+                          operation.gameSessionOwnerMutationId(),
+                          operation.gameSessionOwnerAttemptId(),
+                          operation.gameSessionOwnerFence(),
+                          inputDigest,
+                          exactInput));
+            }));
+  }
+
+  /**
+   * Reads the immutable result only when the exact typed operation is already COMMITTED. This
+   * read-only historical retry does not require a current installation snapshot; all absent,
+   * PENDING and ABORTED operations remain on the installation-guarded materialization path.
+   */
+  Optional<Result> readRetainedCommittedResult(
       Input input, WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
+    VerifiedPreparationInput verified =
+        verifyPreparationInput(
+            input, authority, "Canonical World preparation retained-result read");
+    WorldCanonicalInstanceExecutionIdentity executionIdentity = verified.identity();
+
+    Optional<ExecutionOperation> retained = readExactExecution(executionIdentity).operation();
+    if (retained.isEmpty() || retained.orElseThrow().state() != ExecutionState.COMMITTED) {
+      return Optional.empty();
+    }
+    return Optional.of(readCommittedResult(input, retained.orElseThrow()));
+  }
+
+  private record VerifiedPreparationInput(
+      WorldCanonicalInstanceExecutionIdentity identity, String inputJson) {}
+
+  private VerifiedPreparationInput verifyPreparationInput(
+      Input input,
+      WorldCanonicalInstancePreparationService.HeldCommitAuthority authority,
+      String operation) {
     Objects.requireNonNull(input, "input");
     Objects.requireNonNull(authority, "authority");
-    requireNoActiveTransaction("Canonical World preparation");
+    requireNoActiveTransaction(operation);
     WorldCanonicalInstanceExecutionIdentity executionIdentity =
         Objects.requireNonNull(
             authority.executionIdentity(),
@@ -126,8 +188,22 @@ public final class WorldCanonicalInstancePreparationRepository {
           "Fresh World admission requires Account's exact original Game Session attempt observation");
     }
     String inputJson = inputJson(input);
-    String inputDigest = digest(inputJson.getBytes(StandardCharsets.UTF_8));
     executionIdentity.requireMatches(input, inputJson);
+    return new VerifiedPreparationInput(executionIdentity, inputJson);
+  }
+
+  /**
+   * Runs the one owner transaction, then independently reads its committed immutable result. The
+   * Account source-protection handle remains open through the transaction manager's commit path;
+   * the stored original Game Session lease is checked separately at actual World admission.
+   */
+  public Result materialize(
+      Input input, WorldCanonicalInstancePreparationService.HeldCommitAuthority authority) {
+    VerifiedPreparationInput verified =
+        verifyPreparationInput(input, authority, "Canonical World preparation");
+    WorldCanonicalInstanceExecutionIdentity executionIdentity = verified.identity();
+    String inputJson = verified.inputJson();
+    String inputDigest = digest(inputJson.getBytes(StandardCharsets.UTF_8));
 
     ExecutionLookup lookup = readExactExecution(executionIdentity);
     Optional<ExecutionOperation> retained = lookup.operation();

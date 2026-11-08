@@ -51,6 +51,9 @@ public final class WorldOriginalStartSessionProtectedActivationService {
       return readback.terminalEvidence();
     }
 
+    activationService.preflightInstallationRegistry(
+        input.worldActivationRequest().canonicalGameInstanceId());
+
     // The distinct Account protection is acquired before any World writable transaction. This
     // interface is the authenticated Account workload client; the carrier itself is integrity-only.
     var protection = accountProtectionClient.acquire(input);

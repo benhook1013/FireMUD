@@ -1366,12 +1366,8 @@ class CanonicalGameplayAccountClosedBarrierRedisOwnerIntegrationTest {
     private static Flyway flyway(
         DriverManagerDataSource dataSource, String schema, String migrationTarget) {
       var configuration =
-          Flyway.configure()
-              .dataSource(dataSource)
-              .schemas(schema)
-              .defaultSchema(schema)
-              .table("flyway_schema_history")
-              .locations(MIGRATION_LOCATION);
+          CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+              dataSource, schema, MIGRATION_LOCATION);
       if (migrationTarget != null) {
         configuration.target(MigrationVersion.fromVersion(migrationTarget));
       }

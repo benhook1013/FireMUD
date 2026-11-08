@@ -29,8 +29,6 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerBootstrapPartitionRedisScriptContribution;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -558,15 +556,8 @@ class CanonicalGameplayIssuerBindingLocalOperationRepositoryIntegrationTest {
     var intent =
         new CanonicalGameplayIssuerLayoutBootstrapRepository(dsl)
             .beginInitialBootstrapIntent(UUID.randomUUID(), descriptor(), source);
-    Flyway.configure()
-        .dataSource(schema.dataSource())
-        .schemas(schema.schema())
-        .defaultSchema(schema.schema())
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target(MigrationVersion.fromVersion("1038.3"))
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        schema.dataSource(), schema.schema(), MIGRATION_LOCATION, "1038.3");
     var state =
         new CanonicalGameplayIssuerBootstrapPartitionRedisOwner.CurrentIssuerState(
             intent.sourceCheckpoint(), stableIncarnation("lineage-migration"));

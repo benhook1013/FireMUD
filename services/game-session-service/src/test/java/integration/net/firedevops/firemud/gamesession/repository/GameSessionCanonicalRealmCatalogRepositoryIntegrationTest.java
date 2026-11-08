@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
@@ -285,12 +286,19 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     assertThat(retainedCatalogState(fixture, historicalRequest.requestId()))
         .isEqualTo(catalogBefore);
     assertThat(retainedAssociationState(fixture, tenant(40))).isEqualTo(associationBefore);
+    String privateCatalogColumnsNull =
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> column + " IS NULL")
+            .collect(java.util.stream.Collectors.joining(" AND "));
     assertThat(
             requiredRecord(
                     fixture.dsl,
                     "SELECT complete_policy_set_evidence IS NULL AND fixture_policy_request_bytes IS NULL "
                         + "AND fixture_policy_seal_operation_id IS NULL AND fixture_policy_seal_request_digest IS NULL "
-                        + "AND fixture_policy_seal_evidence_digest IS NULL AS historical "
+                        + "AND fixture_policy_seal_evidence_digest IS NULL "
+                        + "AND "
+                        + privateCatalogColumnsNull
+                        + " AS historical "
                         + "FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
                     historicalRequest.requestId())
                 .get("historical", Boolean.class))
@@ -967,12 +975,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     }
 
     FluentConfiguration migrationConfiguration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
+        CanonicalGameplayIssuerTestFixtures.migrationConfiguration(
+            dataSource, schema, MIGRATION_LOCATION);
     if (targetVersion != null) {
       migrationConfiguration.target(targetVersion);
     }
@@ -993,11 +997,17 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
   }
 
   private static Record retainedCatalogState(Fixture fixture, UUID requestId) {
+    String privateCatalogColumnNames =
+        CanonicalGameplayIssuerTestFixtures.PRIVATE_CATALOG_COLUMNS.stream()
+            .map(column -> "'" + column + "'")
+            .collect(java.util.stream.Collectors.joining(", "));
     return requiredRecord(
         fixture.dsl,
         "SELECT xmin::text AS xmin, (to_jsonb(catalog) - ARRAY['complete_policy_set_evidence', "
             + "'fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', "
-            + "'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest'])::text AS bytes "
+            + "'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest', "
+            + privateCatalogColumnNames
+            + "])::text AS bytes "
             + "FROM game_session_canonical_realm_catalog catalog WHERE creation_request_id = ?",
         requestId);
   }
@@ -1211,14 +1221,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
               net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence.PublishedSet>
           publishedSets) {
     void migrateToLatest() {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
     }
 
     IntakeReceipt register(UUID tenantId, String worldSlug, String displayName, String provenance) {

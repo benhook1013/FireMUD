@@ -180,7 +180,7 @@ tasks.named<Test>("integrationTest") {
     classpath = classpath.filter { it !in socialArtifacts } + files(extractSocialIntegrationTestClasses)
 }
 
-// Owner proof exports classes and its required registry script without Account application or
+// Owner proof exports classes and required registry/projection resources without Account application or
 // Flyway resources, so a receiving service retains its own configuration and migration ownership.
 val accountOriginalOrderProofJar by tasks.registering(Jar::class) {
     archiveClassifier.set("original-order-proof")
@@ -189,6 +189,19 @@ val accountOriginalOrderProofJar by tasks.registering(Jar::class) {
     from(sourceSets["testFixtures"].output.classesDirs)
     from("src/main/resources") {
         include("redis/lua/account-control-ui-registry-cas.lua")
+        include("redis/lua/account-game-session-delegation-pending-register.lua")
+        include("redis/lua/account-game-session-delegation-activate-committed.lua")
+        include("redis/lua/account-game-session-delegation-authority-project.lua")
+        include("redis/lua/account-initial-gameplay-login-dispose.lua")
+        include("redis/account_generation_projection_cas.lua")
+        include("redis/scripts/account-game-session-delegation-pending-register.json")
+        include("redis/scripts/account-game-session-delegation-activate-committed.json")
+        include("redis/scripts/account-game-session-delegation-authority-project-issuer.json")
+        include("redis/scripts/account-initial-gameplay-login-dispose.json")
+        include("redis/scripts/account-generation-projection-cas.json")
+        include("redis/scripts/account-selected-tenant-generation-projection.json")
+        include("redis/scripts/account-selected-membership-generation-projection.json")
+        include("META-INF/services/net.firedevops.firemud.common.redis.contracts.RedisScriptContribution")
     }
 }
 

@@ -207,12 +207,55 @@ public class GameSessionInitialPlaytestLifecycleRepository {
     return Optional.of(new Snapshot(preparation, state, observedAt));
   }
 
+  /**
+   * Locks and requalifies one exact retained preparation for private catalog identity allocation.
+   *
+   * <p>This bounded owner read is only for a caller-owned writable transaction. It does not select
+   * a lifecycle by slug and refuses a changed source before the catalog owner can allocate an
+   * identity.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<Snapshot> readExactForPrivateCatalogTarget(
+      UUID preparationRequestId, UUID playtestLifecycleId) {
+    requireOwnerTransaction(true);
+    requireNonNil(preparationRequestId, "preparationRequestId");
+    requireNonNil(playtestLifecycleId, "playtestLifecycleId");
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + TABLE
+                + " WHERE request_id = ? AND playtest_lifecycle_id = ? FOR SHARE",
+            preparationRequestId,
+            playtestLifecycleId);
+    if (row == null) return Optional.empty();
+    Preparation preparation = preparation(row);
+    Request request = preparation.request();
+    Record sourceLock =
+        dsl.fetchOne(
+            "SELECT realm_id FROM game_session_canonical_realm_catalog "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ? FOR SHARE",
+            request.targetNamespace(),
+            request.tenantId(),
+            request.sourceCatalogRealmId());
+    if (sourceLock == null || !preparation.source().equals(readSource(request, false))) {
+      throw new SourceUnavailableException(
+          "Exact initial playtest source changed before private catalog allocation");
+    }
+    Instant observedAt = databaseNow();
+    ReadState state =
+        observedAt.isBefore(preparation.request().forkExpiresAt())
+            ? ReadState.INCOMPLETE
+            : ReadState.EXPIRED;
+    return Optional.of(new Snapshot(preparation, state, observedAt));
+  }
+
   private SourceReference qualifySource(Request request) {
     SourceReference source = readSource(request, true);
     Record target =
         dsl.fetchOne(
             "SELECT realm_id FROM game_session_canonical_realm_catalog WHERE target_namespace = ? "
-                + "AND canonical_tenant_id = ? AND world_slug = ? AND realm_slug = ?",
+                + "AND canonical_tenant_id = ? AND world_slug = ? AND realm_slug = ? "
+                + "AND public_production",
             request.targetNamespace(),
             request.tenantId(),
             request.worldSlug(),
@@ -318,7 +361,8 @@ public class GameSessionInitialPlaytestLifecycleRepository {
     return actual;
   }
 
-  private static Preparation preparation(Record row) {
+  // Owner-internal decoding of immutable retained facts, not a current allocation qualification.
+  static Preparation preparation(Record row) {
     Request request =
         new Request(
             row.get("request_id", UUID.class),

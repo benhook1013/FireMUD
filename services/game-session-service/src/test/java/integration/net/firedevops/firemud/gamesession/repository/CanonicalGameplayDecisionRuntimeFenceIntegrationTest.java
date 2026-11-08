@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.util.UUID;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -38,14 +37,8 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
     String schema = "gs_runtime_fence_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
     try {
-      Flyway.configure()
-          .dataSource(dataSource)
-          .schemas(schema)
-          .defaultSchema(schema)
-          .table("flyway_schema_history")
-          .locations(MIGRATION_LOCATION)
-          .load()
-          .migrate();
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(
+          dataSource, schema, MIGRATION_LOCATION, null);
 
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       var schemaReadback = dsl.fetchOne("SELECT current_schema() AS actual_schema");
@@ -555,15 +548,8 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
 
   private static void migrateToRegionFencePredecessor(
       String schema, DriverManagerDataSource dataSource) {
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .target("1044.1")
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, "1044.1");
   }
 
   private static java.util.List<String> requiredRegionSourceImages(DSLContext dsl) {
@@ -648,15 +634,8 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
 
   private static void migrate(
       String schema, DriverManagerDataSource dataSource, String targetVersion) {
-    var configuration =
-        Flyway.configure()
-            .dataSource(dataSource)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table("flyway_schema_history")
-            .locations(MIGRATION_LOCATION);
-    if (targetVersion != null) configuration.target(targetVersion);
-    configuration.load().migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(
+        dataSource, schema, MIGRATION_LOCATION, targetVersion);
   }
 
   private static void assertSnapshotObligationIdentifiersCanonicalized(

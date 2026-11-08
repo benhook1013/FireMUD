@@ -11,7 +11,6 @@ import net.firedevops.firemud.accountservice.entity.PaymentTransaction;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
-import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -22,7 +21,6 @@ class PaymentServiceImplTest {
   @Mock private AccountRepository accountRepository;
   @Mock private AccountTenantMembershipRepository membershipRepository;
   @Mock private PaymentTransactionRepository txRepo;
-  @Mock private SubscriptionRepository subRepo;
   @Mock private StripeClient stripeClient;
 
   private PaymentServiceImpl service;
@@ -30,9 +28,7 @@ class PaymentServiceImplTest {
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
-    service =
-        new PaymentServiceImpl(
-            accountRepository, membershipRepository, txRepo, subRepo, stripeClient);
+    service = new PaymentServiceImpl(accountRepository, membershipRepository, txRepo, stripeClient);
   }
 
   @Test
@@ -71,7 +67,7 @@ class PaymentServiceImplTest {
         assertThrows(IllegalStateException.class, () -> service.createSubscription(2L, 1L, "plan"));
 
     assertEquals("Subscription creation is unavailable", error.getMessage());
-    verifyNoInteractions(accountRepository, membershipRepository, txRepo, subRepo, stripeClient);
+    verifyNoInteractions(accountRepository, membershipRepository, txRepo, stripeClient);
   }
 
   @Test

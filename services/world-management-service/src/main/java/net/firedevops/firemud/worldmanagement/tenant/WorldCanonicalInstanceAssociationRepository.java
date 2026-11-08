@@ -175,6 +175,8 @@ public final class WorldCanonicalInstanceAssociationRepository {
       field("playtest_state_generation", Long.class);
   private static final Field<UUID> INSTANCE_LAUNCH_BINDING_OPERATION_ID =
       field("canonical_launch_binding_operation_id", UUID.class);
+  private static final Field<UUID> INSTANCE_PRIVATE_FRESH_OPERATION_ID =
+      field("private_fresh_operation_id", UUID.class);
   private static final Field<String> INSTANCE_CANONICAL_AUTHORITY_KIND =
       field("canonical_authority_kind", String.class);
   private static final Field<String> INSTANCE_FIXTURE_PROVENANCE_DIGEST =
@@ -700,6 +702,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
     row.put(INSTANCE_PLAYTEST_LIFECYCLE_ID.getName(), (UUID) null);
     row.put(INSTANCE_PLAYTEST_STATE_GENERATION.getName(), (Long) null);
     row.put(INSTANCE_LAUNCH_BINDING_OPERATION_ID.getName(), (UUID) null);
+    row.put(INSTANCE_PRIVATE_FRESH_OPERATION_ID.getName(), (UUID) null);
     row.put(INSTANCE_CANONICAL_AUTHORITY_KIND.getName(), "RUN_OWNED_FIXTURE");
     row.put(INSTANCE_FIXTURE_PROVENANCE_DIGEST.getName(), evidence.fixtureProvenanceDigest());
     row.put(

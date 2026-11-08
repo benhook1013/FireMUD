@@ -1217,26 +1217,70 @@ public class CharacterRepository {
     }
   }
 
+  /**
+   * Transient Account discovery only: reads existing canonical actor rows without enrolling a
+   * namespace, capturing a snapshot or creating an original-selection/retention receipt. The caller
+   * supplies a short owner read transaction after independently resolving current sources.
+   */
+  public List<
+          net.firedevops.firemud.entitymanagement.bootstrap.AccountBootstrapRosterActorProjection>
+      readAccountBootstrapRoster(UUID canonicalAccountUuid, CanonicalGameplayRosterTarget target) {
+    Objects.requireNonNull(canonicalAccountUuid, "canonicalAccountUuid");
+    Objects.requireNonNull(target, "target");
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive()) {
+      throw new IllegalStateException("Account bootstrap discovery requires owner transaction");
+    }
+    if (target.playableStateScope()
+            != net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED
+        || target.entryPolicy()
+            != net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy
+                .PRESEEDED_ONLY) {
+      throw new UnsupportedOperationException("Account bootstrap target is unsupported");
+    }
+    String enrolledScope =
+        dsl.select(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE)
+            .from(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES)
+            .where(
+                ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES
+                    .TENANT_UUID
+                    .eq(target.tenantUuid())
+                    .and(
+                        ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_NAMESPACE_ID.eq(
+                            target.playableStateNamespaceId())))
+            .fetchOne(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE);
+    // A namespace with no rows may legitimately have no enrollment yet. Absence does not create
+    // enrollment or authority; the complete independently current owner target supplies scope.
+    if (enrolledScope != null && !target.playableStateScope().name().equals(enrolledScope)) {
+      throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_NAMESPACE_SCOPE_MISMATCH");
+    }
+    var rows = canonicalRosterQuery(canonicalAccountUuid, target).fetch();
+    if (rows.size() > CanonicalGameplayRosterSnapshotDigest.MAX_ROSTER_SIZE) {
+      throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_LIMIT_EXCEEDED");
+    }
+    var actors =
+        new ArrayList<
+            net.firedevops.firemud.entitymanagement.bootstrap
+                .AccountBootstrapRosterActorProjection>(rows.size());
+    for (var row : rows) {
+      Integer level = row.get(CHARACTERS.LEVEL);
+      if (level == null) {
+        throw new IllegalStateException("CANONICAL_ROSTER_LEVEL_NULL");
+      }
+      actors.add(
+          new net.firedevops.firemud.entitymanagement.bootstrap
+              .AccountBootstrapRosterActorProjection(
+              row.get(CHARACTERS.CHARACTER_UUID), row.get(CHARACTERS.NAME), level));
+    }
+    return actors;
+  }
+
   private List<CanonicalGameplayRosterActor> readCurrentCanonicalRoster(
       UUID canonicalAccountUuid, CanonicalGameplayRosterTarget target) {
+    var query = canonicalRosterQuery(canonicalAccountUuid, target);
     List<CanonicalGameplayRosterActor> actors =
-        dsl.select(CHARACTERS.CHARACTER_UUID, CHARACTERS.NAME)
-            .from(CHARACTERS)
-            .where(
-                CHARACTERS
-                    .ACCOUNT_UUID
-                    .eq(canonicalAccountUuid)
-                    .and(CHARACTERS.TENANT_UUID.eq(target.tenantUuid()))
-                    .and(
-                        CHARACTERS.PLAYABLE_STATE_NAMESPACE_ID.eq(
-                            target.playableStateNamespaceId()))
-                    .and(CHARACTERS.PLAYABLE_STATE_SCOPE.eq(target.playableStateScope().name()))
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name()))
-                    .and(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON.isNull()))
-            .orderBy(CHARACTERS.CHARACTER_UUID.asc())
-            .limit(CanonicalGameplayRosterSnapshotDigest.MAX_ROSTER_SIZE + 1)
+        query
             .forShare()
             .fetch(
                 row ->
@@ -1246,6 +1290,23 @@ public class CharacterRepository {
       throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_LIMIT_EXCEEDED");
     }
     return actors;
+  }
+
+  private org.jooq.SelectLimitPercentStep<org.jooq.Record3<UUID, String, Integer>>
+      canonicalRosterQuery(UUID canonicalAccountUuid, CanonicalGameplayRosterTarget target) {
+    return dsl.select(CHARACTERS.CHARACTER_UUID, CHARACTERS.NAME, CHARACTERS.LEVEL)
+        .from(CHARACTERS)
+        .where(
+            CHARACTERS
+                .ACCOUNT_UUID
+                .eq(canonicalAccountUuid)
+                .and(CHARACTERS.TENANT_UUID.eq(target.tenantUuid()))
+                .and(CHARACTERS.PLAYABLE_STATE_NAMESPACE_ID.eq(target.playableStateNamespaceId()))
+                .and(CHARACTERS.PLAYABLE_STATE_SCOPE.eq(target.playableStateScope().name()))
+                .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.OWNER_RESOLVED.name()))
+                .and(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON.isNull()))
+        .orderBy(CHARACTERS.CHARACTER_UUID.asc())
+        .limit(CanonicalGameplayRosterSnapshotDigest.MAX_ROSTER_SIZE + 1);
   }
 
   private CanonicalGameplayRosterSnapshot readBackCanonicalGameplayRosterSnapshot(

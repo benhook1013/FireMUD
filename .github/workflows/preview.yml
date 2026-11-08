@@ -126,7 +126,7 @@ jobs:
               echo "::error title=Missing preview head SHA::Manual preview dispatches must supply the current PR head SHA." >&2
               exit 1
             fi
-            if [[ "$HEAD_SHA" != "${HEAD_SHA,,}" ]]; then
+            if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
               echo "::error title=Noncanonical preview head SHA::Expected lowercase hexadecimal input." >&2
               exit 1
             fi

@@ -39,3 +39,15 @@ They are not generic CI utilities. They enforce the deployment contract for play
 
 - [system-architecture-deploy-preflight-policy.md](../../design/architecture/system-architecture-deploy-preflight-policy.md)
 - [system-architecture-deployment-runbook.md](../../design/architecture/system-architecture-deployment-runbook.md)
+
+## Internal Runtime Installation Candidate
+
+`runtime-installation-inventory.py --rendered-manifest PATH --declarations PATH --output PATH` emits deterministic candidate JSON for the [runtime ownership installation inventory](../../design/architecture/system-architecture-deployment-runbook.md#runtime-ownership-installation-inventory). It uses the existing PyYAML dependency, reads and hashes exact original input bytes without changing them, and exclusively creates the output so an existing evidence file is preserved. Retain both original inputs alongside the candidate; the candidate's two digests bind those bytes.
+
+The closed declaration schema is `firemud-runtime-installation-declarations/v1`: it has the inventory root fields except `renderedManifestDigest` and `declarationsDigest`, plus `nonWorkloadKinds`. Each member has the inventory member fields except `image`, which the producer obtains from the exact rendered container. `nonWorkloadKinds` is a sorted unique array of exact `{apiVersion, kind}` objects explicitly classifying rendered kinds without PodSpecs; every entry must occur in the render. All ordinary/init containers, including unrelated sidecars and restartable init containers, require an exact ownership declaration. Unknown or unsupported workloads, hidden container fields, aliases, duplicate mappings, ambiguous identities, extra/missing declarations, namespace mismatch and mutable images refuse generation.
+
+Input bindings are explicitly captured name/version/digest facts; this tool does not discover live Secret versions, prove applicable input completeness or establish an installation. The protected installation source must independently verify those facts and every applicable input, establish the current completed installation, and hold its identity through World registration. `UNRESOLVED` family classifications remain in the candidate and cannot support qualified launch writes. Candidate production supplies no installation, registration, admission or cleanup authority, and does not implement the ADR 0177 executor.
+
+Inputs are bounded to 16 MiB of rendered YAML and 4 MiB of declarations, with at most 1,024 members; emitted JSON is bounded to 4 MiB. The focused offline vectors are `python3 dev-tools/deploy/test-runtime-installation-inventory.py`; they exercise candidate generation and refusal, not protected installation delivery.
+
+The files under `fixtures/runtime-installation/` are controlled interoperability vectors, including synthetic catalog/input facts. The Python producer reproduces the exact candidate bytes and World’s parser consumes that same vector; they are not installed authority or a deployable enrollment.

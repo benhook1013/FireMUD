@@ -232,7 +232,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     diagnostics.logPostgres("game-logic", GAME_LOGIC_POSTGRES);
     diagnostics.logPostgres("account", ACCOUNT_POSTGRES);
     Store gds = store("game-design", "selected_full_gds", GDS_POSTGRES, false);
-    Store world = store("world-management", "selected_full_world", WORLD_POSTGRES, false);
+    Store world = store("world-management", "selected_full_world", WORLD_POSTGRES, true);
     Store entity = store("entity-management", "selected_full_entity", ENTITY_POSTGRES, true);
     Store automation =
         store("automation-scripting", "selected_full_automation", AUTOMATION_POSTGRES, true);

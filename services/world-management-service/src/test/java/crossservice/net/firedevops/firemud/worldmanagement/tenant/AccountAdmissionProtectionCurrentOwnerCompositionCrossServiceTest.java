@@ -151,7 +151,12 @@ class AccountAdmissionProtectionCurrentOwnerCompositionCrossServiceTest {
               "filesystem:"
                   + Path.of("../game-session-service/src/main/resources/db/migration")
                       .toAbsolutePath()
+                      .normalize(),
+              "filesystem:"
+                  + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                      .toAbsolutePath()
                       .normalize())
+          .placeholders(java.util.Map.of("serviceSchema", gsData.getSchema()))
           .load()
           .migrate();
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(gsData), SQLDialect.POSTGRES);

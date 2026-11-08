@@ -50,8 +50,13 @@ class RuntimeRegionStatusRepositoryIntegrationTest {
 
     Flyway.configure()
         .dataSource(dataSource)
+        .placeholders(java.util.Map.of("serviceSchema", "public"))
         .locations(
-            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+            "filesystem:"
+                + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
 

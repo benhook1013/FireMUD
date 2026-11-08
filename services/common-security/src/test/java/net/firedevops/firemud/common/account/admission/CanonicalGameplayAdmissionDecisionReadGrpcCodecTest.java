@@ -10,12 +10,15 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Participant;
@@ -25,6 +28,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecis
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OwnerProofOutcome;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
+import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
@@ -38,6 +42,9 @@ import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleGrpcCodec;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamesession.v1.CanonicalGameplayAdmissionCandidate;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionResponse;
@@ -58,6 +65,508 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
   private static final UUID INSTANCE = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
   private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final tools.jackson.databind.ObjectMapper JSON = JsonMapper.builder().build();
+
+  @Test
+  void discoveryRoundTripsCompleteOwnerTargetsAndAuthenticatedEmptyCollection() {
+    var target = target(lease(), "PRESEEDED_ONLY");
+    var request =
+        new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+            DECISION_ID, target.targetNamespace());
+    assertThat(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryRequest(request)))
+        .isEqualTo(request);
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+            request, List.of(target));
+    var decoded =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(request, response);
+    assertThat(decoded.request()).isEqualTo(request);
+    assertThat(decoded.targets()).containsExactly(target);
+    assertThat(decoded.targets().getFirst().canonicalTenantId().toString())
+        .isNotEqualTo(Long.toString(target.gameSessionTenantId()));
+    assertThatThrownBy(() -> decoded.targets().clear())
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThat(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                    request,
+                    CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                        request, List.of()))
+                .targets())
+        .isEmpty();
+  }
+
+  @Test
+  void discoveryCarriesBothSupportedPublicCreationPoliciesWithoutChangingTargetEvidence() {
+    for (String policy : List.of("PRESEEDED_ONLY", "PLAYER_CREATED")) {
+      var current = target(lease(), policy);
+      var request =
+          new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+              DECISION_ID, current.targetNamespace());
+      var response =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+              request, List.of(current));
+      assertThat(
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                      request, response)
+                  .targets())
+          .containsExactly(current);
+    }
+  }
+
+  @Test
+  void discoveryRejectsOpenRequestShapeAndChangedResponseCorrelation() {
+    var request =
+        new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(DECISION_ID, "test");
+    var wire = CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryRequest(request);
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+            .build();
+    var oversizedUnknown =
+        UnknownFieldSet.newBuilder()
+            .addField(
+                99,
+                UnknownFieldSet.Field.newBuilder()
+                    .addLengthDelimited(ByteString.copyFrom(new byte[16 * 1024]))
+                    .build())
+            .build();
+    for (var malformed :
+        List.of(
+            wire.toBuilder().addSchemaVersion(1).build(),
+            wire.toBuilder().setSchemaVersion(0, 2).build(),
+            wire.toBuilder().addReadRequestUuid(DECISION_ID.toString()).build(),
+            wire.toBuilder().setUnknownFields(oversizedUnknown).build(),
+            wire.toBuilder().clearReadRequestUuid().build(),
+            wire.toBuilder().setReadRequestUuid(0, "1").build(),
+            wire.toBuilder().setReadRequestUuid(0, new UUID(0, 0).toString()).build(),
+            wire.toBuilder().setTargetNamespace(0, "bad/namespace").build(),
+            wire.toBuilder().setUnknownFields(unknown).build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(malformed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(request, List.of());
+    for (var malformed :
+        List.of(
+            response.toBuilder().clearSchemaVersion().build(),
+            response.toBuilder().addRequest(wire).build(),
+            response.toBuilder()
+                .setRequest(0, wire.toBuilder().setReadRequestUuid(0, OTHER.toString()))
+                .build(),
+            response.toBuilder().setRequest(0, wire.toBuilder().addTargetNamespace("test")).build(),
+            response.toBuilder().setUnknownFields(unknown).build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                      request, malformed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void discoveryRejectsDuplicateTenantAuthorityAndUnsupportedOrIncompleteTargets() {
+    var target = target(lease(), "PRESEEDED_ONLY");
+    var request =
+        new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+            DECISION_ID, target.targetNamespace());
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+            request, List.of(target));
+    var wire = response.getCurrentTargets(0);
+    for (var malformed :
+        List.of(
+            response.toBuilder().addCurrentTargets(wire).build(),
+            response.toBuilder()
+                .setCurrentTargets(0, wire.toBuilder().setTargetNamespace(0, "foreign"))
+                .build(),
+            response.toBuilder()
+                .setCurrentTargets(0, wire.toBuilder().setPlayableStateScope(0, "ISOLATED"))
+                .build(),
+            response.toBuilder()
+                .setCurrentTargets(0, wire.toBuilder().setCharacterCreationPolicy(0, "UNSUPPORTED"))
+                .build(),
+            response.toBuilder()
+                .setCurrentTargets(0, wire.toBuilder().clearCanonicalGameInstanceUuid())
+                .build(),
+            response.toBuilder()
+                .setCurrentTargets(0, wire.toBuilder().setCatalogRevision(0, "01"))
+                .build(),
+            response.toBuilder()
+                .setCurrentTargets(0, wire.toBuilder().addTenantSlug("duplicate"))
+                .build(),
+            response.toBuilder()
+                .setCurrentTargets(
+                    0, wire.toBuilder().setHoldBindingDigest(0, "sha256:" + "f".repeat(64)))
+                .build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                      request, malformed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void discoveryEnforcesCompleteTargetAndFourMiBEnvelopeBounds() {
+    var target = target(lease(), "PRESEEDED_ONLY");
+    var request =
+        new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+            DECISION_ID, target.targetNamespace());
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+            request, List.of(target));
+    var oversizedTarget =
+        response.getCurrentTargets(0).toBuilder()
+            .setWorldDisplayName(0, "x".repeat(64 * 1024))
+            .build();
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                    request, response.toBuilder().setCurrentTargets(0, oversizedTarget).build()))
+        .isInstanceOf(IllegalArgumentException.class);
+    var boundary = response.toBuilder().clearCurrentTargets();
+    for (int index = 0; index < 63; index++) {
+      boundary.addCurrentTargets(discoveryBoundaryTarget(target, index, 64 * 1024));
+    }
+    // Field 3 framing for this final roughly 64 KiB target is one tag plus a three-byte length.
+    int finalTargetSize = 4 * 1024 * 1024 - boundary.build().getSerializedSize() - 4;
+    boundary.addCurrentTargets(discoveryBoundaryTarget(target, 63, finalTargetSize));
+    var complete = boundary.build();
+    assertThat(complete.getSerializedSize()).isEqualTo(4 * 1024 * 1024);
+    var accepted =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(request, complete);
+    assertThat(accepted.targets()).hasSize(64);
+    assertThat(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                request, accepted.targets()))
+        .isEqualTo(complete);
+    var last = complete.getCurrentTargets(63).toBuilder();
+    last.setWorldDisplayName(0, last.getWorldDisplayName(0) + "x");
+    var oversized = complete.toBuilder().setCurrentTargets(63, last).build();
+    assertThat(oversized.getSerializedSize()).isEqualTo(4 * 1024 * 1024 + 1);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+                    request, oversized))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("discovery response");
+    var oneMore = CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetEvidence(last.build());
+    var tooLargeTargets = new java.util.ArrayList<>(accepted.targets());
+    tooLargeTargets.set(63, oneMore);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
+                    request, tooLargeTargets))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("discovery response");
+    assertThat(CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_DISCOVERY_RESPONSE_WIRE_BYTES)
+        .isEqualTo(4 * 1024 * 1024);
+  }
+
+  private static net.firedevops.firemud.gamesession.v1.CanonicalPlayableTargetEvidence
+      discoveryBoundaryTarget(Target source, int index, int targetSize) {
+    UUID tenant =
+        UUID.nameUUIDFromBytes(("discovery-tenant-" + index).getBytes(StandardCharsets.UTF_8));
+    UUID realm =
+        UUID.nameUUIDFromBytes(("discovery-realm-" + index).getBytes(StandardCharsets.UTF_8));
+    var holdRequest =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            source.targetNamespace(),
+            tenant,
+            source.worldSlug(),
+            realm,
+            source.playableStateNamespaceId(),
+            source.playableStateScope(),
+            source.canonicalGameInstanceId(),
+            source.canonicalVersionId(),
+            source.activeWorldEpoch(),
+            source.initialAdmissionRequestId(),
+            source.initialAdmissionRequestDigest(),
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            source.catalogRevision(),
+            null);
+    var hold =
+        new WorldCanonicalInitialAdmissionHold.HoldIdentity(
+            holdRequest, source.holdId(), source.holdFence());
+    var wire =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetEvidence(source).toBuilder()
+            .setCanonicalTenantUuid(0, tenant.toString())
+            .setRealmUuid(0, realm.toString())
+            .setTenantSlug(0, "tenant-" + index)
+            .setHoldBindingDigest(0, hold.holdBindingDigest())
+            .setWorldDisplayName(0, "x");
+    int characters = targetSize - wire.build().getSerializedSize() + 1;
+    wire.setWorldDisplayName(0, "x".repeat(characters));
+    characters += targetSize - wire.build().getSerializedSize();
+    wire.setWorldDisplayName(0, "x".repeat(characters));
+    assertThat(wire.build().getSerializedSize()).isEqualTo(targetSize);
+    return wire.build();
+  }
+
+  @Test
+  void resolverAcceptsOnlyRetainedSelectorsAndDerivesVersionAndEpochFromOwnerTarget()
+      throws Exception {
+    var source = publishedRealmEvidence();
+    var target = publishedTarget(source);
+    var selector = retainedSelector(target, source.request());
+    var request =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(selector);
+    assertThat(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(request))
+        .isEqualTo(selector);
+    assertThat(request.getDescriptorForType().findFieldByName("canonical_version_uuid")).isNull();
+    assertThat(request.getDescriptorForType().findFieldByName("active_world_epoch")).isNull();
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+            selector, target);
+    var resolved =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+            selector, response);
+    assertThat(resolved.currentTarget()).isEqualTo(target);
+    assertThat(resolved.strictSelector()).isEqualTo(source.request());
+  }
+
+  @Test
+  void resolverRejectsUnknownDuplicateMissingAndChangedOriginalValues() throws Exception {
+    var source = publishedRealmEvidence();
+    var target = publishedTarget(source);
+    var selector = retainedSelector(target, source.request());
+    var request =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionRequest(selector);
+    var unknown =
+        UnknownFieldSet.newBuilder()
+            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+            .build();
+    for (var malformed :
+        List.of(
+            request.toBuilder().addPointerVersion("1").build(),
+            request.toBuilder().clearAccountUuid().build(),
+            request.toBuilder().setUnknownFields(unknown).build(),
+            request.toBuilder().setCatalogRevision(0, "01").build(),
+            request.toBuilder().setPlayableStateScope(0, "ISOLATED").build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
+                      malformed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+            selector, target);
+    for (var malformed :
+        List.of(
+            response.toBuilder().addSchemaVersion(1).build(),
+            response.toBuilder()
+                .setRequest(0, request.toBuilder().setAccountUuid(0, OTHER.toString()))
+                .build(),
+            response.toBuilder().setUnknownFields(unknown).build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                      selector, malformed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
+  void resolverRejectsEveryRetainedTargetMismatchAndPlayerCreatedSubstitution() throws Exception {
+    var source = publishedRealmEvidence();
+    var target = publishedTarget(source);
+    var selector = retainedSelector(target, source.request());
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
+            selector, target);
+    List<
+            java.util.function.Consumer<
+                net.firedevops.firemud.gamesession.v1.CanonicalPlayableTargetEvidence.Builder>>
+        changes =
+            List.of(
+                builder -> builder.setTargetNamespace(0, "foreign"),
+                    builder -> builder.setCanonicalTenantUuid(0, OTHER.toString()),
+                builder -> builder.setTenantSlug(0, "another"),
+                    builder -> builder.setWorldSlug(0, "another"),
+                builder -> builder.setRealmUuid(0, OTHER.toString()),
+                    builder -> builder.setRealmSlug(0, "another"),
+                builder -> builder.setPlayableStateNamespaceUuid(0, OTHER.toString()),
+                    builder -> builder.setPlayableStateScope(0, "ISOLATED"),
+                builder -> builder.setCanonicalGameInstanceUuid(0, OTHER.toString()),
+                    builder -> builder.setCatalogRevision(0, "1"),
+                builder -> builder.setPointerVersion(0, "1"),
+                    builder -> builder.setCharacterCreationPolicy(0, "PLAYER_CREATED"));
+    for (var change : changes) {
+      var changed = response.getCurrentTarget(0).toBuilder();
+      change.accept(changed);
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromTargetResolutionResponse(
+                      selector, response.toBuilder().setCurrentTarget(0, changed).build()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  private static CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector
+      retainedSelector(
+          Target target, CanonicalGameplayRosterOwnerReadEvidence.Request correlation) {
+    return new CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector(
+        correlation.requestUuid(),
+        correlation.canonicalAccountUuid(),
+        target.targetNamespace(),
+        target.canonicalTenantId(),
+        target.tenantSlug(),
+        target.worldSlug(),
+        target.realmId(),
+        target.realmSlug(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope(),
+        target.canonicalGameInstanceId(),
+        target.catalogRevision(),
+        target.pointerVersion());
+  }
+
+  @Test
+  void strictPublishedReadRequiresOneExactFreshActiveWorldCapture() throws Exception {
+    var source = publishedRealmEvidence();
+    var target = publishedTarget(source);
+    var request =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmRequest(
+                source.request()));
+    var lifecycle = worldLifecycle(source, target);
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
+            request, source, target, lifecycle);
+    for (var malformed :
+        List.of(
+            response.toBuilder().clearWorldLifecycleEvidence().build(),
+            response.toBuilder()
+                .addWorldLifecycleEvidence(response.getWorldLifecycleEvidence(0))
+                .build(),
+            response.toBuilder()
+                .setWorldLifecycleEvidence(0, ByteString.copyFromUtf8("{}"))
+                .build())) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                      request, malformed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    var original = lifecycle.request();
+    var changedRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            1,
+            OTHER,
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.worldSlug(),
+            original.canonicalGameInstanceId(),
+            original.playableStateNamespaceId(),
+            original.playableStateScope(),
+            true,
+            original.controlPlaneRequestId(),
+            original.canonicalVersionId(),
+            original.expectedDescriptorRequestDigest(),
+            original.expectedDescriptorResultDigest(),
+            original.expectedReleaseAttestationDigest());
+    for (var changed :
+        List.of(
+            copyWorld(lifecycle, original, "TERMINATING", lifecycle.lifecycleEpoch()),
+            copyWorld(lifecycle, original, "ACTIVE", lifecycle.lifecycleEpoch() + 1),
+            copyWorld(lifecycle, changedRequest, "ACTIVE", lifecycle.lifecycleEpoch()))) {
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                      request,
+                      response.toBuilder()
+                          .setWorldLifecycleEvidence(
+                              0, ByteString.copyFrom(changed.canonicalBytes()))
+                          .build()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThat(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+                    request, response)
+                .worldLifecycleEvidence())
+        .isEqualTo(lifecycle);
+  }
+
+  private static WorldCanonicalInstanceLifecycleEvidence copyWorld(
+      WorldCanonicalInstanceLifecycleEvidence source,
+      WorldCanonicalInstanceLifecycleEvidence.Request request,
+      String status,
+      long epoch) {
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        request,
+        source.launchBinding(),
+        source.startLocation(),
+        source.runtimeRoomInstanceId(),
+        status,
+        epoch,
+        source.rowVersion(),
+        source.captureId(),
+        source.graphSha256(),
+        source.preparationInputDigest(),
+        source.operationalRegionAssignments());
+  }
+
+  @Test
+  void strictEnvelopeRetainsCompleteWorldEvidenceAtTheExistingUpstreamTransportBoundary()
+      throws Exception {
+    var source = publishedRealmEvidence();
+    var target = publishedTarget(source);
+    var small = worldLifecycle(source, target);
+    assertThat(small.operationalRegionAssignments()).hasSize(1);
+    // World uses one bytes field: near 4 MiB its tag and length occupy five bytes. Every additional
+    // canonical UUID-to-UUID JSON entry adds exactly 78 ASCII bytes, including its comma.
+    int upstreamBudget = GrpcRequestBytePolicy.ORDINARY_MAXIMUM_BYTES;
+    int entries = 1 + (upstreamBudget - 5 - small.canonicalBytes().length) / 78;
+    assertThat(entries).isGreaterThan(1);
+    Map<UUID, UUID> assignments = new LinkedHashMap<>();
+    for (int index = 1; index <= entries; index++) {
+      assignments.put(new UUID(1L, index), new UUID(2L, index));
+    }
+    var complete =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            small.request(),
+            small.launchBinding(),
+            small.startLocation(),
+            small.runtimeRoomInstanceId(),
+            small.lifecycleStatus(),
+            small.lifecycleEpoch(),
+            small.rowVersion(),
+            small.captureId(),
+            small.graphSha256(),
+            small.preparationInputDigest(),
+            assignments);
+    var upstream =
+        WorldCanonicalInstanceLifecycleGrpcCodec.toResponse(complete.request(), complete);
+    assertThat(upstream.getSerializedSize())
+        .isLessThanOrEqualTo(upstreamBudget)
+        .isGreaterThan(upstreamBudget - 78);
+    var request =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmRequest(
+                source.request()));
+    var response =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
+            request, source, target, complete);
+    assertThat(response.getSerializedSize())
+        .isGreaterThan(upstreamBudget)
+        .isLessThanOrEqualTo(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec
+                .MAX_PUBLISHED_REALM_RESPONSE_WIRE_BYTES);
+    assertThat(response.getWorldLifecycleEvidence(0))
+        .isEqualTo(upstream.getCanonicalResponseBytes());
+    var decoded =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
+            request, response);
+    assertThat(decoded.worldLifecycleEvidence().canonicalBytes())
+        .containsExactly(complete.canonicalBytes());
+    assertThat(decoded.worldLifecycleEvidence().operationalRegionAssignments())
+        .containsExactlyEntriesOf(assignments);
+  }
 
   @Test
   void roundTripsCompleteProvisionalReadAndPreservesOriginalLeaseBytes() {
@@ -237,13 +746,14 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
     var target = publishedTarget(source);
     var response =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
-            parsedRequest, source, target);
+            parsedRequest, source, target, worldLifecycle(source, target));
     var evidence =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromPublishedRealmResponse(
             parsedRequest, response);
     assertThat(evidence.selector()).isEqualTo(selector);
     assertThat(evidence.sourceEvidence()).isEqualTo(source);
     assertThat(evidence.currentTarget()).isEqualTo(target);
+    assertThat(evidence.worldLifecycleEvidence().lifecycleStatus()).isEqualTo("ACTIVE");
 
     UnknownFieldSet unknown =
         UnknownFieldSet.newBuilder()
@@ -367,7 +877,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
     var target = publishedTarget(source);
     var response =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
-            request, source, target);
+            request, source, target, worldLifecycle(source, target));
     var targetEvidence = response.getCurrentTarget(0);
     for (var changed :
         List.of(
@@ -417,7 +927,10 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.parsePublishedRealmRequest(request);
     var response =
         CanonicalGameplayAdmissionDecisionReadGrpcCodec.toPublishedRealmResponse(
-            parsedRequest, source, publishedTarget(source));
+            parsedRequest,
+            source,
+            publishedTarget(source),
+            worldLifecycle(source, publishedTarget(source)));
     var oversizedResponse =
         response.toBuilder()
             .setPublishedSource(
@@ -585,6 +1098,113 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
     return new CanonicalGameplayRosterOwnerReadEvidence(request, "1".repeat(64), proof, policySet);
   }
 
+  private static WorldCanonicalInstanceLifecycleEvidence worldLifecycle(
+      CanonicalGameplayRosterOwnerReadEvidence source, Target target) {
+    var published = source.publishedPolicySetEvidence();
+    var content =
+        GameDesignPublicationTerminalEvidence.fromStored(published.terminalEvidenceBytes())
+            .releaseContent();
+    var selected = content.worldStartLocationEvidence();
+    var descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            target.targetNamespace(),
+            "controlled-launch",
+            target.canonicalTenantId(),
+            target.worldSlug(),
+            HOLD_ID,
+            DIGEST,
+            19L,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    var descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            "controlled-descriptor",
+            target.runtimeVersionId(),
+            false,
+            null,
+            "{}",
+            content.generationConfigRevision(),
+            published.publicationVersionStateEpoch(),
+            1L,
+            published.publishedReleaseBundleRef(),
+            false,
+            null);
+    var participants =
+        content.participantDigests().stream()
+            .map(
+                p ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        p.participantKey(),
+                        p.scopeValue(),
+                        p.baseVersionId() != null,
+                        p.baseVersionId(),
+                        p.appliedCommitId(),
+                        p.contentDigest(),
+                        p.digestSchemaVersion(),
+                        p.abilitySchemaDigest() != null,
+                        p.abilitySchemaDigest()))
+            .toList();
+    var release =
+        AuthoredWorldReleaseAttestationEvidence.create(
+            target.targetNamespace(),
+            descriptor.resultDigest(),
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            target.worldSlug(),
+            descriptor.authoredWorldSourceOperationId(),
+            descriptor.authoredWorldSourceEvidenceDigest(),
+            descriptor.launchDescriptorId(),
+            published.publishedReleaseBundleRef(),
+            published.publicationVersionStateEpoch(),
+            published.publishWorkflowId(),
+            published.sourceCommitId().toString(),
+            participants,
+            content.manifestHash(),
+            content.manifestSchemaVersion(),
+            content.requiredManifestAssetKeys(),
+            content.artifactDigests(),
+            content.commandDefinitions(),
+            content.generationConfigRevision(),
+            selected);
+    var binding = new CompleteLaunchBindingEvidence(descriptor, release);
+    var request =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            1,
+            source.request().requestUuid(),
+            target.targetNamespace(),
+            target.canonicalTenantId(),
+            target.worldSlug(),
+            target.canonicalGameInstanceId(),
+            target.playableStateNamespaceId(),
+            "SHARED",
+            true,
+            descriptor.controlPlaneRequestId(),
+            target.canonicalVersionId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest());
+    var start = WorldDraftStartLocationEvidence.fromStored(selected.selectorReceiptBytes());
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        request,
+        binding,
+        start.startLocation(),
+        1L,
+        "ACTIVE",
+        target.activeWorldEpoch(),
+        1L,
+        HOLD_ID,
+        start.graphDigest().substring(7),
+        DIGEST,
+        Map.of(HOLD_ID, HOLD_FENCE));
+  }
+
   private static Target publishedTarget(CanonicalGameplayRosterOwnerReadEvidence evidence) {
     var request = evidence.request();
     var proof = evidence.gameSessionOwnerProof();
@@ -604,7 +1224,7 @@ class CanonicalGameplayAdmissionDecisionReadGrpcCodecTest {
         request.playableStateScope(),
         request.canonicalGameInstanceUuid(),
         request.canonicalVersionUuid(),
-        99L,
+        evidence.publishedPolicySetEvidence().target().gameDesignVersionRowId(),
         request.expectedCatalogRevision(),
         request.expectedPointerVersion(),
         evidence.admissionPointerSnapshotDigest(),

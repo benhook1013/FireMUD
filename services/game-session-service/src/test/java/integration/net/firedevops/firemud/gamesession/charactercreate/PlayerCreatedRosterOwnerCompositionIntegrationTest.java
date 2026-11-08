@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.zaxxer.hikari.HikariDataSource;
 import io.grpc.BindableService;
 import io.grpc.Context;
 import io.grpc.Metadata;
@@ -67,7 +68,6 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -559,8 +559,8 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
   private static final class Owners implements AutoCloseable {
     private final ArrayDeque<AutoCloseable> resources = new ArrayDeque<>();
     private final List<RpcObservation> rpcObservations = new CopyOnWriteArrayList<>();
-    private final DriverManagerDataSource gsData;
-    private final DriverManagerDataSource entityData;
+    private final HikariDataSource gsData;
+    private final HikariDataSource entityData;
     private final org.jooq.DSLContext entityDsl;
     private final org.jooq.DSLContext gsDsl;
     private final GameSessionCanonicalGameplayRosterOwnerReadClient originalClient;
@@ -571,10 +571,12 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
     private final CanonicalPlayerCreatedRosterClient roster;
 
     private Owners(Path directory) throws Exception {
-      gsData = dataSource("created_owner_gs_" + UUID.randomUUID().toString().replace("-", ""));
-      entityData =
-          dataSource("created_owner_entity_" + UUID.randomUUID().toString().replace("-", ""));
+      gsData = own(dataSource("created_owner_gs_" + UUID.randomUUID().toString().replace("-", "")));
       try {
+        entityData =
+            own(
+                dataSource(
+                    "created_owner_entity_" + UUID.randomUUID().toString().replace("-", "")));
         var pki =
             LoopbackMtlsTestPki.create(
                 Files.createDirectories(directory.resolve("peers")),
@@ -606,7 +608,15 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
                 .wireFixture();
         gs =
             new ControlledPlayerCreatedOriginalOwnerFixture(
-                gsData,
+                new org.springframework.jdbc.datasource.DelegatingDataSource(gsData) {
+                  @Override
+                  public java.sql.Connection getConnection() throws java.sql.SQLException {
+                    var connection = super.getConnection();
+                    connection.setSchema("public");
+                    return connection;
+                  }
+                },
+                gsData.getSchema(),
                 initial,
                 recovery,
                 Clock.systemUTC(),
@@ -836,9 +846,12 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
           else failure.addSuppressed(cleanup);
         }
       }
-      var admin = DSL.using(dataSource(null), SQLDialect.POSTGRES);
-      admin.execute("DROP SCHEMA IF EXISTS \"" + gsData.getSchema() + "\" CASCADE");
-      admin.execute("DROP SCHEMA IF EXISTS \"" + entityData.getSchema() + "\" CASCADE");
+      try (var adminData = dataSource(null)) {
+        var admin = DSL.using(adminData, SQLDialect.POSTGRES);
+        admin.execute("DROP SCHEMA IF EXISTS \"" + gsData.getSchema() + "\" CASCADE");
+        if (entityData != null)
+          admin.execute("DROP SCHEMA IF EXISTS \"" + entityData.getSchema() + "\" CASCADE");
+      }
       if (failure != null) throw failure;
     }
   }
@@ -921,11 +934,17 @@ class PlayerCreatedRosterOwnerCompositionIntegrationTest {
 
   private record RpcObservation(String method, long remainingMillis) {}
 
-  private static DriverManagerDataSource dataSource(String schema) {
-    var data =
-        new DriverManagerDataSource(
-            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+  private static HikariDataSource dataSource(String schema) {
+    // Source RPCs deliberately run outside SQL transactions. Reuse physical connections as the
+    // application does, rather than charging every independent SELECT a new PostgreSQL handshake.
+    var data = new HikariDataSource();
+    data.setJdbcUrl(postgres.getJdbcUrl());
+    data.setUsername(postgres.getUsername());
+    data.setPassword(postgres.getPassword());
     data.setSchema(schema);
+    data.setMaximumPoolSize(4);
+    data.setMinimumIdle(0);
+    data.setConnectionTimeout(5000);
     return data;
   }
 

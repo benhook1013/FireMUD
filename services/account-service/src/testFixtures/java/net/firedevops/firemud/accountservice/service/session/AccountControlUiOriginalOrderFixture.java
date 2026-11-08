@@ -27,6 +27,7 @@ import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 
 /**
  * Genuine Account owner mutations. Fresh creator/legal sources and signer platform evidence are
@@ -74,6 +75,59 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
         temporary,
         gameDesignTenant,
         Clock.systemUTC());
+  }
+
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      boolean ownedCompositionConnections)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        Clock.systemUTC(),
+        null,
+        Clock.systemUTC(),
+        ownedCompositionConnections);
+  }
+
+  /**
+   * Test-only composition with one preselected Game Design provenance tuple shared by Account and
+   * World. It is imported during construction, never substituted onto existing associations.
+   */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      FreshTenantCreationEvidence creationEvidence,
+      boolean ownedCompositionConnections)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        Objects.requireNonNull(creationEvidence, "creationEvidence").canonicalTenantId(),
+        Clock.systemUTC(),
+        null,
+        Clock.systemUTC(),
+        ownedCompositionConnections,
+        creationEvidence);
   }
 
   /** Actor clock is injectable for genuine signed-credential expiry recovery proof. */
@@ -142,112 +196,198 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       String migrationTarget,
       Clock serviceClock)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        migrationTarget,
+        serviceClock,
+        false);
+  }
+
+  private AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget,
+      Clock serviceClock,
+      boolean ownedCompositionConnections)
+      throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        migrationTarget,
+        serviceClock,
+        ownedCompositionConnections,
+        AccountControlUiOwnerSourcesFixture.defaultCreation(gameDesignTenant));
+  }
+
+  private AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget,
+      Clock serviceClock,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence)
+      throws Exception {
     this.temporary = temporary;
     Objects.requireNonNull(actorClock, "actorClock");
     Objects.requireNonNull(serviceClock, "serviceClock");
     f =
         new AccountControlUiOwnerSourcesFixture(
-            jdbcUrl, username, password, temporary, false, gameDesignTenant, migrationTarget);
-    signerFixture = new AccountControlUiSignerFixture(f, temporary, serviceClock);
-    var lifecycle = signerFixture;
-    lifecycle.commit();
-    var originalSigner = f.tx(lifecycle.signer::captureCurrent);
-    assertThat(f.tx(() -> lifecycle.signer.requireOriginal(originalSigner.receipt())).receipt())
-        .isEqualTo(originalSigner.receipt());
-    custody("encryption", "enc1", 11);
-    custody("request-mac", "mac1", 29);
-    String PASSWORD = UUID.randomUUID().toString();
-    var admin = RedisClient.create(RedisURI.Builder.redis(redisHost, redisPort).build());
-    accountClient =
-        RedisClient.create(
-            RedisURI.Builder.redis(redisHost, redisPort)
-                .withAuthentication("account_coord_app", PASSWORD)
-                .build());
-    accountClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
-    try (var connection = admin.connect(ByteArrayCodec.INSTANCE)) {
-      connection
-          .sync()
-          .aclSetuser(
-              "account_coord_app",
-              new io.lettuce.core.AclSetuserArgs()
-                  .reset()
-                  .on()
-                  .addPassword(PASSWORD)
-                  .keyPattern("session:auth:token:*")
-                  .addCommand(io.lettuce.core.protocol.CommandType.HELLO)
-                  .addCommand(io.lettuce.core.protocol.CommandType.PING)
-                  .addCommand(
-                      io.lettuce.core.protocol.CommandType.CLIENT,
-                      io.lettuce.core.protocol.CommandKeyword.SETINFO)
-                  .addCommand(
-                      io.lettuce.core.protocol.CommandType.ACL,
-                      io.lettuce.core.protocol.CommandKeyword.WHOAMI)
-                  .addCommand(
-                      io.lettuce.core.protocol.CommandType.SCRIPT,
-                      io.lettuce.core.protocol.CommandKeyword.LOAD)
-                  .addCommand(io.lettuce.core.protocol.CommandType.EVALSHA)
-                  .addCommand(io.lettuce.core.protocol.CommandType.GET)
-                  .addCommand(io.lettuce.core.protocol.CommandType.SET)
-                  .addCommand(io.lettuce.core.protocol.CommandType.PEXPIRETIME)
-                  .addCommand(io.lettuce.core.protocol.CommandType.TIME));
-      connection
-          .sync()
-          .dispatch(
-              TestAclCommand.INSTANCE,
-              new io.lettuce.core.output.StatusOutput<>(ByteArrayCodec.INSTANCE),
-              new io.lettuce.core.protocol.CommandArgs<>(ByteArrayCodec.INSTANCE)
-                  .add("SETUSER")
-                  .add("account_coord_app")
-                  .add("+waitaof"));
-      awaitLocalAndReplicaAof(connection.sync());
+            jdbcUrl,
+            username,
+            password,
+            temporary,
+            false,
+            gameDesignTenant,
+            migrationTarget,
+            ownedCompositionConnections,
+            creationEvidence);
+    RedisClient allocatedClient = null;
+    try {
+      signerFixture = new AccountControlUiSignerFixture(f, temporary, serviceClock);
+      var lifecycle = signerFixture;
+      lifecycle.commit();
+      var originalSigner = f.tx(lifecycle.signer::captureCurrent);
+      assertThat(f.tx(() -> lifecycle.signer.requireOriginal(originalSigner.receipt())).receipt())
+          .isEqualTo(originalSigner.receipt());
+      custody("encryption", "enc1", 11);
+      custody("request-mac", "mac1", 29);
+      String PASSWORD = UUID.randomUUID().toString();
+      var admin = RedisClient.create(RedisURI.Builder.redis(redisHost, redisPort).build());
+      accountClient =
+          RedisClient.create(
+              RedisURI.Builder.redis(redisHost, redisPort)
+                  .withAuthentication("account_coord_app", PASSWORD)
+                  .build());
+      allocatedClient = accountClient;
+      accountClient.setOptions(ClientOptions.builder().autoReconnect(false).build());
+      try (var connection = admin.connect(ByteArrayCodec.INSTANCE)) {
+        connection
+            .sync()
+            .aclSetuser(
+                "account_coord_app",
+                new io.lettuce.core.AclSetuserArgs()
+                    .reset()
+                    .on()
+                    .addPassword(PASSWORD)
+                    .keyPattern("session:auth:token:*")
+                    .keyPattern("session:auth:generation:issuer:*")
+                    .keyPattern("session:auth:generation:account:*")
+                    .addCommand(io.lettuce.core.protocol.CommandType.HELLO)
+                    .addCommand(io.lettuce.core.protocol.CommandType.PING)
+                    .addCommand(
+                        io.lettuce.core.protocol.CommandType.CLIENT,
+                        io.lettuce.core.protocol.CommandKeyword.SETINFO)
+                    .addCommand(
+                        io.lettuce.core.protocol.CommandType.ACL,
+                        io.lettuce.core.protocol.CommandKeyword.WHOAMI)
+                    .addCommand(
+                        io.lettuce.core.protocol.CommandType.SCRIPT,
+                        io.lettuce.core.protocol.CommandKeyword.LOAD)
+                    .addCommand(io.lettuce.core.protocol.CommandType.EVALSHA)
+                    .addCommand(io.lettuce.core.protocol.CommandType.GET)
+                    .addCommand(io.lettuce.core.protocol.CommandType.SET)
+                    .addCommand(io.lettuce.core.protocol.CommandType.PEXPIRETIME)
+                    .addCommand(io.lettuce.core.protocol.CommandType.PTTL)
+                    .addCommand(io.lettuce.core.protocol.CommandType.TYPE)
+                    .addCommand(io.lettuce.core.protocol.CommandType.TIME));
+        connection
+            .sync()
+            .dispatch(
+                TestAclCommand.INSTANCE,
+                new io.lettuce.core.output.StatusOutput<>(ByteArrayCodec.INSTANCE),
+                new io.lettuce.core.protocol.CommandArgs<>(ByteArrayCodec.INSTANCE)
+                    .add("SETUSER")
+                    .add("account_coord_app")
+                    .add("+waitaof"));
+        awaitLocalAndReplicaAof(connection.sync());
 
-    } finally {
-      admin.shutdown();
+      } finally {
+        admin.shutdown();
+      }
+      coordination =
+          new AccountControlUiCoordination(
+              () -> accountClient.connect(ByteArrayCodec.INSTANCE),
+              new AcknowledgementRequirements(1, 1, 5000),
+              testCatalog());
+      operations =
+          migrationTarget != null
+                  && AccountControlUiOwnerSourcesFixture.HISTORICAL_MIGRATION_TARGETS.contains(
+                      migrationTarget)
+              ? new AccountHistoricalControlUiIssuanceRepository(f.dsl)
+              : new AccountControlUiIssuanceRepository(f.dsl);
+      publicSource =
+          org.mockito.Mockito.spy(
+              new AccountJwtJwksTrustedSource(
+                  lifecycle.client,
+                  lifecycle.trust,
+                  lifecycle.desired,
+                  lifecycle.publication,
+                  f.manager));
+      actors =
+          new AccountControlUiActorService(
+              operations,
+              f.authority,
+              lifecycle.signer,
+              coordination,
+              publicSource,
+              f.fences,
+              f.manager,
+              actorClock);
+      issuance =
+          new AccountControlUiIssuanceService(
+              f.primary,
+              operations,
+              f.authority,
+              f.fences,
+              lifecycle.signer,
+              new AccountControlUiResponseCryptography(
+                  new AccountControlUiKeyring(temporary.resolve("custody")), serviceClock),
+              coordination,
+              actors,
+              f.manager,
+              serviceClock,
+              300_000L,
+              AccountControlUiOwnerSourcesFixture.CALLER);
+    } catch (Exception | Error failure) {
+      if (allocatedClient != null) {
+        try {
+          allocatedClient.shutdown();
+        } catch (RuntimeException | Error cleanupFailure) {
+          failure.addSuppressed(cleanupFailure);
+        }
+      }
+      try {
+        f.closeOwnedConnections();
+      } catch (RuntimeException | Error cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
+      throw failure;
     }
-    coordination =
-        new AccountControlUiCoordination(
-            () -> accountClient.connect(ByteArrayCodec.INSTANCE),
-            new AcknowledgementRequirements(1, 1, 5000),
-            testCatalog());
-    operations =
-        migrationTarget != null
-                && AccountControlUiOwnerSourcesFixture.HISTORICAL_MIGRATION_TARGETS.contains(
-                    migrationTarget)
-            ? new AccountHistoricalControlUiIssuanceRepository(f.dsl)
-            : new AccountControlUiIssuanceRepository(f.dsl);
-    publicSource =
-        org.mockito.Mockito.spy(
-            new AccountJwtJwksTrustedSource(
-                lifecycle.client,
-                lifecycle.trust,
-                lifecycle.desired,
-                lifecycle.publication,
-                f.manager));
-    actors =
-        new AccountControlUiActorService(
-            operations,
-            f.authority,
-            lifecycle.signer,
-            coordination,
-            publicSource,
-            f.fences,
-            f.manager,
-            actorClock);
-    issuance =
-        new AccountControlUiIssuanceService(
-            f.primary,
-            operations,
-            f.authority,
-            f.fences,
-            lifecycle.signer,
-            new AccountControlUiResponseCryptography(
-                new AccountControlUiKeyring(temporary.resolve("custody")), serviceClock),
-            coordination,
-            actors,
-            f.manager,
-            serviceClock,
-            300_000L,
-            AccountControlUiOwnerSourcesFixture.CALLER);
   }
 
   /** The same persistence layout used by this fixture's genuine issuance and actor owners. */
@@ -257,6 +397,16 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
 
   public UUID tenantId() {
     return f.tenant;
+  }
+
+  /** The exact immutable source tuple imported at construction for cross-owner composition. */
+  public FreshTenantCreationEvidence creationEvidence() {
+    return f.creationEvidence;
+  }
+
+  /** Reuse the same physical test-only Account writer without resetting its ACL or credentials. */
+  AccountCoordinationPinnedConnectionProvider gameplayConnectionProvider() {
+    return () -> accountClient.connect(ByteArrayCodec.INSTANCE);
   }
 
   /**
@@ -388,7 +538,17 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
 
   @Override
   public void close() {
-    accountClient.shutdown();
+    try {
+      accountClient.shutdown();
+    } catch (RuntimeException | Error failure) {
+      try {
+        f.closeOwnedConnections();
+      } catch (RuntimeException | Error cleanupFailure) {
+        failure.addSuppressed(cleanupFailure);
+      }
+      throw failure;
+    }
+    f.closeOwnedConnections();
   }
 
   private static RedisScriptCatalog testCatalog() {

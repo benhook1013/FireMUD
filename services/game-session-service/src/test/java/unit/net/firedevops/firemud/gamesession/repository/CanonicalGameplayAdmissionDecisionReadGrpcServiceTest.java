@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -20,8 +22,11 @@ import io.grpc.stub.StreamObserver;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisCommandTimeoutException;
 import io.lettuce.core.RedisConnectionException;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,13 +35,20 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionNeverAdmittedGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.security.CanonicalGameplayAdmissionDecisionReadWorkloadGuard;
+import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayAdmissionDecisionReadGrpcService;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameplayAdmissionDecisionResponse;
 import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionRequest;
 import net.firedevops.firemud.gamesession.v1.GetOriginalNewNeverAdmittedDecisionResponse;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsRequest;
+import net.firedevops.firemud.gamesession.v1.ListVisiblePublicProductionAdmissionTargetsResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -50,6 +62,370 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * separate PostgreSQL test.
  */
 class CanonicalGameplayAdmissionDecisionReadGrpcServiceTest {
+  @Test
+  void discoveryReturnsOnlyCompleteUnchangedOwnerCollectionRegardlessOfIterationOrder() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    var first = discoveryTarget("first", "First world");
+    var second = discoveryTarget("second", "Second world");
+    when(routes.readVisiblePublicProductionTargets())
+        .thenReturn(List.of(first, second), List.of(second, first));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    var captured =
+        ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+    verify(observer).onNext(captured.capture());
+    verify(observer).onCompleted();
+    verify(observer, never()).onError(any());
+    var result =
+        CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
+                discoveryRequest()),
+            captured.getValue());
+    assertThat(result.targets())
+        .extracting(
+            target -> target.canonicalTenantId(),
+            target -> target.canonicalGameInstanceId(),
+            target -> target.ownerProofDigest())
+        .containsExactlyInAnyOrder(
+            tuple(
+                first.canonicalTenantId(),
+                first.canonicalGameInstanceId(),
+                first.ownerProofDigest()),
+            tuple(
+                second.canonicalTenantId(),
+                second.canonicalGameInstanceId(),
+                second.ownerProofDigest()));
+    verify(routes, org.mockito.Mockito.times(2)).readVisiblePublicProductionTargets();
+  }
+
+  @Test
+  void discoveryReturnsCompletePlayerCreatedAndMixedPolicyCollectionsOnBothReads() {
+    var preseeded = discoveryTarget("first", "First world");
+    var created = discoveryTarget("second", "Created world", "PLAYER_CREATED");
+    for (var initial : List.of(List.of(preseeded, created), List.of(created))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      var reversed = new java.util.ArrayList<>(initial);
+      java.util.Collections.reverse(reversed);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(initial, reversed);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      var captured =
+          ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+      verify(observer).onNext(captured.capture());
+      verify(observer).onCompleted();
+      verify(observer, never()).onError(any());
+      var result =
+          CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
+              CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseDiscoveryRequest(
+                  discoveryRequest()),
+              captured.getValue());
+      assertThat(result.targets()).hasSize(initial.size());
+      assertThat(result.targets())
+          .extracting(
+              target -> target.canonicalTenantId(), target -> target.characterCreationPolicy())
+          .containsExactlyInAnyOrderElementsOf(
+              initial.stream()
+                  .map(
+                      target -> tuple(target.canonicalTenantId(), target.characterCreationPolicy()))
+                  .toList());
+      verify(routes, times(2)).readVisiblePublicProductionTargets();
+    }
+  }
+
+  @Test
+  void discoveryDoesNotHideMalformedPlayerCreatedAuthority() {
+    var created = discoveryTarget("created", "World", "PLAYER_CREATED");
+    var malformed =
+        mock(CanonicalPlayableTarget.class, org.mockito.AdditionalAnswers.delegatesTo(created));
+    org.mockito.Mockito.doReturn("not-a-proof-digest").when(malformed).ownerProofDigest();
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(malformed));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+    verify(routes).readVisiblePublicProductionTargets();
+  }
+
+  @Test
+  void discoveryDoesNotHideDuplicateAuthorityBehindPlayerCreatedFiltering() {
+    var preseeded = discoveryTarget("same", "World");
+    var created = discoveryTarget("same", "World", "PLAYER_CREATED");
+    for (var targets : List.of(List.of(preseeded, created), List.of(created, created))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(targets);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+      verify(routes).readVisiblePublicProductionTargets();
+    }
+  }
+
+  @Test
+  void discoveryAllowsGenuineEmptyCollectionButNeverDependencyAbsenceAsEmptySuccess() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of());
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    var captured =
+        ArgumentCaptor.forClass(ListVisiblePublicProductionAdmissionTargetsResponse.class);
+    verify(observer).onNext(captured.capture());
+    assertThat(captured.getValue().getCurrentTargetsList()).isEmpty();
+    verify(observer).onCompleted();
+    var absent = discoveryObserver();
+    discoveryService(null, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), absent);
+    assertDiscoveryFailure(absent, Status.Code.UNAVAILABLE);
+    when(routes.readVisiblePublicProductionTargets())
+        .thenThrow(
+            new CanonicalPlayerRouteReadService.ReadUnavailableException("private storage detail"));
+    var unavailable = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), unavailable);
+    assertDiscoveryFailure(unavailable, Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void discoveryRejectsChangedContentsMembershipAndDuplicates() {
+    var first = discoveryTarget("first", "First world");
+    var second = discoveryTarget("second", "Second world");
+    for (var changed :
+        List.of(
+            List.<CanonicalPlayableTarget>of(),
+            List.of(first, second),
+            List.of(discoveryTarget("first", "Changed display")),
+            List.of(first, first))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(first), changed);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+    }
+  }
+
+  @Test
+  void discoveryRejectsAnUnchangedOversizedTargetBeforeTheSecondSourceRead() {
+    var oversized = discoveryTarget("first", "x".repeat(64 * 1024));
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of(oversized));
+    var observer = discoveryObserver();
+    discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+        .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+    assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+    verify(routes, times(1)).readVisiblePublicProductionTargets();
+  }
+
+  @Test
+  void discoveryAuthenticatesAndRejectsSqlBeforeParsingOrOwnerAccess() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    var guard = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
+    doThrow(Status.PERMISSION_DENIED.asRuntimeException()).when(guard).requireAccountCaller();
+    var denied = discoveryObserver();
+    discoveryService(routes, guard)
+        .listVisiblePublicProductionAdmissionTargets(
+            ListVisiblePublicProductionAdmissionTargetsRequest.getDefaultInstance(), denied);
+    assertDiscoveryFailure(denied, Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(routes);
+    for (boolean synchronization : new boolean[] {false, true}) {
+      var observer = discoveryObserver();
+      var allowed = mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class);
+      try {
+        if (synchronization) TransactionSynchronizationManager.initSynchronization();
+        else TransactionSynchronizationManager.setActualTransactionActive(true);
+        discoveryService(routes, allowed)
+            .listVisiblePublicProductionAdmissionTargets(
+                ListVisiblePublicProductionAdmissionTargetsRequest.getDefaultInstance(), observer);
+        assertDiscoveryFailure(observer, Status.Code.FAILED_PRECONDITION);
+        verify(allowed).requireAccountCaller();
+      } finally {
+        TransactionSynchronizationManager.clear();
+      }
+    }
+    verifyNoInteractions(routes);
+  }
+
+  @Test
+  void discoveryRejectsMalformedOrForeignNamespaceBeforeOwnerAccess() {
+    var routes = mock(CanonicalPlayerRouteReadService.class);
+    for (var request :
+        List.of(
+            ListVisiblePublicProductionAdmissionTargetsRequest.getDefaultInstance(),
+            discoveryRequest().toBuilder().setTargetNamespace(0, "foreign").build())) {
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(request, observer);
+      assertDiscoveryFailure(
+          observer,
+          request.getSchemaVersionCount() == 0
+              ? Status.Code.INVALID_ARGUMENT
+              : Status.Code.PERMISSION_DENIED);
+    }
+    verifyNoInteractions(routes);
+  }
+
+  private static CanonicalGameplayAdmissionDecisionReadGrpcService discoveryService(
+      CanonicalPlayerRouteReadService routes,
+      CanonicalGameplayAdmissionDecisionReadWorkloadGuard guard) {
+    return new CanonicalGameplayAdmissionDecisionReadGrpcService(
+        mock(CanonicalGameplayBindingInventoryRepository.class),
+        guard,
+        "test",
+        null,
+        routes,
+        null,
+        null,
+        null);
+  }
+
+  private static ListVisiblePublicProductionAdmissionTargetsRequest discoveryRequest() {
+    return CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryRequest(
+        new CanonicalGameplayAdmissionDecisionReadGrpcCodec.DiscoveryRequest(
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), "test"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static StreamObserver<ListVisiblePublicProductionAdmissionTargetsResponse>
+      discoveryObserver() {
+    return mock(StreamObserver.class);
+  }
+
+  @Test
+  void discoveryUnexpectedSourceFailuresUseTheSourceContractsSanitizedStatus() {
+    for (RuntimeException failure :
+        List.of(
+            new UnsupportedOperationException("private storage detail"),
+            new IllegalStateException("private storage detail"),
+            new IllegalArgumentException("private storage detail"))) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenThrow(failure);
+      var observer = discoveryObserver();
+      discoveryService(routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+          .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      assertDiscoveryFailure(
+          observer,
+          failure instanceof IllegalArgumentException
+              ? Status.Code.FAILED_PRECONDITION
+              : Status.Code.INTERNAL);
+    }
+  }
+
+  @Test
+  void discoveryObserverFailuresNeverProduceASecondTerminalSignal() {
+    for (boolean completionFailure : List.of(false, true)) {
+      var routes = mock(CanonicalPlayerRouteReadService.class);
+      when(routes.readVisiblePublicProductionTargets()).thenReturn(List.of());
+      var observer = discoveryObserver();
+      var failure = new IllegalStateException("private observer detail");
+      if (completionFailure) doThrow(failure).when(observer).onCompleted();
+      else doThrow(failure).when(observer).onNext(any());
+      Runnable receive =
+          () ->
+              discoveryService(
+                      routes, mock(CanonicalGameplayAdmissionDecisionReadWorkloadGuard.class))
+                  .listVisiblePublicProductionAdmissionTargets(discoveryRequest(), observer);
+      if (completionFailure) assertThatThrownBy(receive::run).isSameAs(failure);
+      else receive.run();
+      verify(observer).onNext(any());
+      if (completionFailure) {
+        verify(observer).onCompleted();
+        verify(observer, never()).onError(any());
+      } else {
+        var error = ArgumentCaptor.forClass(Throwable.class);
+        verify(observer).onError(error.capture());
+        assertThat(Status.fromThrowable(error.getValue()).getCode())
+            .isEqualTo(Status.Code.INTERNAL);
+        assertThat(error.getValue())
+            .hasMessageNotContaining("private observer detail")
+            .hasNoCause();
+        verify(observer, never()).onCompleted();
+      }
+    }
+  }
+
+  private static void assertDiscoveryFailure(
+      StreamObserver<ListVisiblePublicProductionAdmissionTargetsResponse> observer,
+      Status.Code expected) {
+    var error = ArgumentCaptor.forClass(Throwable.class);
+    verify(observer).onError(error.capture());
+    assertThat(Status.fromThrowable(error.getValue()).getCode()).isEqualTo(expected);
+    assertThat(error.getValue()).hasMessageNotContaining("private storage detail");
+    verify(observer, never()).onNext(any());
+    verify(observer, never()).onCompleted();
+  }
+
+  private static CanonicalPlayableTarget discoveryTarget(String slug, String displayName) {
+    return discoveryTarget(slug, displayName, "PRESEEDED_ONLY");
+  }
+
+  private static CanonicalPlayableTarget discoveryTarget(
+      String slug, String displayName, String creationPolicy) {
+    UUID tenant = UUID.nameUUIDFromBytes(("tenant-" + slug).getBytes(StandardCharsets.UTF_8));
+    UUID realm = UUID.nameUUIDFromBytes(("realm-" + slug).getBytes(StandardCharsets.UTF_8));
+    UUID namespace = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    UUID instance = UUID.nameUUIDFromBytes(("instance-" + slug).getBytes(StandardCharsets.UTF_8));
+    UUID version = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    UUID holdId = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    UUID holdFence = UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    String requestId =
+        UUID.nameUUIDFromBytes(("admission-" + slug).getBytes(StandardCharsets.UTF_8)).toString();
+    String digest = "a".repeat(64);
+    var request =
+        new WorldCanonicalInitialAdmissionHold.Request(
+            "test",
+            tenant,
+            "earth",
+            realm,
+            namespace,
+            "SHARED",
+            instance,
+            version,
+            7,
+            requestId,
+            digest,
+            WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+            2,
+            null);
+    var hold = new WorldCanonicalInitialAdmissionHold.HoldIdentity(request, holdId, holdFence);
+    return new CanonicalPlayableTarget(
+        "test",
+        slug,
+        tenant,
+        "earth",
+        displayName,
+        realm,
+        "production",
+        "Production",
+        11,
+        71,
+        namespace,
+        "SHARED",
+        instance,
+        version,
+        99,
+        2,
+        3,
+        "d".repeat(64),
+        7,
+        requestId,
+        digest,
+        CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
+        null,
+        holdId,
+        holdFence,
+        hold.holdBindingDigest(),
+        101,
+        "sha256:" + digest,
+        CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+        false,
+        Instant.parse("2026-10-25T00:00:00Z"),
+        creationPolicy);
+  }
+
   @Test
   void deniesNonAccountCallerBeforeParsingOrRepositoryRead() {
     var repository = mock(CanonicalGameplayBindingInventoryRepository.class);

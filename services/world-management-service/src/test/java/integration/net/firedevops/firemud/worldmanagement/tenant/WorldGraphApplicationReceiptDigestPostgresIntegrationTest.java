@@ -194,14 +194,22 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       fresh.validate();
       assertThat(fresh.info().pending()).isEmpty();
 
-      Flyway probeCurrent = flyway(probeSource, probeSchema, null, worldLocation, sagaLocation);
+      // Predicate-only CTAS clones deliberately lack real owner keys. Keep this controlled
+      // probe at its catalog frontier; fresh and upgraded real schemas advance through V1050.
+      Flyway probeCurrent =
+          flyway(
+              probeSource,
+              probeSchema,
+              MigrationVersion.fromVersion("1048"),
+              worldLocation,
+              sagaLocation);
       probeCurrent.migrate();
       probeCurrent.validate();
       assertThat(probeCurrent.info().pending()).isEmpty();
 
-      assertThat(latestVersion(upgradeDsl)).isEqualTo("1045");
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1050");
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
-      assertThat(latestVersion(probeDsl)).isEqualTo(latestVersion(upgradeDsl));
+      assertThat(latestVersion(probeDsl)).isEqualTo("1048");
       assertThat(migrationHistory(upgradeDsl, "1012")).isEqualTo(history1012Before);
       assertThat(migrationHistory(upgradeDsl, "1014")).isEqualTo(history1014Before);
       assertThat(migrationHistory(upgradeDsl, "1042.11")).isEqualTo(history104211Before);
@@ -210,12 +218,18 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       assertThat(migrationHistory(upgradeDsl, "1044")).isNotNull();
       assertThat(migrationHistory(upgradeDsl, "1044.1")).isNotNull();
       assertThat(migrationHistory(upgradeDsl, "1045")).isNotNull();
+      assertThat(migrationHistory(upgradeDsl, "1046")).isNotNull();
+      assertThat(migrationHistory(upgradeDsl, "1047")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.12")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.13")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1044")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1045")).isNotNull();
+      assertThat(migrationHistory(freshDsl, "1046")).isNotNull();
+      assertThat(migrationHistory(freshDsl, "1047")).isNotNull();
       assertThat(migrationHistory(probeDsl, "1044")).isNotNull();
       assertThat(migrationHistory(probeDsl, "1045")).isNotNull();
+      assertThat(migrationHistory(probeDsl, "1046")).isNotNull();
+      assertThat(migrationHistory(probeDsl, "1047")).isNotNull();
       assertCanonicalInitialAdmissionHoldLifecycleGuard(upgradeDsl, upgradeSchema);
       assertCanonicalInitialAdmissionHoldLifecycleGuard(freshDsl, freshSchema);
       assertCanonicalInitialAdmissionHoldLifecycleGuard(probeDsl, probeSchema);
@@ -337,7 +351,20 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
 
   private static void cloneProbeTables(DSLContext dsl, String sourceSchema, String probeSchema) {
     dsl.execute("CREATE SCHEMA " + DSL.name(probeSchema));
-    for (String table : PROBE_TABLES)
+    // The latest catalog migration requires every installed World/Saga table to exist.
+    // Retain the controlled predicate-only clones, including every original positive table,
+    // and clone the remaining installed source/control/replay/Saga tables without row data.
+    // Flyway creates its own real configured history below; never clone migration rows.
+    List<String> tables =
+        dsl.fetch(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
+                    + " WHERE n.nspname=? AND c.relkind IN ('r','p','f') AND c.relname<>?"
+                    + " ORDER BY c.relname",
+                sourceSchema,
+                HISTORY)
+            .getValues(0, String.class);
+    assertThat(tables).containsAll(PROBE_TABLES);
+    for (String table : tables)
       dsl.execute(
           "CREATE TABLE "
               + DSL.name(probeSchema, table)

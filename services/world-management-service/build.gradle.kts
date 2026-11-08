@@ -14,6 +14,8 @@ firemudJooq {
 
 dependencies {
     implementation(project(":common-security"))
+    // Resolve the annotations declared provided/optional by the pinned jOOQ API during analysis.
+    compileOnly(libs.jetbrains.annotations)
   testImplementation(testFixtures(project(":common-platform-core")))
   testImplementation(libs.bouncycastle.pkix)
   testCompileOnly(libs.spotbugs.annotations)
@@ -33,6 +35,10 @@ dependencies {
   )
   add("crossServiceTestImplementation", testFixtures(project(":common-test-support")))
   add("crossServiceTestImplementation", "io.grpc:grpc-util:${libs.versions.grpc.get()}")
+}
+
+tasks.named<Test>("test") {
+    inputs.file(rootProject.file("dev-tools/deploy/fixtures/runtime-installation/candidate.json"))
 }
 
 // Receiving owner proof uses World classes without its application or Flyway resources.

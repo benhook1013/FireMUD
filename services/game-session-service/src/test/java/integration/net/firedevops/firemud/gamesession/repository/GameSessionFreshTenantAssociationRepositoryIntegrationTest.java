@@ -22,6 +22,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldIntakeDigest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
@@ -32,7 +33,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssoc
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantSourceException;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -841,14 +841,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
@@ -877,14 +870,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);

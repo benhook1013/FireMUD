@@ -38,6 +38,7 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayIssuerTestFixtures;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepository.PinnedLaunchDescriptorSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
@@ -50,7 +51,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemp
 import net.firedevops.firemud.gamesession.service.GameSessionStartSessionLaunchDescriptorContinuationService;
 import net.firedevops.firemud.gamesession.service.GameSessionStartSessionLaunchDescriptorContinuationService.EvidenceContinuationUnavailableException;
 import net.firedevops.firemud.test.TestContainerImages;
-import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -860,14 +860,7 @@ class GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    CanonicalGameplayIssuerTestFixtures.migrateSchema(dataSource, schema, MIGRATION_LOCATION, null);
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
     DSLContext dsl =
