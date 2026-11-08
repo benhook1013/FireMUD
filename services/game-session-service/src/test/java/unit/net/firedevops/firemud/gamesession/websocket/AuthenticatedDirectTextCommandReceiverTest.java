@@ -16,9 +16,11 @@ import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
@@ -80,15 +82,20 @@ class AuthenticatedDirectTextCommandReceiverTest {
   @Test
   void loginAndLobbyObservationsNeverSubstituteForCanonicalPlayAdmission() {
     var fixture = fixture();
-    var result =
-        fixture.receiver.receive(
-            fixture.socket,
-            new TextCommand(
-                TextCommandType.PLAY,
-                List.of("demo", "production", "hero"),
-                "PLAY demo production hero"));
+    var command =
+        new TextCommand(
+            TextCommandType.PLAY,
+            List.of("demo", "production", "hero"),
+            "PLAY demo production hero");
+    var result = fixture.receiver.receive(fixture.socket, command);
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_UNAVAILABLE");
+    var wireResponse =
+        new TextPlayerOutputRenderer(new PresentationProperties())
+            .renderAll(command, result.commandResult(), result.outputs());
+    assertThat(wireResponse)
+        .isEqualTo("ERROR ADMISSION_UNAVAILABLE Canonical gameplay admission unavailable")
+        .doesNotContain("ENTITLEMENT_UNAVAILABLE");
     verifyNoInteractions(fixture.lobby, fixture.selections);
   }
 

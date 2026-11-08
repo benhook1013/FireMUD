@@ -142,7 +142,7 @@ class GameSessionWebSocketHandlerTest {
 
     InOrder order = Mockito.inOrder(session, authenticatedSessions);
     order.verify(session).sendMessage(argThat(message -> "OK LOGOUT".equals(message.getPayload())));
-    order.verify(authenticatedSessions).close(session);
+    order.verify(authenticatedSessions).close(session, new CloseStatus(1000, "logout"));
     Mockito.verifyNoInteractions(interpreter);
   }
 
@@ -225,8 +225,29 @@ class GameSessionWebSocketHandlerTest {
 
     InOrder order = Mockito.inOrder(session, authenticatedSessions);
     order.verify(session).sendMessage(argThat(message -> "OK LOGOUT".equals(message.getPayload())));
-    order.verify(authenticatedSessions).close(session);
+    order.verify(authenticatedSessions).close(session, new CloseStatus(1000, "logout"));
     Mockito.verifyNoInteractions(interpreter);
+  }
+
+  @Test
+  void authenticatedTransportErrorUsesInternalErrorInsteadOfRestart() throws Exception {
+    var authenticatedSessions = authenticatedLogoutReceiving();
+
+    handler.handleTransportError(session, new IOException("transport failed"));
+
+    verify(authenticatedSessions).close(session, new CloseStatus(1011, "internal_error"));
+    Mockito.verifyNoInteractions(interpreter, sessionAuthenticationService);
+  }
+
+  @Test
+  void authenticatedConnectionClosedPreservesObservedStatus() {
+    var authenticatedSessions = authenticatedLogoutReceiving();
+    var status = new CloseStatus(1001, "idle_timeout");
+
+    handler.afterConnectionClosed(session, status);
+
+    verify(authenticatedSessions).close(session, status);
+    Mockito.verifyNoInteractions(interpreter, sessionAuthenticationService);
   }
 
   private AuthenticatedDirectTextSessions authenticatedLogoutReceiving() {
