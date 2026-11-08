@@ -30,6 +30,109 @@ class AccountPublicJwksCacheTest {
           "a".repeat(64));
 
   @Test
+  void unknownKidCustodyRejectionImmediatelyLatchesKnownKeysAndLaterRefresh() throws Exception {
+    KeyPair key = rsa3072();
+    var accepted = snapshot(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    for (boolean typedCustodyRejection : new boolean[] {true, false}) {
+      MutableClock clock = new MutableClock(INITIAL);
+      AtomicInteger loads = new AtomicInteger();
+      AtomicReference<AccountPublicJwksCache.PublicJwksSnapshot> current =
+          new AtomicReference<>(accepted);
+      AtomicReference<Boolean> custodyRejected = new AtomicReference<>(false);
+      var cache =
+          cache(
+              clock,
+              () -> {
+                loads.incrementAndGet();
+                if (typedCustodyRejection && custodyRejected.get()) {
+                  throw new AccountPublicJwksCache.SourceCustodyRejectedException();
+                }
+                return current.get();
+              });
+      assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+      custodyRejected.set(true);
+      current.set(new AccountPublicJwksCache.PublicJwksSnapshot(otherPin(), accepted.jwksBytes()));
+      assertThatThrownBy(() -> cache.keyFor("unknown"))
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      // Neither a restored source nor another lookup can silently requalify a rejected instance.
+      custodyRejected.set(false);
+      current.set(accepted);
+      assertThatThrownBy(() -> cache.keyFor("known"))
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      assertThatThrownBy(cache::refresh)
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      assertThat(loads).hasValue(2);
+    }
+  }
+
+  @Test
+  void proactiveRefreshOutagesNeverExtendAgeAndDeniedKidsStayDenied() throws Exception {
+    KeyPair key = rsa3072();
+    MutableClock clock = new MutableClock(INITIAL);
+    AtomicReference<AccountPublicJwksCache.TrustedPublicJwksSource> current =
+        new AtomicReference<>(
+            () ->
+                snapshot(
+                    jwks(
+                        jwk("known", (RSAPublicKey) key.getPublic())
+                            + ","
+                            + jwk("denied", (RSAPublicKey) key.getPublic()))));
+    var cache = cache(clock, () -> current.get().load());
+    cache.refresh();
+    cache.invalidateKid("denied");
+    current.set(
+        () -> {
+          throw new AccountPublicJwksCache.SourceUnavailableException();
+        });
+    clock.advance(Duration.ofSeconds(3));
+    cache.refresh();
+    clock.advance(Duration.ofSeconds(3));
+    cache.refresh();
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    assertThatThrownBy(() -> cache.keyFor("denied"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    clock.advance(Duration.ofSeconds(5));
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+    assertThatThrownBy(() -> cache.keyFor("denied"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+  }
+
+  @Test
+  void proactiveInvalidSourcePermanentlyRefusesFreshKnownAndUnknownKids() throws Exception {
+    KeyPair key = rsa3072();
+    var valid = snapshot(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    var changed = new AccountPublicJwksCache.PublicJwksSnapshot(otherPin(), valid.jwksBytes());
+    for (var invalid :
+        new AccountPublicJwksCache.PublicJwksSnapshot[] {
+          changed,
+          snapshot("{\"keys\":[]}"),
+          snapshot(jwks(jwk("known", (RSAPublicKey) rsa3072().getPublic())))
+        }) {
+      MutableClock clock = new MutableClock(INITIAL);
+      AtomicReference<AccountPublicJwksCache.PublicJwksSnapshot> current =
+          new AtomicReference<>(valid);
+      var cache = cache(clock, current::get);
+      cache.refresh();
+      cache.invalidateKid("denied");
+      current.set(invalid);
+      assertThatThrownBy(cache::refresh)
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      current.set(valid);
+      assertThatThrownBy(() -> cache.keyFor("known"))
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      assertThatThrownBy(() -> cache.keyFor("unknown"))
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      assertThatThrownBy(cache::refresh)
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      assertThatThrownBy(() -> cache.keyFor("denied"))
+          .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    }
+  }
+
+  @Test
   void snapshotBoundKnownKeyRejectsNewEvidenceUntilOrdinaryRefreshMatchesIt() throws Exception {
     KeyPair key = rsa3072();
     String first = jwks(jwk("known", (RSAPublicKey) key.getPublic()));

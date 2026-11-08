@@ -74,9 +74,10 @@ workloads = (
     "account-service",
     "game-session-service",
     "social-groups-service",
+    "spring-cloud-gateway",
 )
 if len(documents) != len(workloads):
-    raise SystemExit(f"expected eight Certificate documents, got {len(documents)}")
+    raise SystemExit(f"expected nine Certificate documents, got {len(documents)}")
 for workload, document in zip(workloads, documents, strict=True):
     expected_name = f"{namespace}-grpc-{workload}"
     if document.get("apiVersion") != "cert-manager.io/v1" or document.get("kind") != "Certificate":
@@ -103,29 +104,31 @@ for workload, document in zip(workloads, documents, strict=True):
         "rotationPolicy": "Always",
     }:
         raise SystemExit(f"{expected_name} has an unexpected private-key profile")
-    if spec.get("dnsNames") != [
+    expected_dns = None if workload == "spring-cloud-gateway" else [
         workload,
         f"{workload}.{namespace}",
         f"{workload}.{namespace}.svc",
         f"{workload}.{namespace}.svc.cluster.local",
-    ]:
+    ]
+    if spec.get("dnsNames") != expected_dns:
         raise SystemExit(f"{expected_name} has unexpected DNS identities")
     if spec.get("uris") != [f"spiffe://firemud/ns/{namespace}/sa/{workload}"]:
         raise SystemExit(f"{expected_name} has an unexpected workload URI")
-    if spec.get("usages") != [
+    expected_usages = ["digital signature", "key encipherment", "client auth"] if workload == "spring-cloud-gateway" else [
         "digital signature",
         "key encipherment",
         "server auth",
         "client auth",
-    ]:
+    ]
+    if spec.get("usages") != expected_usages:
         raise SystemExit(f"{expected_name} has unexpected usages")
     if spec.get("encodeUsagesInRequest") is not True:
         raise SystemExit(f"{expected_name} omits encoded usages")
 PY
 
   actual_wait_count="$(grep -c ' wait ' "$STATE_DIR/calls")"
-  [[ "$actual_wait_count" -eq 8 ]] || {
-    echo "expected eight Certificate readiness waits for $namespace, got $actual_wait_count" >&2
+  [[ "$actual_wait_count" -eq 9 ]] || {
+    echo "expected nine Certificate readiness waits for $namespace, got $actual_wait_count" >&2
     exit 1
   }
   if grep -E 'get secret|create secret|apply.*secret' "$STATE_DIR/calls" >/dev/null; then
@@ -168,6 +171,7 @@ for workload in (
     "account-service",
     "game-session-service",
     "social-groups-service",
+    "spring-cloud-gateway",
 ):
     assert workload in request_text, workload
     assert f"firemud-grpc-{workload}" in certificate_text, workload

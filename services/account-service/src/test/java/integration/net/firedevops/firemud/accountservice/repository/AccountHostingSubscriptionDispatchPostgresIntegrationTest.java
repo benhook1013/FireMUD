@@ -2,6 +2,8 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.stripe.exception.StripeException;
 import com.stripe.model.StripeObject;
@@ -105,6 +107,109 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var read = f.tx().execute(s -> f.owner().readProviderDispatch(prepared));
     assertThat(read.readyForProviderIo()).isTrue();
     assertThat(read.initialCallAllowed()).isFalse();
+  }
+
+  @Test
+  void upgradeRetainsControlledUnclaimedWorkWithoutInventingDispatchHistory() {
+    Fixture f = fixture("1030");
+    // Controlled retained state is inserted directly with the normal SQL guards enabled. The
+    // existing production claim owner does not commit nonterminal work without its first attempt.
+    f.tx()
+        .executeWithoutResult(
+            s ->
+                f.dsl()
+                    .execute(
+                        "INSERT INTO subscription_provisioning_work (request_id, subscription_id, phase, row_version, "
+                            + "attempt_count, max_attempts, max_stalled_attempts, lease_millis, backoff_millis, deadline_at, retry_at) "
+                            + "SELECT request_id, subscription_id, 'RECONCILING', 1, 0, 4, 3, 10000, 1000, "
+                            + "created_at + interval '1 hour', created_at FROM subscription_create_operations WHERE request_id = ?",
+                        f.creation().requestId()));
+    var retained =
+        f.dsl()
+            .fetch(
+                "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM subscription_provisioning_work t")
+            .intoMaps();
+    assertThat(retained).hasSize(1);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+
+    migrate(f.source(), f.schema(), "1032");
+
+    assertThat(
+            f.dsl()
+                .fetch(
+                    "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM subscription_provisioning_work t")
+                .intoMaps())
+        .isEqualTo(retained);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
+    var first = claim(f, 1);
+    assertThat(first.attemptNumber()).isOne();
+    var result =
+        (AccountHostingSubscriptionProvisioningService.AwaitingPayment)
+            service(f).provision(first, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(result.invoice().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(result.invoice().subscriptionId()).isEqualTo(f.creation().subscriptionId());
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
+    assertThat(f.transport().creates).isOne();
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl().fetchOne("SELECT * FROM subscription_provider_dispatch_claim"))
+                .intoMap())
+        .containsEntry("classification", "FIRST_DISPATCH")
+        .containsEntry("first_attempt_id", first.attemptId())
+        .containsEntry("first_claimed_row_version", first.subscriptionRowVersion());
+  }
+
+  @Test
+  void upgradeRetainsExpiredFirstClaimAsTerminalWithoutInventingDispatchHistory() {
+    Fixture f = fixture("1030");
+    f.clock().advance(Duration.ofHours(1));
+    var failed =
+        f.tx().execute(s -> f.owner().claim(f.creation().requestId(), 1, UUID.randomUUID()));
+    assertThat(failed.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(failed.claim()).isNull();
+    assertThat(
+            Objects.requireNonNull(f.dsl().fetchOne("SELECT * FROM subscription_provisioning_work"))
+                .intoMap())
+        .containsEntry("phase", "BILLING_RECONCILIATION_TERMINAL_FAILURE")
+        .containsEntry("attempt_count", 0)
+        .containsEntry("failure_reason", "ABSOLUTE_DEADLINE");
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isOne();
+    var retained = new java.util.LinkedHashMap<String, List<Map<String, Object>>>();
+    for (String table :
+        List.of(
+            "subscription",
+            "subscription_provisioning_work",
+            "subscription_provisioning_operator_outbox",
+            "subscription_instrument_reservations")) {
+      retained.put(
+          table,
+          f.dsl()
+              .fetch("SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM " + table + " t")
+              .intoMaps());
+    }
+
+    migrate(f.source(), f.schema(), "1032");
+
+    var replay =
+        f.tx().execute(s -> f.owner().claim(f.creation().requestId(), 1, UUID.randomUUID()));
+    assertThat(replay.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(replay.claim()).isNull();
+    for (var entry : retained.entrySet()) {
+      assertThat(
+              f.dsl()
+                  .fetch(
+                      "SELECT row_to_json(t)::text AS row, xmin::text AS xmin FROM "
+                          + entry.getKey()
+                          + " t")
+                  .intoMaps())
+          .isEqualTo(entry.getValue());
+    }
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
+    assertThat(f.transport().creates).isZero();
+    assertThat(f.transport().searches).isZero();
   }
 
   @Test
@@ -400,6 +505,209 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
                 .intoMap())
         .containsEntry("phase", "BILLING_RECONCILIATION_TERMINAL_FAILURE")
         .containsEntry("failure_reason", "STALLED_WITHOUT_COMMITTED_PROGRESS");
+  }
+
+  @Test
+  void displayRefreshAfterClaimRefusesDispatchButRetainedWorkReachesOperatorDeadline() {
+    Fixture f = fixture("1032");
+    var original = claim(f, 1);
+    var originalRows = f.dsl().fetch("SELECT * FROM subscription_create_operations").intoMaps();
+    var reservation =
+        f.dsl().fetch("SELECT * FROM subscription_instrument_reservations").intoMaps();
+    refreshDisplay(f);
+
+    assertThatThrownBy(
+            () ->
+                f.tx().execute(s -> f.owner().prepareProviderDispatch(original, UUID.randomUUID())))
+        .isInstanceOf(FenceRejectedException.class);
+    var refused =
+        (AccountHostingSubscriptionProvisioningService.Pending)
+            service(f).provision(original, UUID.randomUUID(), UUID.randomUUID());
+    assertThat(refused.disposition()).isEqualTo(Disposition.WAITING);
+    assertThat(refused.providerResult())
+        .isEqualTo(
+            new StripeHostingSubscriptionProvisioner.Pending("DISPATCH_FENCE_REJECTED", null));
+    var waiting =
+        f.tx()
+            .execute(
+                s ->
+                    f.owner()
+                        .claim(
+                            f.creation().requestId(),
+                            original.subscriptionRowVersion(),
+                            UUID.randomUUID()));
+    assertThat(waiting.disposition()).isEqualTo(Disposition.WAITING);
+    assertThat(waiting.claim()).isNull();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isOne();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
+    f.clock().advance(Duration.ofHours(1));
+
+    var terminal =
+        f.tx()
+            .execute(
+                s ->
+                    f.owner()
+                        .claim(
+                            f.creation().requestId(),
+                            original.subscriptionRowVersion(),
+                            UUID.randomUUID()));
+    assertThat(terminal.disposition()).isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(terminal.claim()).isNull();
+    assertThat(f.tx().<Disposition>execute(s -> f.owner().deferUnresolved(original)))
+        .isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(
+            Objects.requireNonNull(f.dsl().fetchOne("SELECT * FROM subscription_provisioning_work"))
+                .intoMap())
+        .containsEntry("phase", "BILLING_RECONCILIATION_TERMINAL_FAILURE")
+        .containsEntry("failure_reason", "ABSOLUTE_DEADLINE");
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isOne();
+    assertThat(f.dsl().fetch("SELECT * FROM subscription_create_operations").intoMaps())
+        .usingRecursiveComparison()
+        .isEqualTo(originalRows);
+    assertThat(f.dsl().fetch("SELECT * FROM subscription_instrument_reservations").intoMaps())
+        .isEqualTo(reservation);
+    assertThat(Objects.requireNonNull(f.dsl().fetchOne("SELECT * FROM subscription")).intoMap())
+        .containsEntry("status", "provisioning")
+        .containsEntry("provider_subscription_id", null)
+        .containsEntry("terminal_resolution_id", null);
+    assertThat(f.transport().creates).isZero();
+    assertThat(f.transport().searches).isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_terminal_resolutions")))
+        .isZero();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
+  }
+
+  @Test
+  void displayRefreshAfterDispatchPreparationRefusesReadbackAndStillAllowsLocalDeadlineFailure() {
+    Fixture f = fixture("1032");
+    var original = claim(f, 1);
+    var prepared =
+        f.tx().execute(s -> f.owner().prepareProviderDispatch(original, UUID.randomUUID()));
+    var dispatchRows =
+        f.dsl().fetch("SELECT * FROM subscription_provider_dispatch_claim").intoMaps();
+    refreshDisplay(f);
+
+    assertThatThrownBy(() -> f.tx().execute(s -> f.owner().readProviderDispatch(prepared)))
+        .isInstanceOf(FenceRejectedException.class);
+    assertThat(f.tx().<Disposition>execute(s -> f.owner().deferUnresolved(original)))
+        .isEqualTo(Disposition.WAITING);
+    f.clock().advance(Duration.ofHours(1));
+    assertThat(f.tx().<Disposition>execute(s -> f.owner().deferUnresolved(original)))
+        .isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(f.dsl().fetch("SELECT * FROM subscription_provider_dispatch_claim").intoMaps())
+        .isEqualTo(dispatchRows);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isOne();
+    assertThat(f.transport().creates).isZero();
+  }
+
+  @Test
+  void displayRefreshDoesNotAuthorizeInitialClaimOrDirectDispatchInsert() {
+    Fixture unclaimed = fixture("1032");
+    refreshDisplay(unclaimed);
+    assertThatThrownBy(() -> claim(unclaimed, 1)).isInstanceOf(FenceRejectedException.class);
+    assertThat(unclaimed.dsl().fetchCount(DSL.table("subscription_provisioning_work"))).isZero();
+    assertThat(unclaimed.dsl().fetchCount(DSL.table("subscription_provisioning_attempts")))
+        .isZero();
+
+    Fixture retained = fixture("1032");
+    var original = claim(retained, 1);
+    refreshDisplay(retained);
+    // Exercise the unchanged V1032 insertion guard independently of the Java eligibility fence.
+    assertThatThrownBy(
+            () ->
+                retained
+                    .tx()
+                    .execute(
+                        s ->
+                            retained
+                                .dsl()
+                                .execute(
+                                    "INSERT INTO subscription_provider_dispatch_claim "
+                                        + "(creation_request_id, subscription_id, provider_operation_id, dispatch_id, "
+                                        + "classification, first_attempt_id, first_claimed_row_version, recorded_at) "
+                                        + "VALUES (?, ?, ?, ?, 'FIRST_DISPATCH', ?, ?, ?::timestamptz)",
+                                    retained.creation().requestId(),
+                                    retained.creation().subscriptionId(),
+                                    retained.creation().subscriptionProvisioningRequestId(),
+                                    UUID.randomUUID(),
+                                    original.attemptId(),
+                                    original.subscriptionRowVersion(),
+                                    retained.clock().instant().atOffset(ZoneOffset.UTC))))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("Provider dispatch lacks exact live original provisioning fence");
+    assertThat(retained.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim")))
+        .isZero();
+    assertThat(retained.transport().creates).isZero();
+  }
+
+  @Test
+  void displayRefreshDoesNotLetStaleWorkerSettleReplacementOrRewriteOriginalBinding() {
+    Fixture f = fixture("1032");
+    var first = claim(f, 1);
+    f.clock().advance(Duration.ofSeconds(11));
+    var replacement = claim(f, first.subscriptionRowVersion());
+    refreshDisplay(f);
+    var before = f.dsl().fetch("SELECT * FROM subscription_provisioning_work").intoMaps();
+    assertThatThrownBy(() -> f.tx().execute(s -> f.owner().deferUnresolved(first)))
+        .isInstanceOf(FenceRejectedException.class);
+    assertThatThrownBy(
+            () ->
+                f.tx()
+                    .execute(s -> f.owner().claim(f.creation().requestId(), 1, first.attemptId())))
+        .isInstanceOf(FenceRejectedException.class);
+    assertThat(f.dsl().fetch("SELECT * FROM subscription_provisioning_work").intoMaps())
+        .isEqualTo(before);
+    // Private claims are not caller-constructible. A controlled changed-creation double still must
+    // not substitute for the immutable retained original during the local settlement readback.
+    var changedCreation = mock(AccountSubscriptionCreationRecord.class);
+    when(changedCreation.requestId()).thenReturn(f.creation().requestId());
+    var changedClaim = mock(ProvisioningClaim.class);
+    when(changedClaim.creation()).thenReturn(changedCreation);
+    when(changedClaim.attemptId()).thenReturn(replacement.attemptId());
+    when(changedClaim.subscriptionRowVersion()).thenReturn(replacement.subscriptionRowVersion());
+    assertThatThrownBy(() -> f.tx().execute(s -> f.owner().deferUnresolved(changedClaim)))
+        .isInstanceOf(FenceRejectedException.class)
+        .hasMessage("Exact retained provisioning settlement claim rejected");
+    // The database also retains its existing owner-change guard; this component cannot invent an
+    // unaudited transfer merely to manufacture a changed-current-owner state.
+    assertThatThrownBy(
+            () ->
+                f.tx()
+                    .execute(
+                        s ->
+                            f.dsl()
+                                .execute(
+                                    "UPDATE account_tenant_billing_owners SET owner_version = owner_version + 1, "
+                                        + "owner_generation = ? WHERE tenant_uuid = ?",
+                                    UUID.randomUUID(),
+                                    f.creation().tenantId())))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(f.dsl().fetch("SELECT * FROM subscription_provisioning_work").intoMaps())
+        .isEqualTo(before);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
+    assertThat(f.transport().creates).isZero();
+  }
+
+  private static void refreshDisplay(Fixture f) {
+    var instruments = new AccountPaymentInstrumentRepository(f.dsl());
+    var original = f.creation();
+    var instrument =
+        instruments
+            .findByOwner(original.owner().accountUuid(), original.paymentInstrumentId())
+            .orElseThrow();
+    in(
+        f.tx(),
+        () ->
+            instruments.recordAvailability(
+                new AccountPaymentInstrumentRepository.AvailabilityObservation(
+                    UUID.randomUUID(),
+                    instrument.instrumentUuid(),
+                    instrument.accountUuid(),
+                    instrument.rowVersion(),
+                    AccountPaymentInstrumentRecord.State.ATTACHABLE,
+                    new AccountPaymentInstrumentRecord.DisplayMetadata("visa", "4242", 12, 2031),
+                    DIGEST)));
   }
 
   private static ProviderDispatch prepareAndRead(Fixture f, ProvisioningClaim claim) {

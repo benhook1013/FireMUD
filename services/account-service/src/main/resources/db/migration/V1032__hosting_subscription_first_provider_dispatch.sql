@@ -20,6 +20,7 @@ CREATE TABLE subscription_provider_dispatch_claim (
 
 -- Existing attempt-1/work rows may already have unknown remote effects. Preserve their bytes and
 -- add only a non-authorizing guard. No dispatched/absent/canceled result is inferred.
+-- Work without an attempt has no dispatch history to guard.
 INSERT INTO subscription_provider_dispatch_claim
     (creation_request_id, subscription_id, provider_operation_id, dispatch_id, classification,
      first_attempt_id, first_claimed_row_version, recorded_at)
@@ -27,7 +28,7 @@ SELECT w.request_id, w.subscription_id, c.subscription_provisioning_request_id,
        gen_random_uuid(), 'PREEXISTING_UNKNOWN', a.attempt_id, a.claimed_row_version, clock_timestamp()
 FROM subscription_provisioning_work w
 JOIN subscription_create_operations c ON c.request_id = w.request_id
-LEFT JOIN subscription_provisioning_attempts a ON a.request_id = w.request_id AND a.attempt_number = 1;
+JOIN subscription_provisioning_attempts a ON a.request_id = w.request_id AND a.attempt_number = 1;
 
 -- [jooq ignore start]
 CREATE FUNCTION account_subscription_provider_dispatch_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$

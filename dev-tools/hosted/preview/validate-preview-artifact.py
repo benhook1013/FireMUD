@@ -68,7 +68,8 @@ SOCIAL_GROUPS_GRPC_WORKLOADS = {"social-groups-service"}
 DISTINCT_GRPC_WORKLOADS = (
     PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS | SOCIAL_GROUPS_GRPC_WORKLOADS
 )
-NAMESPACE_BOUND_GRPC_WORKLOADS = DISTINCT_GRPC_WORKLOADS | {"logging-admin-service"}
+GATEWAY_CLIENT_WORKLOADS = {"spring-cloud-gateway"}
+NAMESPACE_BOUND_GRPC_WORKLOADS = DISTINCT_GRPC_WORKLOADS | GATEWAY_CLIENT_WORKLOADS | {"logging-admin-service"}
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
     "Service": SERVICE_IMAGES | {"spring-cloud-gateway-mtls", "postgres", "redis-coord", "redis-cache", "minio"},
@@ -84,6 +85,7 @@ EXPECTED_NAMES = {
         "social-groups-service-controller-ingress",
         "spring-cloud-gateway-ingress",
         "spring-cloud-gateway-egress",
+        "game-session-authenticated-gameplay-ingress",
         "tcp-proxy-service-egress",
     },
 }
@@ -157,7 +159,7 @@ EXPECTED_SECRET_REFS = {
     "minio-credentials",
     "firemud-grpc-tls",
 }
-DISTINCT_GRPC_SECRET_OWNERS = {f"firemud-grpc-{service}": service for service in DISTINCT_GRPC_WORKLOADS}
+DISTINCT_GRPC_SECRET_OWNERS = {f"firemud-grpc-{service}": service for service in DISTINCT_GRPC_WORKLOADS | GATEWAY_CLIENT_WORKLOADS}
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
 ALLOCATED_TELNET_PORT_ANNOTATION = "firemud.dev/allocated-telnet-port"
 CERTIFICATE_IDENTITY_MODES = {"standalone", "hosted-controller"}
@@ -280,8 +282,12 @@ EXPECTED_SERVICE_SPECS = {
             service,
             (("tcp-8080", 8080, 8080), ("tcp-6565", 6565, 6565)),
         )
-        for service in SERVICE_IMAGES - {"spring-cloud-gateway", "tcp-proxy-service"}
+        for service in SERVICE_IMAGES - {"spring-cloud-gateway", "tcp-proxy-service", "game-session-service"}
     },
+    "game-session-service": _application_service_spec(
+        "game-session-service",
+        (("tcp-8080", 8080, 8080), ("tcp-6565", 6565, 6565), ("tcp-8444", 8444, 8444)),
+    ),
     "spring-cloud-gateway": _application_service_spec(
         "spring-cloud-gateway",
         (("tcp-80", 80, 8080), ("tcp-6565", 6565, 6565)),
@@ -593,6 +599,14 @@ INTERNAL_SERVICES_EGRESS = [
     },
 ]
 EXPECTED_INTERNAL_NETWORK_POLICY_SPECS = {
+    "game-session-authenticated-gameplay-ingress": {
+        "podSelector": {"matchLabels": {"app": "game-session-service"}},
+        "policyTypes": ["Ingress"],
+        "ingress": [{
+            "from": [{"podSelector": {"matchLabels": {"app": "spring-cloud-gateway"}}}],
+            "ports": [{"protocol": "TCP", "port": 8444}],
+        }],
+    },
     "internal-services": {
         "podSelector": INTERNAL_SERVICES_SELECTOR,
         "policyTypes": ["Ingress", "Egress"],
@@ -626,6 +640,10 @@ GATEWAY_EGRESS = [
             {"protocol": "UDP", "port": 53},
             {"protocol": "TCP", "port": 53},
         ],
+    },
+    {
+        "to": [{"podSelector": {"matchLabels": {"app": "game-session-service"}}}],
+        "ports": [{"protocol": "TCP", "port": 8444}],
     },
     {
         "to": [
@@ -816,7 +834,8 @@ def _is_distinct_grpc_secret_volume_source(document: object, path: str, value: o
     if not isinstance(volume, dict):
         return False
     source = volume.get("secret")
-    return volume.get("name") == "grpc-tls" and isinstance(source, dict) and source.get("secretName") == value
+    expected_volume_name = "gameplay-client-tls" if owner in GATEWAY_CLIENT_WORKLOADS else "grpc-tls"
+    return volume.get("name") == expected_volume_name and isinstance(source, dict) and source.get("secretName") == value
 
 
 def _is_manifest_secret_reference(value: object, expected_namespace: str) -> bool:
@@ -855,16 +874,27 @@ def _validate_image_reference(
         fail(f"{location} uses an unapproved image")
 
 
-def _expected_gateway_container_env(expected_namespace: str) -> list[dict[str, str]]:
+def _expected_gateway_container_env(expected_namespace: str) -> list[dict]:
     if re.fullmatch(r"pr-[1-9][0-9]{0,50}", expected_namespace) is None:
         fail(f"runtime namespace is not canonical: {expected_namespace!r}")
     return [
         {"name": "SPRING_PROFILES_ACTIVE", "value": "prod"},
         {"name": "SPRING_FLYWAY_TABLE", "value": "flyway_schema_history_gateway"},
         {"name": "SERVICE_SCHEMA", "value": "gateway"},
+        {
+            "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+            "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+        },
         {"name": "FIREMUD_GRPC_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
         {"name": "FIREMUD_GRPC_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
         {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+        {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH", "value": "/gameplay-client-tls/tls.crt"},
+        {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH", "value": "/gameplay-client-tls/tls.key"},
+        {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH", "value": "/gameplay-client-trust/ca.crt"},
+        {
+            "name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_AUTHENTICATED_UPSTREAM_URL",
+            "value": "wss://game-session-service.$(FIREMUD_GRPC_WORKLOAD_NAMESPACE).svc.cluster.local:8444/ws/game/tcp",
+        },
         {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED", "value": "true"},
         {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_BIND_ADDRESS", "value": "0.0.0.0"},
         {"name": "FIREMUD_GATEWAY_TCP_PROXY_TLS_PORT", "value": "8443"},
@@ -1526,6 +1556,8 @@ def validate_service_consumers(
                 f"{expected_namespace}-tcp-proxy-bridge",
             )
         if service == "spring-cloud-gateway":
+            expected_mounts["gameplay-client-tls"] = ("/gameplay-client-tls", "firemud-grpc-spring-cloud-gateway")
+            expected_mounts["gameplay-client-trust"] = ("/gameplay-client-trust", "firemud-grpc-tls")
             expected_mounts["gateway-ws-server-tls"] = (
                 "/gateway-ws-server-tls",
                 f"{expected_namespace}-gateway-internal-ws",
@@ -1548,7 +1580,7 @@ def validate_service_consumers(
             mount = mounts[volume_name]
             if mount.get("mountPath") != mount_path or mount.get("readOnly") is not True:
                 fail(f"Deployment/{service} has an unsafe {volume_name} mount")
-            if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls"} and mount != {
+            if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls", "gameplay-client-tls", "gameplay-client-trust"} and mount != {
                 "name": volume_name,
                 "mountPath": mount_path,
                 "readOnly": True,
@@ -1575,14 +1607,14 @@ def validate_service_consumers(
                     ):
                         fail(f"Deployment/{service} distinct workload falls back to shared firemud-grpc-tls")
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
-                if volume_name == "grpc-trust":
+                if volume_name in {"grpc-trust", "gameplay-client-trust"}:
                     expected_source = {
                         "secretName": source_name,
                         "items": [{"key": "ca.crt", "path": "ca.crt"}],
                     }
                     if source != expected_source:
                         fail(f"Deployment/{service} has an unsafe grpc-trust projection")
-                if volume_name == "grpc-tls" and service in DISTINCT_GRPC_WORKLOADS:
+                if (volume_name == "grpc-tls" and service in DISTINCT_GRPC_WORKLOADS) or volume_name == "gameplay-client-tls":
                     expected_source = {
                         "secretName": source_name,
                         "items": [

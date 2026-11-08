@@ -22,6 +22,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -115,6 +120,104 @@ class CanonicalGameplayLoginResultTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Canonical LOGIN private result is closed");
     assertThat(result.evidence().accountId()).isEqualTo(ACCOUNT);
+  }
+
+  @Test
+  void liveBorrowPreservesExactIdentityRefusesReentrancyAndReleasesAfterCallbackFailure()
+      throws Exception {
+    var result = decode(response(claims()));
+    assertThat(
+            result.<Integer>withLivePrivateResult(
+                borrowed -> {
+                  assertThat(borrowed).isSameAs(result);
+                  assertThatThrownBy(borrowed::close).isInstanceOf(IllegalStateException.class);
+                  assertThatThrownBy(() -> borrowed.withLivePrivateResult(nested -> true))
+                      .isInstanceOf(IllegalStateException.class);
+                  return borrowed.compactJwtBytes().length;
+                }))
+        .isPositive();
+    assertThatThrownBy(
+            () ->
+                result.withLivePrivateResult(
+                    borrowed -> {
+                      throw new IllegalStateException("controlled callback failure");
+                    }))
+        .hasMessage("controlled callback failure");
+    result.close();
+    assertThatThrownBy(() -> result.withLivePrivateResult(borrowed -> true))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void directCloseDrainsAllBorrowersWithoutHoldingResultMonitorAndThenErasesBytes()
+      throws Exception {
+    var wire = response(claims());
+    var result = decode(wire);
+    var field = CanonicalGameplayLoginResult.class.getDeclaredField("compactJwt");
+    field.setAccessible(true);
+    byte[] owned = (byte[]) field.get(result);
+    byte[] expected = wire.getAuthToken().getBytes(StandardCharsets.US_ASCII);
+    var entered = new CountDownLatch(2);
+    var release = new CountDownLatch(1);
+    var closingThread = new AtomicReference<Thread>();
+    try (var executor = Executors.newFixedThreadPool(3)) {
+      var first = executor.submit(() -> borrowUntilReleased(result, entered, release, expected));
+      var second = executor.submit(() -> borrowUntilReleased(result, entered, release, expected));
+      try {
+        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+        var closing =
+            executor.submit(
+                () -> {
+                  closingThread.set(Thread.currentThread());
+                  result.close();
+                });
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (closingThread.get() == null
+            || closingThread.get().getState() != Thread.State.WAITING) {
+          if (System.nanoTime() >= deadline) throw new IllegalStateException("Close did not drain");
+          Thread.sleep(1);
+        }
+        assertThatThrownBy(() -> result.withLivePrivateResult(borrowed -> true))
+            .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(result::compactJwtBytes).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> closing.get(100, TimeUnit.MILLISECONDS))
+            .isInstanceOf(TimeoutException.class);
+        assertThat(owned).containsExactly(expected);
+        release.countDown();
+        assertThat(first.get(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(second.get(5, TimeUnit.SECONDS)).isTrue();
+        closing.get(5, TimeUnit.SECONDS);
+        assertThat(owned).containsOnly((byte) 0);
+        result.close();
+      } finally {
+        release.countDown();
+      }
+    } finally {
+      Arrays.fill(expected, (byte) 0);
+      result.close();
+    }
+  }
+
+  private static boolean borrowUntilReleased(
+      CanonicalGameplayLoginResult result,
+      CountDownLatch entered,
+      CountDownLatch release,
+      byte[] expected) {
+    return result.withLivePrivateResult(
+        borrowed -> {
+          assertThat(borrowed).isSameAs(result);
+          entered.countDown();
+          try {
+            if (!release.await(5, TimeUnit.SECONDS))
+              throw new IllegalStateException("Borrow timed out");
+          } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Borrow interrupted", failure);
+          }
+          // Reads must still progress while close waits for this callback's pin.
+          assertThat(borrowed.compactJwtBytes()).containsExactly(expected);
+          return true;
+        });
   }
 
   @ParameterizedTest

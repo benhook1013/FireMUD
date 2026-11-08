@@ -59,6 +59,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           TRANSPORT_SESSION_HEADER);
 
   private final ReactorNettyWebSocketClient client;
+  private AuthenticatedGameplayWebSocketClient authenticatedClient;
   private final GameplayWebSocketBridgeProperties properties;
   private final RuntimeIdentity runtimeIdentity;
   private final GameplayWebSocketObservability gameplayWebSocketObservability;
@@ -81,6 +82,16 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
     this.gameplayWebSocketObservability = gameplayWebSocketObservability;
   }
 
+  public GameplayWebSocketBridgeHandler(
+      ReactorNettyWebSocketClient client,
+      GameplayWebSocketBridgeProperties properties,
+      RuntimeIdentity runtimeIdentity,
+      GameplayWebSocketObservability observability,
+      AuthenticatedGameplayWebSocketClient authenticatedClient) {
+    this(client, properties, runtimeIdentity, observability);
+    this.authenticatedClient = authenticatedClient;
+  }
+
   GameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient client,
       GameplayWebSocketBridgeProperties properties,
@@ -98,8 +109,27 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
             .doFinally(signal -> activeBridges.remove(state));
       }
     }
+    var origin =
+        net.firedevops.firemud.springcloudgateway.filter.VerifiedTcpProxyOrigin.from(downstream);
+    if ("trusted_tcp_proxy"
+            .equals(downstream.getHandshakeInfo().getHeaders().getFirst(CONNECTION_MODE_HEADER))
+        && origin == null
+        && authenticatedClient != null) {
+      activeBridges.remove(state);
+      return downstream.close(new CloseStatus(1008, "authenticated_tcp_origin_required"));
+    }
+    if (origin != null && authenticatedClient == null) {
+      activeBridges.remove(state);
+      return downstream.close(BACKEND_UNAVAILABLE);
+    }
     HttpHeaders upstreamHeaders = buildUpstreamHeaders(downstream);
-    URI upstreamUri = URI.create(properties.upstreamUrl());
+    URI upstreamUri =
+        origin == null ? URI.create(properties.upstreamUrl()) : authenticatedClient.upstream();
+    if (origin != null) {
+      upstreamHeaders.set("X-Client-IP", origin.clientAddress());
+      upstreamHeaders.set("X-Proxy-Connection-Id", origin.proxyConnectionId().toString());
+      upstreamHeaders.set(CONNECTION_MODE_HEADER, "trusted_tcp_proxy");
+    }
 
     Mono<Void> downstreamSend =
         downstream.send(state.outboundToClient.asFlux().map(text -> downstream.textMessage(text)));
@@ -182,14 +212,15 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
       return Mono.empty();
     }
     Sinks.One<Void> connected = Sinks.one();
+    WebSocketHandler upstreamHandler =
+        upstream -> {
+          connected.tryEmitEmpty();
+          return bridgeUpstreamSession(downstream, upstream, state);
+        };
     Mono<Void> sessionLifecycle =
-        client.execute(
-            upstreamUri,
-            upstreamHeaders,
-            upstream -> {
-              connected.tryEmitEmpty();
-              return bridgeUpstreamSession(downstream, upstream, state);
-            });
+        "wss".equals(upstreamUri.getScheme()) && authenticatedClient != null
+            ? authenticatedClient.execute(upstreamHeaders, upstreamHandler)
+            : client.execute(upstreamUri, upstreamHeaders, upstreamHandler);
     return Mono.when(connected.asMono().timeout(UPSTREAM_CONNECT_TIMEOUT), sessionLifecycle)
         .onErrorResume(
             GameplayBridgeReconnectException.class,

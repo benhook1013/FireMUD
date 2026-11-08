@@ -3,17 +3,25 @@ package net.firedevops.firemud.springcloudgateway.config;
 import io.netty.channel.ChannelOption;
 import java.time.Duration;
 import java.util.Map;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.springcloudgateway.filter.VerifiedTcpProxyOrigin;
+import net.firedevops.firemud.springcloudgateway.websocket.AuthenticatedGameplayWebSocketClient;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketBridgeHandler;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
+import org.springframework.web.reactive.socket.server.support.HandshakeWebSocketService;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
+import org.springframework.web.server.WebHandler;
 import reactor.netty.http.client.HttpClient;
 
 @Configuration
@@ -34,9 +42,38 @@ public class GameplayWebSocketBridgeConfig {
       ReactorNettyWebSocketClient gameplayWebSocketClient,
       GameplayWebSocketBridgeProperties properties,
       RuntimeIdentity runtimeIdentity,
-      GameplayWebSocketObservability gameplayWebSocketObservability) {
+      GameplayWebSocketObservability gameplayWebSocketObservability,
+      ObjectProvider<AuthenticatedGameplayWebSocketClient> authenticatedClient) {
     return new GameplayWebSocketBridgeHandler(
-        gameplayWebSocketClient, properties, runtimeIdentity, gameplayWebSocketObservability);
+        gameplayWebSocketClient,
+        properties,
+        runtimeIdentity,
+        gameplayWebSocketObservability,
+        authenticatedClient.getIfAvailable());
+  }
+
+  @Bean(initMethod = "initialize", destroyMethod = "close")
+  @ConditionalOnProperty(
+      prefix = "firemud.gateway.gameplay.bridge",
+      name = "authenticated-upstream-url")
+  AuthenticatedGameplayWebSocketClient authenticatedGameplayWebSocketClient(
+      @Value("${firemud.grpc.workload-namespace:}") String namespace,
+      @Value("${firemud.gateway.gameplay.bridge.authenticated-upstream-url}") String upstream,
+      @Value(
+              "${firemud.gateway.gameplay.bridge.tls.cert-chain:${FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH:}}")
+          String certificate,
+      @Value(
+              "${firemud.gateway.gameplay.bridge.tls.private-key:${FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH:}}")
+          String privateKey,
+      @Value(
+              "${firemud.gateway.gameplay.bridge.tls.ca-cert:${FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH:}}")
+          String caCertificate) {
+    var tls = new CommonGrpcClientProperties();
+    tls.setPlaintext(false);
+    tls.setCertChain(certificate);
+    tls.setPrivateKey(privateKey);
+    tls.setCaCert(caCertificate);
+    return new AuthenticatedGameplayWebSocketClient(tls, namespace, upstream);
   }
 
   @Bean
@@ -44,12 +81,12 @@ public class GameplayWebSocketBridgeConfig {
       GameplayWebSocketBridgeHandler gameplayWebSocketBridgeHandler) {
     SimpleUrlHandlerMapping mapping = new SimpleUrlHandlerMapping();
     mapping.setOrder(-1);
-    mapping.setUrlMap(
-        Map.of(
-            "/ws/game",
-            gameplayWebSocketBridgeHandler,
-            "/ws/game/**",
-            gameplayWebSocketBridgeHandler));
+    HandshakeWebSocketService upgrade = new HandshakeWebSocketService();
+    WebHandler bridge =
+        exchange ->
+            upgrade.handleRequest(
+                exchange, VerifiedTcpProxyOrigin.bind(exchange, gameplayWebSocketBridgeHandler));
+    mapping.setUrlMap(Map.of("/ws/game", bridge, "/ws/game/**", bridge));
     return mapping;
   }
 

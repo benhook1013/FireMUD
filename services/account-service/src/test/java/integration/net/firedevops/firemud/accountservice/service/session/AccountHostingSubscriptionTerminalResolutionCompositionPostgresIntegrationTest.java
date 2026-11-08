@@ -357,7 +357,7 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
               .reconcile(
                   failedRequest,
                   hosting.creation().requestId(),
-                  2,
+                  claim.subscriptionRowVersion(),
                   hosting.providerId(),
                   claim.attemptId())
               .outcome();

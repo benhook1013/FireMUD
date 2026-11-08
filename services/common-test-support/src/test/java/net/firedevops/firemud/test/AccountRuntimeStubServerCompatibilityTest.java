@@ -1,23 +1,29 @@
 package net.firedevops.firemud.test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
+import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class AccountRuntimeStubServerCompatibilityTest {
   private static final String REALM_ID = "8a1df0f1-1b57-465e-9c4b-bb34f8153d31";
@@ -39,6 +45,9 @@ class AccountRuntimeStubServerCompatibilityTest {
           "RequestEmailVerification",
           "VerifyEmail",
           "VerifyEmailLoginOtp");
+  // Private runtime mutations require their actual bounded mTLS owner, never fake authority.
+  private static final Set<String> UNIMPLEMENTED_RUNTIME_METHODS =
+      Set.of("CommitTenantCapacityAdmission");
 
   @Test
   void accountServiceMethodSetIsFullyCategorized() {
@@ -49,13 +58,38 @@ class AccountRuntimeStubServerCompatibilityTest {
 
     assertThat(actualMethods)
         .containsExactlyInAnyOrderElementsOf(
-            java.util.stream.Stream.concat(
+            java.util.stream.Stream.of(
                     AccountRuntimeStubServer.implementedRuntimeMethodNames().stream(),
-                    NON_RUNTIME_METHODS.stream())
+                    NON_RUNTIME_METHODS.stream(),
+                    UNIMPLEMENTED_RUNTIME_METHODS.stream())
+                .flatMap(java.util.function.Function.identity())
                 .collect(java.util.stream.Collectors.toSet()));
 
     assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
         .contains("IssueDirectTextConnectScope", "JoinPublicProductionMembership");
+  }
+
+  @Test
+  void privateCapacityMutationRemainsUnimplementedOnSharedFakeRuntimeServer() throws Exception {
+    assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
+        .doesNotContain("CommitTenantCapacityAdmission");
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        assertThatThrownBy(
+                () ->
+                    stub.commitTenantCapacityAdmission(
+                        CommitTenantCapacityAdmissionRequest.getDefaultInstance()))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+      } finally {
+        channel.shutdownNow();
+      }
+    }
   }
 
   @Test
@@ -197,7 +231,8 @@ class AccountRuntimeStubServerCompatibilityTest {
   }
 
   @Test
-  void joinRequiresCallerSessionAndResetClearsRetainedScopes() throws Exception {
+  void joinRequiresCallerSessionBeforeReplayAndResetClearsRetainedScopesAndOutcomes()
+      throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       server.mapAccountId("demo@example.com", 7L);
       String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
@@ -215,20 +250,44 @@ class AccountRuntimeStubServerCompatibilityTest {
                 .setRequestId("join-request-1")
                 .build();
 
-        var blankSession =
-            stub.joinPublicProductionMembership(
-                validJoin.toBuilder()
-                    .setPlayerContext(validJoin.getPlayerContext().toBuilder().setSessionId("  "))
-                    .build());
+        var blankSessionRequest =
+            validJoin.toBuilder()
+                .setPlayerContext(validJoin.getPlayerContext().toBuilder().setSessionId("  "))
+                .build();
+        var blankSession = stub.joinPublicProductionMembership(blankSessionRequest);
         assertThat(blankSession.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
         assertThat(blankSession.getSuccess()).isFalse();
 
         assertThat(stub.joinPublicProductionMembership(validJoin).getSuccess()).isTrue();
+        for (var invalidRequest :
+            List.of(
+                blankSessionRequest,
+                validJoin.toBuilder().setConnectScopeId("missing-scope").build(),
+                validJoin.toBuilder()
+                    .setPlayerContext(
+                        validJoin.getPlayerContext().toBuilder()
+                            .setRealmId("a87e157e-d63b-4bac-ad7c-2bd51c7ad81c"))
+                    .build())) {
+          var invalidReplay = stub.joinPublicProductionMembership(invalidRequest);
+          assertThat(invalidReplay.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+          assertThat(invalidReplay.getSuccess()).isFalse();
+          assertThat(invalidReplay.getReplayed()).isFalse();
+        }
         server.resetRuntimeState();
 
         var afterReset = stub.joinPublicProductionMembership(validJoin);
         assertThat(afterReset.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
         assertThat(afterReset.getSuccess()).isFalse();
+
+        String freshScopeId = stub.issueDirectTextConnectScope(scopeRequest).getConnectScopeId();
+        assertThat(freshScopeId).isNotEqualTo(connectScopeId);
+        var freshJoin =
+            stub.joinPublicProductionMembership(
+                validJoin.toBuilder().setConnectScopeId(freshScopeId).build());
+        assertThat(freshJoin.getError().getCode()).isEmpty();
+        assertThat(freshJoin.getSuccess()).isTrue();
+        assertThat(freshJoin.getOutcomeCode()).isEqualTo("ALREADY_ACTIVE");
+        assertThat(freshJoin.getReplayed()).isFalse();
       } finally {
         channel.shutdownNow();
       }
@@ -309,12 +368,145 @@ class AccountRuntimeStubServerCompatibilityTest {
     }
   }
 
-  @Test
-  void alreadyActiveNonAdmittingJoinReturnsMembershipReceiptWithoutGrantingAdmission()
+  @ParameterizedTest
+  @ValueSource(strings = {"MISSING", "INACTIVE"})
+  void joinRetainsTerminalOutcomesAndNewRequestObservesActiveMembership(String lifecycle)
       throws Exception {
+    var clock = Clock.fixed(Instant.parse("2026-10-30T12:34:56Z"), ZoneOffset.UTC);
+    try (var server = new AccountRuntimeStubServer(0, clock)) {
+      server.mapAccountId("demo@example.com", 7L);
+      long previousVersion = "MISSING".equals(lifecycle) ? 1L : 3L;
+      if ("MISSING".equals(lifecycle)) server.setMembershipExists(false);
+      else server.setMembershipInactive();
+      server.setMembershipVersion(previousVersion);
+      server.setAllowPublicJoin(false);
+      String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+      var scopeRequest = validConnectScopeRequest(accountUuid);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        var scope = stub.issueDirectTextConnectScope(scopeRequest);
+        var request =
+            JoinPublicProductionMembershipRequest.newBuilder()
+                .setPlayerContext(scopeRequest.getPlayerContext())
+                .setConnectScopeId(scope.getConnectScopeId())
+                .setRequestId("join-request-1")
+                .build();
+        var before = stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11"));
+        var denied = stub.joinPublicProductionMembership(request);
+        assertThat(denied.getSuccess()).isFalse();
+        assertThat(denied.getOutcomeCode()).isEqualTo("PUBLIC_PRODUCTION_ADMISSION_DENIED");
+        assertThat(denied.getReplayed()).isFalse();
+        assertThat(stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11")))
+            .isEqualTo(before);
+
+        server.setAllowPublicJoin(true);
+        var deniedReplay = stub.joinPublicProductionMembership(request);
+        assertThat(deniedReplay).isEqualTo(denied.toBuilder().setReplayed(true).build());
+        assertThat(stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11")))
+            .isEqualTo(before);
+
+        var nextRequest = withRequestId(request, "join-request-2");
+        var joined = stub.joinPublicProductionMembership(nextRequest);
+        assertThat(joined.getSuccess()).isTrue();
+        assertThat(joined.getOutcomeCode()).isEqualTo("JOINED");
+        assertThat(joined.getReplayed()).isFalse();
+        assertThat(joined.getMembershipVersion()).isEqualTo(previousVersion + 1L);
+        assertThat(joined.getGameplayAdmissionAllowed()).isTrue();
+        var after = stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11"));
+        assertThat(after.getMembershipVersion()).isEqualTo(joined.getMembershipVersion());
+        assertThat(after.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+
+        server.setAllowPublicJoin(false);
+        var repeated = stub.joinPublicProductionMembership(nextRequest);
+        assertThat(repeated).isEqualTo(joined.toBuilder().setReplayed(true).build());
+        assertThat(stub.joinPublicProductionMembership(request))
+            .isEqualTo(denied.toBuilder().setReplayed(true).build());
+        var alreadyActive =
+            stub.joinPublicProductionMembership(withRequestId(request, "join-request-3"));
+        assertThat(alreadyActive.getSuccess()).isTrue();
+        assertThat(alreadyActive.getOutcomeCode()).isEqualTo("ALREADY_ACTIVE");
+        assertThat(alreadyActive.getReplayed()).isFalse();
+        assertThat(alreadyActive.getMembershipVersion()).isEqualTo(joined.getMembershipVersion());
+        assertThat(stub.getTenantMembershipForRuntime(membershipRequest(accountUuid, "11")))
+            .isEqualTo(after);
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void retainedJoinRejectsConflictingCallerAndScopeIdentity() throws Exception {
+    try (var server = new AccountRuntimeStubServer(0)) {
+      server.mapAccountId("demo@example.com", 7L);
+      server.mapAccountId("other@example.com", 9L);
+      String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
+      var scopeRequest = validConnectScopeRequest(accountUuid);
+      var channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        var request =
+            JoinPublicProductionMembershipRequest.newBuilder()
+                .setPlayerContext(scopeRequest.getPlayerContext())
+                .setConnectScopeId(
+                    stub.issueDirectTextConnectScope(scopeRequest).getConnectScopeId())
+                .setRequestId("join-request-1")
+                .build();
+        var original = stub.joinPublicProductionMembership(request);
+        assertThat(original.getSuccess()).isTrue();
+        var otherAccountScope =
+            validConnectScopeRequest(AccountRuntimeStubServer.accountUuidForTestFixture(9L));
+        var otherTenantScope =
+            scopeRequest.toBuilder()
+                .setTenantId("22")
+                .setPlayerContext(scopeRequest.getPlayerContext().toBuilder().setTenantId("22"))
+                .build();
+        var sameScopeNewId = stub.issueDirectTextConnectScope(scopeRequest).getConnectScopeId();
+        var conflicts =
+            List.of(
+                request.toBuilder()
+                    .setPlayerContext(
+                        request.getPlayerContext().toBuilder().setSessionId("session-2"))
+                    .build(),
+                request.toBuilder().setConnectScopeId(sameScopeNewId).build(),
+                request.toBuilder()
+                    .setPlayerContext(otherAccountScope.getPlayerContext())
+                    .setConnectScopeId(
+                        stub.issueDirectTextConnectScope(otherAccountScope).getConnectScopeId())
+                    .build(),
+                request.toBuilder()
+                    .setPlayerContext(otherTenantScope.getPlayerContext())
+                    .setConnectScopeId(
+                        stub.issueDirectTextConnectScope(otherTenantScope).getConnectScopeId())
+                    .build());
+
+        for (var conflict : conflicts) {
+          var rejected = stub.joinPublicProductionMembership(conflict);
+          assertThat(rejected.getError().getCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+          assertThat(rejected.getSuccess()).isFalse();
+          assertThat(rejected.getReplayed()).isFalse();
+          assertThat(rejected.getAccountId()).isEmpty();
+          assertThat(rejected.getTenantId()).isEmpty();
+        }
+        assertThat(stub.joinPublicProductionMembership(request))
+            .isEqualTo(original.toBuilder().setReplayed(true).build());
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void alreadyActiveNonAdmittingJoinReturnsMembershipReceiptWithoutGrantingAdmission(
+      boolean allowPublicJoin) throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       server.mapAccountId("demo@example.com", 7L);
       server.denyGameplayAdmission();
+      server.setAllowPublicJoin(allowPublicJoin);
       String accountUuid = AccountRuntimeStubServer.accountUuidForTestFixture(7L);
       var scopeRequest = validConnectScopeRequest(accountUuid);
       ManagedChannel channel =
@@ -375,6 +567,14 @@ class AccountRuntimeStubServerCompatibilityTest {
         .setGameInstanceId("33")
         .setCatalogRevision(1L)
         .setPointerVersion(1L)
+        .build();
+  }
+
+  private static JoinPublicProductionMembershipRequest withRequestId(
+      JoinPublicProductionMembershipRequest request, String requestId) {
+    return request.toBuilder()
+        .setRequestId(requestId)
+        .setPlayerContext(request.getPlayerContext().toBuilder().setRequestId(requestId))
         .build();
   }
 

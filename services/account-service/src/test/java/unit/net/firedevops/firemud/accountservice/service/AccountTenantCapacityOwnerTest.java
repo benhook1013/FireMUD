@@ -1,0 +1,248 @@
+package unit.net.firedevops.firemud.accountservice.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import java.sql.Connection;
+import java.time.Clock;
+import java.time.ZoneOffset;
+import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
+import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
+import org.jooq.ConnectionRunnable;
+import org.jooq.DSLContext;
+import org.jooq.Record;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+/**
+ * Controlled ordering/denial only. Physical transaction and positive current-source proof are
+ * separate.
+ */
+class AccountTenantCapacityOwnerTest {
+  @AfterEach
+  void clear() {
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+  }
+
+  @Test
+  void exactReplayPrecedesFreshnessCurrentSourcesAndUsageEvenAfterOriginalExpiry()
+      throws Exception {
+    var f = new Fixture(true);
+    var result = f.owner.commit(f.request, f.request.evidence().callerWorkload());
+    assertThat(result.reservationId()).isEqualTo(f.reservation);
+    assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload())).isEqualTo(result);
+    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void changedAttemptOrPayloadOrFenceConflictsBeforeAnyCurrentSourceOrUsageMutation()
+      throws Exception {
+    var f = new Fixture(false);
+    for (Request changed :
+        java.util.List.of(
+            new Request(
+                    f.request.identity(),
+                    UUID.randomUUID(),
+                    f.request.capacityRearmFence(),
+                    f.request.targetNamespace(),
+                    f.request.context(),
+                    f.request.operation(),
+                    f.request.priorShape(),
+                    f.request.requestedShape(),
+                    f.request.evidence(),
+                    f.request.capacityDelta(),
+                    null)
+                .withDigest(),
+            new Request(
+                    f.request.identity(),
+                    f.request.admissionAttemptId(),
+                    2,
+                    f.request.targetNamespace(),
+                    f.request.context(),
+                    f.request.operation(),
+                    f.request.priorShape(),
+                    f.request.requestedShape(),
+                    f.request.evidence(),
+                    f.request.capacityDelta(),
+                    null)
+                .withDigest(),
+            new Request(
+                    f.request.identity(),
+                    f.request.admissionAttemptId(),
+                    f.request.capacityRearmFence(),
+                    f.request.targetNamespace(),
+                    f.request.context(),
+                    f.request.operation(),
+                    f.request.priorShape(),
+                    new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
+                        .Shape(2, 0, 0),
+                    f.request.evidence(),
+                    f.request.capacityDelta(),
+                    null)
+                .withDigest())) {
+      assertThatThrownBy(() -> f.owner.commit(changed, changed.evidence().callerWorkload()))
+          .hasMessage("IDEMPOTENCY_CONFLICT");
+    }
+    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void matchingContentWithoutAccountRetainedAuthorityCannotCreateUsage() throws Exception {
+    var f = new Fixture(false);
+    f.existing = false;
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .hasMessage("ENTITLEMENT_UNAVAILABLE");
+    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void wrongPeerOrAbsentDeltaNeverStartsAccountWork() throws Exception {
+    var f = new Fixture(false);
+    assertThatThrownBy(
+            () -> f.owner.commit(f.request, "spiffe://firemud/ns/prod/sa/world-management-service"))
+        .hasMessage("ENTITLEMENT_UNAVAILABLE");
+    var absent =
+        new Request(
+                f.request.identity(),
+                f.request.admissionAttemptId(),
+                1,
+                f.request.targetNamespace(),
+                f.request.context(),
+                f.request.operation(),
+                f.request.priorShape(),
+                f.request.requestedShape(),
+                f.request.evidence(),
+                null,
+                null)
+            .withDigest();
+    assertThatThrownBy(() -> f.owner.commit(absent, absent.evidence().callerWorkload()))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes);
+  }
+
+  private static final class Fixture {
+    private final DSLContext dsl = mock(DSLContext.class);
+    private final AccountRepository accounts = mock(AccountRepository.class);
+    private final AccountCanonicalRuntimeMembershipSnapshotRepository memberships =
+        mock(AccountCanonicalRuntimeMembershipSnapshotRepository.class);
+    private final AccountGameplayDelegationIssuanceRepository issuances =
+        mock(AccountGameplayDelegationIssuanceRepository.class);
+    private final AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
+    private final Request request = CapacityAdmissionTestFixture.playerRequest();
+    private final UUID reservation = UUID.randomUUID();
+    private final AccountTenantCapacityOwner owner;
+    private boolean existing = true;
+
+    private Fixture(boolean expired) throws Exception {
+      when(accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
+          .thenReturn(Optional.of(new Account()));
+      Connection connection = mock(Connection.class);
+      when(connection.getTransactionIsolation()).thenReturn(Connection.TRANSACTION_SERIALIZABLE);
+      doAnswer(
+              invocation -> {
+                invocation.getArgument(0, ConnectionRunnable.class).run(connection);
+                return null;
+              })
+          .when(dsl)
+          .connection(any(ConnectionRunnable.class));
+      Record row = mock(Record.class);
+      when(row.get("tenant_uuid", UUID.class)).thenReturn(request.identity().tenantId());
+      when(row.get("request_id", UUID.class)).thenReturn(request.identity().requestId());
+      when(row.get("admission_id", UUID.class)).thenReturn(request.identity().admissionId());
+      when(row.get("admission_attempt_id", UUID.class)).thenReturn(request.admissionAttemptId());
+      when(row.get("reservation_id", UUID.class)).thenReturn(reservation);
+      when(row.get("capacity_rearm_fence", Long.class)).thenReturn(1L);
+      when(row.get("reservation_fence", Long.class)).thenReturn(1L);
+      when(row.get("mutation_digest", String.class)).thenReturn(request.mutationDigest());
+      when(row.get("canonical_payload", byte[].class))
+          .thenReturn(CapacityAdmissionDigest.preimage(request));
+      when(row.get("caller_workload", String.class))
+          .thenReturn(request.evidence().callerWorkload());
+      when(row.get("evaluation_identity", String.class))
+          .thenReturn(request.evidence().evaluationIdentity());
+      when(row.get("expires_at", java.time.OffsetDateTime.class))
+          .thenReturn(AccountTenantCapacityRepository.at(request.evidence().expiresAt()));
+      when(row.get("state", String.class)).thenReturn("RESERVED");
+      Record evaluation = mock(Record.class);
+      when(evaluation.get("snapshot_identity", String.class))
+          .thenReturn(request.evidence().snapshotIdentity());
+      when(dsl.fetchOne(anyString(), any(Object[].class)))
+          .thenAnswer(
+              invocation -> {
+                String sql = invocation.getArgument(0, String.class);
+                if (sql.startsWith("SELECT * FROM account_tenant_capacity_reservations "))
+                  return existing ? row : null;
+                if (sql.startsWith(
+                    "SELECT snapshot_identity FROM account_tenant_capacity_evaluations "))
+                  return evaluation;
+                if (sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
+                  return null;
+                throw new AssertionError(sql);
+              });
+      owner =
+          new AccountTenantCapacityOwner(
+              dsl,
+              accounts,
+              memberships,
+              issuances,
+              scopes,
+              new ControlledTransactions(),
+              Clock.fixed(
+                  CapacityAdmissionTestFixture.NOW.plusSeconds(expired ? 60 : 1), ZoneOffset.UTC),
+              "prod");
+    }
+  }
+
+  private static final class ControlledTransactions implements PlatformTransactionManager {
+    @Override
+    public TransactionStatus getTransaction(
+        @org.jspecify.annotations.Nullable TransactionDefinition definition) {
+      assertThat(definition).isNotNull();
+      assertThat(definition.getIsolationLevel())
+          .isEqualTo(TransactionDefinition.ISOLATION_SERIALIZABLE);
+      assertThat(definition.getPropagationBehavior())
+          .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+      assertThat(definition.getTimeout()).isEqualTo(5);
+      assertThat(definition.isReadOnly()).isFalse();
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      return new SimpleTransactionStatus();
+    }
+
+    @Override
+    public void commit(TransactionStatus status) {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+
+    @Override
+    public void rollback(TransactionStatus status) {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+}

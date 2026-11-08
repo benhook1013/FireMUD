@@ -52,6 +52,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   private static final String INSTANCE = "55555555-5555-4555-8555-555555555555";
   private static final String SESSION = "66666666-6666-4666-8666-666666666666";
   private static final String GENERATION = "1";
+  private static final String TRANSITION = "99999999-9999-4999-8999-999999999999";
+  private static final String ATTEMPT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   private static final long DURATION_MILLIS = 120_000L;
   private static final byte[] ISSUER_PAYLOAD = new byte[] {0, 1, 2, 0, (byte) 0xff, 13, 10};
   private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -92,6 +94,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
             .addCommand(CommandType.GET)
             .addCommand(CommandType.SET)
             .addCommand(CommandType.SISMEMBER)
+            .addCommand(CommandType.HSET)
             .addCommand(CommandType.HGET)
             .addCommand(CommandType.HLEN)
             .addCommand(CommandType.TIME));
@@ -273,7 +276,13 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
             + NAMESPACE;
     String[] keys =
         new String[] {
-          sessionKey, characterKey, accountTenantKey, tenantKey, accountBarrierKey, issuerBarrierKey
+          sessionKey,
+          characterKey,
+          accountTenantKey,
+          tenantKey,
+          accountBarrierKey,
+          issuerBarrierKey,
+          "session:game:capacity-execution:{" + TAG + "}:" + ATTEMPT
         };
     long now = System.currentTimeMillis();
     Map<String, Object> lease = leaseEvidence(now + 60_000L);
@@ -288,7 +297,11 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
                 + "\",\"bindingGeneration\":\""
                 + GENERATION
                 + "\"}");
-    byte[] templateBytes = canonicalBytes(template(candidate, lease));
+    byte[] capacityBytes = canonicalBytes(capacity(now + 60_000L));
+    String capacityDigest = "sha256:" + HexFormatHolder.sha256(capacityBytes);
+    var sessionTemplate = template(candidate, lease);
+    sessionTemplate.put("capacityExecutionDigest", capacityDigest);
+    byte[] templateBytes = canonicalBytes(sessionTemplate);
     Map<String, String> account = accountFields();
     Map<String, String> issuer = issuerMetadata();
     byte[] accountJson = canonicalBytes(account);
@@ -310,7 +323,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
           accountJson,
           issuerJson,
           ascii(Long.toString(now + 60_000L)),
-          ISSUER_PAYLOAD.clone()
+          ISSUER_PAYLOAD.clone(),
+          capacityBytes,
+          ascii("FINAL"),
+          ascii(capacityDigest)
         };
 
     admin.set(ascii(sessionKey), candidateBytes);
@@ -323,7 +339,155 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     issuerPhysical.put("payload", ISSUER_PAYLOAD.clone());
     issuerPhysical.put("payloadDigest", ascii("sha256:" + "f".repeat(64)));
     admin.hset(ascii(issuerBarrierKey), encodedBytes(issuerPhysical));
-    return new ScriptCase(keys, arguments);
+    ScriptCase result = new ScriptCase(keys, arguments);
+    assertThat(eval(action(result, "INSTALL"))).isEqualTo(3L);
+    return result;
+  }
+
+  // Deliberately controlled envelope. Only actual Account composition qualifies its authority.
+  private static Map<String, String> capacity(long expiresAt) {
+    return Map.ofEntries(
+        Map.entry("schema", "gs-original-new-capacity-execution/v1"),
+        Map.entry("tenantId", TENANT),
+        Map.entry("requestId", UUID.randomUUID().toString()),
+        Map.entry("admissionId", TRANSITION),
+        Map.entry("admissionAttemptId", ATTEMPT),
+        Map.entry("reservationId", UUID.randomUUID().toString()),
+        Map.entry("reservationFence", "1"),
+        Map.entry("capacityRearmFence", "1"),
+        Map.entry("selectedOwnerId", "controlled-owner"),
+        Map.entry("selectedOwnerFence", "1"),
+        Map.entry("transitionId", TRANSITION),
+        Map.entry("expiresAtMillis", Long.toString(expiresAt)));
+  }
+
+  private static ScriptCase action(ScriptCase source, String action) {
+    byte[][] arguments = source.arguments().clone();
+    arguments[17] = ascii(action);
+    return new ScriptCase(source.keys(), arguments);
+  }
+
+  @Test
+  void lostFinalReplyReplaysTheActualSessionHashAndControllerTimesWithoutNegativeClosure()
+      throws Exception {
+    ScriptCase original = seed();
+    eval(original); // Deliberately discard the final-CAS reply, then inspect actual state.
+    byte[] actual = admin.get(ascii(original.keys()[0]));
+    byte[] admittedAt = admin.hget(ascii(original.keys()[6]), ascii("admissionAt"));
+    byte[] expiresAt = admin.hget(ascii(original.keys()[6]), ascii("continuityExpiresAt"));
+    assertThat(admin.hget(ascii(original.keys()[6]), ascii("sessionSha1")))
+        .containsExactly(ascii(HexFormatHolder.sha1(actual)));
+    assertThat(eval(action(original, "CLOSE"))).isEqualTo(2L);
+    assertThat(eval(original)).isEqualTo(2L);
+    assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(actual);
+    assertThat(admin.hget(ascii(original.keys()[6]), ascii("admissionAt")))
+        .containsExactly(admittedAt);
+    assertThat(admin.hget(ascii(original.keys()[6]), ascii("continuityExpiresAt")))
+        .containsExactly(expiresAt);
+  }
+
+  @Test
+  void permanentClosureSurvivesLostReplyAndPreventsEveryDelayedSameAttemptFinal() throws Exception {
+    ScriptCase original = seed();
+    eval(action(original, "CLOSE")); // Lose the successful reply deliberately.
+    assertThat(admin.hget(ascii(original.keys()[6]), ascii("state")))
+        .containsExactly(ascii("CLOSED"));
+    assertThat(eval(action(original, "CLOSE"))).isEqualTo(4L);
+    assertThat(eval(action(original, "INSTALL"))).isEqualTo(4L);
+    assertThat(eval(original)).isEqualTo(4L);
+    assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(original.arguments()[8]);
+    assertThat(admin.hlen(ascii(original.keys()[6]))).isEqualTo(3L);
+  }
+
+  @Test
+  void concurrentFinalAndIrreversibleClosureHaveExactlyOneDecisiveWinner() throws Exception {
+    ScriptCase original = seed();
+    var start = new java.util.concurrent.CountDownLatch(1);
+    var finalized =
+        java.util.concurrent.CompletableFuture.supplyAsync(
+            () -> {
+              try {
+                start.await();
+                return eval(original);
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(interrupted);
+              }
+            });
+    var closed =
+        java.util.concurrent.CompletableFuture.supplyAsync(
+            () -> {
+              try {
+                start.await();
+                return eval(action(original, "CLOSE"));
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(interrupted);
+              }
+            });
+    start.countDown();
+    long finalResult = finalized.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    long closeResult = closed.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    if (finalResult == 1L) {
+      assertThat(closeResult).isEqualTo(2L);
+      assertThat(admin.hget(ascii(original.keys()[6]), ascii("state")))
+          .containsExactly(ascii("COMMITTED"));
+      assertThat(eval(original)).isEqualTo(2L);
+      assertThat(admin.hget(ascii(original.keys()[6]), ascii("sessionSha1")))
+          .containsExactly(ascii(HexFormatHolder.sha1(admin.get(ascii(original.keys()[0])))));
+    } else {
+      assertThat(finalResult).isEqualTo(4L);
+      assertThat(closeResult).isEqualTo(4L);
+      assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(original.arguments()[8]);
+      assertThat(eval(original)).isEqualTo(4L);
+    }
+  }
+
+  @Test
+  void missingExecutionAndChangedFenceNeverAuthorizeOrProveNoCommit() throws Exception {
+    ScriptCase original = seed();
+    byte[] candidate = admin.get(ascii(original.keys()[0]));
+    byte[][] stale = original.arguments().clone();
+    var staleCapacity =
+        (tools.jackson.databind.node.ObjectNode) JSON.readTree(original.arguments()[16]);
+    staleCapacity.put("reservationFence", "2");
+    stale[16] = canonicalBytes(staleCapacity);
+    String staleDigest = "sha256:" + HexFormatHolder.sha256(stale[16]);
+    stale[18] = ascii(staleDigest);
+    var staleTemplate = (tools.jackson.databind.node.ObjectNode) JSON.readTree(stale[10]);
+    staleTemplate.put("capacityExecutionDigest", staleDigest);
+    stale[10] = canonicalBytes(staleTemplate);
+    assertThat(eval(new ScriptCase(original.keys(), stale))).isEqualTo(-1L);
+    admin.del(new byte[][] {ascii(original.keys()[6])});
+    assertThat(eval(original)).isEqualTo(-1L);
+    assertThat(eval(action(original, "CLOSE"))).isEqualTo(-1L);
+    assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(candidate);
+    assertThat(admin.type(ascii(original.keys()[6]))).isEqualTo("none");
+  }
+
+  @Test
+  void elapsedReservationRefusesTheFinalCasButStillNeedsExplicitClosure() throws Exception {
+    ScriptCase original = seed();
+    // Replace only this controlled fixture's complete matching envelope before INSTALL.
+    admin.del(new byte[][] {ascii(original.keys()[6])});
+    var capacity = new LinkedHashMap<>(capacity(System.currentTimeMillis() + 1000L));
+    byte[][] args = original.arguments().clone();
+    args[16] = canonicalBytes(capacity);
+    String digest = "sha256:" + HexFormatHolder.sha256(args[16]);
+    args[18] = ascii(digest);
+    var template = JSON.readTree(new String(args[10], StandardCharsets.UTF_8));
+    ((tools.jackson.databind.node.ObjectNode) template).put("capacityExecutionDigest", digest);
+    args[10] = canonicalBytes(template);
+    ScriptCase expiring = new ScriptCase(original.keys(), args);
+    assertThat(eval(action(expiring, "INSTALL"))).isEqualTo(3L);
+    Thread.sleep(
+        Math.max(
+            1L,
+            Long.parseLong(capacity.get("expiresAtMillis")) - System.currentTimeMillis() + 20L));
+    assertThat(eval(expiring)).isEqualTo(-1L);
+    assertThat(admin.hget(ascii(original.keys()[6]), ascii("state")))
+        .containsExactly(ascii("AUTHORIZED"));
+    assertThat(eval(action(expiring, "CLOSE"))).isEqualTo(4L);
   }
 
   private static Map<String, Object> candidate(Map<String, Object> lease) {
@@ -338,6 +502,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
             "issuerId", "firemud-account-service");
     Map<String, Object> transition = Map.of("bindingGeneration", GENERATION);
     Map<String, Object> value = new LinkedHashMap<>();
+    value.put("bindingDecisionId", TRANSITION);
     value.put("purpose", "original-new-non-admitting-candidate/v1");
     value.put("binding", binding);
     value.put("transition", transition);

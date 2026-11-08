@@ -2737,13 +2737,14 @@ public final class CanonicalGameplayBindingInventoryRepository {
                       + TRANSITION
                       + " SET status = 'COMMITTED', inventory_revision = ?,"
                       + " original_new_final_session_sha256 = ?, original_new_admission_at_ms = ?,"
-                      + " original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ?"
+                      + " original_new_continuity_expires_at_ms = ?, original_new_session_duration_ms = ?, original_new_capacity_execution_digest = ?"
                       + " WHERE transition_id = ? AND status = 'PROVISIONAL' AND inventory_revision = ?",
                   decimal(next),
                   actual.finalSessionSha256(),
                   actual.admissionAtMillis(),
                   actual.continuityExpiresAtMillis(),
                   actual.canonicalSessionDurationMillis(),
+                  actual.execution().digest(),
                   transition.transitionId(),
                   prior),
               "Original NEW final transition CAS changed");
@@ -2822,7 +2823,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
       CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual,
       CanonicalGameplayAdmissionDecision decision) {
     OriginalNewFinalAdmissionReceipt receipt = readOriginalNewFinalAdmissionReceipt(row, decision);
-    if (!receipt.finalSessionSha256().equals(actual.finalSessionSha256())
+    if (!actual
+            .execution()
+            .digest()
+            .equals(row.get("original_new_capacity_execution_digest", String.class))
+        || !receipt.finalSessionSha256().equals(actual.finalSessionSha256())
         || receipt.admissionAtMillis() != actual.admissionAtMillis()
         || receipt.continuityExpiresAtMillis() != actual.continuityExpiresAtMillis()
         || receipt.sessionDurationMillis() != actual.canonicalSessionDurationMillis()) {

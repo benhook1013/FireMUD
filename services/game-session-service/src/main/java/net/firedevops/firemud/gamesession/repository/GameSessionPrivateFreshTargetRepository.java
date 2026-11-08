@@ -204,6 +204,80 @@ public class GameSessionPrivateFreshTargetRepository {
     return row == null ? Optional.empty() : Optional.of(toSnapshot(row));
   }
 
+  /**
+   * Coherent no-write World source read inside the receiving owner's short transaction. Shared
+   * locks and retained source/receipt qualification supply as-of facts, not later protection.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<CanonicalPrivateFreshTargetSnapshot> readForWorldPreparation(
+      UUID preparationRequestId, UUID playtestLifecycleId) {
+    return new GameSessionPrivateFreshCatalogRevisionRepository(dsl)
+        .readForWorldPreparation(preparationRequestId, playtestLifecycleId);
+  }
+
+  Optional<CanonicalPrivateFreshTargetSnapshot> readInitialForWorldPreparation(
+      UUID preparationRequestId, UUID playtestLifecycleId) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Private World source requires a writable owner read transaction");
+    }
+    requireNonNil(preparationRequestId, "preparationRequestId");
+    requireNonNil(playtestLifecycleId, "playtestLifecycleId");
+    var prepared =
+        preparations
+            .readExactForPrivateCatalogTarget(preparationRequestId, playtestLifecycleId)
+            .orElseThrow(
+                () -> new PreparationUnavailableException("Exact private preparation is absent"));
+    if (prepared.state() != ReadState.INCOMPLETE)
+      throw new PreparationUnavailableException("Exact private preparation has expired");
+    Record row =
+        dsl.fetchOne(
+            "SELECT * FROM "
+                + CATALOG
+                + " WHERE private_preparation_request_id = ? AND private_playtest_lifecycle_id = ? FOR SHARE",
+            preparationRequestId,
+            playtestLifecycleId);
+    if (row == null) return Optional.empty();
+    var preparation = prepared.preparation();
+    var source = preparation.source();
+    var sourceCatalog = readExactSourceCatalog(preparation);
+    byte[] policy = readCompleteHumanPolicyEvidence(preparation);
+    var request =
+        new Request(
+            required(row, "creation_request_id", UUID.class),
+            preparationRequestId,
+            playtestLifecycleId);
+    var result =
+        requireExactRetry(
+            row,
+            request,
+            preparation,
+            sourceCatalog,
+            requestPreimage(request, preparation.requestDigest()));
+    if (!Arrays.equals(policy, required(row, "complete_policy_set_evidence", byte[].class))
+        || !source.intakeOperationId().equals(row.get("source_intake_operation_id", UUID.class))
+        || !source
+            .intakeReceiptDigest()
+            .equals(row.get("source_intake_receipt_digest", String.class))
+        || !source.sourceOperationId().equals(row.get("source_operation_id", UUID.class))
+        || !source.sourceEvidenceDigest().equals(row.get("source_evidence_digest", String.class))
+        || !result
+            .receiptDigest()
+            .equals(
+                receiptDigest(
+                    request.requestId(),
+                    preparation,
+                    sourceCatalog,
+                    result.realmId(),
+                    result.requestDigest(),
+                    source.targetPolicy().source().policy()))) {
+      throw new InvalidPrivateTargetException(
+          "Private World target differs from complete retained source receipt");
+    }
+    return Optional.of(result);
+  }
+
   private Record findByCreationRequest(UUID requestId) {
     List<Record> rows =
         dsl.fetch(
@@ -228,7 +302,7 @@ public class GameSessionPrivateFreshTargetRepository {
     return rows.isEmpty() ? null : rows.getFirst();
   }
 
-  private CanonicalRealmCatalogSnapshot readExactSourceCatalog(Preparation preparation) {
+  CanonicalRealmCatalogSnapshot readExactSourceCatalog(Preparation preparation) {
     var request = preparation.request();
     CanonicalRealmCatalogSnapshot source =
         catalogs.readRetainedInitialPublicProduction(
@@ -257,7 +331,7 @@ public class GameSessionPrivateFreshTargetRepository {
     return source;
   }
 
-  private byte[] readCompleteHumanPolicyEvidence(Preparation preparation) {
+  byte[] readCompleteHumanPolicyEvidence(Preparation preparation) {
     var request = preparation.request();
     Record row =
         dsl.fetchOne(
@@ -648,7 +722,7 @@ public class GameSessionPrivateFreshTargetRepository {
     }
   }
 
-  private void requireWritableSerializableOwnerTransaction() {
+  void requireWritableSerializableOwnerTransaction() {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw new IllegalStateException(

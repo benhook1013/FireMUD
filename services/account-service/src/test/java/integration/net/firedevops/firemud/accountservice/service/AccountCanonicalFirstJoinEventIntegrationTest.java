@@ -337,7 +337,15 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                         fixture.dsl.execute(
                             "UPDATE account_join_operations SET outcome_membership_version = 3 WHERE request_id = ?",
                             nextRequest)))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(RuntimeException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            java.sql.SQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains("Terminal canonical JOIN receipt is immutable");
+            });
   }
 
   @Test
@@ -452,7 +460,16 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                             fixture.callerBinding,
                             "ALREADY_ACTIVE",
                             proof)))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(RuntimeException.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            java.sql.SQLException.class,
+            failure -> {
+              assertThat(failure.getSQLState()).isEqualTo("23514");
+              assertThat(failure.getMessage())
+                  .contains(
+                      "Canonical JOIN terminal receipt does not match committed owner evidence");
+            });
     assertThat(fixture.countAll("account_audit_outbox")).isZero();
     assertThat(
             fixture
@@ -464,6 +481,59 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                             .orElseThrow())
                 .status())
         .isEqualTo("PENDING");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void committedJoinReplaysStoredEvidenceAfterLaterMembershipChanges(boolean alreadyActive) {
+    Fixture fixture = newFixture();
+    fixture.commitFirstJoin();
+    String originalRequest = alreadyActive ? fixture.prepareAnotherJoin() : fixture.requestId;
+    var committed = fixture.commitExistingJoin(originalRequest);
+    assertThat(committed.outcome()).isEqualTo(alreadyActive ? "ALREADY_ACTIVE" : "JOINED");
+
+    // Controlled historical owner input, not proof of a production leave API.
+    fixture.seedControlledInactiveOwnerSnapshot();
+    var tables =
+        java.util.List.of(
+            "account_join_operations",
+            "account_tenant_membership",
+            "account_tenant_membership_role_snapshots",
+            "account_membership_pair_authority",
+            "account_authority_outbox_events",
+            "account_authority_outbox_streams",
+            "account_audit_outbox");
+    java.util.function.Supplier<Object> storedRows =
+        () ->
+            tables.stream()
+                .map(
+                    table ->
+                        fixture
+                            .dsl
+                            .fetch(
+                                "SELECT xmin::text AS row_version, to_jsonb(t)::text AS row_data FROM "
+                                    + table
+                                    + " t ORDER BY to_jsonb(t)::text")
+                            .intoMaps())
+                .toList();
+    var inactiveRows = storedRows.get();
+    assertThat(fixture.commitExistingJoin(originalRequest)).isEqualTo(committed);
+    assertThat(storedRows.get()).isEqualTo(inactiveRows);
+
+    // A real subsequent JOIN owner operation advances the event and restores membership.
+    var restored = fixture.commitExistingJoin(fixture.prepareAnotherJoin());
+    assertThat(restored.terminalProof().eventSequence()).isEqualTo(3L);
+    assertThat(restored.membershipVersion()).isEqualTo(4L);
+    var restoredRows = storedRows.get();
+    assertThat(fixture.commitExistingJoin(originalRequest)).isEqualTo(committed);
+    assertThatThrownBy(
+            () ->
+                fixture.inTransaction(
+                    () ->
+                        fixture.terminalCoordinator.commitCanonicalJoin(
+                            fixture.scope, originalRequest, "different-caller", null, null, null)))
+        .isInstanceOf(CanonicalJoinOperationConflictException.class);
+    assertThat(storedRows.get()).isEqualTo(restoredRows);
   }
 
   @Test

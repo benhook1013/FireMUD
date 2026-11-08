@@ -2302,6 +2302,7 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
+  @org.springframework.test.annotation.DirtiesContext
   void ordinaryUuidPasswordOtpBootstrapAndScopeJourneysPreservePersistedIdentity()
       throws Exception {
     String suffix = UUID.randomUUID().toString().substring(0, 8);

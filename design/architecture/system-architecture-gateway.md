@@ -71,6 +71,8 @@ For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, 
 
 ### Header Trust Model
 
+Authenticated TCP LOGIN/lobby/PLAY uses the [dedicated Gateway-to-Game Session mTLS receiver](./system-architecture-security.md#authenticated-tcp-gateway-to-game-session-receiving). Only TCP provenance actually verified by this Gateway may be relayed on that hop; ordinary forwarded headers and the in-cluster HTTP/WebSocket exception do not establish backend LOGIN custody.
+
 Spring Cloud Gateway acts as the canonicalizer for client identity and session/tenant headers. It defines a strict trust boundary between **public ingress**, the **Telnet TCP Proxy**, and **internal services**:
 
 - Headers that may carry client, session, or routing identity (`X-Client-IP`, `X-Game-Instance-Id`, `X-Tenant-Id`, `X-World-Slug`, `X-Realm-Slug`, `X-Pointer-Version`, and all `X-Proxy-*` headers) are **never trusted directly from public clients**. The gateway strips or overwrites any such headers that arrive from the external load balancer or browser/WebSocket clients before routing to backend services.

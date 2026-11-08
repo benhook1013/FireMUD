@@ -4,7 +4,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -12,6 +11,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -75,6 +76,7 @@ import org.jooq.Field;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -92,7 +94,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class ControlledPlayerCreatedOriginalOwnerFixture {
   private static final JsonMapper JSON = JsonMapper.builder().build();
-  private final DriverManagerDataSource dataSource;
+  private final javax.sql.DataSource dataSource;
   private final String schema;
   private final Path migrations;
   private final CanonicalPlayerRouteReadService routeReader;
@@ -109,10 +111,6 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
   private final WireFixture wireFixture;
   private final AtomicInteger controlledWorldLifecycleReads = new AtomicInteger();
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification =
-          "The caller and fixture intentionally share the isolated DataSource and schema lifecycle.")
   public ControlledPlayerCreatedOriginalOwnerFixture(
       DriverManagerDataSource dataSource,
       WireFixture supplied,
@@ -120,15 +118,32 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
       Clock clock,
       CanonicalGameplayRosterReferencePolicy policy)
       throws Exception {
+    this(
+        dataSource,
+        Objects.requireNonNull(dataSource.getSchema(), "caller-owned isolated schema"),
+        supplied,
+        recovery,
+        clock,
+        policy);
+  }
+
+  public ControlledPlayerCreatedOriginalOwnerFixture(
+      javax.sql.DataSource dataSource,
+      String schema,
+      WireFixture supplied,
+      CanonicalGameplayRosterRecoveryClient recovery,
+      Clock clock,
+      CanonicalGameplayRosterReferencePolicy policy)
+      throws Exception {
     Objects.requireNonNull(supplied, "complete controlled publication fixture");
-    this.dataSource = Objects.requireNonNull(dataSource);
     Objects.requireNonNull(clock);
     migrations = resolveMigrationDirectory();
-    schema = Objects.requireNonNull(dataSource.getSchema(), "caller-owned isolated schema");
+    this.schema = Objects.requireNonNull(schema, "caller-owned isolated schema");
+    this.dataSource = schemaScopedDataSource(Objects.requireNonNull(dataSource), this.schema);
     migrate("1005");
-    var manager = new DataSourceTransactionManager(dataSource);
+    var manager = new DataSourceTransactionManager(this.dataSource);
     transactions = new TransactionTemplate(manager);
-    dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    dsl = DSL.using(new TransactionAwareDataSourceProxy(this.dataSource), SQLDialect.POSTGRES);
     catalogs = new GameSessionCanonicalRealmCatalogRepository(dsl);
     var events = new GameplayAdmissionPointerEventRepository(dsl);
     var pointers = new GameSessionCanonicalAdmissionPointerRepository(dsl, catalogs, events);
@@ -468,6 +483,37 @@ public final class ControlledPlayerCreatedOriginalOwnerFixture {
 
   public int retainedOriginalReferenceCount() {
     return dsl.fetchCount(DSL.table("game_session_canonical_roster_selection"));
+  }
+
+  static javax.sql.DataSource schemaScopedDataSource(javax.sql.DataSource source, String schema) {
+    Objects.requireNonNull(schema, "caller-owned isolated schema");
+    return new DelegatingDataSource(Objects.requireNonNull(source)) {
+      @Override
+      public Connection getConnection() throws SQLException {
+        return inSchema(super.getConnection());
+      }
+
+      @Override
+      public Connection getConnection(String username, String password) throws SQLException {
+        return inSchema(super.getConnection(username, password));
+      }
+
+      private Connection inSchema(Connection connection) throws SQLException {
+        try {
+          // Bind every checkout, not the shared pool's configuration or a single sampled
+          // connection.
+          connection.setSchema(schema);
+          return connection;
+        } catch (SQLException failure) {
+          try {
+            connection.close();
+          } catch (SQLException closeFailure) {
+            failure.addSuppressed(closeFailure);
+          }
+          throw failure;
+        }
+      }
+    };
   }
 
   private void migrate(String version) {
