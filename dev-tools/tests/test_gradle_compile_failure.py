@@ -5,13 +5,14 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -40,6 +41,218 @@ class CaptureTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
         return path
+
+    def stall_identity(self, pid=123, parent=100, role='daemon'):
+        return {'pid': pid, 'ppid': parent, 'start': 42, 'role': role,
+                'state': 'S', 'cpu_ticks': 1, 'rss_pages': 10, 'jcmd': '/unused/jcmd'}
+
+    def test_stall_timer_activity_attribution_and_one_batch(self):
+        identity = self.stall_identity()
+        with patch.object(CAPTURE.time, 'monotonic', return_value=0) as clock, patch.object(
+                CAPTURE, 'java_identity', return_value=identity), patch.object(
+                CAPTURE.subprocess, 'Popen') as launch, patch.object(CAPTURE.os, 'killpg') as kill, patch.object(
+                CAPTURE, 'owns_session', return_value=True):
+            observer = CAPTURE.StallObserver(self.root, self.output)
+            observer.observe(b'The client will now receive all logging from the daemon (pi')
+            observer.observe(b'd: 123). The daemon log file: secret')
+            self.assertEqual(identity, observer.daemon)
+            clock.return_value = 299
+            observer.tick()
+            launch.assert_not_called()
+            observer.observe(b'progress')
+            clock.return_value = 598
+            observer.tick()
+            launch.assert_not_called()
+            clock.return_value = 599
+            observer.tick()
+            launch.assert_called_once()
+            self.assertTrue(launch.call_args.kwargs['start_new_session'])
+            self.assertEqual(subprocess.DEVNULL, launch.call_args.kwargs['stdin'])
+            clock.return_value = 690
+            observer.tick()
+            kill.assert_called_once()
+            observer.observe(b'new progress')
+            clock.return_value = 1000
+            observer.tick()
+            launch.assert_called_once()
+
+    def test_stall_without_daemon_and_launch_failure_are_nonfatal(self):
+        with patch.object(CAPTURE.time, 'monotonic', side_effect=[0, 301]), patch.object(
+                CAPTURE.subprocess, 'Popen') as launch:
+            observer = CAPTURE.StallObserver(self.root, self.output)
+            observer.tick()
+            launch.assert_called_once()
+            self.assertIn('null', launch.call_args.args[0])
+        with patch.object(CAPTURE.time, 'monotonic', side_effect=[0, 301]), patch.object(
+                CAPTURE.subprocess, 'Popen', side_effect=OSError('unavailable')):
+            observer = CAPTURE.StallObserver(self.root, self.output)
+            observer.daemon = self.stall_identity()
+            observer.tick()
+            self.assertTrue(observer.attempted)
+            self.assertIsNone(observer.child)
+
+    def test_stall_processes_include_both_workers_exclude_unrelated_and_reused(self):
+        proc = self.root / 'proc'
+        java = self.write('jdk/bin/java')
+        def process(pid, parent, main, display=b''):
+            base = proc / str(pid)
+            base.mkdir(parents=True)
+            fields = ['0'] * 22
+            fields[0], fields[1], fields[19] = 'S', str(parent), '42'
+            (base / 'stat').write_text(f'{pid} (java) ' + ' '.join(fields))
+            (base / 'cmdline').write_bytes(b'java\0' + main + b'\0' + display + b'\0SECRET\0')
+            (base / 'exe').symlink_to(java)
+        process(100, 1, b'org.gradle.launcher.daemon.bootstrap.GradleDaemon')
+        for pid in (101, 102):
+            process(pid, 100, b'worker.org.gradle.process.internal.worker.GradleWorkerMain',
+                    b'Gradle Test Executor 4')
+        process(103, 999, b'worker.org.gradle.process.internal.worker.GradleWorkerMain',
+                b'Gradle Test Executor 5')
+        process(104, 100, b'other.JavaMain')
+        with patch.object(CAPTURE, 'PROC_ROOT', proc):
+            daemon = CAPTURE.java_identity(100)
+            selected = CAPTURE.stall_processes(daemon)
+            self.assertEqual({100, 101, 102}, {p['pid'] for p in selected})
+            self.assertNotIn('SECRET', json.dumps(selected))
+            self.assertEqual([], CAPTURE.stall_processes({**daemon, 'start': 43}))
+            with patch.object(CAPTURE, 'STALL_MAX_PROCESSES', 2):
+                self.assertEqual(2, len(CAPTURE.stall_processes(daemon)))
+
+    def test_stall_sanitizer_rejects_names_secrets_and_diagnostic_prose(self):
+        raw = (b'"SECRET-password" #17 tid=0xabc nid=0xdef waiting\n'
+               b'   java.lang.Thread.State: WAITING (parking)\n'
+               b'        at java.base@25/java.lang.Object.wait0(Native Method)\n'
+               b'        at org.example.Work.run(Work.java:42)\n'
+               b'        - locked <0xabc> (a java.lang.Object)\n'
+               b'JAVA_TOOL_OPTIONS=SECRET\njdbc:postgresql://SECRET\n'
+               b'SELECT SECRET FROM private\nVM.command_line SECRET\n')
+        output = CAPTURE.sanitized_threads(raw)
+        self.assertNotIn('SECRET', output)
+        self.assertIn('#17 tid=0xabc nid=0xdef', output)
+        self.assertIn('WAITING', output)
+        self.assertIn('Work.run(Work.java:42)', output)
+        self.assertIn('locked <0xabc>', output)
+
+    def test_stall_identity_change_never_attaches(self):
+        original = self.stall_identity()
+        with patch.object(CAPTURE, 'java_identity', return_value={**original, 'start': 43}), patch.object(
+                CAPTURE.subprocess, 'Popen') as launch:
+            result = CAPTURE.thread_snapshot(original)
+        self.assertEqual('exited-or-changed', result['status'])
+        launch.assert_not_called()
+
+    def test_stall_fake_jcmd_output_limit_and_timeout(self):
+        fake = self.write('jcmd', '#!/usr/bin/env python3\n'
+                          'print("at org.example.Work.run(Work.java:42)", flush=True)\n'
+                          'print("SECRET" * 1000, flush=True)\n'
+                          'import time; time.sleep(10)\n')
+        fake.chmod(0o755)
+        identity = {**self.stall_identity(), 'jcmd': str(fake)}
+        with patch.object(CAPTURE, 'java_identity', return_value=identity), patch.object(
+                CAPTURE, 'STALL_DUMP_BYTES', 100):
+            result = CAPTURE.thread_snapshot(identity)
+        self.assertEqual('limited', result['status'])
+        self.assertNotIn('SECRET', json.dumps(result))
+        self.assertNotIn('jcmd', result)
+        fake.write_text('#!/usr/bin/env python3\nimport time; time.sleep(10)\n')
+        with patch.object(CAPTURE, 'java_identity', return_value=identity), patch.object(
+                CAPTURE, 'STALL_COMMAND_SECONDS', 0.1):
+            result = CAPTURE.thread_snapshot(identity)
+        self.assertEqual('timeout', result['status'])
+
+    def test_stall_missing_jcmd_is_nonfatal(self):
+        identity = self.stall_identity()
+        with patch.object(CAPTURE, 'java_identity', return_value=identity):
+            self.assertEqual('unavailable', CAPTURE.thread_snapshot(identity)['status'])
+
+    def test_stall_snapshots_are_fresh_bounded_and_reject_symlinks(self):
+        identity = self.stall_identity()
+        with patch.object(CAPTURE, 'stall_processes', return_value=[identity]), patch.object(
+                CAPTURE, 'thread_snapshot', return_value={'status': 'complete'}), patch.object(
+                CAPTURE.time, 'sleep'), patch('sys.stdout', io.StringIO()):
+            CAPTURE.collect_stall(self.root, self.output, identity)
+            CAPTURE.collect_stall(self.root, self.output, identity)
+        self.assertEqual(4, len(list(self.output.glob('observation-*/snapshot-*.json'))))
+        link = self.root / 'escape'
+        link.symlink_to(self.output, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            CAPTURE.collect_stall(self.root, link, identity)
+
+    def test_stall_session_guard_never_signals_parent_or_unowned_group(self):
+        with patch.object(CAPTURE.os, 'getpgid', return_value=50), patch.object(
+                CAPTURE.os, 'getsid', return_value=50):
+            self.assertFalse(CAPTURE.owns_session(123))
+        with patch.object(CAPTURE, 'owns_session', return_value=False), patch.object(
+                CAPTURE.os, 'killpg') as kill:
+            with self.assertRaises(SystemExit):
+                CAPTURE.stop_stall_session(signal.SIGALRM, None)
+            observer = CAPTURE.StallObserver(self.root, self.output)
+            child = observer.child = Mock()
+            observer.close()
+            kill.assert_not_called()
+            child.wait.assert_not_called()
+        with patch.object(CAPTURE, 'owns_session', return_value=True), patch.object(
+                CAPTURE.os, 'killpg') as kill, self.assertRaises(SystemExit):
+            CAPTURE.stop_stall_session(signal.SIGALRM, None)
+        kill.assert_called_once_with(os.getpid(), signal.SIGKILL)
+
+    def test_stall_capture_cancellation_closes_observer(self):
+        observer = Mock()
+        observer.tick.side_effect = SystemExit(143)
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)
+        with os.fdopen(read_fd, 'rb') as source, self.assertRaises(SystemExit):
+            list(CAPTURE.capture_chunks(source, observer))
+        observer.close.assert_called_once()
+
+    def test_stall_missing_attribution_is_explicit_and_never_enumerates_jvms(self):
+        with patch.object(CAPTURE, 'stall_processes') as enumerate_jvms, patch.object(
+                CAPTURE.time, 'sleep'), patch('sys.stdout', io.StringIO()) as output:
+            CAPTURE.collect_stall(self.root, self.output, None)
+        enumerate_jvms.assert_not_called()
+        self.assertIn('"daemon_attribution": "unavailable"', output.getvalue())
+
+    def test_stall_blocked_diagnostic_sink_is_reaped_without_touching_other_processes(self):
+        child = subprocess.Popen([sys.executable, '-c',
+                                  'import os;\nwhile True: os.write(1, b"x" * 65536)'],
+                                 stdout=subprocess.PIPE, start_new_session=True)
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(unrelated.wait)
+        self.addCleanup(unrelated.kill)
+        self.addCleanup(child.stdout.close)
+        self.addCleanup(child.wait)
+        self.addCleanup(lambda: child.kill() if child.poll() is None else None)
+        observer = CAPTURE.StallObserver(self.root, self.output)
+        observer.child, observer.started, observer.attempted = child, time.monotonic(), True
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b'build output')
+        os.close(write_fd)
+        with os.fdopen(read_fd, 'rb') as source:
+            self.assertEqual([b'build output'], list(CAPTURE.capture_chunks(source, observer)))
+        self.assertIsNotNone(child.poll())
+        self.assertIsNone(unrelated.poll())
+
+    def test_stall_exited_or_reused_daemon_is_not_labelled_verified(self):
+        with patch.object(CAPTURE, 'stall_processes', return_value=[]), patch.object(
+                CAPTURE.time, 'sleep'), patch('sys.stdout', io.StringIO()) as output:
+            CAPTURE.collect_stall(self.root, self.output, self.stall_identity())
+        self.assertIn('"daemon_attribution": "unavailable"', output.getvalue())
+        for path in self.output.glob('observation-*/snapshot-*.json'):
+            self.assertEqual('unavailable', json.loads(path.read_text())['daemon_attribution'])
+
+    def test_stall_capture_keeps_exact_stdout_and_closes_on_eof(self):
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b'original output\n')
+        os.close(write_fd)
+        observer = Mock()
+        destination = io.BytesIO()
+        with os.fdopen(read_fd, 'rb') as source:
+            status = CAPTURE.capture_log(source, destination, self.log, observer)
+        self.assertEqual(0, status)
+        self.assertEqual(b'original output\n', destination.getvalue())
+        self.assertEqual(destination.getvalue(), self.log.read_bytes())
+        observer.observe.assert_called_once_with(b'original output\n')
+        observer.close.assert_called_once()
 
     def test_compile_failure_bounds_and_symlink_rejection(self):
         self.write('services/common-saga/build/generated/source/Bad.java', 'bad')
