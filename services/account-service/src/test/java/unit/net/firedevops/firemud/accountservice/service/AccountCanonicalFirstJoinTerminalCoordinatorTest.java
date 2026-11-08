@@ -191,6 +191,74 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void inactiveJoinRestoresOnlyPlayerWithoutRegrantingRetainedElevatedRoles(
+      boolean retainedPlayerRole) {
+    Fixture fixture = new Fixture();
+    fixture.arrangePending();
+    AccountTenantMembership inactive = fixture.membership(fixture.account);
+    inactive.setLifecycleState("INACTIVE");
+    inactive.setGameplayAdmissionAllowed(false);
+    inactive.setMembershipVersion(1L);
+    List<String> retainedRoles =
+        retainedPlayerRole
+            ? List.of("designer", "moderator", "player", "tenantAdmin")
+            : List.of("designer", "moderator", "tenantAdmin");
+    RoleSnapshot inactiveRoles =
+        new RoleSnapshot(
+            17L, null, 73L, 1L, retainedRoles, ACCOUNT_ID, TENANT_ID, fixture.provenance);
+    when(fixture.memberships.findFreshMembershipForUpdate(ACCOUNT_ID, TENANT_ID))
+        .thenReturn(Optional.of(inactive));
+    when(fixture.roles.findForCanonicalUpdate(ACCOUNT_ID, TENANT_ID, fixture.provenance, 73L, 1L))
+        .thenReturn(Optional.of(inactiveRoles));
+    when(fixture.memberships.restoreFreshMembershipForJoin(ACCOUNT_ID, TENANT_ID, inactive))
+        .thenReturn(fixture.membership);
+    when(fixture.eventProducer.publishCanonicalRestoredMembershipChange(
+            fixture.scope,
+            REQUEST_ID,
+            CALLER_BINDING,
+            fixture.positivePair(fixture.event.eventId(), fixture.event.eventDigest()),
+            null,
+            null,
+            null))
+        .thenReturn(fixture.checkpoint);
+    var committed = Fixture.committed(fixture.operation, fixture.expectedProof);
+    when(fixture.operations.commitCanonicalJoin(
+            REQUEST_ID, fixture.scope, CALLER_BINDING, "JOINED", fixture.expectedProof))
+        .thenReturn(committed);
+    fixture.startWritableTransaction();
+
+    var result =
+        fixture.coordinator.commitCanonicalJoin(
+            fixture.scope, REQUEST_ID, CALLER_BINDING, null, null, null);
+
+    assertThat(result).isSameAs(committed);
+    InOrder ordered = inOrder(fixture.roles, fixture.eventProducer);
+    ordered
+        .verify(fixture.roles)
+        .findForCanonicalUpdate(ACCOUNT_ID, TENANT_ID, fixture.provenance, 73L, 1L);
+    ordered
+        .verify(fixture.roles)
+        .replaceCanonical(
+            fixture.membership, ACCOUNT_ID, TENANT_ID, fixture.provenance, 2L, List.of("player"));
+    ordered
+        .verify(fixture.eventProducer)
+        .publishCanonicalRestoredMembershipChange(
+            fixture.scope,
+            REQUEST_ID,
+            CALLER_BINDING,
+            fixture.positivePair(fixture.event.eventId(), fixture.event.eventDigest()),
+            null,
+            null,
+            null);
+    MembershipEvent restoredEvent =
+        MembershipAuthorityEventV1Codec.verify(
+            new String(fixture.event.payload(), StandardCharsets.UTF_8));
+    assertThat(restoredEvent.roles()).containsExactly("player");
+    assertThat(inactiveRoles.roles()).containsExactlyElementsOf(retainedRoles);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void committedJoinStillRejectsChangedRequestOrCallerBinding(boolean changedRequest) {
     Fixture fixture = new Fixture();
     String requestId = changedRequest ? "different-request" : REQUEST_ID;

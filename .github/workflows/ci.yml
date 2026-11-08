@@ -1070,8 +1070,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Allow 90 minutes for the full Game Session native issuer suites; retain Account 60, World 40 and Game Design 30.
-    timeout-minutes: ${{ matrix.module == 'game-session-service' && 90 || matrix.module == 'account-service' && 60 || matrix.module == 'world-management-service' && 40 || matrix.module == 'game-design-service' && 30 || 20 }}
+    # Allow 90 minutes for the full Game Session native issuer suites; retain Account 60, allow World 60, and retain Game Design 30.
+    timeout-minutes: ${{ matrix.module == 'game-session-service' && 90 || matrix.module == 'account-service' && 60 || matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
