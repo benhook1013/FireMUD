@@ -1187,6 +1187,7 @@ def main() -> int:
     setup_gh_curl_pattern = (
         r"(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n"
         r"\s*--connect-timeout 10 --max-time 60 \\\n"
+        r'\s*--write-out "\$\{curl_metrics\}\\n" \\\n'
         r'\s*"https://github\.com/cli/cli/releases/download/v\$\{gh_version\}/gh_\$\{gh_version\}_linux_amd64\.tar\.gz" \\\n'
         r'\s*-o "\$temporary_archive"$'
     )
@@ -1210,6 +1211,17 @@ def main() -> int:
     ]:
         fail("setup-gh must validate the runner, restore the archive, and always install it")
     gh_validation, gh_cache, gh_install = gh_steps[1:]
+    gh_metric_variables = {
+        "http_code": "200",
+        "num_redirects": "1",
+        "time_namelookup": "0.010000",
+        "time_connect": "0.020000",
+        "time_appconnect": "0.030000",
+        "time_starttransfer": "0.040000",
+        "time_total": "0.050000",
+    }
+    if sorted(re.findall(r"%\{([^}]+)\}", gh_install["run"])) != sorted(gh_metric_variables):
+        fail("setup-gh curl diagnostics must expose only the fixed numeric HTTP/redirect/timing fields")
     if not re.fullmatch(r"actions/cache@[0-9a-f]{40}", gh_cache.get("uses", "")):
         fail("setup-gh archive cache must use an immutable action revision")
     if gh_cache.get("with") != {
@@ -1244,9 +1256,19 @@ def main() -> int:
             'printf "download\\n" >> "$GH_DOWNLOAD_LOG"\n'
             '[[ " $* " == *" $GH_EXPECTED_URL "* ]]\n'
             '[[ "${@: -2:1}" == -o ]]\n'
+            'output="${@: -1}"\nformat=\n'
+            'while (($#)); do\n'
+            '  if [[ "$1" == --write-out ]]; then format="$2"; shift 2; else shift; fi\n'
+            'done\n'
+            + "".join(
+                f"format=${{format//'%{{{variable}}}'/'{value}'}}\n"
+                for variable, value in gh_metric_variables.items()
+            )
+            + 'format=${format//\'%{url_effective}\'/"$GH_SIGNED_URL_FIXTURE"}\n'
+            'printf "%b" "$format"\n'
             'if [[ "$GH_DOWNLOAD_MODE" == fail ]]; then\n'
-            '  printf partial > "${@: -1}"\n  exit 28\nfi\n'
-            'cp -- "$GH_FIXTURE_ARCHIVE" "${@: -1}"\n',
+            '  printf partial > "$output"\n  exit 28\nfi\n'
+            'cp -- "$GH_FIXTURE_ARCHIVE" "$output"\n',
             encoding="utf-8",
         )
         curl.chmod(0o755)
@@ -1302,6 +1324,8 @@ def main() -> int:
                     "GH_DOWNLOAD_MODE": download_mode,
                     "GH_DOWNLOAD_LOG": str(download_log),
                     "GH_EXECUTION_LOG": str(execution_log),
+                    "GH_TOKEN": "fixture-credential-must-not-be-logged",
+                    "GH_SIGNED_URL_FIXTURE": "https://release-assets.example/asset?signature=fixture-secret",
                 },
                 capture_output=True,
                 text=True,
@@ -1309,6 +1333,18 @@ def main() -> int:
             )
             if result.returncode != expected_status:
                 fail(f"setup-gh {case} fixture failed: {result}")
+            expected_metrics = (
+                "setup_gh_download_http_code=200 setup_gh_download_redirect_count=1 "
+                "setup_gh_download_dns_seconds=0.010000 setup_gh_download_connect_seconds=0.020000 "
+                "setup_gh_download_tls_seconds=0.030000 setup_gh_download_first_byte_seconds=0.040000 "
+                "setup_gh_download_total_seconds=0.050000\n"
+            )
+            if result.stdout != ("" if case == "warm" else expected_metrics):
+                fail(f"setup-gh {case} must emit exactly the fixed metrics once per download invocation")
+            if any(secret in result.stdout + result.stderr for secret in (
+                "https://", "signature=", "fixture-secret", "fixture-credential-must-not-be-logged",
+            )):
+                fail(f"setup-gh {case} diagnostics exposed a URL, query string, or credential")
             if download_log.exists() != (case != "warm") or list(install_root.glob("gh.tar.gz.*")):
                 fail(f"setup-gh {case} must avoid warm downloads and clean staged downloads")
             if expected_status == 0:
