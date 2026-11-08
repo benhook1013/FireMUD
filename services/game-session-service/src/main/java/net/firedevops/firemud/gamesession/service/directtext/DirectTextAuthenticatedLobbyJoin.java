@@ -123,7 +123,6 @@ public record DirectTextAuthenticatedLobbyJoin(
         || reply.hasError()
         || !reply.getSuccess()
         || !Set.of("JOINED", "ALREADY_ACTIVE").contains(reply.getOutcomeCode())
-        || "JOINED".equals(reply.getOutcomeCode()) && !reply.getGameplayAdmissionAllowed()
         || !scope.evidence().accountId().toString().equals(reply.getAccountId())
         || !scope.issued().target().tenantId().equals(reply.getTenantId())
         || !reply.getMembershipId().matches("[1-9][0-9]{0,18}")
