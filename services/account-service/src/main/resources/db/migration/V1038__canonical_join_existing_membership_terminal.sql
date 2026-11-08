@@ -319,7 +319,7 @@ BEGIN
     END IF;
 
     IF NEW.status IS DISTINCT FROM 'COMMITTED'
-        OR NEW.outcome NOT IN ('JOINED', 'ALREADY_ACTIVE')
+        OR NEW.outcome IS NULL OR NEW.outcome NOT IN ('JOINED', 'ALREADY_ACTIVE')
         OR NEW.entitlement_authority_availability IS DISTINCT FROM 'AVAILABLE'
         OR (NEW.outcome = 'JOINED' AND NEW.allow_public_join IS DISTINCT FROM TRUE)
         OR NEW.allow_public_join IS NULL
