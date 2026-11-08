@@ -191,7 +191,13 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     return inTransaction(
         () -> {
           requireDirectPeer();
-          Account account = accounts.findByAccountUuidForUpdate(context.accountId()).orElseThrow();
+          Account account =
+              accounts
+                  .findByAccountUuidForUpdate(context.accountId())
+                  .orElseThrow(
+                      () ->
+                          new AuthenticationException(
+                              "CONNECT_CONTEXT_INVALID", "Direct caller Account is unknown"));
           if (account.getId() == null
               || account.getId() <= 0L
               || !context.accountId().equals(account.getAccountUuid())
