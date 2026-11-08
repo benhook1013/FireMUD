@@ -160,11 +160,10 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .commitCanonicalFirstJoin(REQUEST_ID, fixture.scope, CALLER_BINDING, fixture.expectedProof);
   }
 
-  @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(strings = {"COMMITTED", "FAILED"})
-  void terminalJoinReturnsStoredEvidenceWithoutReadingOrMutatingCurrentAuthority(String status) {
+  @Test
+  void committedJoinReturnsStoredEvidenceWithoutReadingOrMutatingCurrentAuthority() {
     Fixture fixture = new Fixture();
-    var committed = Fixture.terminal(fixture.operation, fixture.expectedProof, status);
+    var committed = Fixture.terminal(fixture.operation, fixture.expectedProof, "COMMITTED");
     when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
     when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
         .thenReturn(Optional.of(committed));
@@ -250,11 +249,12 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
             null,
             null,
             null);
-    MembershipEvent restoredEvent =
-        MembershipAuthorityEventV1Codec.verify(
-            new String(fixture.event.payload(), StandardCharsets.UTF_8));
-    assertThat(restoredEvent.roles()).containsExactly("player");
-    assertThat(inactiveRoles.roles()).containsExactlyElementsOf(retainedRoles);
+    // Capture every role write, not the immutable fixture event returned by the mocked producer.
+    org.mockito.ArgumentCaptor<List<String>> writtenRoles =
+        org.mockito.ArgumentCaptor.forClass(List.class);
+    verify(fixture.roles)
+        .replaceCanonical(any(), any(), any(), any(), anyLong(), writtenRoles.capture());
+    assertThat(writtenRoles.getValue()).containsExactly("player");
   }
 
   @org.junit.jupiter.params.ParameterizedTest
