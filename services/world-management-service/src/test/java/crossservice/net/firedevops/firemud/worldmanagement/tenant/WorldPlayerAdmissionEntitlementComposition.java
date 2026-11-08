@@ -169,7 +169,7 @@ final class WorldPlayerAdmissionEntitlementComposition {
                         target.playableStateNamespaceId(),
                         target.playableStateScope(),
                         target.canonicalGameInstanceId(),
-                        transport.proxyConnectionId().toString(),
+                        transport.transportSessionId(),
                         UUID.randomUUID().toString()),
                     new DirectTextJoinTarget(
                         target.canonicalTenantId(),
@@ -209,7 +209,7 @@ final class WorldPlayerAdmissionEntitlementComposition {
             // Actual Account owner transition; caller binding is controlled and no World hold
             // spans this JOIN transaction. Reuse only the still-current verified LOGIN result.
             fixture.commitFirstJoin(
-                realmScope, UUID.randomUUID().toString(), transport.proxyConnectionId().toString());
+                realmScope, UUID.randomUUID().toString(), transport.transportSessionId());
             var joined =
                 entitlementClient.read(
                     lobby, coordinates, transport, UUID.randomUUID(), login, () -> true);

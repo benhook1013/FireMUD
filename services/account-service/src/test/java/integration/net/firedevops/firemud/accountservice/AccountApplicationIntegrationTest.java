@@ -1749,9 +1749,7 @@ class AccountApplicationIntegrationTest {
           target.playableStateNamespaceId(),
           target.playableStateScope(),
           target.canonicalGameInstanceId(),
-          UUID.nameUUIDFromBytes(
-                  ("session-" + account.getAccountUuid()).getBytes(StandardCharsets.UTF_8))
-              .toString(),
+          "00042",
           request);
     }
 
