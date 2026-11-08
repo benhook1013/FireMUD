@@ -471,6 +471,20 @@ try:
     assert f"base_ref={request['base']['ref']}\n" in output
     assert f"image_tag=pr-merge-{merge['sha']}\n" in output
     assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
+    assert "canonical_play_transition=false\n" in output
+    labeled_request = json.loads(json.dumps(request))
+    labeled_request["labels"] = [{"name": "canonical-play-transition"}]
+    assert admit(labeled_request, merge, branch).returncode == 0
+    assert "canonical_play_transition=true\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    # Event labels are a separate marker path; only typed-refresh admission may
+    # export verified live-label authority through this metadata output.
+    assert admit(labeled_request, merge, branch, event_name="pull_request").returncode == 0
+    assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    for labels in (None, [], [{"name": "other"}], "canonical-play-transition"):
+        unlabeled_request = {**request, "labels": labels}
+        assert admit(unlabeled_request, merge, branch).returncode == 0
+        assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    assert admit(labeled_request, merge, branch, {"EVENT_ACTION": "other"}).returncode != 0
     assert branch["object"]["sha"] not in dict(line.split("=", 1) for line in output.splitlines())["base_image"]
     literal_marker = fixture / "must-not-execute"
     valid_refs = ("feature/topic+fix", "feature/@/parent", "feature/世界", "feature/#fragment", "feature/%encoded",
@@ -496,7 +510,7 @@ try:
         assert not (fixture / "runtime-meta-ref-calls").read_text(), "invalid ref reached GitHub lookup"
     assert admit(request, merge, {**branch, "ref": "refs/heads/feature/other"}).returncode != 0
     for mutation in ("stale-base", "stale-head", "wrong-parents", "fork", "closed", "retarget", "missing-merge", "wrong-default-ref"):
-        mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (request, merge, branch)]
+        mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (labeled_request, merge, branch)]
         overrides = {}
         if mutation == "stale-base":
             mutated_branch["object"]["sha"] = "d" * 40
@@ -516,6 +530,7 @@ try:
             overrides["GITHUB_REF"] = "refs/heads/feature/untrusted"
         rejected = admit(mutated_request, mutated_merge, mutated_branch, overrides)
         assert rejected.returncode != 0, f"runtime metadata admitted {mutation}"
+        assert "canonical_play_transition=true\n" not in Path(env["GITHUB_OUTPUT"]).read_text()
 finally:
     for path, original in zip(paths, originals):
         path.write_text(original)
