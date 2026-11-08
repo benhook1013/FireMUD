@@ -632,14 +632,39 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
-  void displayRefreshDoesNotAuthorizeInitialClaimOrDirectDispatchInsert() {
-    Fixture unclaimed = fixture("1032");
+  void displayRefreshBeforeInitialClaimRetainsTerminalFailureWithoutDispatch() {
+    Fixture unclaimed = fixture(null);
     refreshDisplay(unclaimed);
-    assertThatThrownBy(() -> claim(unclaimed, 1)).isInstanceOf(FenceRejectedException.class);
-    assertThat(unclaimed.dsl().fetchCount(DSL.table("subscription_provisioning_work"))).isZero();
+    var refused =
+        unclaimed
+            .tx()
+            .execute(
+                s ->
+                    unclaimed
+                        .owner()
+                        .claim(unclaimed.creation().requestId(), 1, UUID.randomUUID()));
+    assertThat(Objects.requireNonNull(refused).disposition())
+        .isEqualTo(Disposition.TERMINAL_FAILURE);
+    assertThat(refused.claim()).isNull();
+    assertThat(unclaimed.dsl().fetchCount(DSL.table("subscription_provisioning_work"))).isOne();
+    assertThat(
+            Objects.requireNonNull(
+                    unclaimed.dsl().fetchOne("SELECT * FROM subscription_provisioning_work"))
+                .intoMap())
+        .containsEntry("phase", "BILLING_RECONCILIATION_TERMINAL_FAILURE")
+        .containsEntry("failure_reason", "RESERVED_INSTRUMENT_CHANGED");
+    assertThat(unclaimed.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox")))
+        .isOne();
     assertThat(unclaimed.dsl().fetchCount(DSL.table("subscription_provisioning_attempts")))
         .isZero();
+    assertThat(unclaimed.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim")))
+        .isZero();
+    assertThat(unclaimed.transport().creates).isZero();
+    assertThat(unclaimed.transport().searches).isZero();
+  }
 
+  @Test
+  void displayRefreshDoesNotAuthorizeDirectDispatchInsert() {
     Fixture retained = fixture("1032");
     var original = claim(retained, 1);
     refreshDisplay(retained);
@@ -1012,15 +1037,17 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   private static void migrate(DriverManagerDataSource source, String schema, String target) {
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration", "classpath:db/migration/saga")
-        .target(target)
-        .load()
-        .migrate();
+    var configuration =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration", "classpath:db/migration/saga");
+    if (target != null) {
+      configuration.target(target);
+    }
+    configuration.load().migrate();
   }
 
   private record Fixture(
