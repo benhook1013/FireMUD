@@ -443,15 +443,16 @@ public final class AccountHostingSubscriptionLifecycleRepository {
                   : dsl.fetchOne(
                       "SELECT claimed_at FROM subscription_provisioning_attempts WHERE attempt_id = ?",
                       provisioningAttemptId);
+          Instant provisioningNow = databaseNow();
           if (provisioningAttemptId == null
               || !"provisioning".equals(current.status())
               || claimedAttempt == null
-              || now.isBefore(instant(claimedAttempt, "claimed_at"))
+              || provisioningNow.isBefore(instant(claimedAttempt, "claimed_at"))
               || !"CLAIMED".equals(work.get("phase", String.class))
               || !provisioningAttemptId.equals(work.get("last_attempt_id", UUID.class))
               || current.rowVersion() != work.get("subscription_row_version", Long.class)
-              || !now.isBefore(instant(work, "lease_expires_at"))
-              || !now.isBefore(instant(work, "deadline_at"))) {
+              || !provisioningNow.isBefore(instant(work, "lease_expires_at"))
+              || !provisioningNow.isBefore(instant(work, "deadline_at"))) {
             throw new FenceRejectedException(
                 "Initial confirmation lacks its exact durable provisioning claim");
           }
@@ -997,6 +998,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             Duration.ofMillis(operation.get("grace_millis", Long.class))));
   }
 
+  /** Provisioning leases and dispatch fences share PostgreSQL time, not the observation clock. */
+  private Instant databaseNow() {
+    return instant(Objects.requireNonNull(dsl.fetchOne("SELECT clock_timestamp() AS now")), "now");
+  }
+
   private Instant now() {
     return clock.instant().truncatedTo(ChronoUnit.MICROS);
   }
@@ -1296,12 +1302,12 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return recoverUndispatchableWork(requestId, versionToLock, prior);
     }
     var original = intents.findCreation(requestId).orElseThrow();
-    Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+    retainUnclaimedWork(original);
+    Record work = workForUpdate(requestId);
+    Instant now = databaseNow();
     if (now.isBefore(original.createdAt())) {
       throw new FenceRejectedException("Provisioning clock predates the durable intent");
     }
-    retainUnclaimedWork(original);
-    Record work = workForUpdate(requestId);
     if ("BILLING_RECONCILIATION_TERMINAL_FAILURE".equals(work.get("phase", String.class))) {
       return new ClaimResult(Disposition.TERMINAL_FAILURE, null);
     }
@@ -1403,12 +1409,12 @@ public final class AccountHostingSubscriptionLifecycleRepository {
   private ClaimResult recoverUndispatchableWork(UUID requestId, long version, Record prior) {
     var current = intents.lockForProvisioningSettlement(requestId, version);
     var original = intents.findCreation(requestId).orElseThrow();
-    Instant now = now();
+    retainUnclaimedWork(original);
+    Record work = workForUpdate(requestId);
+    Instant now = databaseNow();
     if (now.isBefore(original.createdAt())) {
       throw new FenceRejectedException("Provisioning clock predates the durable intent");
     }
-    retainUnclaimedWork(original);
-    Record work = workForUpdate(requestId);
     if (work.get("last_attempt_id") == null) {
       if (prior != null
           || work.get("attempt_count", Integer.class) != 0
@@ -1488,15 +1494,14 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             "INSERT INTO subscription_provider_dispatch_claim "
                 + "(creation_request_id, subscription_id, provider_operation_id, dispatch_id, classification, "
                 + "first_attempt_id, first_claimed_row_version, recorded_at) "
-                + "VALUES (?, ?, ?, ?, 'FIRST_DISPATCH', ?, ?, ?::timestamptz) "
+                + "VALUES (?, ?, ?, ?, 'FIRST_DISPATCH', ?, ?, clock_timestamp()) "
                 + "ON CONFLICT (creation_request_id) DO NOTHING",
             original.requestId(),
             original.subscriptionId(),
             original.subscriptionProvisioningRequestId(),
             dispatchId,
             retained.attemptId(),
-            retained.subscriptionRowVersion(),
-            utc(now()));
+            retained.subscriptionRowVersion());
     DispatchReceipt receipt = dispatchReceipt(original.requestId());
     requireDispatchBinding(retained, receipt);
     boolean initial =
@@ -1730,7 +1735,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         || !claim.expiresAt().equals(instant(retained, "expires_at"))) {
       throw new FenceRejectedException("Exact retained provisioning settlement claim rejected");
     }
-    Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+    Instant now = databaseNow();
     if (now.isBefore(claim.claimedAt())) {
       throw new FenceRejectedException("Provisioning clock predates its retained claim");
     }
