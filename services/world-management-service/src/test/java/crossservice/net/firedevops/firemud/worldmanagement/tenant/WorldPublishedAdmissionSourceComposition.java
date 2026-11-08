@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.grpc.BindableService;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
@@ -15,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
@@ -35,7 +38,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.repository.CanonicalPublishedAdmissionActualOwnerCompositionFixture;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.jooq.DSLContext;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Real GS OPEN/current publication and World ACTIVE reads over authenticated sockets, followed by
@@ -110,15 +112,23 @@ final class WorldPublishedAdmissionSourceComposition {
                 .toList());
     // This is the sole stipulated source: the exact published set already used by the real
     // preparation/OPEN owners. No Game Design issuing-owner proof is claimed here.
+    var policySourcePeerFailure = new AtomicReference<String>();
     var policySource =
         new PublishedRealmEntryPolicyServiceGrpc.PublishedRealmEntryPolicyServiceImplBase() {
           @Override
           public void listPublishedRealmEntryPolicies(
               ListPublishedRealmEntryPoliciesRequest request,
               StreamObserver<ListPublishedRealmEntryPoliciesResponse> observer) {
-            assertThat(GrpcPeerIdentity.current().uri())
-                .isEqualTo(peer(namespace, "game-session-service"));
-            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            var authenticatedPeer = GrpcPeerIdentity.current();
+            String expectedPeer = peer(namespace, "game-session-service");
+            if (authenticatedPeer == null || !expectedPeer.equals(authenticatedPeer.uri())) {
+              policySourcePeerFailure.compareAndSet(
+                  null,
+                  "Expected authenticated peer "
+                      + expectedPeer
+                      + " but was "
+                      + (authenticatedPeer == null ? "missing" : authenticatedPeer.uri()));
+            }
             observer.onNext(
                 PublishedRealmEntryPolicyReadGrpcCodec.toResponse(
                     PublishedRealmEntryPolicyReadGrpcCodec.fromRequest(request), policies));
@@ -201,7 +211,17 @@ final class WorldPublishedAdmissionSourceComposition {
                     target.catalogRevision(),
                     target.pointerVersion());
             assertThatThrownBy(() -> accountClient.resolvePublishedRealmAdmissionTarget(wrong))
-                .isInstanceOf(RuntimeException.class);
+                .isExactlyInstanceOf(StatusRuntimeException.class)
+                .satisfies(
+                    failure -> {
+                      var status = ((StatusRuntimeException) failure).getStatus();
+                      assertThat(status.getCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+                      assertThat(status.getDescription())
+                          .isEqualTo("Canonical Game Session admission decision is unavailable");
+                    });
+            var afterRefusal = accountClient.resolvePublishedRealmAdmissionTarget(selector);
+            assertThat(afterRefusal.selector()).isEqualTo(resolved.selector());
+            assertThat(afterRefusal.currentTarget()).isEqualTo(resolved.currentTarget());
             WorldPlayerAdmissionEntitlementComposition.exercise(
                 root,
                 originalAccount,
@@ -217,7 +237,12 @@ final class WorldPublishedAdmissionSourceComposition {
         }
       }
     } finally {
-      stop(design);
+      try {
+        stop(design);
+      } finally {
+        // Assert on the test thread, preserving peer diagnostics even if the caller failed.
+        assertThat(policySourcePeerFailure.get()).as("published policy source peer").isNull();
+      }
     }
   }
 

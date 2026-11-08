@@ -161,7 +161,17 @@ public class AccountMembershipAuthorityEventProducer {
       Objects.requireNonNull(fence, "Original paid read fence required");
       Objects.requireNonNull(observed, "Original sealed SDK result required");
     }
-    var account = accountRepository.findByAccountUuid(scope.accountId()).orElseThrow();
+    var account =
+        accountRepository
+            .findByAccountUuid(scope.accountId())
+            .orElseThrow(() -> new IllegalStateException("Canonical Account identity is absent"));
+    if (account.getId() == null
+        || account.getId() <= 0L
+        || !scope.accountId().equals(account.getAccountUuid())
+        || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
+        || !Objects.equals(account.getAccountUuidSourceNumericId(), account.getId())) {
+      throw new IllegalStateException("Canonical Account owner identity is contradictory");
+    }
     joinOperationRepository.lockAccount(account.getId());
     CanonicalJoinOperationEvidence operation =
         joinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId).orElseThrow();
