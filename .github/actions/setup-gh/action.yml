@@ -42,8 +42,14 @@ runs:
             | sha256sum --check --status; then
           temporary_archive="$(mktemp -- "${install_root}/gh.tar.gz.XXXXXX")"
           trap 'rm -f -- "$temporary_archive"' EXIT
+          # Emit numeric diagnostics once per curl invocation, including failures, without signed redirect URLs.
+          curl_metrics='setup_gh_download_http_code=%{http_code} setup_gh_download_redirect_count=%{num_redirects}'
+          curl_metrics+=' setup_gh_download_dns_seconds=%{time_namelookup} setup_gh_download_connect_seconds=%{time_connect}'
+          curl_metrics+=' setup_gh_download_tls_seconds=%{time_appconnect} setup_gh_download_first_byte_seconds=%{time_starttransfer}'
+          curl_metrics+=' setup_gh_download_total_seconds=%{time_total}'
           curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
             --connect-timeout 10 --max-time 60 \
+            --write-out "${curl_metrics}\n" \
             "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
             -o "$temporary_archive"
           printf '%s  %s\n' "$gh_sha256" "$temporary_archive" \
