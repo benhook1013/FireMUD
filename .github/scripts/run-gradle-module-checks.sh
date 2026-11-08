@@ -35,12 +35,17 @@ if [[ ( "$MODULE" == "account-service" || "$MODULE" == "game-session-service" ||
     fi
   done
 
+  declare -a PREPARE_LOG_ARGS=()
+  if [[ "$MODULE" == "world-management-service" ]]; then
+    PREPARE_LOG_ARGS+=(--info)
+  fi
+
   # Build every current service test class first, then freeze one source-derived selector.
   bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
     --runner "$ROOT_DIR/gradlew" -- \
     --max-workers=2 \
     '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
-    "${PREPARE_TASKS[@]}" -PfullCheck --profile
+    "${PREPARE_TASKS[@]}" -PfullCheck --profile "${PREPARE_LOG_ARGS[@]}"
   python3 "$ROOT_DIR/dev-tools/validation/slow_service_ci_test_partition.py" plan \
     --module "$MODULE" \
     --partition "$PARTITION" \
