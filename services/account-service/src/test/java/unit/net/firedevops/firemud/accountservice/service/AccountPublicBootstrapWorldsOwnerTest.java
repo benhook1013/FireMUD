@@ -81,7 +81,8 @@ class AccountPublicBootstrapWorldsOwnerTest {
 
     assertThat(worlds)
         .containsExactly(
-            new BootstrapWorldDto("alpha", "Alpha"), new BootstrapWorldDto("zulu", "Zulu"));
+            new BootstrapWorldDto("tenant-b", "alpha", "Alpha"),
+            new BootstrapWorldDto("tenant-a", "zulu", "Zulu"));
     verify(f.targets, times(2)).listVisiblePublicProductionAdmissionTargets(any());
     verify(f.entitlements).evaluate(TENANT_A);
     verify(f.entitlements).evaluate(TENANT_B);
@@ -101,7 +102,8 @@ class AccountPublicBootstrapWorldsOwnerTest {
         .thenReturn(evaluation(TENANT_B, true, NOW.plusSeconds(30)));
     assertThat(f.owner.listWorlds(TOKEN))
         .containsExactly(
-            new BootstrapWorldDto("created", "Created"), new BootstrapWorldDto("seeded", "Seeded"));
+            new BootstrapWorldDto("tenant-b", "created", "Created"),
+            new BootstrapWorldDto("tenant-a", "seeded", "Seeded"));
     verify(f.entitlements, times(1)).evaluate(TENANT_A);
     verify(f.entitlements, times(1)).evaluate(TENANT_B);
   }
@@ -138,7 +140,7 @@ class AccountPublicBootstrapWorldsOwnerTest {
   }
 
   @Test
-  void ambiguousWorldSlugAcrossTenantsRefusesWithoutReturningEitherWorld() {
+  void sharedWorldSlugAcrossTenantsReturnsBothQualifiedSelectors() {
     Fixture f = new Fixture();
     Target first = target(TENANT_A, "tenant-a", "same-slug", "First", 1);
     Target second = target(TENANT_B, "tenant-b", "same-slug", "Second", 1);
@@ -148,7 +150,10 @@ class AccountPublicBootstrapWorldsOwnerTest {
     when(f.entitlements.evaluate(TENANT_B))
         .thenReturn(evaluation(TENANT_B, true, NOW.plusSeconds(30)));
 
-    assertCode("ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listWorlds(TOKEN));
+    assertThat(f.owner.listWorlds(TOKEN))
+        .containsExactly(
+            new BootstrapWorldDto("tenant-a", "same-slug", "First"),
+            new BootstrapWorldDto("tenant-b", "same-slug", "Second"));
   }
 
   @Test

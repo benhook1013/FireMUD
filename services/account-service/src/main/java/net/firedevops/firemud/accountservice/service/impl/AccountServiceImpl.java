@@ -910,7 +910,8 @@ public class AccountServiceImpl implements AccountService {
 
   @Override
   @Timed(value = "account.bootstrap_realms")
-  public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
+  public List<BootstrapRealmDto> listBootstrapRealms(
+      String bootstrapToken, String tenantSlug, String worldSlug) {
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("Public bootstrap realm discovery refuses ambient SQL");
@@ -920,7 +921,7 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "AUTH_UNAVAILABLE", "Canonical public-realm scope source is unavailable");
     }
-    return owner.listRealmScopes(bootstrapToken, worldSlug).stream()
+    return owner.listRealmScopes(bootstrapToken, tenantSlug, worldSlug).stream()
         .map(
             retained -> {
               var target = retained.target();
