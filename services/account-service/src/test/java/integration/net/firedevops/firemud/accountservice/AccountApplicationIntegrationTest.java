@@ -737,6 +737,55 @@ class AccountApplicationIntegrationTest {
     f.assertTransitionCount(0L);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void publicJoinExpiryDuringProcessingPreservesPendingIntentAndRollsBack(boolean duringProvider) {
+    var f = publicJoinFixture(duringProvider);
+    String token = f.browserScope();
+    String request = UUID.randomUUID().toString();
+    var intent = new java.util.concurrent.atomic.AtomicReference<String>();
+    Runnable expire =
+        () -> {
+          intent.set(f.operation(request).intentDigest());
+          f.clock.offset = Duration.ofMinutes(3);
+        };
+    if (duringProvider) {
+      f.paid.transport().duringRead(expire);
+    } else {
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                var result = invocation.callRealMethod();
+                expire.run();
+                return result;
+              })
+          .when(f.operations)
+          .commitCanonicalJoin(
+              org.mockito.ArgumentMatchers.eq(request),
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.anyString(),
+              org.mockito.ArgumentMatchers.anyString(),
+              org.mockito.ArgumentMatchers.any());
+    }
+    assertThatThrownBy(() -> f.join(token, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("CONNECT_SCOPE_INVALID");
+    assertThat(intent.get()).isNotBlank();
+    assertThat(f.operation(request).intentDigest()).isEqualTo(intent.get());
+    assertThat(f.operation(request).status()).isEqualTo("PENDING");
+    assertThat(f.operation(request).requestDigest()).isNull();
+    assertThat(f.operation(request).terminalProof()).isNull();
+    assertThat(f.operation(request).lastAttemptFailureCode()).isNull();
+    assertThat(f.membershipCount()).isZero();
+    f.assertTransitionCount(0L);
+    var pending = f.state(request);
+    assertThatThrownBy(() -> f.join(token, request))
+        .isInstanceOf(AuthenticationException.class)
+        .extracting(value -> ((AuthenticationException) value).getCode())
+        .isEqualTo("CONNECT_SCOPE_INVALID");
+    assertThat(f.state(request)).isEqualTo(pending);
+  }
+
   @Test
   void publicJoinChangedCallerOrScopeCannotReplaceOriginalTerminalBytes() {
     var f = publicJoinFixture(false);

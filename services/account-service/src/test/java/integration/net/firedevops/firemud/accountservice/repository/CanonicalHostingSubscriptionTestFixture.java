@@ -1011,7 +1011,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
   }
 
   public static final class MutableClock extends Clock {
-    private Instant current;
+    private volatile Instant current;
 
     private MutableClock(Instant current) {
       this.current = current;
