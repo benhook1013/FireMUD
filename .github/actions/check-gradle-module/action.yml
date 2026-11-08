@@ -133,5 +133,6 @@ runs:
         path: |
           build/reports/profile/
           build/reports/compile-failure/${{ inputs.module }}/
+          build/reports/gradle-stall/${{ inputs.module }}/
         if-no-files-found: warn
         retention-days: 14
