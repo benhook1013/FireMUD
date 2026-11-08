@@ -1174,13 +1174,21 @@ jobs:
                   }
                   if (matching.conclusion === "failure" && repositoryName === "benhook1013/FireMUD" &&
                       matching.event === "pull_request") {
-                    const jobs = await withTransientGitHubRetry("canonical transition PLAY failure jobs lookup", () =>
-                      github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
-                        owner, repo, run_id: matching.id, attempt_number: matching.run_attempt, per_page: 100,
-                      })
-                    );
-                    const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
-                    if (candidate && await verifyKnownPlayFailure(matching, candidate, currentIdentity)) {
+                    let knownPlayVerified = false;
+                    try {
+                      const jobs = await withTransientGitHubRetry("canonical transition PLAY failure jobs lookup", () =>
+                        github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
+                          owner, repo, run_id: matching.id, attempt_number: matching.run_attempt, per_page: 100,
+                        })
+                      );
+                      const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
+                      knownPlayVerified = Boolean(candidate) &&
+                        await verifyKnownPlayFailure(matching, candidate, currentIdentity);
+                    } catch (error) {
+                      if (error instanceof TerminalGitHubRequestError) throw error;
+                      core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
+                    }
+                    if (knownPlayVerified) {
                       const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception");
                       if (freshIdentity?.obsolete) return;
                       if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
