@@ -166,15 +166,13 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
           .findCanonicalEvidenceForUpdateByRequestId(requestId)
           .orElseThrow();
     }
-    if ("PENDING".equals(operation.status())) {
-      eventProducer.requireCurrentCanonicalJoinPolicy(
-          scope,
-          operation,
-          !"ACTIVE".equals(membership.getLifecycleState()),
-          hosting,
-          fence,
-          observed);
-    }
+    eventProducer.requireCurrentCanonicalJoinPolicy(
+        scope,
+        operation,
+        !"ACTIVE".equals(membership.getLifecycleState()),
+        hosting,
+        fence,
+        observed);
     VerifiedTenantProvenance provenance = operation.scopeEvidence().tenantProvenance();
     RoleSnapshot roles =
         roleSnapshotRepository
@@ -225,9 +223,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
       throw new IllegalStateException("Membership lifecycle does not allow JOIN");
     }
     FirstJoinEvidence current = readCurrentJoinEvidence(scope, membership, roles, checkpoint);
-    if ("PENDING".equals(operation.status())
-        && "ALREADY_ACTIVE".equals(outcome)
-        && requestId.equals(current.event().requestId())) {
+    if ("ALREADY_ACTIVE".equals(outcome) && requestId.equals(current.event().requestId())) {
       throw new IllegalStateException("Pending JOIN cannot adopt its precommitted transition");
     }
     if ("JOINED".equals(outcome) && !requestId.equals(current.event().requestId())) {
@@ -252,16 +248,11 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
       String payload =
           canonicalCurrentAuditPayload(scope, requestId, operation, current, checkpoint);
       UUID auditId = auditEventIdFor(requestId);
-      AccountAuditEnvelope audit;
-      if ("PENDING".equals(operation.status())) {
-        AccountAuditEnvelope appended =
-            auditOutboxRepository.appendCanonicalTenant(
-                auditId, scope.tenantId().toString(), JOINED_EVENT_TYPE, payload);
-        audit =
-            auditOutboxRepository.findExactCanonicalTenantEnvelopeForUpdate(appended).orElseThrow();
-      } else {
-        audit = auditOutboxRepository.findCanonicalTenantEnvelopeForUpdate(auditId).orElseThrow();
-      }
+      AccountAuditEnvelope appended =
+          auditOutboxRepository.appendCanonicalTenant(
+              auditId, scope.tenantId().toString(), JOINED_EVENT_TYPE, payload);
+      AccountAuditEnvelope audit =
+          auditOutboxRepository.findExactCanonicalTenantEnvelopeForUpdate(appended).orElseThrow();
       requireExactAudit(audit, scope, auditId, payload, operation.terminalProof());
       proof = proof(operation, current, audit);
     }
