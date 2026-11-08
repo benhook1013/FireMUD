@@ -400,7 +400,7 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
       var history = f.retainedRows(HISTORY);
       assertThat(f.count("saga_instance")).isZero();
 
-      migration(f.source, f.schema, null).migrate();
+      migration(f.source, f.schema, "1048").migrate();
       assertThat(
               f.dsl
                   .fetch(
@@ -432,7 +432,7 @@ class WorldRuntimeInstallationRegistryPostgresIntegrationTest {
                   .get(0, Boolean.class))
           .isTrue();
       assertThat(f.count("world_runtime_installation_registration")).isZero();
-      migration(f.source, f.schema, null).validate();
+      migration(f.source, f.schema, "1048").validate();
     }
   }
 

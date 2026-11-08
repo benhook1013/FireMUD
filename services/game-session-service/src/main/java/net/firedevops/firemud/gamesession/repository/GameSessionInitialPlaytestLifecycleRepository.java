@@ -361,7 +361,8 @@ public class GameSessionInitialPlaytestLifecycleRepository {
     return actual;
   }
 
-  private static Preparation preparation(Record row) {
+  // Owner-internal decoding of immutable retained facts, not a current allocation qualification.
+  static Preparation preparation(Record row) {
     Request request =
         new Request(
             row.get("request_id", UUID.class),

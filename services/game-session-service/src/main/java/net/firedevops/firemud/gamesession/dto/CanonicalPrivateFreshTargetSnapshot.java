@@ -60,7 +60,7 @@ public record CanonicalPrivateFreshTargetSnapshot(
     if (visible
         || publicProduction
         || !"ISOLATED".equals(stateScope)
-        || catalogRevision != 1L
+        || catalogRevision < 1L
         || playtestStateGeneration != 1L
         || !"PREPARING".equals(preparationState)
         || playtestLifecycleId.equals(playableStateNamespaceId)

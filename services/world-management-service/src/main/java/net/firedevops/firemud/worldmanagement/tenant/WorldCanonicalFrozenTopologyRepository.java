@@ -1,13 +1,24 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Context;
+import io.grpc.Deadline;
+import io.grpc.Status;
 import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
@@ -15,7 +26,15 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopolog
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import org.jooq.DSLContext;
+import org.jooq.ExecuteContext;
+import org.jooq.ExecuteListener;
+import org.jooq.ExecuteListenerProvider;
 import org.jooq.Record;
+import org.jooq.exception.DataAccessException;
+import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListenerProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
@@ -24,6 +43,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Explicitly unwired immutable graph/2 journal; historical reads never reenter an owner writer. */
 public class WorldCanonicalFrozenTopologyRepository {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(WorldCanonicalFrozenTopologyRepository.class);
+  static final int MAX_DEADLINE_READS = 4;
+  private static final Semaphore DEADLINE_READ_SLOTS = new Semaphore(MAX_DEADLINE_READS);
   private static final ObjectMapper JSON =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -63,6 +86,37 @@ public class WorldCanonicalFrozenTopologyRepository {
     return readFrozen(Objects.requireNonNull(request, "request"));
   }
 
+  /**
+   * The complete local read, including connection acquisition, shares the caller's absolute budget.
+   */
+  public Optional<WorldCanonicalFrozenTopology> readCommitted(
+      CaptureRequest request, Deadline deadline) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new ConflictException("Frozen topology readback requires no caller transaction");
+    }
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(deadline, "deadline");
+    Context context = Context.current();
+    if (context.getDeadline() != null) deadline = deadline.minimum(context.getDeadline());
+    var read = new DeadlineRead(request, deadline, context);
+    read.requireLive();
+    if (!DEADLINE_READ_SLOTS.tryAcquire()) throw Status.RESOURCE_EXHAUSTED.asRuntimeException();
+    Context.CancellationListener listener = ignored -> read.cancel(Status.CANCELLED);
+    try {
+      context.addListener(listener, Runnable::run);
+      try {
+        Thread.ofVirtual().name("world-frozen-topology-read").start(read::run);
+      } catch (RuntimeException | Error failure) {
+        read.finished();
+        throw failure;
+      }
+      return read.await();
+    } finally {
+      context.removeListener(listener);
+    }
+  }
+
   /** Reads this immutable selector only inside the caller-owned read-only RR snapshot. */
   Optional<WorldCanonicalFrozenTopology> readInOwnedSnapshot(CaptureRequest request) {
     requireOwnedReadOnlyRepeatableReadSnapshot();
@@ -70,8 +124,14 @@ public class WorldCanonicalFrozenTopologyRepository {
   }
 
   private Optional<WorldCanonicalFrozenTopology> readFrozen(CaptureRequest request) {
+    return readFrozen(request, dsl);
+  }
+
+  private Optional<WorldCanonicalFrozenTopology> readFrozen(
+      CaptureRequest request, DSLContext reader) {
     Record row =
-        dsl.resultQuery(
+        reader
+            .resultQuery(
                 "SELECT binding_json,binding_digest,owner_binding_json FROM world_canonical_frozen_topology WHERE publication_fence=?",
                 request.publicationFence())
             .fetchOne();
@@ -83,7 +143,9 @@ public class WorldCanonicalFrozenTopologyRepository {
     var ownerBinding =
         JSON.readValue(required(row, "owner_binding_json", String.class), OwnerBinding.class);
     return Optional.ofNullable(
-        find(new Request(WorldDraftTopologyCommitPlan.create(binding, ownerBinding), request)));
+        find(
+            new Request(WorldDraftTopologyCommitPlan.create(binding, ownerBinding), request),
+            reader));
   }
 
   private void requireOwnedReadOnlyRepeatableReadSnapshot() {
@@ -199,8 +261,13 @@ public class WorldCanonicalFrozenTopologyRepository {
   }
 
   private WorldCanonicalFrozenTopology find(Request supplied) {
+    return find(supplied, dsl);
+  }
+
+  private WorldCanonicalFrozenTopology find(Request supplied, DSLContext reader) {
     Record row =
-        dsl.resultQuery(
+        reader
+            .resultQuery(
                 "SELECT * FROM world_canonical_frozen_topology WHERE publication_fence=?",
                 supplied.freeze().publicationFence())
             .fetchOne();
@@ -257,6 +324,183 @@ public class WorldCanonicalFrozenTopologyRepository {
     }
     return new WorldCanonicalFrozenTopology(
         captureId, retained, identity, graph, graphBytes, storageResult, resultBytes);
+  }
+
+  /**
+   * A stalled JDBC acquire or cancel retains its slot. There is no queue and no replacement worker
+   * until both resource and cancellation work end, so an unresponsive driver cannot grow this work.
+   */
+  private final class DeadlineRead {
+    private final CaptureRequest request;
+    private final Deadline deadline;
+    private final Context context;
+    private final CompletableFuture<Optional<WorldCanonicalFrozenTopology>> result =
+        new CompletableFuture<>();
+    private final AtomicReference<Status> cancellation = new AtomicReference<>();
+    private final Object ownership = new Object();
+    private Statement active;
+    private boolean resourceFinished;
+    private boolean resourceReleaseFailed;
+    private boolean cancellationStarted;
+    private boolean cancellationFinished;
+    private boolean released;
+
+    private DeadlineRead(CaptureRequest request, Deadline deadline, Context context) {
+      this.request = request;
+      this.deadline = deadline;
+      this.context = context;
+    }
+
+    private void requireLive() {
+      Status stopped = cancellation.get();
+      if (stopped != null) throw stopped.asRuntimeException();
+      if (context.isCancelled()) throw Status.CANCELLED.asRuntimeException();
+      if (deadline.isExpired()) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+    }
+
+    private Optional<WorldCanonicalFrozenTopology> await() {
+      try {
+        var value =
+            result.get(
+                Math.max(0, deadline.timeRemaining(TimeUnit.NANOSECONDS)), TimeUnit.NANOSECONDS);
+        requireLive();
+        return value;
+      } catch (TimeoutException expired) {
+        cancel(Status.DEADLINE_EXCEEDED);
+        throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+      } catch (InterruptedException interrupted) {
+        cancel(Status.CANCELLED);
+        Thread.currentThread().interrupt();
+        throw Status.CANCELLED.asRuntimeException();
+      } catch (ExecutionException failed) {
+        requireLive();
+        if (failed.getCause() instanceof RuntimeException failure) throw failure;
+        if (failed.getCause() instanceof Error failure) throw failure;
+        throw new IllegalStateException("Frozen topology read failed", failed.getCause());
+      }
+    }
+
+    private void run() {
+      Connection connection = null;
+      Optional<WorldCanonicalFrozenTopology> value = null;
+      Throwable failure = null;
+      var provider = dsl.configuration().connectionProvider();
+      try {
+        requireLive();
+        connection = provider.acquire();
+        // An acquire may ignore interruption. Never execute on a connection arriving after expiry.
+        requireLive();
+        ExecuteListenerProvider[] existing = dsl.configuration().executeListenerProviders();
+        ExecuteListenerProvider[] listeners = Arrays.copyOf(existing, existing.length + 1);
+        listeners[existing.length] =
+            new DefaultExecuteListenerProvider(
+                ExecuteListener.onExecuteStart(this::startStatement));
+        var reader = DSL.using(dsl.configuration().derive(connection).derive(listeners));
+        value = readFrozen(request, reader);
+        requireLive();
+      } catch (RuntimeException | Error stopped) {
+        failure = stopped;
+      } finally {
+        // cancel() only touches active while holding this monitor. Detach before pool release;
+        // an in-flight driver cancel must finish before the connection can be returned/reused.
+        synchronized (ownership) {
+          active = null;
+        }
+        boolean connectionReleased = true;
+        try {
+          if (connection != null) provider.release(connection);
+        } catch (RuntimeException | Error releaseFailure) {
+          connectionReleased = false;
+          LOGGER.warn(
+              "Frozen topology connection return failed; retaining deadline-read slot. Remaining capacity: {} of {}",
+              DEADLINE_READ_SLOTS.availablePermits(),
+              MAX_DEADLINE_READS,
+              releaseFailure);
+          if (failure == null) failure = releaseFailure;
+          else failure.addSuppressed(releaseFailure);
+        } finally {
+          finished(connectionReleased);
+        }
+      }
+      if (failure == null) result.complete(value);
+      else result.completeExceptionally(failure);
+    }
+
+    private void cancel(Status reason) {
+      if (!cancellation.compareAndSet(null, reason)) return;
+      result.completeExceptionally(reason.asRuntimeException());
+      synchronized (ownership) {
+        if (resourceFinished) return;
+        cancellationStarted = true;
+      }
+      try {
+        Thread.ofVirtual()
+            .name("world-frozen-topology-cancel")
+            .start(
+                () -> {
+                  synchronized (ownership) {
+                    try {
+                      if (active != null) active.cancel();
+                    } catch (SQLException ignored) {
+                      // Deadline refusal is delivered; the JDBC query timeout also remains.
+                    } finally {
+                      cancellationFinished = true;
+                      releaseSlot();
+                    }
+                  }
+                });
+      } catch (RuntimeException | Error startFailure) {
+        synchronized (ownership) {
+          // No cancellation worker owns resources. JDBC's timeout remains the backstop, and
+          // the resource worker must still end before its slot can be released.
+          cancellationFinished = true;
+          releaseSlot();
+        }
+      }
+    }
+
+    private void finished() {
+      finished(true);
+    }
+
+    private void finished(boolean connectionReleased) {
+      synchronized (ownership) {
+        resourceFinished = true;
+        resourceReleaseFailed = !connectionReleased;
+        releaseSlot();
+      }
+    }
+
+    private void releaseSlot() {
+      if (!released
+          && resourceFinished
+          && !resourceReleaseFailed
+          && (!cancellationStarted || cancellationFinished)) {
+        released = true;
+        DEADLINE_READ_SLOTS.release();
+      }
+    }
+
+    private void startStatement(ExecuteContext execution) {
+      requireLive();
+      Statement statement =
+          Objects.requireNonNull(
+              execution.statement(), "Frozen topology query has no JDBC statement");
+      synchronized (ownership) {
+        active = statement;
+      }
+      long nanos = deadline.timeRemaining(TimeUnit.NANOSECONDS);
+      if (nanos <= 0) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+      // JDBC uses whole seconds. The independent cancellation worker enforces subsecond expiry.
+      int seconds =
+          (int) Math.min(Integer.MAX_VALUE, 1 + (nanos - 1) / TimeUnit.SECONDS.toNanos(1));
+      try {
+        statement.setQueryTimeout(seconds);
+      } catch (SQLException failure) {
+        throw new DataAccessException("Cannot bound frozen topology query", failure);
+      }
+      requireLive();
+    }
   }
 
   private static void requirePrivateKeys(
