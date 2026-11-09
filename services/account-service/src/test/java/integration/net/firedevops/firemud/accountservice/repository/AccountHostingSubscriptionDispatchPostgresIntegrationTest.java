@@ -426,6 +426,32 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
+  void committedTransitionSurvivesUnavailableIndependentReadback() {
+    Fixture f = fixture("1032");
+    f.transport().duringCreate = f.transport()::confirmFirstInvoice;
+    // The first two reads locate the subscription and supply the lifecycle observation.
+    f.transport().failSubscriptionRead = 3;
+    UUID lifecycleRequest = UUID.randomUUID();
+
+    var result =
+        (AccountHostingSubscriptionProvisioningService.ReadbackUnavailable)
+            service(f).provision(claim(f, 1), UUID.randomUUID(), lifecycleRequest);
+
+    assertThat(result.transition().requestId()).isEqualTo(lifecycleRequest);
+    assertThat(result.transition().outcome()).isEqualTo(Outcome.COMMITTED);
+    assertThat(f.transport().subscriptionReads).isEqualTo(3);
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isOne();
+
+    var current =
+        lifecycle(f, new com.stripe.StripeClient(f.transport()))
+            .readCurrent(f.creation().tenantId());
+    assertThat(current.receiptRequestId()).isEqualTo(lifecycleRequest);
+    assertThat(current.current().rowVersion()).isEqualTo(result.transition().committedRowVersion());
+    assertThat(current.current().providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(f.transport().creates).isOne();
+  }
+
+  @Test
   void liveFinalBudgetDispatchSurvivesDisplayRefreshAndCompetingClaim() {
     Fixture f = fixture("1032");
     var first = claim(f, 1);
@@ -1166,6 +1192,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     private int lists;
     private int creates;
     private int subscriptionReads;
+    private int failSubscriptionRead;
 
     private Transport(
         AccountSubscriptionCreationRecord creation, String paymentMethod, Clock clock) {
@@ -1260,6 +1287,9 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         response = subscription("incomplete");
       } else if (path.equals("/v1/subscriptions/sub_exact")) {
         subscriptionReads++;
+        if (subscriptionReads == failSubscriptionRead) {
+          throw mock(StripeException.class);
+        }
         response = subscription();
       } else {
         throw new AssertionError("Unexpected provider path " + path);
