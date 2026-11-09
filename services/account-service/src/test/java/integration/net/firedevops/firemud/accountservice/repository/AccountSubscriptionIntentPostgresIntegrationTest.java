@@ -70,11 +70,10 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     configuration(c).target("1030").load().migrate();
     Seed seed = seed(c);
     var created = create(c, request(seed, UUID.randomUUID(), 1, null));
-    Instant start = created.createdAt().plusSeconds(1);
     UUID attemptId = UUID.randomUUID();
     var first =
         Objects.requireNonNull(
-                c.tx().execute(s -> lifecycle(c, start).claim(created.requestId(), 1, attemptId)))
+                c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 1, attemptId)))
             .claim();
     assertThat(first.creation()).isEqualTo(created);
     assertThat(first.subscriptionRowVersion()).isEqualTo(2);
@@ -89,29 +88,22 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         .isNull();
     var replay =
         Objects.requireNonNull(
-                c.tx().execute(s -> lifecycle(c, start).claim(created.requestId(), 1, attemptId)))
+                c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 1, attemptId)))
             .claim();
     assertThat(replay.attemptId()).isEqualTo(first.attemptId());
     assertThat(replay.subscriptionRowVersion()).isEqualTo(first.subscriptionRowVersion());
     assertThat(replay.expiresAt()).isEqualTo(first.expiresAt());
     assertThat(count(c, "subscription_provisioning_attempts")).isOne();
+    assertThat(databaseNow(c)).isBefore(first.expiresAt());
     var waiting =
         Objects.requireNonNull(
-            c.tx()
-                .execute(
-                    s ->
-                        lifecycle(c, start.plusSeconds(5))
-                            .claim(created.requestId(), 2, UUID.randomUUID())));
+            c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 2, UUID.randomUUID())));
     assertThat(waiting.disposition())
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.WAITING);
-    Instant recoveryTime = start.plusSeconds(12);
+    sleepUntil(c, first.expiresAt().plusMillis(6));
     var recovered =
         Objects.requireNonNull(
-                c.tx()
-                    .execute(
-                        s ->
-                            lifecycle(c, recoveryTime)
-                                .claim(created.requestId(), 2, UUID.randomUUID())))
+                c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 2, UUID.randomUUID())))
             .claim();
     // Attempt history does not grant provider IO; the independent dispatch receipt owns it.
     assertThat(recovered.attemptNumber()).isEqualTo(2);
@@ -119,7 +111,7 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     assertThat(recovered.subscriptionRowVersion()).isEqualTo(3);
     assertThat(recovered.attemptId()).isNotEqualTo(first.attemptId());
     assertThat(count(c, "subscription_provisioning_attempts")).isEqualTo(2);
-    assertThatThrownBy(() -> c.tx().execute(s -> lifecycle(c, recoveryTime).deferUnresolved(first)))
+    assertThatThrownBy(() -> c.tx().execute(s -> lifecycle(c).deferUnresolved(first)))
         .isInstanceOf(FenceRejectedException.class);
     assertThat(
             Objects.requireNonNull(
@@ -140,28 +132,30 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     configuration(c).target("1030").load().migrate();
     Seed seed = seed(c);
     var created = create(c, request(seed, UUID.randomUUID(), 1, null));
-    Instant start = created.createdAt().plusSeconds(1);
     var first =
         Objects.requireNonNull(
-                c.tx()
-                    .execute(
-                        s -> lifecycle(c, start).claim(created.requestId(), 1, UUID.randomUUID())))
+                c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID())))
             .claim();
-    var firstDeferred = c.tx().execute(s -> lifecycle(c, start).deferUnresolved(first));
+    var firstDeferred = c.tx().execute(s -> lifecycle(c).deferUnresolved(first));
     assertThat(firstDeferred)
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.WAITING);
-    Instant retryAt = start.plusSeconds(1);
+    Instant retryAt =
+        Objects.requireNonNull(
+                c.setup()
+                    .fetchOne(
+                        "SELECT retry_at FROM subscription_provisioning_work WHERE request_id = ?",
+                        created.requestId()))
+            .get("retry_at", OffsetDateTime.class)
+            .toInstant();
+    sleepUntil(c, retryAt.plusMillis(5));
     var second =
         Objects.requireNonNull(
-                c.tx()
-                    .execute(
-                        s ->
-                            lifecycle(c, retryAt).claim(created.requestId(), 2, UUID.randomUUID())))
+                c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 2, UUID.randomUUID())))
             .claim();
-    var exhausted = c.tx().execute(s -> lifecycle(c, retryAt).deferUnresolved(second));
+    var exhausted = c.tx().execute(s -> lifecycle(c).deferUnresolved(second));
     assertThat(exhausted)
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
-    var exhaustedReplay = c.tx().execute(s -> lifecycle(c, retryAt).deferUnresolved(second));
+    var exhaustedReplay = c.tx().execute(s -> lifecycle(c).deferUnresolved(second));
     assertThat(exhaustedReplay)
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
     assertThat(count(c, "subscription_provisioning_operator_outbox")).isOne();
@@ -206,11 +200,10 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     configuration(c).target("1030").load().migrate();
     Seed seed = seed(c);
     var created = create(c, request(seed, UUID.randomUUID(), 1, null));
-    Instant start = created.createdAt().plusSeconds(1);
     c.tx()
         .executeWithoutResult(
             s -> {
-              lifecycle(c, start).claim(created.requestId(), 1, UUID.randomUUID());
+              lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID());
               s.setRollbackOnly();
             });
     assertThat(count(c, "subscription_provisioning_work")).isZero();
@@ -235,25 +228,16 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     configuration(c).load().migrate();
     assertThatThrownBy(
             () ->
-                c.tx()
-                    .execute(
-                        s -> lifecycle(c, start).claim(created.requestId(), 2, UUID.randomUUID())))
+                c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 2, UUID.randomUUID())))
         .isInstanceOf(FenceRejectedException.class);
-    assertThatThrownBy(
-            () ->
-                c.tx()
-                    .execute(
-                        s ->
-                            lifecycle(c, created.createdAt().minusSeconds(1))
-                                .claim(created.requestId(), 1, UUID.randomUUID())))
-        .isInstanceOf(FenceRejectedException.class);
+    // Provisioning boundaries use PostgreSQL clock_timestamp(); an injected Java clock cannot
+    // move the database clock before this durable creation time. The wrong-version fence above
+    // and rollback proof below exercise the supported database-owned claim boundaries.
     c.tx()
         .executeWithoutResult(
             s -> {
               assertThat(
-                      lifecycle(c, start)
-                          .claim(created.requestId(), 1, UUID.randomUUID())
-                          .disposition())
+                      lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID()).disposition())
                   .isEqualTo(
                       AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
               s.setRollbackOnly();
@@ -264,7 +248,7 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     for (UUID attempt : List.of(firstAttempt, firstAttempt, UUID.randomUUID())) {
       var result =
           Objects.requireNonNull(
-              c.tx().execute(s -> lifecycle(c, start).claim(created.requestId(), 1, attempt)));
+              c.tx().execute(s -> lifecycle(c).claim(created.requestId(), 1, attempt)));
       assertThat(result.disposition())
           .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
       assertThat(result.claim()).isNull();
@@ -273,9 +257,7 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
             Objects.requireNonNull(
                     c.tx()
                         .execute(
-                            s ->
-                                lifecycle(c, start.plusSeconds(7200))
-                                    .claim(created.requestId(), 1, UUID.randomUUID())))
+                            s -> lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID())))
                 .disposition())
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
     assertThat(count(c, "subscription_provisioning_work")).isOne();
@@ -324,16 +306,13 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     configuration(c).target("1030").load().migrate();
     Seed seed = seed(c);
     var created = create(c, request(seed, UUID.randomUUID(), 1, null));
-    Instant start = created.createdAt().plusSeconds(1);
     Supplier<String> attempt =
         () -> {
           try {
             return Objects.requireNonNull(
                     c.tx()
                         .execute(
-                            s ->
-                                lifecycle(c, start)
-                                    .claim(created.requestId(), 1, UUID.randomUUID())))
+                            s -> lifecycle(c).claim(created.requestId(), 1, UUID.randomUUID())))
                 .disposition()
                 .name();
           } catch (FenceRejectedException stale) {
@@ -352,12 +331,14 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
     configuration(c).target("1030").load().migrate();
     Seed seed = seed(c);
     var created = create(c, request(seed, UUID.randomUUID(), 1, null));
+    Duration provisioningTimeout = Duration.ofSeconds(3);
+    sleepUntil(c, created.createdAt().plus(provisioningTimeout).plusMillis(5));
     var expired =
         Objects.requireNonNull(
             c.tx()
                 .execute(
                     s ->
-                        lifecycle(c, created.createdAt().plusSeconds(3600))
+                        lifecycle(c, provisioningTimeout)
                             .claim(created.requestId(), 1, UUID.randomUUID())));
     assertThat(expired.disposition())
         .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Disposition.TERMINAL_FAILURE);
@@ -368,19 +349,34 @@ class AccountSubscriptionIntentPostgresIntegrationTest {
         .isEqualTo("pending");
   }
 
-  private static AccountHostingSubscriptionLifecycleRepository lifecycle(Context c, Instant now) {
+  private static AccountHostingSubscriptionLifecycleRepository lifecycle(Context c) {
+    return lifecycle(c, Duration.ofHours(1));
+  }
+
+  private static AccountHostingSubscriptionLifecycleRepository lifecycle(
+      Context c, Duration absoluteTimeout) {
     return new AccountHostingSubscriptionLifecycleRepository(
         c.dsl(),
         c.repository(),
-        Clock.fixed(now, ZoneOffset.UTC),
+        Clock.systemUTC(),
         new AccountHostingSubscriptionLifecycleRepository.ReconciliationLimits(
-            2, 3, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
+            2, 3, Duration.ofSeconds(3), Duration.ofMillis(1), absoluteTimeout),
         new AccountHostingSubscriptionLifecyclePolicy(
             Duration.ofSeconds(15),
             new AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming(
                 Duration.ofSeconds(60), Duration.ofSeconds(120))),
         "prod",
         false);
+  }
+
+  private static Instant databaseNow(Context c) {
+    return Objects.requireNonNull(c.setup().fetchOne("SELECT clock_timestamp() AS now"))
+        .get("now", OffsetDateTime.class)
+        .toInstant();
+  }
+
+  private static void sleepUntil(Context c, Instant deadline) {
+    c.setup().execute("SELECT pg_sleep_until(?::timestamptz)", deadline.atOffset(ZoneOffset.UTC));
   }
 
   @Test
