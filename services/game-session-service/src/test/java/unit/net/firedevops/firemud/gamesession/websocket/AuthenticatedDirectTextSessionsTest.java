@@ -89,8 +89,12 @@ class AuthenticatedDirectTextSessionsTest {
           .isEqualTo("Authenticated gameplay authority unavailable");
     }
     verify(outcome, never()).withOwnedPrivateResult(any());
-    sessions.close(socket, CloseStatus.NORMAL);
+    var laterBorrow =
+        receiver.receive(
+            socket, new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"));
+    assertThat(laterBorrow.commandResult().errorCode()).isEqualTo("LOGIN_REQUIRED");
     verify(outcome).close();
+    sessions.close(socket, CloseStatus.NORMAL);
   }
 
   @ParameterizedTest
@@ -139,9 +143,9 @@ class AuthenticatedDirectTextSessionsTest {
         .hasMessage("Authenticated gameplay LOGIN was rejected");
 
     assertThat(secret).containsOnly('\0');
-    verify(outcome, never()).close();
-    sessions.close(socket, CloseStatus.NORMAL);
     verify(outcome).close();
+    sessions.close(socket, CloseStatus.NORMAL);
+    verify(outcome, org.mockito.Mockito.times(1)).close();
   }
 
   @Test

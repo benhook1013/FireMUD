@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -29,6 +30,7 @@ import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthentic
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -51,6 +53,36 @@ class AuthenticatedDirectTextCommandReceiverTest {
     assertThat(result.commandResult().errorMessage())
         .isEqualTo("Authenticated gameplay authority unavailable");
     verifyNoInteractions(fixture.connection, fixture.lobby, fixture.selections);
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void emailNormalizationRejectionReturnsUsageBeforeProtectedOwnerLookup() {
+    var socket = mock(WebSocketSession.class);
+    var sessions = mock(AuthenticatedDirectTextSessions.class);
+    var connection = mock(AuthenticatedDirectTextSessions.Connection.class);
+    when(sessions.require(socket)).thenReturn(connection);
+    ObjectProvider<InitialGameplayLoginOwner> logins = mock(ObjectProvider.class);
+    ObjectProvider<DirectTextWorldSelectionService> selections = mock(ObjectProvider.class);
+    ObjectProvider<DirectTextAuthenticatedLobbyOwner> lobbies = mock(ObjectProvider.class);
+    var receiver =
+        new AuthenticatedDirectTextCommandReceiver(sessions, logins, selections, lobbies);
+    var malformedEmail = " \u0000 ";
+    var command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of(malformedEmail, "secret"),
+            "LOGIN malformed secret",
+            "LOGIN",
+            new TextCommandPayload.Credentials(malformedEmail, "secret"));
+
+    var result = receiver.receive(socket, command);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("Usage: LOGIN <email> <password>");
+    verify(logins, never()).getIfAvailable();
+    verifyNoInteractions(connection);
   }
 
   @Test

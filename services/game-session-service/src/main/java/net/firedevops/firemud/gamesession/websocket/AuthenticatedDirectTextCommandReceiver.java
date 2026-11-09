@@ -47,8 +47,13 @@ public final class AuthenticatedDirectTextCommandReceiver {
               || credentials.password() == null
               || credentials.password().isEmpty())
             yield failure("INVALID_ARGUMENT", "Usage: LOGIN <email> <password>");
+          String email;
+          try {
+            email = EmailCanonicalization.normalize(credentials.loginName());
+          } catch (IllegalArgumentException invalidEmail) {
+            yield failure("INVALID_ARGUMENT", "Usage: LOGIN <email> <password>");
+          }
           var owner = required(logins);
-          String email = EmailCanonicalization.normalize(credentials.loginName());
           connection.login(owner, email, credentials.password().toCharArray());
           yield connection.withLogin((original, result) -> success("Logged in as " + email));
         }

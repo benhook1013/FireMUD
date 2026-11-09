@@ -135,10 +135,13 @@ public final class AuthenticatedDirectTextSessions {
         requireLive();
         InitialGameplayLoginOwner.Outcome received =
             Objects.requireNonNull(owner).receive(credentials);
-        outcome = received;
         credentials = null;
-        if (received.status() != InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING)
-          throw new LoginRejectedException(received.failureCode().orElse("UNAVAILABLE"));
+        if (received.status() != InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING) {
+          String failureCode = received.failureCode().orElse("UNAVAILABLE");
+          received.close();
+          throw new LoginRejectedException(failureCode);
+        }
+        outcome = received;
         requireLive();
       } finally {
         java.util.Arrays.fill(ownedSecret, '\0');
