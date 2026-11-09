@@ -195,8 +195,9 @@ with patch.object(runner_module, "http_request_json", return_value={"data": [
 ]}) as request:
     try:
         runner_module.require_visible_world(qualified, "bootstrap")
-    except runner_module.ProbeOperationalFailure:
-        pass
+    except runner_module.ProbeOperationalFailure as exc:
+        assert qualified.world in str(exc)
+        assert qualified.tenant_slug in str(exc)
     else:
         raise AssertionError("Another tenant's world satisfied discovery")
 with patch.object(runner_module, "http_request_json", return_value={"data": [

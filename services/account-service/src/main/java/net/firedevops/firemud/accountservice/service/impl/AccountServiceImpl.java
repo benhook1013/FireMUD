@@ -712,9 +712,10 @@ public class AccountServiceImpl implements AccountService {
                 return new CanonicalJoinResult(
                     committed.outcome(),
                     committed.terminalProof(),
-                    currentMembership
-                        .map(AccountTenantMembership::isGameplayAdmissionAllowed)
-                        .orElse(false),
+                    gameplayAvailable
+                        && currentMembership
+                            .map(AccountTenantMembership::isGameplayAdmissionAllowed)
+                            .orElse(false),
                     true);
               }
               AccountTenantMembership committedMembership = currentMembership.orElseThrow();
