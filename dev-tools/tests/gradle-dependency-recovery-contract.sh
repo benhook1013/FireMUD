@@ -1202,11 +1202,16 @@ class DistributionRecovery(unittest.TestCase):
 
 unittest.main(argv=["distribution-recovery"], exit=True)
 PY_DISTRIBUTION_TEST
+GRADLE_COMMAND_PATTERN='^[[:space:]]*(-[[:space:]]+)?(run:[[:space:]]+)?\./gradlew([[:space:]]|$)'
+for command_form in '- run: ./gradlew :check' './gradlew'; do
+  printf '%s\n' "$command_form" | grep -Eq "$GRADLE_COMMAND_PATTERN" || fail "Gradle wrapper command form was not detected: $command_form"
+done
+
 for workflow in "$ROOT_DIR/.github/workflows/ci.yml" "$ROOT_DIR/.github/workflows/runtime-images.yml" \
   "$ROOT_DIR/.github/actions/check-gradle-module/action.yml" \
   "$ROOT_DIR/.github/actions/aggregate-slow-service-coverage/action.yml"; do
   [[ -f "$workflow" ]] || fail "Missing Gradle bootstrap owner: $workflow"
-  if grep -Eq '^[[:space:]]*(run: )?\./gradlew[[:space:]]' "$workflow"; then
+  if grep -Eq "$GRADLE_COMMAND_PATTERN" "$workflow"; then
     fail "Gradle bootstrap bypasses bounded distribution recovery in $workflow"
   fi
 done
