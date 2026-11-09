@@ -255,6 +255,11 @@ jobs:
       - name: Set up Gradle for remote generator compatibility proof
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
 
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
       - name: Compile the actual Buf-generated Java sources
         run: |
           test -n "$(find protos/gen/java -name '*.java' -print -quit)"
@@ -686,6 +691,11 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
       - name: 🧪 Check Flyway Migration Versions
         env:
           FIREMUD_FLYWAY_BASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.flyway_base_sha || github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -723,6 +733,11 @@ jobs:
           build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
+
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
 
       - name: 🧪 Check gRPC Transport Configuration
         run: bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- checkGrpcTransportConfig checkGrpcPublicMethods

@@ -16,8 +16,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: ⚙️ Set Up Python for Combined Coverage Verification
-      if: ${{ inputs.module == 'common-saga' }}
+    - name: Set up Python for Gradle recovery and coverage verification
+      if: ${{ inputs.module != 'game-design-service' }}
       uses: ./.github/actions/setup-python
       with:
         requirements: none

@@ -1171,6 +1171,11 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
       - name: Build service JAR
         run: bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- :${{ matrix.service }}:bootJar
 
@@ -1410,6 +1415,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
 
       - name: Build controller JAR and image locally
         run: |
@@ -1894,6 +1904,11 @@ jobs:
           tags: ${{ env.BASE_IMAGE }}
           cache-from: type=gha,scope=pr-controller-smoke
           cache-to: type=gha,mode=max,scope=pr-controller-smoke
+
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
 
       - name: Build controller image for credential-free local validation
         run: |
