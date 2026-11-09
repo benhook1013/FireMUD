@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
 import shlex
 import subprocess
+import tarfile
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -1184,6 +1187,7 @@ def main() -> int:
     setup_gh_curl_pattern = (
         r"(?m)^\s*curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \\\n"
         r"\s*--connect-timeout 10 --max-time 60 \\\n"
+        r'\s*--write-out "\$\{curl_metrics\}\\n" \\\n'
         r'\s*"https://github\.com/cli/cli/releases/download/v\$\{gh_version\}/gh_\$\{gh_version\}_linux_amd64\.tar\.gz" \\\n'
         r'\s*-o "\$temporary_archive"$'
     )
@@ -1197,6 +1201,162 @@ def main() -> int:
     ):
         if required_setup_gh_fragment not in setup_gh_text:
             fail(f"setup-gh installer does not consume canonical authority: {required_setup_gh_fragment}")
+
+    gh_steps = load(actions / "setup-gh/action.yml")["runs"]["steps"]
+    if [step.get("name") for step in gh_steps] != [
+        "Load workflow tool versions",
+        "Validate supported runner",
+        "Restore pinned GitHub CLI archive",
+        "Install pinned GitHub CLI",
+    ]:
+        fail("setup-gh must validate the runner, restore the archive, and always install it")
+    gh_validation, gh_cache, gh_install = gh_steps[1:]
+    gh_metric_variables = {
+        "http_code": "200",
+        "num_redirects": "1",
+        "time_namelookup": "0.010000",
+        "time_connect": "0.020000",
+        "time_appconnect": "0.030000",
+        "time_starttransfer": "0.040000",
+        "time_total": "0.050000",
+    }
+    if sorted(re.findall(r"%\{([^}]+)\}", gh_install["run"])) != sorted(gh_metric_variables):
+        fail("setup-gh curl diagnostics must expose only the fixed numeric HTTP/redirect/timing fields")
+    if not re.fullmatch(r"actions/cache@[0-9a-f]{40}", gh_cache.get("uses", "")):
+        fail("setup-gh archive cache must use an immutable action revision")
+    if gh_cache.get("with") != {
+        "path": "${{ runner.temp }}/firemud-gh/${{ steps.versions.outputs.gh-version }}/gh.tar.gz",
+        "key": (
+            "firemud-gh-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.gh-version }}-"
+            "${{ steps.versions.outputs.gh-linux-amd64-sha256 }}"
+        ),
+    }:
+        fail("setup-gh must cache only the archive under one exact OS/arch/version/checksum key")
+    if any("if" in step or "continue-on-error" in step for step in gh_steps):
+        fail("setup-gh must not skip validation or installation on cache hits or suppress failure")
+    for runner_os, runner_arch, expected_status in (("Linux", "X64", 0), ("Windows", "X64", 1), ("Linux", "ARM64", 1)):
+        result = subprocess.run(
+            ["bash", "-c", gh_validation["run"]],
+            env={**os.environ, "RUNNER_OS": runner_os, "RUNNER_ARCH": runner_arch},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != expected_status:
+            fail(f"setup-gh runner validation failed: {runner_os}/{runner_arch}: {result}")
+
+    # Execute the actual installer with real tar/checksum tools and a download-only fixture.
+    with tempfile.TemporaryDirectory(prefix="firemud-gh-contract-") as gh_fixture:
+        fixture = Path(gh_fixture)
+        fixture_bin = fixture / "bin"
+        fixture_bin.mkdir()
+        curl = fixture_bin / "curl"
+        curl.write_text(
+            "#!/usr/bin/env bash\nset -euo pipefail\n"
+            'printf "download\\n" >> "$GH_DOWNLOAD_LOG"\n'
+            '[[ " $* " == *" $GH_EXPECTED_URL "* ]]\n'
+            '[[ "${@: -2:1}" == -o ]]\n'
+            'output="${@: -1}"\nformat=\n'
+            'while (($#)); do\n'
+            '  if [[ "$1" == --write-out ]]; then format="$2"; shift 2; else shift; fi\n'
+            'done\n'
+            + "".join(
+                f"format=${{format//'%{{{variable}}}'/'{value}'}}\n"
+                for variable, value in gh_metric_variables.items()
+            )
+            + 'format=${format//\'%{url_effective}\'/"$GH_SIGNED_URL_FIXTURE"}\n'
+            'printf "%b" "$format"\n'
+            'if [[ "$GH_DOWNLOAD_MODE" == fail ]]; then\n'
+            '  printf partial > "$output"\n  exit 28\nfi\n'
+            'cp -- "$GH_FIXTURE_ARCHIVE" "$output"\n',
+            encoding="utf-8",
+        )
+        curl.chmod(0o755)
+        version = a["GH_VERSION"]
+        payload = (
+            '#!/usr/bin/env bash\nprintf "version-check\\n" >> "$GH_EXECUTION_LOG"\n'
+            f"printf 'gh version {version} (fixture)\\n'\n"
+        ).encode()
+        archive = fixture / "fixture.tar.gz"
+        wrong_version_archive = fixture / "wrong-version.tar.gz"
+        for archive_file, binary in (
+            (archive, payload),
+            (wrong_version_archive, payload.replace(f"gh version {version}".encode(), b"gh version 0.0.0")),
+        ):
+            with tarfile.open(archive_file, "w:gz") as bundle:
+                member = tarfile.TarInfo(f"gh_{version}_linux_amd64/bin/gh")
+                member.mode, member.size = 0o755, len(binary)
+                bundle.addfile(member, io.BytesIO(binary))
+        for case, cached, download_mode, expected_status in (
+            ("cold", None, "ok", 0),
+            ("warm", archive.read_bytes(), "fail", 0),
+            ("corrupt", b"corrupt cache", "ok", 0),
+            ("outage", None, "fail", 28),
+            ("mismatch", None, "ok", 1),
+            ("version", None, "ok", 1),
+        ):
+            runner_temp = fixture / case
+            install_root = runner_temp / "firemud-gh" / version
+            install_root.mkdir(parents=True)
+            archive_path = install_root / "gh.tar.gz"
+            if cached is not None:
+                archive_path.write_bytes(cached)
+            stale_binary = install_root / "extracted" / f"gh_{version}_linux_amd64/bin/gh"
+            stale_binary.parent.mkdir(parents=True)
+            stale_binary.write_text("stale extraction must be replaced\n", encoding="utf-8")
+            path_file, download_log, execution_log = (runner_temp / name for name in ("path", "download", "execution"))
+            path_file.touch()
+            download_archive = wrong_version_archive if case == "version" else archive
+            expected_checksum = hashlib.sha256(download_archive.read_bytes()).hexdigest()
+            result = subprocess.run(
+                ["bash", "-c", gh_install["run"]],
+                env={
+                    **os.environ,
+                    "PATH": f"{fixture_bin}{os.pathsep}{os.environ['PATH']}",
+                    "GH_VERSION": version,
+                    "GH_SHA256": "0" * 64 if case == "mismatch" else expected_checksum,
+                    "RUNNER_TEMP": str(runner_temp),
+                    "GITHUB_PATH": str(path_file),
+                    "GH_FIXTURE_ARCHIVE": str(download_archive),
+                    "GH_EXPECTED_URL": (
+                        f"https://github.com/cli/cli/releases/download/v{version}/gh_{version}_linux_amd64.tar.gz"
+                    ),
+                    "GH_DOWNLOAD_MODE": download_mode,
+                    "GH_DOWNLOAD_LOG": str(download_log),
+                    "GH_EXECUTION_LOG": str(execution_log),
+                    "GH_TOKEN": "fixture-credential-must-not-be-logged",
+                    "GH_SIGNED_URL_FIXTURE": "https://release-assets.example/asset?signature=fixture-secret",
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != expected_status:
+                fail(f"setup-gh {case} fixture failed: {result}")
+            expected_metrics = (
+                "setup_gh_download_http_code=200 setup_gh_download_redirect_count=1 "
+                "setup_gh_download_dns_seconds=0.010000 setup_gh_download_connect_seconds=0.020000 "
+                "setup_gh_download_tls_seconds=0.030000 setup_gh_download_first_byte_seconds=0.040000 "
+                "setup_gh_download_total_seconds=0.050000\n"
+            )
+            if result.stdout != ("" if case == "warm" else expected_metrics):
+                fail(f"setup-gh {case} must emit exactly the fixed metrics once per download invocation")
+            if any(secret in result.stdout + result.stderr for secret in (
+                "https://", "signature=", "fixture-secret", "fixture-credential-must-not-be-logged",
+            )):
+                fail(f"setup-gh {case} diagnostics exposed a URL, query string, or credential")
+            if download_log.exists() != (case != "warm") or list(install_root.glob("gh.tar.gz.*")):
+                fail(f"setup-gh {case} must avoid warm downloads and clean staged downloads")
+            if expected_status == 0:
+                if archive_path.read_bytes() != archive.read_bytes() or stale_binary.read_bytes() != payload:
+                    fail(f"setup-gh {case} must replace stale bytes with the verified archive and extraction")
+                if path_file.read_text() != f"{install_root}/bin\n" or execution_log.read_text() != "version-check\n":
+                    fail(f"setup-gh {case} must check the installed version before publishing its PATH")
+            elif case == "version":
+                if path_file.read_text() or "GitHub CLI version mismatch" not in result.stderr:
+                    fail("setup-gh must reject a checksum-valid archive reporting the wrong version")
+            elif archive_path.exists() or path_file.read_text() or execution_log.exists():
+                fail(f"setup-gh {case} must not promote, execute, or expose a failed download")
 
     setup_kubectl_text = (actions / "setup-kubectl/action.yml").read_text()
     if "azure/setup-kubectl@" in setup_kubectl_text or "actions/cache@" in setup_kubectl_text:

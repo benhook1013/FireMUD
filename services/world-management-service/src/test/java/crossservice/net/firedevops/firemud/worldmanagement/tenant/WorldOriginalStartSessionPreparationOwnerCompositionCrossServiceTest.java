@@ -245,6 +245,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.boot.ssl.SslBundle;
 import org.springframework.boot.ssl.SslBundles;
@@ -291,6 +293,9 @@ import tools.jackson.databind.json.JsonMapper;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(
+          WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest.class);
   private static final String NAMESPACE = "firemud";
   private static final tools.jackson.databind.ObjectMapper JSON = JsonMapper.builder().build();
   private static final Network NETWORK = Network.newNetwork();
@@ -589,6 +594,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var sharedAuthoredSource = controlledSource("controlled-upstream", tenant);
     var sharedCreation =
         CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(sharedAuthoredSource);
+    long compositionStartedNanos = System.nanoTime();
+    logCompositionTiming(compositionStartedNanos, "fixtures-start");
     try (var account =
             new AccountControlUiOriginalOrderFixture(
                 ACCOUNT.getJdbcUrl(),
@@ -601,6 +608,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 true);
         var world = database(WORLD, "world-management-service", true);
         var gs = database(GS, "game-session-service", true)) {
+      logCompositionTiming(compositionStartedNanos, "fixture-resources-ready");
       var issuer =
           new AccountOriginalStartSessionAuthorizationProofFixture(
               account, proofDirectory.resolve("issuer"), NAMESPACE);
@@ -721,6 +729,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               claim.get().ownerMutationId(),
               input.gameSessionOwnerAttemptId(),
               claim.get().ownerFence());
+      logCompositionTiming(compositionStartedNanos, "owner-preparation-ready");
       var pki = new WorldOriginalStartSessionPreparationProofPki(proofDirectory.resolve("pki"));
       var factory = new GrpcChannelFactory();
       var currentAttemptRefusal = new AtomicReference<Status>();
@@ -1084,6 +1093,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   pki.client("game-session-service"),
                   false);
           try {
+            logCompositionTiming(compositionStartedNanos, "transport-ready");
             Map<String, List<String>> worldBefore =
                 rows(
                     world.dsl(),
@@ -1903,6 +1913,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             }
             // Current Game Session association remains STARTING; this is not admission or delivery.
           } finally {
+            logCompositionTiming(compositionStartedNanos, "cleanup-start");
             channel.shutdownNow();
             assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
           }
@@ -1912,7 +1923,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       } finally {
         shutdown(gsServer);
       }
+    } finally {
+      logCompositionTiming(compositionStartedNanos, "composition-exit");
     }
+  }
+
+  // Subtract adjacent cumulative milestones for phase durations. Exit markers do not imply success.
+  private static void logCompositionTiming(long startedNanos, String phase) {
+    long elapsedNanos = System.nanoTime() - startedNanos;
+    LOGGER.info(
+        "World owner composition timing: invocation={} phase={} elapsedMillis={}",
+        startedNanos,
+        phase,
+        TimeUnit.NANOSECONDS.toMillis(elapsedNanos));
   }
 
   private static CanonicalInitialAdmissionRequest canonicalAdmissionRequest(

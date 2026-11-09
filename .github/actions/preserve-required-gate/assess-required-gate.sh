@@ -125,13 +125,16 @@ validation_cancelled_before_checks() {
   jq -e --argjson run "${workflow_run_id}" --argjson attempt "${attempt}" \
     --arg head "${HEAD_SHA}" --arg repo "${GITHUB_REPOSITORY}" --argjson gate "${job_json}" '
     ["Detect CI-Relevant Changes", "GitHub Workflow Lint", "Buf Generation", "Dev Tools README Contract",
-     ("Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})"), "Metrics Cardinality Policy Check", "Flyway Migration Sanity Checks",
+     ("Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})"),
+     ("Build and Test (account-service / $" + "{{ matrix.partition }})"),
+     ("Build and Test (world-management-service / $" + "{{ matrix.partition }})"),
+     ("Build and Test (game-session-service / $" + "{{ matrix.partition }})"), "Metrics Cardinality Policy Check", "Flyway Migration Sanity Checks",
      "gRPC Transport Configuration Sanity Checks", "PostgreSQL Runtime Upgrade Proof", "Validate Documentation",
      "YAML Lint", "Dockerfile Lint", "Helm Render Validation", "Helm Chart Lint", "Python Script Validation",
      "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof", "Account Coverage Aggregate",
-     "Game Session Coverage Aggregate", "Validation Gate"] as $names
-    | type == "array" and length == 1 and .[0].total_count == 22 and (.[0].jobs | type) == "array" and
-      (.[0].jobs | length) == 22 and ([.[0].jobs[].id] | unique | length) == 22 and
+     "Game Session Coverage Aggregate", "World Coverage Aggregate", "Validation Gate"] as $names
+    | type == "array" and length == 1 and .[0].total_count == 26 and (.[0].jobs | type) == "array" and
+      (.[0].jobs | length) == 26 and ([.[0].jobs[].id] | unique | length) == 26 and
       ([.[0].jobs[].name] | sort) == ($names | sort) and
       all(.[0].jobs[]; (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
         .run_id == $run and .run_attempt == $attempt and .head_sha == $head and .status == "completed" and
@@ -145,7 +148,7 @@ validation_cancelled_before_checks() {
           all(.steps[]; .status == "completed" and
             (if .name == "Enforce validation success" then .conclusion == "failure"
              else (.conclusion == "success" or .conclusion == "skipped") end))
-        elif (.name == "Account Coverage Aggregate" or .name == "Game Session Coverage Aggregate") then
+        elif (.name == "Account Coverage Aggregate" or .name == "Game Session Coverage Aggregate" or .name == "World Coverage Aggregate") then
           (.conclusion == "cancelled" or .conclusion == "skipped") and .steps == []
         else .conclusion == "cancelled" and .steps == [] end)
   ' <<<"${jobs_snapshot}" >/dev/null || return 1

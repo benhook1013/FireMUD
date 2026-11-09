@@ -35,6 +35,10 @@ jobs:
       affected_services: ${{ steps.compute.outputs.affected_services }}
       affected_modules: ${{ steps.compute.outputs.affected_modules }}
       module_check_matrix: ${{ steps.compute.outputs.module_check_matrix }}
+      other_module_check_matrix: ${{ steps.compute.outputs.other_module_check_matrix }}
+      account_module_check_matrix: ${{ steps.compute.outputs.account_module_check_matrix }}
+      game_session_module_check_matrix: ${{ steps.compute.outputs.game_session_module_check_matrix }}
+      world_module_check_matrix: ${{ steps.compute.outputs.world_module_check_matrix }}
       bootable_modules: ${{ steps.compute.outputs.bootable_modules }}
       docs_changed: ${{ steps.compute.outputs.docs_changed }}
       frontend_changed: ${{ steps.compute.outputs.frontend_changed }}
@@ -146,13 +150,17 @@ jobs:
                 lightweight_only: false,
               };
             }
-            const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4 };
+            const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4, "world-management-service": 2 };
             outputs.module_check_matrix = outputs.affected_modules.flatMap((module) =>
               slowServicePartitionCounts[module]
                 ? Array.from({ length: slowServicePartitionCounts[module] }, (_, index) =>
                     ({ module, partition: String(index + 1), "java-version": 25 }))
                 : [{ module, partition: "full", "java-version": 25 }]
             );
+            outputs.other_module_check_matrix = outputs.module_check_matrix.filter(row => !slowServicePartitionCounts[row.module]);
+            outputs.account_module_check_matrix = outputs.module_check_matrix.filter(row => row.module === "account-service");
+            outputs.game_session_module_check_matrix = outputs.module_check_matrix.filter(row => row.module === "game-session-service");
+            outputs.world_module_check_matrix = outputs.module_check_matrix.filter(row => row.module === "world-management-service");
             for (const [name, value] of Object.entries(outputs)) {
               core.setOutput(
                 name,
@@ -247,10 +255,15 @@ jobs:
       - name: Set up Gradle for remote generator compatibility proof
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
 
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
       - name: Compile the actual Buf-generated Java sources
         run: |
           test -n "$(find protos/gen/java -name '*.java' -print -quit)"
-          ./gradlew compileBufGeneratedJava
+          bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- compileBufGeneratedJava
 
   docker-lint:
     name: Dockerfile Lint
@@ -678,10 +691,15 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
       - name: 🧪 Check Flyway Migration Versions
         env:
           FIREMUD_FLYWAY_BASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.flyway_base_sha || github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: ./gradlew checkFlywayVersions
+        run: bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- checkFlywayVersions
 
   grpc-transport-config-sanity-checks:
     name: gRPC Transport Configuration Sanity Checks
@@ -716,8 +734,13 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Set up Python for Gradle recovery
+        uses: ./.github/actions/setup-python
+        with:
+          requirements: none
+
       - name: 🧪 Check gRPC Transport Configuration
-        run: ./gradlew checkGrpcTransportConfig checkGrpcPublicMethods
+        run: bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- checkGrpcTransportConfig checkGrpcPublicMethods
 
   workflow-lint:
     name: GitHub Workflow Lint
@@ -1065,31 +1088,21 @@ jobs:
   build-and-test:
     name: Build and Test (${{ matrix.module }} / ${{ matrix.partition }})
     needs: [changes]
-    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.affected_modules != '[]' }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.other_module_check_matrix != '[]' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
-    # Allow 90 minutes for the full Game Session native issuer suites; retain Account 60, allow World 60, and retain Game Design 30.
-    timeout-minutes: ${{ matrix.module == 'game-session-service' && 90 || matrix.module == 'account-service' && 60 || matrix.module == 'world-management-service' && 60 || matrix.module == 'game-design-service' && 30 || 20 }}
+    timeout-minutes: ${{ matrix.module == 'game-design-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.changes.outputs.module_check_matrix) }}
-
+        include: ${{ fromJSON(needs.changes.outputs.other_module_check_matrix) }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
-
-      - name: 'Declare Game Session CI partition count: 4'
-        if: ${{ matrix.module == 'game-session-service' }}
-        run: ':'
-
-      - name: 'Declare Account CI partition count: 4'
-        if: ${{ matrix.module == 'account-service' }}
-        run: ':'
 
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1097,84 +1110,19 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: ⚙️ Set Up Python for Combined Coverage Verification
-        if: ${{ matrix.module == 'common-saga' }}
-        uses: ./.github/actions/setup-python
+      - name: Validate module and retain proof
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/check-gradle-module
         with:
-          requirements: none
-
-      - name: Set up Python for installation inventory composition
-        if: ${{ matrix.module == 'game-design-service' }}
-        uses: ./.github/actions/setup-python
-        with:
-          requirements: yaml
-
-      - name: ⚙️ Set Up Java
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: 'temurin'
+          module: ${{ matrix.module }}
+          partition: ${{ matrix.partition }}
           java-version: ${{ matrix.java-version }}
+          bootable-modules: ${{ needs.changes.outputs.bootable_modules }}
 
-      - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      # Cached negative Spring Boot 4.1.1 resolution requires metadata revalidation (CI 37847761035).
-      - name: 🧪 Run Gradle Checks
-        id: checks
-        run: |
-          echo "::group::Run Module Validation"
-          bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}' '${{ matrix.partition }}'
-          echo "::endgroup::"
-
-      - name: 📦 Build Runtime JAR
-        if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' || matrix.partition == '1') }}
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck
-
-      - name: 📈 Parse Coverage %
-        id: coverage
-        env:
-          MODULE_DIR: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing' || format('services/{0}', matrix.module) }}
-        run: |
-          COVERAGE_FILE="$MODULE_DIR/build/reports/jacoco/test/jacocoTestReport.xml"
-          if [ -f "$COVERAGE_FILE" ]; then
-            COVERAGE_LINE=$(grep -A 1 "<counter type=\"LINE\"" "$COVERAGE_FILE" | tail -n 1 || true)
-            MISSED=$(echo "$COVERAGE_LINE" | sed -n 's/.*missed="\([0-9]*\)".*/\1/p')
-            COVERED=$(echo "$COVERAGE_LINE" | sed -n 's/.*covered="\([0-9]*\)".*/\1/p')
-            TOTAL=$((MISSED + COVERED))
-            if [ "$TOTAL" -gt 0 ]; then
-              PERCENT=$((100 * COVERED / TOTAL))
-            else
-              PERCENT=0
-            fi
-          else
-            echo "Coverage file not found" >&2
-            PERCENT=0
-          fi
-          echo "percent=$PERCENT" >> "$GITHUB_OUTPUT"
-
-      - name: 🔎 Verify Combined Unit and Integration Coverage
-        if: ${{ matrix.module == 'common-saga' && matrix.partition == 'full' }}
-        run: |
-          python3 dev-tools/validation/validate-jacoco-combined-report.py \
-            --report services/common-saga/build/reports/jacoco/test/jacocoTestReport.xml \
-            --require-covered-class net/firedevops/firemud/common/saga/SagaRunner \
-            --require-covered-class net/firedevops/firemud/common/saga/persistence/SagaInstanceRepository \
-            --require-covered-method net/firedevops/firemud/common/saga/persistence/SagaInstanceRepository#findAll
-
-      - name: 📤 Upload Coverage Report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: jacoco-${{ matrix.module }}-${{ matrix.partition }}-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/' || format('services/{0}/build/reports/jacoco/test/', matrix.module) }}
-
-      - name: ☂️ Upload Coverage to Codecov
+      - &module-codecov
+        name: ☂️ Upload Coverage to Codecov
         continue-on-error: true
-        # Optional coverage upload must leave time for required proof artifacts.
+        # Required proof artifacts are already retained before this bounded optional upload.
         timeout-minutes: 2
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
@@ -1187,52 +1135,130 @@ jobs:
           name: ${{ matrix.module }}-${{ matrix.partition }}-jacoco
           verbose: true
 
-      - name: 📤 Upload Test Logs if Failed
-        if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+  build-and-test-account:
+    name: Build and Test (account-service / ${{ matrix.partition }})
+    needs: [changes]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.account_module_check_matrix != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.account_module_check_matrix) }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          name: test-logs-${{ matrix.module }}-${{ matrix.partition }}-${{ github.sha }}
-          path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', matrix.module) }}
+          egress-policy: audit
 
-      - name: 📤 Upload JUnit Test Results
-        if: ${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: junit-${{ matrix.module }}-${{ matrix.partition }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: ${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', matrix.module) }}
-          if-no-files-found: warn
-          retention-days: 14
+      - name: 'Declare Account CI partition count: 4'
+        if: ${{ matrix.module == 'account-service' }}
+        run: ':'
 
-      - name: 📤 Upload Slow-Service Partition Reports and Execution Data
-        if: ${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service') }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          name: slow-service-ci-partition-${{ github.run_id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}-${{ matrix.module }}-partition-${{ matrix.partition }}
-          path: |
-            services/${{ matrix.module }}/build/classes/java/main/
-            services/${{ matrix.module }}/build/slow-service-ci-partition/${{ matrix.module }}/partition-${{ matrix.partition }}/
-            services/${{ matrix.module }}/build/jacoco/*.exec
-            services/${{ matrix.module }}/build/reports/jacoco/test/
-            services/${{ matrix.module }}/build/test-results/**/*.xml
-          if-no-files-found: warn
-          retention-days: 14
+          fetch-depth: 2
+          persist-credentials: false
 
-      - name: Upload Gradle Task Profile
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - name: Validate module and retain proof
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/check-gradle-module
         with:
-          name: gradle-profile-${{ matrix.module }}-${{ matrix.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: |
-            build/reports/profile/
-            build/reports/compile-failure/${{ matrix.module }}/
-            build/reports/gradle-stall/${{ matrix.module }}/
-          if-no-files-found: warn
-          retention-days: 14
+          module: ${{ matrix.module }}
+          partition: ${{ matrix.partition }}
+          java-version: ${{ matrix.java-version }}
+          bootable-modules: ${{ needs.changes.outputs.bootable_modules }}
+
+      - *module-codecov
+
+  build-and-test-game-session:
+    name: Build and Test (game-session-service / ${{ matrix.partition }})
+    needs: [changes]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.game_session_module_check_matrix != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.game_session_module_check_matrix) }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: 'Declare Game Session CI partition count: 4'
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: ':'
+
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Validate module and retain proof
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/check-gradle-module
+        with:
+          module: ${{ matrix.module }}
+          partition: ${{ matrix.partition }}
+          java-version: ${{ matrix.java-version }}
+          bootable-modules: ${{ needs.changes.outputs.bootable_modules }}
+
+      - *module-codecov
+
+  build-and-test-world:
+    name: Build and Test (world-management-service / ${{ matrix.partition }})
+    needs: [changes]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && needs.changes.outputs.world_module_check_matrix != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.world_module_check_matrix) }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - name: 'Declare World CI partition count: 2'
+        if: ${{ matrix.module == 'world-management-service' }}
+        run: ':'
+
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Validate module and retain proof
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/check-gradle-module
+        with:
+          module: ${{ matrix.module }}
+          partition: ${{ matrix.partition }}
+          java-version: ${{ matrix.java-version }}
+          bootable-modules: ${{ needs.changes.outputs.bootable_modules }}
+
+      - *module-codecov
 
   account-coverage-aggregate:
     name: Account Coverage Aggregate
-    needs: [changes, build-and-test]
-    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service') && needs.build-and-test.result == 'success' }}
+    needs: [changes, build-and-test-account]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service') && needs.build-and-test-account.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1251,99 +1277,16 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: 🐍 Set Up Python
-        uses: ./.github/actions/setup-python
+      - name: Aggregate complete Account coverage
+        uses: ./.github/actions/aggregate-slow-service-coverage
         with:
-          requirements: none
-
-      - name: Capture Account partition job and artifact provenance
-        id: provenance
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          CI_RUN_ID: ${{ github.run_id }}
-          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF_NAME: ${{ github.ref_name }}
-          CI_SOURCE_SHA: ${{ github.sha }}
-          CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          CI_PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
-          CI_MODULE: account-service
-        with:
-          script: |
-            const captureSlowServiceProvenance = require(
-              require("node:path").join(process.env.GITHUB_WORKSPACE,
-                ".github/scripts/capture-slow-service-provenance.cjs"),
-            );
-            await captureSlowServiceProvenance({
-              github,
-              context,
-              env: process.env,
-              module: process.env.CI_MODULE,
-            });
-
-      - name: Select Account artifacts from latest effective job outcomes
-        id: selection
-        env:
-          PROVENANCE_PATH: services/account-service/build/slow-service-ci-partition-provenance.json
-          SELECTION_PATH: services/account-service/build/slow-service-ci-partition-selection.json
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
-            --module account-service \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --provenance-json "$PROVENANCE_PATH" \
-            --selection-json "$SELECTION_PATH" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Download all effective Account partition artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        continue-on-error: true
-        with:
-          artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
-          path: services/account-service/build/slow-service-ci-partition-inputs
-          merge-multiple: false
-
-      - name: Verify complete Account partition and report union
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
-            --module account-service \
-            --input-dir services/account-service/build/slow-service-ci-partition-inputs \
-            --verified-classes-dir services/account-service/build/slow-service-ci-verified-classes \
-            --selection-json services/account-service/build/slow-service-ci-partition-selection.json \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
-
-      - name: ⚙️ Set Up Java for Account Coverage Aggregation
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: 'temurin'
-          java-version: 25
-
-      - name: ⚙️ Set Up Gradle for Account Coverage Aggregation
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: Merge complete Account JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :account-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=account-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
-
-      - name: 📤 Upload Complete Account Coverage Report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: jacoco-account-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: services/account-service/build/reports/jacoco/test/
-          if-no-files-found: error
-          retention-days: 14
+          module: account-service
+          module-label: Account
 
   game-session-coverage-aggregate:
     name: Game Session Coverage Aggregate
-    needs: [changes, build-and-test]
-    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'game-session-service') && needs.build-and-test.result == 'success' }}
+    needs: [changes, build-and-test-game-session]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'game-session-service') && needs.build-and-test-game-session.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1362,94 +1305,39 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: 🐍 Set Up Python
-        uses: ./.github/actions/setup-python
+      - name: Aggregate complete Game Session coverage
+        uses: ./.github/actions/aggregate-slow-service-coverage
         with:
-          requirements: none
+          module: game-session-service
+          module-label: Game Session
 
-      - name: Capture Game Session partition job and artifact provenance
-        id: provenance
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          CI_RUN_ID: ${{ github.run_id }}
-          CI_RUN_ATTEMPT: ${{ github.run_attempt }}
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_REF_NAME: ${{ github.ref_name }}
-          CI_SOURCE_SHA: ${{ github.sha }}
-          CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          CI_PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
-          CI_MODULE: game-session-service
+  world-coverage-aggregate:
+    name: World Coverage Aggregate
+    needs: [changes, build-and-test-world]
+    if: ${{ (github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null) && contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'world-management-service') && needs.build-and-test-world.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          script: |
-            const captureSlowServiceProvenance = require(
-              require("node:path").join(process.env.GITHUB_WORKSPACE,
-                ".github/scripts/capture-slow-service-provenance.cjs"),
-            );
-            await captureSlowServiceProvenance({
-              github,
-              context,
-              env: process.env,
-              module: process.env.CI_MODULE,
-            });
+          egress-policy: audit
 
-      - name: Select Game Session artifacts from latest effective job outcomes
-        id: selection
-        env:
-          PROVENANCE_PATH: services/game-session-service/build/slow-service-ci-partition-provenance.json
-          SELECTION_PATH: services/game-session-service/build/slow-service-ci-partition-selection.json
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
-            --module game-session-service \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --provenance-json "$PROVENANCE_PATH" \
-            --selection-json "$SELECTION_PATH" \
-            --github-output "$GITHUB_OUTPUT"
-
-      - name: Download all effective Game Session partition artifacts
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        continue-on-error: true
+      - name: Check out World source for complete coverage aggregation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
-          path: services/game-session-service/build/slow-service-ci-partition-inputs
-          merge-multiple: false
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
 
-      - name: Verify complete Game Session partition and report union
-        run: |
-          python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
-            --module game-session-service \
-            --input-dir services/game-session-service/build/slow-service-ci-partition-inputs \
-            --verified-classes-dir services/game-session-service/build/slow-service-ci-verified-classes \
-            --selection-json services/game-session-service/build/slow-service-ci-partition-selection.json \
-            --run-id "$GITHUB_RUN_ID" \
-            --source-revision "$GITHUB_SHA" \
-            --run-attempt "$GITHUB_RUN_ATTEMPT"
-
-      - name: ⚙️ Set Up Java for Game Session Coverage Aggregation
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      - name: Aggregate complete World coverage
+        uses: ./.github/actions/aggregate-slow-service-coverage
         with:
-          distribution: 'temurin'
-          java-version: 25
-
-      - name: ⚙️ Set Up Gradle for Game Session Coverage Aggregation
-        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: Merge complete Game Session JaCoCo coverage
-        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :game-session-service:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=game-session-service -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
-
-      - name: 📤 Upload Complete Game Session Coverage Report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: jacoco-game-session-service-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
-          path: services/game-session-service/build/reports/jacoco/test/
-          if-no-files-found: error
-          retention-days: 14
+          module: world-management-service
+          module-label: World
 
   # Final gating and PR reporting
   validation-gate:
@@ -1466,8 +1354,10 @@ jobs:
       ACCOUNT_MODULE_AFFECTED: ${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'account-service') }}
       ACCOUNT_COVERAGE_AGGREGATE: ${{ needs.account-coverage-aggregate.result }}
       GAME_SESSION_MODULE_AFFECTED: ${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'game-session-service') }}
+      WORLD_MODULE_AFFECTED: ${{ contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), 'world-management-service') }}
       GAME_SESSION_COVERAGE_AGGREGATE: ${{ needs.game-session-coverage-aggregate.result }}
-    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, account-coverage-aggregate, game-session-coverage-aggregate]
+      WORLD_COVERAGE_AGGREGATE: ${{ needs.world-coverage-aggregate.result }}
+    needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test, build-and-test-account, build-and-test-game-session, build-and-test-world, account-coverage-aggregate, game-session-coverage-aggregate, world-coverage-aggregate]
     if: ${{ always() }}
     steps:
       - name: Harden runner
@@ -1544,7 +1434,9 @@ jobs:
           ACCOUNT_MODULE_AFFECTED: ${{ env.ACCOUNT_MODULE_AFFECTED }}
           ACCOUNT_COVERAGE_AGGREGATE: ${{ needs.account-coverage-aggregate.result }}
           GAME_SESSION_MODULE_AFFECTED: ${{ env.GAME_SESSION_MODULE_AFFECTED }}
+          WORLD_MODULE_AFFECTED: ${{ env.WORLD_MODULE_AFFECTED }}
           GAME_SESSION_COVERAGE_AGGREGATE: ${{ needs.game-session-coverage-aggregate.result }}
+          WORLD_COVERAGE_AGGREGATE: ${{ needs.world-coverage-aggregate.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           BUF_CHECK: ${{ needs.buf-check.result }}
           DOCKER_LINT: ${{ needs.docker-lint.result }}
@@ -1563,6 +1455,10 @@ jobs:
           DOCS_CHECK: ${{ needs.docs-check.result }}
           FRONTEND_CHECKS: ${{ needs.frontend-checks.result }}
           BUILD_AND_TEST: ${{ needs.build-and-test.result }}
+          BUILD_AND_TEST_ACCOUNT: ${{ needs.build-and-test-account.result }}
+          BUILD_AND_TEST_GAME_SESSION: ${{ needs.build-and-test-game-session.result }}
+          BUILD_AND_TEST_WORLD: ${{ needs.build-and-test-world.result }}
+          OTHER_MODULES_AFFECTED: ${{ needs.changes.outputs.other_module_check_matrix != '[]' }}
         run: |
           is_acceptable_optional_result() {
             local result="$1"
@@ -1663,16 +1559,20 @@ jobs:
             fi
           fi
 
-          echo "Build and Test Matrix => $BUILD_AND_TEST"
-          if [ "$AFFECTED_MODULES" != "[]" ]; then
-            if [ "$BUILD_AND_TEST" != "success" ]; then
+          # A skipped selected group is missing proof, even if its sibling groups succeeded.
+          require_matrix_group() {
+            local label="$1" affected="$2" result="$3"
+            echo "$label => $result (affected=$affected)"
+            if [ "$affected" = "true" ]; then
+              if [ "$result" != "success" ]; then failed=1; fi
+            elif [ "$result" != "skipped" ]; then
               failed=1
             fi
-          else
-            if ! is_acceptable_optional_result "$BUILD_AND_TEST"; then
-              failed=1
-            fi
-          fi
+          }
+          require_matrix_group "Other module matrix" "$OTHER_MODULES_AFFECTED" "$BUILD_AND_TEST"
+          require_matrix_group "Account matrix" "$ACCOUNT_MODULE_AFFECTED" "$BUILD_AND_TEST_ACCOUNT"
+          require_matrix_group "Game Session matrix" "$GAME_SESSION_MODULE_AFFECTED" "$BUILD_AND_TEST_GAME_SESSION"
+          require_matrix_group "World matrix" "$WORLD_MODULE_AFFECTED" "$BUILD_AND_TEST_WORLD"
 
           echo "Account Coverage Aggregate => $ACCOUNT_COVERAGE_AGGREGATE (account-affected=$ACCOUNT_MODULE_AFFECTED)"
           if [ "$ACCOUNT_MODULE_AFFECTED" = "true" ]; then
@@ -1689,6 +1589,15 @@ jobs:
               failed=1
             fi
           elif [ "$GAME_SESSION_COVERAGE_AGGREGATE" != "skipped" ]; then
+            failed=1
+          fi
+
+          echo "World Coverage Aggregate => $WORLD_COVERAGE_AGGREGATE (world-affected=$WORLD_MODULE_AFFECTED)"
+          if [ "$WORLD_MODULE_AFFECTED" = "true" ]; then
+            if [ "$WORLD_COVERAGE_AGGREGATE" != "success" ]; then
+              failed=1
+            fi
+          elif [ "$WORLD_COVERAGE_AGGREGATE" != "skipped" ]; then
             failed=1
           fi
 

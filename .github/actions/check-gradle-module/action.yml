@@ -1,0 +1,138 @@
+name: Check Gradle module
+description: Run the canonical module checks and retain their coverage and diagnostic proof.
+inputs:
+  module:
+    description: Exact module selected by change detection.
+    required: true
+  partition:
+    description: Existing full or numbered CI partition.
+    required: true
+  java-version:
+    description: Compiler and test toolchain version.
+    required: true
+  bootable-modules:
+    description: JSON array of selected bootable modules.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Set up Python for Gradle recovery and coverage verification
+      if: ${{ inputs.module != 'game-design-service' }}
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: none
+
+    - name: Set up Python for installation inventory composition
+      if: ${{ inputs.module == 'game-design-service' }}
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: yaml
+
+    - name: ⚙️ Set Up Java
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      with:
+        distribution: 'temurin'
+        java-version: ${{ inputs.java-version }}
+
+    - name: ⚙️ Set Up Gradle
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+      with:
+        build-scan-publish: true
+        build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+        build-scan-terms-of-use-agree: 'yes'
+        cache-read-only: false
+
+    # Cached negative Spring Boot 4.1.1 resolution requires metadata revalidation (CI 37847761035).
+    - name: 🧪 Run Gradle Checks
+      id: checks
+      shell: bash
+      run: |
+        echo "::group::Run Module Validation"
+        bash ./.github/scripts/run-gradle-module-checks.sh '${{ inputs.module }}' '${{ inputs.partition }}'
+        echo "::endgroup::"
+
+    - name: 📦 Build Runtime JAR
+      if: ${{ contains(fromJSON(inputs.bootable-modules), inputs.module) && (inputs.module != 'account-service' && inputs.module != 'game-session-service' && inputs.module != 'world-management-service' || inputs.partition == '1') }}
+      shell: bash
+      run: bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ inputs.module }}:bootJar -PfullCheck
+
+    - name: 📈 Parse Coverage %
+      id: coverage
+      env:
+        MODULE_DIR: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing' || format('services/{0}', inputs.module) }}
+      shell: bash
+      run: |
+        COVERAGE_FILE="$MODULE_DIR/build/reports/jacoco/test/jacocoTestReport.xml"
+        if [ -f "$COVERAGE_FILE" ]; then
+          COVERAGE_LINE=$(grep -A 1 "<counter type=\"LINE\"" "$COVERAGE_FILE" | tail -n 1 || true)
+          MISSED=$(echo "$COVERAGE_LINE" | sed -n 's/.*missed="\([0-9]*\)".*/\1/p')
+          COVERED=$(echo "$COVERAGE_LINE" | sed -n 's/.*covered="\([0-9]*\)".*/\1/p')
+          TOTAL=$((MISSED + COVERED))
+          if [ "$TOTAL" -gt 0 ]; then
+            PERCENT=$((100 * COVERED / TOTAL))
+          else
+            PERCENT=0
+          fi
+        else
+          echo "Coverage file not found" >&2
+          PERCENT=0
+        fi
+        echo "percent=$PERCENT" >> "$GITHUB_OUTPUT"
+
+    - name: 🔎 Verify Combined Unit and Integration Coverage
+      if: ${{ inputs.module == 'common-saga' && inputs.partition == 'full' }}
+      shell: bash
+      run: |
+        python3 dev-tools/validation/validate-jacoco-combined-report.py \
+          --report services/common-saga/build/reports/jacoco/test/jacocoTestReport.xml \
+          --require-covered-class net/firedevops/firemud/common/saga/SagaRunner \
+          --require-covered-class net/firedevops/firemud/common/saga/persistence/SagaInstanceRepository \
+          --require-covered-method net/firedevops/firemud/common/saga/persistence/SagaInstanceRepository#findAll
+
+    - name: 📤 Upload Coverage Report
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: jacoco-${{ inputs.module }}-${{ inputs.partition }}-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
+        path: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing/build/reports/jacoco/test/' || format('services/{0}/build/reports/jacoco/test/', inputs.module) }}
+
+    - name: 📤 Upload Test Logs if Failed
+      if: ${{ failure() || cancelled() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: test-logs-${{ inputs.module }}-${{ inputs.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
+        path: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', inputs.module) }}
+
+    - name: 📤 Upload JUnit Test Results
+      if: ${{ always() && inputs.module != 'account-service' && inputs.module != 'game-session-service' && inputs.module != 'world-management-service' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: junit-${{ inputs.module }}-${{ inputs.partition }}-results-${{ github.sha }}-attempt-${{ github.run_attempt }}
+        path: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing/build/test-results/**/*.xml' || format('services/{0}/build/test-results/**/*.xml', inputs.module) }}
+        if-no-files-found: warn
+        retention-days: 14
+
+    - name: 📤 Upload Slow-Service Partition Reports and Execution Data
+      if: ${{ always() && (inputs.module == 'account-service' || inputs.module == 'game-session-service' || inputs.module == 'world-management-service') }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: slow-service-ci-partition-${{ github.run_id }}-${{ github.sha }}-attempt-${{ github.run_attempt }}-${{ inputs.module }}-partition-${{ inputs.partition }}
+        path: |
+          services/${{ inputs.module }}/build/classes/java/main/
+          services/${{ inputs.module }}/build/slow-service-ci-partition/${{ inputs.module }}/partition-${{ inputs.partition }}/
+          services/${{ inputs.module }}/build/jacoco/*.exec
+          services/${{ inputs.module }}/build/reports/jacoco/test/
+          services/${{ inputs.module }}/build/test-results/**/*.xml
+        if-no-files-found: warn
+        retention-days: 14
+
+    - name: Upload Gradle Task Profile
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: gradle-profile-${{ inputs.module }}-${{ inputs.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
+        path: |
+          build/reports/profile/
+          build/reports/compile-failure/${{ inputs.module }}/
+          build/reports/gradle-stall/${{ inputs.module }}/
+        if-no-files-found: warn
+        retention-days: 14

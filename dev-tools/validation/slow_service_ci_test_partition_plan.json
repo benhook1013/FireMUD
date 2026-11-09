@@ -2810,6 +2810,662 @@
           "unknown_class_estimated_weight_seconds": 1.0
         }
       }
+    },
+    "world-management-service": {
+      "partition_count": 2,
+      "tasks": {
+        "crossServiceTest": {
+          "classes": {
+            "net.firedevops.firemud.worldmanagement.client.AccountTenantOperationEntitlementClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 53.212
+            },
+            "net.firedevops.firemud.worldmanagement.client.EntityPlayerCreatedActorPlacementReceiptClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 27.311
+            },
+            "net.firedevops.firemud.worldmanagement.client.EntityPreseededActorAssignmentReceiptClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 27.873
+            },
+            "net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 32.766
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.AccountAdmissionProtectionCurrentOwnerCompositionCrossServiceTest": {
+              "partition": 2,
+              "weight_seconds": 40.894
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.CanonicalInitialPlayerLocationGrpcServiceMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 17.751
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.PrivateWorldPreparationSourceCompositionCrossServiceTest": {
+              "partition": 2,
+              "weight_seconds": 118.669
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest": {
+              "partition": 1,
+              "weight_seconds": 767.628
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "cases": 20,
+              "suites": 1,
+              "weight_seconds": 767.628
+            },
+            "2": {
+              "cases": 26,
+              "suites": 7,
+              "weight_seconds": 318.47599999999994
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 36.83
+        },
+        "integrationTest": {
+          "classes": {
+            "integration.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialPlayerLocationRepositoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 7.888
+            },
+            "integration.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 19.485
+            },
+            "net.firedevops.firemud.worldmanagement.InitialAdmissionBindHoldPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 35.11
+            },
+            "net.firedevops.firemud.worldmanagement.RoomRepositoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 5.306
+            },
+            "net.firedevops.firemud.worldmanagement.RunOwnedWorldLaunchEvidencePostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 6.059
+            },
+            "net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 6.938
+            },
+            "net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 5.815
+            },
+            "net.firedevops.firemud.worldmanagement.WorldAuthoredVersionIdentityIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 7.019
+            },
+            "net.firedevops.firemud.worldmanagement.WorldCompleteLaunchBindingIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 6.947
+            },
+            "net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 5.114
+            },
+            "net.firedevops.firemud.worldmanagement.WorldManagementServiceApplicationIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 5.114
+            },
+            "net.firedevops.firemud.worldmanagement.WorldPreparationStartLocationSubtransactionPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 4.629
+            },
+            "net.firedevops.firemud.worldmanagement.WorldPublicationOwnerBindingMigrationIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 2.114
+            },
+            "net.firedevops.firemud.worldmanagement.WorldSameTransactionGuardSubtransactionPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 4.451
+            },
+            "net.firedevops.firemud.worldmanagement.data.LegacyDemoSeedingPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 10.53
+            },
+            "net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 15.47
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.RunOwnedCanonicalWorldLaunchEvidenceMtlsIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 9.342
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.RunOwnedWorldLaunchEvidenceMtlsIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 17.883
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAppliedGraphHistoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 4.857
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceExecutionTerminalSchemaPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 2.556
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 3.332
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldExecutionIntentHistoryPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 3.606
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldGraphApplicationReceiptDigestPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 7.123
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldGuardedAuthoredGraphCapturePostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 22.646
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldInitialAdmissionHoldHistoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 4.031
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldOperationalRegionAssignmentPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 3.407
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPrivateFreshOperationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 34.204
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeFamilyCatalogPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 74.538
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 25.14
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedFullPublicationEvidenceFixtureTest": {
+              "partition": 1,
+              "weight_seconds": 2.158
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedPublicationPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 9.479
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest": {
+              "partition": 1,
+              "weight_seconds": 5.993
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldV1PreparationHistoryPostgresIntegrationTest": {
+              "partition": 2,
+              "weight_seconds": 28.699
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "cases": 34,
+              "suites": 12,
+              "weight_seconds": 67.211
+            },
+            "2": {
+              "cases": 121,
+              "suites": 21,
+              "weight_seconds": 339.772
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 6.938
+        },
+        "test": {
+          "classes": {
+            "net.firedevops.firemud.worldmanagement.WorldManagementTemporalHostingTest": {
+              "partition": 2,
+              "weight_seconds": 3.129
+            },
+            "net.firedevops.firemud.worldmanagement.client.GameDesignClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.351
+            },
+            "net.firedevops.firemud.worldmanagement.client.GrpcGameSessionCanonicalInitialAdmissionOwnerClientTest": {
+              "partition": 2,
+              "weight_seconds": 0.492
+            },
+            "net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClientTest": {
+              "partition": 1,
+              "weight_seconds": 0.177
+            },
+            "net.firedevops.firemud.worldmanagement.controller.GenerationRuleControllerTest": {
+              "partition": 2,
+              "weight_seconds": 6.109
+            },
+            "net.firedevops.firemud.worldmanagement.controller.RegionControllerTest": {
+              "partition": 1,
+              "weight_seconds": 2.016
+            },
+            "net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProviderTest": {
+              "partition": 2,
+              "weight_seconds": 6.051
+            },
+            "net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResourcesTest": {
+              "partition": 2,
+              "weight_seconds": 0.035
+            },
+            "net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProviderTest": {
+              "partition": 2,
+              "weight_seconds": 0.018
+            },
+            "net.firedevops.firemud.worldmanagement.data.TestDataSeederTest": {
+              "partition": 2,
+              "weight_seconds": 0.818
+            },
+            "net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDtoTest": {
+              "partition": 1,
+              "weight_seconds": 0.002
+            },
+            "net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 1.554
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.GenerationRuleServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.208
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.InitialAdmissionBindHoldReconcilerTest": {
+              "partition": 2,
+              "weight_seconds": 0.261
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.InitialAdmissionBindHoldServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.1
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.InstanceServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.063
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.PingServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.002
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.RegionServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.058
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.RoomServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.431
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.TemporalWorldLifecycleOrchestratorTest": {
+              "partition": 2,
+              "weight_seconds": 0.153
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.TemporalWorldLifecycleWorkflowMetadataResolverTest": {
+              "partition": 2,
+              "weight_seconds": 0.388
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.WorldDesignMutationServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.387
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.WorldDraftDesignDigestServiceImplTest": {
+              "partition": 2,
+              "weight_seconds": 0.109
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.WorldEventServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.116
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.WorldInstanceActivationServiceImplTemporalDelegationTest": {
+              "partition": 2,
+              "weight_seconds": 0.152
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.316
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.WorldManagementGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.723
+            },
+            "net.firedevops.firemud.worldmanagement.service.impl.WorldUpgradeValidationServiceImplTest": {
+              "partition": 1,
+              "weight_seconds": 0.005
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.CanonicalInitialPlayerLocationGrpcCodecTest": {
+              "partition": 1,
+              "weight_seconds": 0.122
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.CanonicalInitialPlayerLocationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.95
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphCodecTest": {
+              "partition": 1,
+              "weight_seconds": 0.035
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshotCaptureSerializationTest": {
+              "partition": 2,
+              "weight_seconds": 0.004
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshotTest": {
+              "partition": 2,
+              "weight_seconds": 0.006
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphTest": {
+              "partition": 2,
+              "weight_seconds": 0.094
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeDigestTest": {
+              "partition": 1,
+              "weight_seconds": 0.012
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.165
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 2.539
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.18
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraphReaderTest": {
+              "partition": 2,
+              "weight_seconds": 0.233
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyDeadlineReadTest": {
+              "partition": 1,
+              "weight_seconds": 4.632
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.304
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalFrozenTopologyTest": {
+              "partition": 2,
+              "weight_seconds": 0.005
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.085
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInitialAdmissionHoldOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.007
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationTest": {
+              "partition": 1,
+              "weight_seconds": 0.026
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationAssemblyServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.378
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationPreflightTest": {
+              "partition": 1,
+              "weight_seconds": 0.753
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationTest": {
+              "partition": 2,
+              "weight_seconds": 0.203
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceStartLocationReadbackTest": {
+              "partition": 2,
+              "weight_seconds": 0.349
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceTopologyPlanTest": {
+              "partition": 1,
+              "weight_seconds": 0.115
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalStartSessionTerminalReadTest": {
+              "partition": 1,
+              "weight_seconds": 0.156
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldCompleteLaunchBindingServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.345
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidenceTest": {
+              "partition": 1,
+              "weight_seconds": 0.054
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.31
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldDraftStartLocationReceiptTest": {
+              "partition": 1,
+              "weight_seconds": 0.002
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitEvidenceTest": {
+              "partition": 2,
+              "weight_seconds": 0.155
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPlanTest": {
+              "partition": 1,
+              "weight_seconds": 0.346
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.593
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldGameDesignPublicationTerminalVerifierTest": {
+              "partition": 1,
+              "weight_seconds": 1.562
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldGuardedAuthoredTopologyPlanTest": {
+              "partition": 1,
+              "weight_seconds": 0.009
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldOwnerBindingSerializationTest": {
+              "partition": 1,
+              "weight_seconds": 0.005
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPrivateFreshOperationRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 0.203
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPrivatePreparationInputAssemblyTest": {
+              "partition": 2,
+              "weight_seconds": 45.025
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPrivatePreparationProtectionClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 56.693
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPrivatePreparationSourceClientMtlsTest": {
+              "partition": 2,
+              "weight_seconds": 80.191
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPublishedSourceSnapshotReadTest": {
+              "partition": 2,
+              "weight_seconds": 0.009
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPublishedSpawnRequirementsReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.084
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldPublishedSpawnRequirementsReadOwnerTest": {
+              "partition": 1,
+              "weight_seconds": 0.952
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationArtifactTest": {
+              "partition": 2,
+              "weight_seconds": 0.084
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeInstallationRegistryTest": {
+              "partition": 2,
+              "weight_seconds": 0.002
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedDraftPublicationFreezeGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.161
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedDraftPublicationFreezeRequestTest": {
+              "partition": 1,
+              "weight_seconds": 0.351
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedDraftPublicationFreezeServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.169
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedOwnerInventoryReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.234
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedOwnerInventoryReadServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.137
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedPublicationArtifactInventoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.074
+            },
+            "net.firedevops.firemud.worldmanagement.tenant.WorldSelectedPublicationSelectorCaptureTest": {
+              "partition": 2,
+              "weight_seconds": 0.078
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityCanonicalTargetReadTest": {
+              "partition": 1,
+              "weight_seconds": 0.828
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.118
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.139
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.211
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepositoryTest": {
+              "partition": 1,
+              "weight_seconds": 1.384
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.469
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceExecutionIdentityTest": {
+              "partition": 2,
+              "weight_seconds": 0.042
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.03
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceLifecycleReadRepositoryTest": {
+              "partition": 2,
+              "weight_seconds": 0.119
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest": {
+              "partition": 1,
+              "weight_seconds": 0.83
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.672
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstancePreparationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.013
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceCommittedReadTest": {
+              "partition": 1,
+              "weight_seconds": 0.419
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldDraftCommitOrderVerifierTest": {
+              "partition": 2,
+              "weight_seconds": 0.073
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeTest": {
+              "partition": 1,
+              "weight_seconds": 0.049
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.148
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplicationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.077
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplyGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.097
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionActivationTerminalReadGrpcMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 6.411
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionActivationTerminalReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 1.956
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationGrpcMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 5.245
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 1.295
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.274
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalCompletionGrpcMtlsTest": {
+              "partition": 1,
+              "weight_seconds": 5.808
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalCompletionGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.285
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.067
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalReadServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.155
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.001
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldPublishedStartLocationReadGrpcServiceTest": {
+              "partition": 2,
+              "weight_seconds": 0.011
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldRuntimeFamilyCatalogReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.074
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldStartSessionAccountParticipationVerifierTest": {
+              "partition": 1,
+              "weight_seconds": 0.079
+            },
+            "unit.net.firedevops.firemud.worldmanagement.tenant.WorldStartSessionExecutionTerminalReadGrpcServiceTest": {
+              "partition": 1,
+              "weight_seconds": 0.172
+            }
+          },
+          "metrics_by_partition": {
+            "1": {
+              "cases": 424,
+              "suites": 54,
+              "weight_seconds": 37.18300000000001
+            },
+            "2": {
+              "cases": 391,
+              "suites": 56,
+              "weight_seconds": 213.77299999999994
+            }
+          },
+          "unknown_class_estimated_weight_seconds": 0.165
+        }
+      }
     }
   },
   "weight_provenance": {
@@ -2844,6 +3500,18 @@
       "source_assessment": "R1308-independent-runner-partition-assessment",
       "source_head": "38c0da4fe656c07dad184838d8dcadf370a382c3",
       "source_option": 2
+    },
+    "world-management-service": {
+      "artifact_id": 13604416967,
+      "artifact_name": "junit-world-management-service-full-results-66e331035e2f09cc82beffdb7726c603f9a5881a-attempt-1",
+      "attempt": 1,
+      "job_id": 128618673184,
+      "native_head_sha": "2dd867b086e72c223bd4761cd18d7a2373c2137e",
+      "run_id": 42443744681,
+      "tested_source_sha": "66e331035e2f09cc82beffdb7726c603f9a5881a",
+      "unknown_class_fallback": "Median observed class weight per task, with deterministic least-loaded assignment for newly compiled tests.",
+      "weight_method": "JUnit suite wall seconds grouped by task and outer class, including nested suites, assigned longest-first across both partitions collectively. Historical weights guide balance, not the current compiled-class inventory or elapsed runner savings.",
+      "zip_sha256": "b64eefb045a6a95ea51ed668f4b5a4c11d0b419cb2e1e66864a0c19c93eeafd2"
     }
   }
 }

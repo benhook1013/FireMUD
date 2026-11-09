@@ -35,7 +35,7 @@ for expected in \
   'declare -a PREPARE_TASKS=(":${MODULE}:testClasses")' \
   'PREPARE_TASKS+=(":${MODULE}:${task_name}Classes")' \
   'CHECK_ARGS+=("-PslowServiceCiPartitionModule=$MODULE" "-PslowServiceCiPartition=$PARTITION")' \
-  'Account: 1-4; Game Session: 1-4' \
+  'Account: 1-4; Game Session: 1-4; World: 1-2' \
   'bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"'; do
   require_contains "$MODULE_CHECK_WRAPPER" "$expected"
 done
@@ -100,7 +100,7 @@ raise SystemExit(0)
         ("account-service", str(partition)) for partition in range(1, 5)
     ] + [
         ("game-session-service", str(partition)) for partition in range(1, 5)
-    ]
+    ] + [("world-management-service", str(partition)) for partition in range(1, 3)]
     for module, partition in partitioned_cases:
         result, entries = invoke(module, partition)
         if result.returncode != 0:
@@ -135,7 +135,7 @@ raise SystemExit(0)
         if "-PfullCheck" not in check or any(value not in check for value in expected_check_properties):
             raise SystemExit(f"{module}/{partition} lost its full-check selector arguments")
 
-    for module in ("account-service", "game-session-service", "common-security"):
+    for module in ("account-service", "game-session-service", "world-management-service", "common-security"):
         result, entries = invoke(module, "full")
         if result.returncode != 0:
             raise SystemExit(f"full check entrypoint rejected {module}: {result.stderr}")
@@ -153,6 +153,8 @@ raise SystemExit(0)
         ("account-service", "5"),
         ("game-session-service", "0"),
         ("game-session-service", "5"),
+        ("world-management-service", "0"),
+        ("world-management-service", "3"),
         ("common-security", "3"),
         ("bad_module", "full"),
     ):
@@ -166,6 +168,7 @@ PY
 python3 - "$CI_WORKFLOW" "$SECURITY_WORKFLOW" "$PREVIEW_WORKFLOW" "$ZAP_WORKFLOW" "$CLASSIFIER" "$ROOT_DIR/build.gradle.kts" <<'PY'
 import copy
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -202,7 +205,7 @@ def require_equal(mapping, path, expected, label):
         )
 
 
-def evaluate_module_check_matrix(step, modules):
+def evaluate_module_check_matrix(step, modules, output="module_check_matrix"):
     script = value_at(step, ("with", "script"), "ci workflow")
     match = re.search(
         r"(?ms)^[ \t]*outputs\.module_check_matrix = .*?^[ \t]*\);",
@@ -220,7 +223,7 @@ def evaluate_module_check_matrix(step, modules):
 const fs = require("node:fs");
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const outputs = { affected_modules: input.modules };
-const rows = new Function("outputs", `${input.partition_set}\n${input.assignment}\nreturn outputs.module_check_matrix;`)(outputs);
+const rows = new Function("outputs", `${input.partition_set}\n${input.assignment}\n${input.groups}\nreturn outputs[${JSON.stringify(input.output)}];`)(outputs);
 process.stdout.write(JSON.stringify(rows));
 """
     try:
@@ -233,6 +236,8 @@ process.stdout.write(JSON.stringify(rows));
                 "modules": modules,
                 "assignment": match.group(0).strip(),
                 "partition_set": partition_set.group(0).strip(),
+                "groups": "\n".join(re.findall(r"(?m)^.*outputs\.(?:other|account|game_session|world)_module_check_matrix = .*;$", script)),
+                "output": output,
             }),
         )
         rows = json.loads(result.stdout)
@@ -488,9 +493,59 @@ security = load_workflow(sys.argv[2])
 preview = load_workflow(sys.argv[3])
 zap = load_workflow(sys.argv[4])
 ci_compute_step = find_step(ci, "changes", "Compute affected jobs", "ci workflow")
+module_action = load_workflow(str(Path(sys.argv[1]).parents[1] / "actions/check-gradle-module/action.yml"))
+require_equal(module_action, ("runs", "using"), "composite", "module action")
+if set(module_action["inputs"]) != {"module", "partition", "java-version", "bootable-modules"}:
+    raise SystemExit("Module recipe must declare its complete explicit input boundary")
+recipe_text = json.dumps(module_action["runs"]["steps"])
+if "matrix." in recipe_text or "needs." in recipe_text:
+    raise SystemExit("Composite must not depend on inaccessible caller context")
+for step in module_action["runs"]["steps"]:
+    if "run" in step and step.get("shell") != "bash":
+        raise SystemExit("Composite run steps need explicit Bash")
+# Compare the extracted recipe with the existing exact command/artifact contracts
+# after substituting only its explicit caller-input boundary.
+normalized_recipe = recipe_text.replace("inputs.java-version", "matrix.java-version").replace("inputs.module", "matrix.module").replace("inputs.partition", "matrix.partition").replace("inputs.bootable-modules", "needs.changes.outputs.bootable_modules")
+module_ci = {"jobs": {"build-and-test": {"steps": json.loads(normalized_recipe)}}}
+codec_step = find_step(ci, "build-and-test", "Upload Coverage to Codecov", "ci workflow")
+require_equal(codec_step, ("continue-on-error",), "true", "native Codecov")
+require_equal(codec_step, ("timeout-minutes",), "2", "native Codecov")
+module_ci["jobs"]["build-and-test"]["steps"].append(codec_step)
+groups = {
+    "build-and-test": ("other_module_check_matrix", None),
+    "build-and-test-account": ("account_module_check_matrix", "account-service"),
+    "build-and-test-game-session": ("game_session_module_check_matrix", "game-session-service"),
+    "build-and-test-world": ("world_module_check_matrix", "world-management-service"),
+}
+for job_id, (output, module) in groups.items():
+    job = ci["jobs"][job_id]
+    name_module = module or "${{ matrix.module }}"
+    require_equal(job, ("name",), "Build and Test (" + name_module + " / ${{ matrix.partition }})", job_id)
+    timeout = "60" if module in ("account-service", "world-management-service") else "90" if module == "game-session-service" else "${{ matrix.module == 'game-design-service' && 30 || 20 }}"
+    require_equal(job, ("timeout-minutes",), timeout, job_id)
+    require_equal(job, ("needs",), ["changes"], job_id)
+    require_equal(job, ("strategy", "fail-fast"), "false", job_id)
+    require_equal(job, ("strategy", "matrix"), {"include": "${{ fromJSON(needs.changes.outputs." + output + ") }}"}, job_id)
+    require_contains(job, ("if",), "needs.changes.outputs." + output + " != '[]'", job_id)
+    require_equal(job, ("permissions",), {"contents": "read", "id-token": "write"}, job_id)
+    call = find_step(ci, job_id, "Validate module and retain proof", "ci workflow")
+    require_equal(call, ("uses",), "./.github/actions/check-gradle-module", job_id)
+    # Enter after failures for proof retention, but never start Gradle after cancellation.
+    # The composite's upload guards below retain their independent failure/cancellation policy.
+    require_equal(call, ("if",), "${{ !cancelled() }}", job_id)
+    require_equal(call, ("with",), {
+        "module": "${{ matrix.module }}", "partition": "${{ matrix.partition }}",
+        "java-version": "${{ matrix.java-version }}",
+        "bootable-modules": "${{ needs.changes.outputs.bootable_modules }}",
+    }, job_id)
+    if find_step(ci, job_id, "Upload Coverage to Codecov", job_id) != codec_step:
+        raise SystemExit("All callers must share the same bounded optional Codecov upload")
+    checkout = find_step(ci, job_id, "Checkout Code", job_id)
+    require_equal(checkout, ("with",), {"fetch-depth": "2", "persist-credentials": "false"}, job_id)
+
 
 module_checks_step = find_step(
-    ci, "build-and-test", "Run Gradle Checks", "ci workflow"
+    module_ci, "build-and-test", "Run Gradle Checks", "ci workflow"
 )
 require_equal(
     module_checks_step,
@@ -509,7 +564,7 @@ require_equal(
 require_equal(
     ci,
     ("jobs", "build-and-test", "strategy", "matrix", "include"),
-    "${{ fromJSON(needs.changes.outputs.module_check_matrix) }}",
+    "${{ fromJSON(needs.changes.outputs.other_module_check_matrix) }}",
     "ci workflow",
 )
 matrix_config = value_at(ci, ("jobs", "build-and-test", "strategy", "matrix"), "ci workflow")
@@ -543,7 +598,7 @@ require_contains(
 require_contains(
     ci_compute_step,
     ("with", "script"),
-    'const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4 };',
+    'const slowServicePartitionCounts = { "account-service": 4, "game-session-service": 4, "world-management-service": 2 };',
     "ci workflow",
 )
 for expected in (
@@ -553,7 +608,32 @@ for expected in (
     '"java-version": 25',
 ):
     require_contains(ci_compute_step, ("with", "script"), expected, "ci workflow")
-java_setup_step = find_step(ci, "build-and-test", "Set Up Java", "ci workflow")
+all_modules = [
+    "common-data-runtime", "common-platform-core", "common-saga", "common-temporal", "common-security",
+    "common-test-support", "common-web-support", "account-service", "automation-scripting-service",
+    "entity-management-service", "game-design-service", "game-logic-service", "game-session-service",
+    "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
+    "world-management-service", "hosted-environment-identity-controller", "load-testing",
+]
+for selected in ([], ["account-service"], ["game-session-service"], ["world-management-service"],
+                 ["account-service", "game-session-service", "common-security"], all_modules):
+    complete = evaluate_module_check_matrix(ci_compute_step, selected)
+    split = []
+    for _, (output, module) in groups.items():
+        require_equal(ci, ("jobs", "changes", "outputs", output),
+                      "${{ steps.compute.outputs." + output + " }}", "ci workflow")
+        rows = evaluate_module_check_matrix(ci_compute_step, selected, output)
+        expected = [row for row in complete if (row["module"] == module if module else row["module"] not in {"account-service", "game-session-service", "world-management-service"})]
+        if rows != expected:
+            raise SystemExit(f"Matrix group {output} changed existing partition identities")
+        split.extend(rows)
+    key = lambda row: (row["module"], row["partition"], row["java-version"])
+    if sorted(map(key, split)) != sorted(map(key, complete)) or len(set(map(key, split))) != len(complete):
+        raise SystemExit("Split matrices must preserve exactly the original disjoint work")
+    if selected == all_modules and len(split) != 27:
+        raise SystemExit("Complete selection must retain 4 Account + 4 GS + 2 World + 17 other jobs")
+
+java_setup_step = find_step(module_ci, "build-and-test", "Set Up Java", "ci workflow")
 require_equal(
     java_setup_step,
     ("with", "java-version"),
@@ -562,12 +642,12 @@ require_equal(
 )
 
 runtime_jar_step = find_step(
-    ci, "build-and-test", "Build Runtime JAR", "ci workflow"
+    module_ci, "build-and-test", "Build Runtime JAR", "ci workflow"
 )
 require_equal(
     runtime_jar_step,
     ("if",),
-    "${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' || matrix.partition == '1') }}",
+    "${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) && (matrix.module != 'account-service' && matrix.module != 'game-session-service' && matrix.module != 'world-management-service' || matrix.partition == '1') }}",
     "ci workflow",
 )
 require_equal(
@@ -579,12 +659,12 @@ require_equal(
 require_equal(
     runtime_jar_step,
     ("run",),
-    "./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
+    "bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
     "ci workflow",
 )
 
 test_logs_step = find_step(
-    ci, "build-and-test", "Upload Test Logs if Failed", "ci workflow"
+    module_ci, "build-and-test", "Upload Test Logs if Failed", "ci workflow"
 )
 require_equal(
     test_logs_step,
@@ -592,14 +672,20 @@ require_equal(
     "${{ failure() || cancelled() }}",
     "ci workflow",
 )
+require_equal(
+    test_logs_step,
+    ("with", "name"),
+    "test-logs-${{ matrix.module }}-${{ matrix.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+    "ci workflow",
+)
 
 junit_results_step = find_step(
-    ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
+    module_ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
 )
 require_equal(
     junit_results_step,
     ("if",),
-    "${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' }}",
+    "${{ always() && matrix.module != 'account-service' && matrix.module != 'game-session-service' && matrix.module != 'world-management-service' }}",
     "ci workflow",
 )
 require_equal(
@@ -622,13 +708,13 @@ require_equal(
 )
 
 slow_partition_artifact_step = find_step(
-    ci, "build-and-test",
+    module_ci, "build-and-test",
     "Upload Slow-Service Partition Reports and Execution Data",
     "ci workflow",
 )
 require_equal(
     slow_partition_artifact_step, ("if",),
-    "${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service') }}",
+    "${{ always() && (matrix.module == 'account-service' || matrix.module == 'game-session-service' || matrix.module == 'world-management-service') }}",
     "ci workflow",
 )
 require_equal(
@@ -646,7 +732,7 @@ for artifact_path in (
     require_contains(slow_partition_artifact_step, ("with", "path"), artifact_path, "ci workflow")
 
 gradle_profile_step = find_step(
-    ci, "build-and-test", "Upload Gradle Task Profile", "ci workflow"
+    module_ci, "build-and-test", "Upload Gradle Task Profile", "ci workflow"
 )
 require_equal(gradle_profile_step, ("if",), "always()", "ci workflow")
 require_equal(
@@ -658,23 +744,51 @@ require_equal(
 require_contains(gradle_profile_step, ("with", "path"), "build/reports/profile/", "ci workflow")
 require_equal(gradle_profile_step, ("with", "retention-days"), "14", "ci workflow")
 
+aggregate_action = load_workflow(str(Path(sys.argv[1]).parents[1] / "actions/aggregate-slow-service-coverage/action.yml"))
+require_equal(aggregate_action, ("runs", "using"), "composite", "coverage action")
+for key in ("module", "module-label"):
+    require_equal(aggregate_action, ("inputs", key, "required"), "true", "coverage action")
+aggregate_steps = aggregate_action["runs"]["steps"]
+for step in aggregate_steps:
+    if "run" in step:
+        require_equal(step, ("shell",), "bash", "coverage action")
+    if "checkout@" in step.get("uses", ""):
+        raise SystemExit("coverage checkout must remain in the owning job")
+aggregate_ci = copy.deepcopy(ci)
+
 for module, job_id, display, prefix in (
     ("account-service", "account-coverage-aggregate", "Account", "ACCOUNT"),
     ("game-session-service", "game-session-coverage-aggregate", "Game Session", "GAME_SESSION"),
+    ("world-management-service", "world-coverage-aggregate", "World", "WORLD"),
 ):
     aggregate_job = value_at(ci, ("jobs", job_id), "ci workflow")
-    require_equal(aggregate_job, ("needs",), ["changes", "build-and-test"], "ci workflow")
-    require_contains(aggregate_job, ("if",), "needs.build-and-test.result == 'success'", "ci workflow")
+    group_id = "build-and-test-" + ("account" if module == "account-service" else "world" if module == "world-management-service" else "game-session")
+    require_equal(aggregate_job, ("needs",), ["changes", group_id], "ci workflow")
+    require_contains(aggregate_job, ("if",), f"needs.{group_id}.result == 'success'", "ci workflow")
     require_contains(
         aggregate_job, ("if",),
         f"contains(fromJSON(needs.changes.outputs.affected_modules || '[]'), '{module}')",
         "ci workflow",
     )
     require_equal(aggregate_job, ("permissions",), {"actions": "read", "contents": "read"}, "ci workflow")
-    aggregate_java = find_step(ci, job_id, f"Set Up Java for {display} Coverage Aggregation", "ci workflow")
+    require_equal(aggregate_job, ("timeout-minutes",), "30", "ci workflow")
+    steps = aggregate_job["steps"]
+    if len(steps) != 3 or "harden-runner@" not in steps[0].get("uses", ""):
+        raise SystemExit("coverage jobs must harden, check out, then aggregate")
+    checkout = steps[1]
+    if "actions/checkout@" not in checkout.get("uses", ""):
+        raise SystemExit("coverage checkout must precede the local composite")
+    require_equal(checkout, ("with", "ref"), "${{ github.sha }}", "ci workflow")
+    require_equal(checkout, ("with", "persist-credentials"), "false", "ci workflow")
+    require_equal(checkout, ("with", "fetch-depth"), "2", "ci workflow")
+    require_equal(steps[2], ("uses",), "./.github/actions/aggregate-slow-service-coverage", "ci workflow")
+    require_equal(steps[2], ("with",), {"module": module, "module-label": display}, "ci workflow")
+    recipe = json.dumps(aggregate_steps).replace("${{ inputs.module }}", module).replace("${{ inputs.module-label }}", display)
+    aggregate_ci["jobs"][job_id]["steps"] = steps[:2] + json.loads(recipe)
+    aggregate_java = find_step(aggregate_ci, job_id, f"Set Up Java for {display} Coverage Aggregation", "ci workflow")
     require_equal(aggregate_java, ("with", "java-version"), "25", "ci workflow")
     require_equal(aggregate_java, ("with", "distribution"), "temurin", "ci workflow")
-    capture = find_step(ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
+    capture = find_step(aggregate_ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow")
     require_equal(capture, ("env", "CI_MODULE"), module, "ci workflow")
     require_equal(
         capture,
@@ -701,20 +815,20 @@ for module, job_id, display, prefix in (
         "module: process.env.CI_MODULE",
         "ci workflow",
     )
-    select = find_step(ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
+    select = find_step(aggregate_ci, job_id, f"Select {display} artifacts from latest effective job outcomes", "ci workflow")
     require_contains(select, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts", "ci workflow")
     require_contains(select, ("run",), f"--module {module}", "ci workflow")
-    download = find_step(ci, job_id, f"Download all effective {display} partition artifacts", "ci workflow")
+    download = find_step(aggregate_ci, job_id, f"Download all effective {display} partition artifacts", "ci workflow")
     require_equal(download, ("continue-on-error",), "true", "ci workflow")
     require_equal(download, ("with", "artifact-ids"), "${{ steps.selection.outputs.artifact_ids }}", "ci workflow")
-    verify = find_step(ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
+    verify = find_step(aggregate_ci, job_id, f"Verify complete {display} partition and report union", "ci workflow")
     require_contains(verify, ("run",), "python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate", "ci workflow")
     require_contains(
         verify, ("run",),
         f"--verified-classes-dir services/{module}/build/slow-service-ci-verified-classes",
         "ci workflow",
     )
-    merge = find_step(ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
+    merge = find_step(aggregate_ci, job_id, f"Merge complete {display} JaCoCo coverage", "ci workflow")
     require_contains(
         merge, ("run",),
         f":{module}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate={module} -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes",
@@ -740,7 +854,7 @@ for module, job_id, display, prefix in (
     )
 
 # Execute the shared provenance helper with strict, offline GitHub API mocks.
-# This covers both service callers, identity aliases, pagination, and refusal paths.
+# This covers all service callers, identity aliases, pagination, and refusal paths.
 helper_path = Path(sys.argv[1]).resolve().parents[2] / ".github/scripts/capture-slow-service-provenance.cjs"
 if not helper_path.is_file():
     raise SystemExit(f"ci workflow: missing shared provenance helper: {helper_path}")
@@ -748,9 +862,10 @@ capture_scripts = []
 for module, job_id, display in (
     ("account-service", "account-coverage-aggregate", "Account"),
     ("game-session-service", "game-session-coverage-aggregate", "Game Session"),
+    ("world-management-service", "world-coverage-aggregate", "World"),
 ):
     capture = find_step(
-        ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow"
+        aggregate_ci, job_id, f"Capture {display} partition job and artifact provenance", "ci workflow"
     )
     capture_scripts.append({"module": module, "script": capture["with"]["script"]})
 capture_node = r"""
@@ -762,8 +877,8 @@ const owner = "example", repository = "firemud", runId = 70;
 const testedMerge = "a".repeat(40), nativeHead = "b".repeat(40), baseSha = "c".repeat(40);
 const wrongSha = "d".repeat(40);
 const repositoryFullName = `${owner}/${repository}`;
-const coreJobRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  Array.from({ length: 4 }, (_, index) => index + 1).map(partition => ({
+const coreJobRows = ["account-service", "game-session-service", "world-management-service"].flatMap((module, index) =>
+  Array.from({ length: module === "world-management-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
     id: 100 + index * 10 + partition, run_id: runId, head_sha: nativeHead,
     name: `Build and Test (${module} / ${partition})`, status: "completed",
     conclusion: "success", started_at: "2026-10-30T01:00:00Z",
@@ -775,8 +890,8 @@ const jobRows = coreJobRows.concat(Array.from({ length: 97 }, (_, index) => ({
   name: `Unrelated completed job ${index}`, status: "completed", conclusion: "success",
   started_at: "2026-10-30T01:00:00Z", completed_at: "2026-10-30T02:00:00Z",
 })));
-const coreArtifactRows = ["account-service", "game-session-service"].flatMap((module, index) =>
-  Array.from({ length: 4 }, (_, index) => index + 1).map(partition => ({
+const coreArtifactRows = ["account-service", "game-session-service", "world-management-service"].flatMap((module, index) =>
+  Array.from({ length: module === "world-management-service" ? 2 : 4 }, (_, index) => index + 1).map(partition => ({
     id: 700 + index * 10 + partition,
     name: `slow-service-ci-partition-${runId}-${testedMerge}-attempt-1-${module}-partition-${partition}`,
     expired: false, size_in_bytes: 1024, created_at: "2026-10-30T02:00:00Z",
@@ -830,6 +945,7 @@ async function runFor(embedded, options = {}) {
     pull_requests: apiAssociations,
   };
   const calls = [];
+  let artifactRequestCount = 0;
   const assertRepo = request => {
     assert.equal(request.owner, owner, "every Actions request must bind the owner");
     assert.equal(request.repo, repository, "every Actions request must bind the repository");
@@ -868,6 +984,14 @@ async function runFor(embedded, options = {}) {
       assert.equal(request.run_id, runId);
       assert.equal(request.per_page, 100);
       calls.push(["artifacts", request]);
+      const round = Math.floor(artifactRequestCount / 2);
+      artifactRequestCount += 1;
+      if (options.artifactProviderError && request.page === 2) {
+        throw new Error(options.artifactProviderError);
+      }
+      if (options.artifactResponse) {
+        return { data: options.artifactResponse(round, request, artifactRows) };
+      }
       return {
         data: {
           total_count: artifactRows.length,
@@ -877,6 +1001,7 @@ async function runFor(embedded, options = {}) {
     },
   };
   const writes = [];
+  const snapshotWaits = [];
   const env = {
     CI_RUN_ID: String(runId),
     CI_RUN_ATTEMPT: String(runAttempt),
@@ -898,18 +1023,19 @@ async function runFor(embedded, options = {}) {
       env,
       module: options.module || embedded.module,
       fileSystem,
+      wait: async milliseconds => { snapshotWaits.push([milliseconds, artifactRequestCount]); },
     });
     assert.equal(writes.length, 1);
     assert.equal(writes[0][0], env.CI_PROVENANCE_PATH);
-    return { ok: true, calls, provenance: JSON.parse(writes[0][1]) };
+    return { ok: true, calls, writes, snapshotWaits, provenance: JSON.parse(writes[0][1]) };
   } catch (error) {
-    return { ok: false, calls, error: error.message };
+    return { ok: false, calls, writes, snapshotWaits, error: error.message };
   }
 }
 
 (async () => {
-  assert.equal(jobRows.length, 105);
-  assert.equal(artifactRows.length, 105);
+  assert.equal(jobRows.length, 107);
+  assert.equal(artifactRows.length, 107);
   for (const embedded of input.scripts) {
     assert.ok(embedded.script.includes("capture-slow-service-provenance.cjs"));
     assert.ok(embedded.script.includes("module: process.env.CI_MODULE"));
@@ -925,8 +1051,12 @@ async function runFor(embedded, options = {}) {
       const result = await runFor(embedded, options);
       assert.equal(result.ok, true, `${embedded.module}/${options.eventName}: ${result.error}`);
       const attempts = options.runAttempt || 1;
-      const expectedKinds = ["run", ...Array(attempts * 2).fill("jobs"), "artifacts", "artifacts"];
+      const expectedKinds = [
+        "run", ...Array(attempts * 2).fill("jobs"),
+        "artifacts", "artifacts", "artifacts", "artifacts",
+      ];
       assert.deepEqual(result.calls.map(([kind]) => kind), expectedKinds);
+      assert.deepEqual(result.snapshotWaits, [[1000, 2]]);
       assert.deepEqual(
         result.calls.filter(([kind]) => kind === "jobs").map(([, request]) => request.page),
         Array.from({ length: attempts }, () => [1, 2]).flat(),
@@ -937,7 +1067,7 @@ async function runFor(embedded, options = {}) {
       );
       assert.deepEqual(
         result.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
-        [1, 2],
+        [1, 2, 1, 2],
       );
       assert.equal(result.provenance.run.head_sha, nativeHead);
       assert.equal(result.provenance.run.tested_source_sha,
@@ -997,7 +1127,7 @@ async function runFor(embedded, options = {}) {
       { label: "wrong attempt", options: { eventName: "pull_request", runAttempt: 1, apiRunAttempt: 2 } },
       { label: "wrong repository", options: { eventName: "pull_request", runRepository: "other/repository" } },
       { label: "wrong dispatch title", options: { eventName: "workflow_dispatch", refName: "release/2026", runName: "CI — Validation develop" } },
-      { label: "unsupported module", options: { eventName: "pull_request", module: "world-management-service" } },
+      { label: "unsupported module", options: { eventName: "pull_request", module: "unsupported-service" } },
     ];
     for (const { label, options } of wrongIdentityCases) {
       const result = await runFor(embedded, options);
@@ -1016,11 +1146,130 @@ async function runFor(embedded, options = {}) {
       eventName: "pull_request", incompleteArtifactsPage: 2,
     });
     assert.equal(incompleteArtifacts.ok, false, `${embedded.module} accepted incomplete artifact pagination`);
-    assert.match(incompleteArtifacts.error, /Incomplete workflow artifact page 2/);
+    assert.match(incompleteArtifacts.error, /two consecutive identical complete workflow artifact snapshots/);
     assert.deepEqual(
       incompleteArtifacts.calls.map(([kind]) => kind),
+      ["run", "jobs", "jobs", ...Array(8).fill("artifacts")],
+    );
+    assert.deepEqual(incompleteArtifacts.snapshotWaits, [[1000, 2], [1000, 4], [1000, 6]]);
+    assert.equal(incompleteArtifacts.writes.length, 0);
+
+    const uploadedArtifact = {
+      id: 3000, name: "unrelated-artifact-uploaded-between-pages", expired: false,
+      size_in_bytes: 512, created_at: "2026-10-30T02:01:00Z",
+      workflow_run: { id: runId, head_sha: nativeHead },
+    };
+    const uploadedRows = [uploadedArtifact, ...artifactRows];
+    const uploadBetweenPages = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round === 0 && request.page === 1 ? artifactRows : uploadedRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(uploadBetweenPages.ok, true, `${embedded.module} did not recover after an upload between pages`);
+    assert.deepEqual(
+      uploadBetweenPages.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(uploadBetweenPages.provenance.artifacts.total_count, artifactRows.length + 1);
+    assert.equal(uploadBetweenPages.provenance.artifacts.items[0].id, uploadedArtifact.id);
+
+    const shiftedDuplicatePage = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request, rows) {
+        if (round < 2 && request.page === 2) {
+          return {
+            total_count: rows.length,
+            artifacts: rows.slice(99, 106),
+          };
+        }
+        const start = (request.page - 1) * request.per_page;
+        return {
+          total_count: rows.length,
+          artifacts: rows.slice(start, start + request.per_page),
+        };
+      },
+    });
+    assert.equal(shiftedDuplicatePage.ok, true, `${embedded.module} did not retry a shifted duplicate page`);
+    assert.deepEqual(
+      shiftedDuplicatePage.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(shiftedDuplicatePage.provenance.artifacts.items.length, artifactRows.length);
+    assert.equal(
+      new Set(shiftedDuplicatePage.provenance.artifacts.items.map(artifact => artifact.id)).size,
+      artifactRows.length,
+    );
+
+    const changedMetadataRows = artifactRows.map(artifact => ({ ...artifact }));
+    changedMetadataRows[0] = { ...changedMetadataRows[0], size_in_bytes: 2048 };
+    const changesBetweenSnapshots = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round === 0 ? artifactRows : changedMetadataRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(changesBetweenSnapshots.ok, true, `${embedded.module} did not converge after complete snapshots changed`);
+    assert.deepEqual(
+      changesBetweenSnapshots.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(changesBetweenSnapshots.provenance.artifacts.items[0].size_in_bytes, 2048);
+    assert.deepEqual(changesBetweenSnapshots.snapshotWaits, [[1000, 2], [1000, 4]]);
+
+    const changedIdentityRows = artifactRows.map(artifact => ({ ...artifact }));
+    changedIdentityRows[0] = { ...changedIdentityRows[0], id: 9000 };
+    const changedIdsBetweenSnapshots = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round === 0 ? artifactRows : changedIdentityRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(changedIdsBetweenSnapshots.ok, true, `${embedded.module} did not converge after complete snapshots changed IDs`);
+    assert.deepEqual(
+      changedIdsBetweenSnapshots.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(changedIdsBetweenSnapshots.provenance.artifacts.total_count, artifactRows.length);
+    assert.equal(changedIdsBetweenSnapshots.provenance.artifacts.items[0].id, 9000);
+
+    const neverStable = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round % 2 === 0 ? artifactRows : changedMetadataRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(neverStable.ok, false, `${embedded.module} accepted snapshots that never stabilized`);
+    assert.match(neverStable.error, /two consecutive identical complete workflow artifact snapshots/);
+    assert.equal(neverStable.calls.filter(([kind]) => kind === "artifacts").length, 8);
+    assert.equal(neverStable.writes.length, 0);
+
+    const providerError = await runFor(embedded, {
+      eventName: "pull_request", artifactProviderError: "provider unavailable",
+    });
+    assert.equal(providerError.ok, false, `${embedded.module} accepted an artifact provider error`);
+    assert.equal(providerError.error, "provider unavailable");
+    assert.deepEqual(
+      providerError.calls.map(([kind]) => kind),
       ["run", "jobs", "jobs", "artifacts", "artifacts"],
     );
+    assert.equal(providerError.writes.length, 0);
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
@@ -1035,7 +1284,7 @@ try:
 except (OSError, subprocess.CalledProcessError) as exc:
     raise SystemExit(f"ci workflow: shared provenance capture fixture failed: {exc}") from exc
 
-coverage_report_step = find_step(ci, "build-and-test", "Upload Coverage Report", "ci workflow")
+coverage_report_step = find_step(module_ci, "build-and-test", "Upload Coverage Report", "ci workflow")
 require_equal(
     coverage_report_step, ("with", "name"),
     "jacoco-${{ matrix.module }}-${{ matrix.partition }}-report-${{ github.sha }}-attempt-${{ github.run_attempt }}",
@@ -1081,7 +1330,7 @@ if re.findall(r"options\.release\.set\((\d+)\)", gradle_build) != ["25", "25"]:
 buf_java_setup = find_step(ci, "buf-check", "Set up Java for remote generator compatibility proof", "ci workflow")
 require_equal(buf_java_setup, ("with", "java-version"), "25", "ci workflow")
 for expected in (
-    'val slowServiceCiPartitionCounts = mapOf("account-service" to 4, "game-session-service" to 4)',
+    'val slowServiceCiPartitionCounts = mapOf("account-service" to 4, "game-session-service" to 4, "world-management-service" to 2)',
     'providers.gradleProperty("slowServiceCiPartitionModule").orNull',
     'if ((slowServiceCiPartition == null) != (slowServiceCiPartitionModule == null))',
     'slowServiceCiPartitionCounts[slowServiceCiPartitionModule]',
@@ -1246,6 +1495,53 @@ gate_enforcement_steps = [
 ]
 if len(gate_enforcement_steps) != 1:
     raise SystemExit("ci workflow: expected one Validation Gate enforcement step")
+# Execute the real enforcement shell with controlled upstream outcomes, without CI or Gradle.
+gate = gate_enforcement_steps[0]
+for group_id in groups:
+    require_list_item(ci, ("jobs", "validation-gate", "needs"), group_id, "ci workflow")
+for variable, job_id in (("BUILD_AND_TEST", "build-and-test"),
+                         ("BUILD_AND_TEST_ACCOUNT", "build-and-test-account"),
+                         ("BUILD_AND_TEST_GAME_SESSION", "build-and-test-game-session"),
+                         ("BUILD_AND_TEST_WORLD", "build-and-test-world")):
+    require_equal(gate, ("env", variable), "${{ needs." + job_id + ".result }}", "ci workflow")
+require_equal(gate, ("env", "OTHER_MODULES_AFFECTED"),
+              "${{ needs.changes.outputs.other_module_check_matrix != '[]' }}", "ci workflow")
+base_env = {name: "success" for name in gate["env"]}
+for name in ("DOCS_CHANGED", "FRONTEND_CHANGED", "PYTHON_CHANGED", "DESIGN_DOCS_CHANGED",
+             "VALIDATION_PYTHON_CHANGED", "POSTGRES_RUNTIME_PROOF_CHANGED",
+             "ACCOUNT_MODULE_AFFECTED", "GAME_SESSION_MODULE_AFFECTED", "WORLD_MODULE_AFFECTED", "OTHER_MODULES_AFFECTED"):
+    base_env[name] = "true"
+base_env["LIGHTWEIGHT_ONLY"] = "false"
+base_env["AFFECTED_MODULES"] = '["account-service","game-session-service","common-security"]'
+def gate_case(changes, expected):
+    result = subprocess.run(["bash", "-e", "-c", gate["run"]], env={**os.environ, **base_env, **changes}, capture_output=True, text=True)
+    if (result.returncode == 0) != expected:
+        raise SystemExit(f"Validation Gate fixture {changes} unexpectedly returned {result.returncode}: {result.stdout} {result.stderr}")
+gate_case({}, True)
+for flag, result, aggregate in (
+    ("OTHER_MODULES_AFFECTED", "BUILD_AND_TEST", None),
+    ("ACCOUNT_MODULE_AFFECTED", "BUILD_AND_TEST_ACCOUNT", "ACCOUNT_COVERAGE_AGGREGATE"),
+    ("GAME_SESSION_MODULE_AFFECTED", "BUILD_AND_TEST_GAME_SESSION", "GAME_SESSION_COVERAGE_AGGREGATE"),
+    ("WORLD_MODULE_AFFECTED", "BUILD_AND_TEST_WORLD", "WORLD_COVERAGE_AGGREGATE"),
+):
+    for outcome in ("failure", "cancelled", "skipped", "timed_out", ""):
+        gate_case({result: outcome}, False)
+    unaffected = {flag: "false", result: "skipped"}
+    if aggregate:
+        unaffected[aggregate] = "skipped"
+        for outcome in ("failure", "cancelled", "skipped"):
+            gate_case({aggregate: outcome}, False)
+    gate_case(unaffected, True)
+    gate_case({**unaffected, result: "failure"}, False)
+gate_case({"CHANGES_RESULT": "failure"}, False)
+gate_case({"WORKFLOW_LINT": "failure"}, False)
+gate_case({"OTHER_MODULES_AFFECTED": "false", "ACCOUNT_MODULE_AFFECTED": "false",
+           "GAME_SESSION_MODULE_AFFECTED": "false", "WORLD_MODULE_AFFECTED": "false",
+           "AFFECTED_MODULES": "[]",
+           "BUILD_AND_TEST": "skipped", "BUILD_AND_TEST_ACCOUNT": "skipped",
+           "BUILD_AND_TEST_GAME_SESSION": "skipped", "ACCOUNT_COVERAGE_AGGREGATE": "skipped",
+           "GAME_SESSION_COVERAGE_AGGREGATE": "skipped", "BUILD_AND_TEST_WORLD": "skipped",
+           "WORLD_COVERAGE_AGGREGATE": "skipped"}, True)
 require_equal(
     gate_enforcement_steps[0],
     ("env", "POSTGRES_RUNTIME_PROOF_CHANGED"),
