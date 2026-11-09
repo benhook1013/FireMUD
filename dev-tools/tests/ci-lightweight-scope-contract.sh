@@ -939,6 +939,7 @@ async function runFor(embedded, options = {}) {
     pull_requests: apiAssociations,
   };
   const calls = [];
+  let artifactRequestCount = 0;
   const assertRepo = request => {
     assert.equal(request.owner, owner, "every Actions request must bind the owner");
     assert.equal(request.repo, repository, "every Actions request must bind the repository");
@@ -977,6 +978,14 @@ async function runFor(embedded, options = {}) {
       assert.equal(request.run_id, runId);
       assert.equal(request.per_page, 100);
       calls.push(["artifacts", request]);
+      const round = Math.floor(artifactRequestCount / 2);
+      artifactRequestCount += 1;
+      if (options.artifactProviderError && request.page === 2) {
+        throw new Error(options.artifactProviderError);
+      }
+      if (options.artifactResponse) {
+        return { data: options.artifactResponse(round, request, artifactRows) };
+      }
       return {
         data: {
           total_count: artifactRows.length,
@@ -1010,9 +1019,9 @@ async function runFor(embedded, options = {}) {
     });
     assert.equal(writes.length, 1);
     assert.equal(writes[0][0], env.CI_PROVENANCE_PATH);
-    return { ok: true, calls, provenance: JSON.parse(writes[0][1]) };
+    return { ok: true, calls, writes, provenance: JSON.parse(writes[0][1]) };
   } catch (error) {
-    return { ok: false, calls, error: error.message };
+    return { ok: false, calls, writes, error: error.message };
   }
 }
 
@@ -1034,7 +1043,10 @@ async function runFor(embedded, options = {}) {
       const result = await runFor(embedded, options);
       assert.equal(result.ok, true, `${embedded.module}/${options.eventName}: ${result.error}`);
       const attempts = options.runAttempt || 1;
-      const expectedKinds = ["run", ...Array(attempts * 2).fill("jobs"), "artifacts", "artifacts"];
+      const expectedKinds = [
+        "run", ...Array(attempts * 2).fill("jobs"),
+        "artifacts", "artifacts", "artifacts", "artifacts",
+      ];
       assert.deepEqual(result.calls.map(([kind]) => kind), expectedKinds);
       assert.deepEqual(
         result.calls.filter(([kind]) => kind === "jobs").map(([, request]) => request.page),
@@ -1046,7 +1058,7 @@ async function runFor(embedded, options = {}) {
       );
       assert.deepEqual(
         result.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
-        [1, 2],
+        [1, 2, 1, 2],
       );
       assert.equal(result.provenance.run.head_sha, nativeHead);
       assert.equal(result.provenance.run.tested_source_sha,
@@ -1125,11 +1137,128 @@ async function runFor(embedded, options = {}) {
       eventName: "pull_request", incompleteArtifactsPage: 2,
     });
     assert.equal(incompleteArtifacts.ok, false, `${embedded.module} accepted incomplete artifact pagination`);
-    assert.match(incompleteArtifacts.error, /Incomplete workflow artifact page 2/);
+    assert.match(incompleteArtifacts.error, /two consecutive identical complete workflow artifact snapshots/);
     assert.deepEqual(
       incompleteArtifacts.calls.map(([kind]) => kind),
+      ["run", "jobs", "jobs", ...Array(8).fill("artifacts")],
+    );
+    assert.equal(incompleteArtifacts.writes.length, 0);
+
+    const uploadedArtifact = {
+      id: 3000, name: "unrelated-artifact-uploaded-between-pages", expired: false,
+      size_in_bytes: 512, created_at: "2026-10-30T02:01:00Z",
+      workflow_run: { id: runId, head_sha: nativeHead },
+    };
+    const uploadedRows = [uploadedArtifact, ...artifactRows];
+    const uploadBetweenPages = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round === 0 && request.page === 1 ? artifactRows : uploadedRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(uploadBetweenPages.ok, true, `${embedded.module} did not recover after an upload between pages`);
+    assert.deepEqual(
+      uploadBetweenPages.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(uploadBetweenPages.provenance.artifacts.total_count, artifactRows.length + 1);
+    assert.equal(uploadBetweenPages.provenance.artifacts.items[0].id, uploadedArtifact.id);
+
+    const shiftedDuplicatePage = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request, rows) {
+        if (round < 2 && request.page === 2) {
+          return {
+            total_count: rows.length,
+            artifacts: rows.slice(99, 106),
+          };
+        }
+        const start = (request.page - 1) * request.per_page;
+        return {
+          total_count: rows.length,
+          artifacts: rows.slice(start, start + request.per_page),
+        };
+      },
+    });
+    assert.equal(shiftedDuplicatePage.ok, true, `${embedded.module} did not retry a shifted duplicate page`);
+    assert.deepEqual(
+      shiftedDuplicatePage.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(shiftedDuplicatePage.provenance.artifacts.items.length, artifactRows.length);
+    assert.equal(
+      new Set(shiftedDuplicatePage.provenance.artifacts.items.map(artifact => artifact.id)).size,
+      artifactRows.length,
+    );
+
+    const changedMetadataRows = artifactRows.map(artifact => ({ ...artifact }));
+    changedMetadataRows[0] = { ...changedMetadataRows[0], size_in_bytes: 2048 };
+    const changesBetweenSnapshots = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round === 0 ? artifactRows : changedMetadataRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(changesBetweenSnapshots.ok, true, `${embedded.module} did not converge after complete snapshots changed`);
+    assert.deepEqual(
+      changesBetweenSnapshots.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(changesBetweenSnapshots.provenance.artifacts.items[0].size_in_bytes, 2048);
+
+    const changedIdentityRows = artifactRows.map(artifact => ({ ...artifact }));
+    changedIdentityRows[0] = { ...changedIdentityRows[0], id: 9000 };
+    const changedIdsBetweenSnapshots = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round === 0 ? artifactRows : changedIdentityRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(changedIdsBetweenSnapshots.ok, true, `${embedded.module} did not converge after complete snapshots changed IDs`);
+    assert.deepEqual(
+      changedIdsBetweenSnapshots.calls.filter(([kind]) => kind === "artifacts").map(([, request]) => request.page),
+      [1, 2, 1, 2, 1, 2],
+    );
+    assert.equal(changedIdsBetweenSnapshots.provenance.artifacts.total_count, artifactRows.length);
+    assert.equal(changedIdsBetweenSnapshots.provenance.artifacts.items[0].id, 9000);
+
+    const neverStable = await runFor(embedded, {
+      eventName: "pull_request",
+      artifactResponse(round, request) {
+        const rows = round % 2 === 0 ? artifactRows : changedMetadataRows;
+        return {
+          total_count: rows.length,
+          artifacts: rowsForPage(rows, request),
+        };
+      },
+    });
+    assert.equal(neverStable.ok, false, `${embedded.module} accepted snapshots that never stabilized`);
+    assert.match(neverStable.error, /two consecutive identical complete workflow artifact snapshots/);
+    assert.equal(neverStable.calls.filter(([kind]) => kind === "artifacts").length, 8);
+    assert.equal(neverStable.writes.length, 0);
+
+    const providerError = await runFor(embedded, {
+      eventName: "pull_request", artifactProviderError: "provider unavailable",
+    });
+    assert.equal(providerError.ok, false, `${embedded.module} accepted an artifact provider error`);
+    assert.equal(providerError.error, "provider unavailable");
+    assert.deepEqual(
+      providerError.calls.map(([kind]) => kind),
       ["run", "jobs", "jobs", "artifacts", "artifacts"],
     );
+    assert.equal(providerError.writes.length, 0);
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
