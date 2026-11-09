@@ -285,6 +285,35 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
   }
 
   @Test
+  void alreadyActiveNonAdmittingReceiptReplaysExactlyWithoutBecomingGameplayAdmission() {
+    var scope = realms();
+    var response =
+        positive().toBuilder()
+            .setOutcomeCode("ALREADY_ACTIVE")
+            .setGameplayAdmissionAllowed(false)
+            .setMembershipVersion(8L)
+            .setMembershipAuthorityGeneration(4L)
+            .setReplayed(true)
+            .build();
+    when(account.joinPublicProductionMembership(any(), any(), any(), any())).thenReturn(response);
+
+    var completed = owner.join(original, verified, custody);
+    assertThat(completed.status())
+        .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING);
+    assertThat(completed.currentReply()).contains(response);
+    assertThat(completed.currentReply().orElseThrow().getGameplayAdmissionAllowed()).isFalse();
+    var row =
+        dsl.fetchSingle(
+            "SELECT reply_bytes FROM " + JOIN + " WHERE scope_record_id = ?", scope.recordId());
+    assertThat(row.get("reply_bytes", byte[].class)).containsExactly(response.toByteArray());
+
+    var continuation = owner(repository, manager).join(original, verified, custody);
+    assertThat(continuation.requestId()).isEqualTo(completed.requestId());
+    assertThat(continuation.currentReply()).contains(response);
+    verify(account, times(1)).joinPublicProductionMembership(any(), any(), any(), any());
+  }
+
+  @Test
   void independentConnectionsAllocateOneFrozenWinnerAndOnlyOneDispatchClaim() throws Exception {
     realms();
     var gate = new CountDownLatch(1);
@@ -785,10 +814,11 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
         .setSuccess(true)
         .setOutcomeCode("JOINED")
         .setAccountId(ACCOUNT.toString())
-        .setTenantId("101")
+        .setTenantId("22222222-2222-4222-8222-222222222222")
         .setMembershipId("90")
         .setMembershipVersion(3)
         .setMembershipAuthorityGeneration(1)
+        .setGameplayAdmissionAllowed(true)
         .build();
   }
 
@@ -803,7 +833,7 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     return new CanonicalPlayableTarget(
         "gameplay",
         "studio",
-        UUID.randomUUID(),
+        UUID.fromString("22222222-2222-4222-8222-222222222222"),
         "forest",
         "Forest",
         UUID.randomUUID(),

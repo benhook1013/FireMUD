@@ -17,6 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
@@ -62,7 +63,15 @@ class AuthControllerTest {
     when(accountService.joinPublicProduction("bootstrap", request))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult(
-                true, "JOINED", accountUuid, 7L, 8L, 1L, 1L, false));
+                true,
+                "JOINED",
+                accountUuid,
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                8L,
+                2L,
+                1L,
+                true,
+                false));
     mockMvc
         .perform(
             post("/auth/bootstrap/join")
@@ -70,7 +79,38 @@ class AuthControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.accountId").value(accountUuid));
+        .andExpect(jsonPath("$.data.accountId").value(accountUuid))
+        .andExpect(jsonPath("$.data.gameplayAdmissionAllowed").value(true));
+  }
+
+  @Test
+  void successfulActiveMembershipResponsePreservesNonAdmittingSnapshot() throws Exception {
+    String account = "d09f80cb-a46a-415e-8d35-c9e8068e49de";
+    var request =
+        new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
+            "scope", "active-request");
+    when(accountService.joinPublicProduction("bootstrap", request))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult(
+                true,
+                "ALREADY_ACTIVE",
+                account,
+                UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                8L,
+                3L,
+                2L,
+                false,
+                false));
+    mockMvc
+        .perform(
+            post("/auth/bootstrap/join")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer bootstrap")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.success").value(true))
+        .andExpect(jsonPath("$.data.outcomeCode").value("ALREADY_ACTIVE"))
+        .andExpect(jsonPath("$.data.gameplayAdmissionAllowed").value(false));
   }
 
   @Test
@@ -222,34 +262,34 @@ class AuthControllerTest {
   @Test
   void listBootstrapWorldsReturnsVisibleWorlds() throws Exception {
     when(accountService.listBootstrapWorlds("boot123"))
-        .thenReturn(List.of(new BootstrapWorldDto("demo", "Demo World")));
+        .thenReturn(List.of(new BootstrapWorldDto("tenant-demo", "demo", "Demo World")));
 
     mockMvc
         .perform(get("/auth/bootstrap/worlds").header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data[0].tenantSlug").value("tenant-demo"))
         .andExpect(jsonPath("$.data[0].worldSlug").value("demo"));
   }
 
   @Test
   void listBootstrapRealmsReturnsVisibleRealms() throws Exception {
-    when(accountService.listBootstrapRealms("boot123", "demo"))
+    when(accountService.listBootstrapRealms("boot123", "tenant-demo", "demo"))
         .thenReturn(
             List.of(
                 new BootstrapRealmDto(
                     "demo",
                     "production",
-                    "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
+                    UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901"),
                     "Live Realm",
-                    1L,
-                    42L,
+                    UUID.fromString("07aee9f3-a635-4b7f-aa66-86489320d7c3"),
+                    UUID.fromString("3ddc3564-435b-479d-b14d-c91995e673cc"),
                     17L,
                     23L,
-                    "8b1a9953-c461-4f4c-9f6d-1f5c5c0d2d88",
+                    UUID.fromString("8b1a9953-c461-4f4c-9f6d-1f5c5c0d2d88"),
                     "PLAYABLE_STATE_SCOPE_SHARED",
-                    false,
                     "SHARED",
-                    "ALLOW_NEW",
+                    "PRESEEDED_ONLY",
                     "2026-03-30T00:00:00Z",
                     "2026-03-30T00:02:00Z",
                     "scope-1")));
@@ -257,11 +297,16 @@ class AuthControllerTest {
     mockMvc
         .perform(
             get("/auth/bootstrap/worlds/demo/realms")
+                .param("tenantSlug", "tenant-demo")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data[0].realmSlug").value("production"))
         .andExpect(jsonPath("$.data[0].realmId").value("4c4b57d8-e3a2-48fe-9977-e7df0fdce901"))
+        .andExpect(jsonPath("$.data[0].tenantId").value("07aee9f3-a635-4b7f-aa66-86489320d7c3"))
+        .andExpect(
+            jsonPath("$.data[0].gameInstanceId").value("3ddc3564-435b-479d-b14d-c91995e673cc"))
+        .andExpect(jsonPath("$.data[0].requiresCharacterSelection").doesNotExist())
         .andExpect(jsonPath("$.data[0].catalogRevision").value(23))
         .andExpect(
             jsonPath("$.data[0].playableStateNamespaceId")
@@ -272,10 +317,26 @@ class AuthControllerTest {
   }
 
   @Test
+  void listBootstrapRealmsRequiresTenantSelector() throws Exception {
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isBadRequest());
+    org.mockito.Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void listBootstrapCharactersReturnsCharacters() throws Exception {
     when(accountService.listBootstrapCharacters("boot123", "demo", "production", "scope-1"))
         .thenReturn(
-            List.of(new BootstrapCharacterDto("char-1", "Mara", 12, "SHARED", "ALLOW_NEW")));
+            List.of(
+                new BootstrapCharacterDto(
+                    "11111111-1111-4111-8111-111111111111",
+                    "Mara",
+                    12,
+                    "SHARED",
+                    "PRESEEDED_ONLY")));
 
     mockMvc
         .perform(
@@ -284,8 +345,11 @@ class AuthControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data[0].characterId").value("char-1"))
-        .andExpect(jsonPath("$.data[0].characterName").value("Mara"));
+        .andExpect(jsonPath("$.data[0].characterId").value("11111111-1111-4111-8111-111111111111"))
+        .andExpect(jsonPath("$.data[0].characterName").value("Mara"))
+        .andExpect(jsonPath("$.data[0].level").value(12))
+        .andExpect(jsonPath("$.data[0].stateScope").value("SHARED"))
+        .andExpect(jsonPath("$.data[0].characterCreationPolicy").value("PRESEEDED_ONLY"));
   }
 
   @Test

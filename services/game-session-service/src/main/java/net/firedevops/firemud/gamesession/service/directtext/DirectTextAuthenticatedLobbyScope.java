@@ -175,13 +175,13 @@ public final class DirectTextAuthenticatedLobbyScope {
   public static DirectTextConnectScopeTarget targetFor(CanonicalPlayableTarget target) {
     Objects.requireNonNull(target);
     return new DirectTextConnectScopeTarget(
-        Long.toString(target.gameSessionTenantId()),
+        target.canonicalTenantId().toString(),
         target.worldSlug(),
         target.realmSlug(),
         target.realmId().toString(),
         target.playableStateNamespaceId().toString(),
         target.playableStateScope(),
-        Long.toString(target.gameInstanceId()),
+        target.canonicalGameInstanceId().toString(),
         target.catalogRevision(),
         target.pointerVersion());
   }

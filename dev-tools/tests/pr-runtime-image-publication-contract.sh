@@ -181,14 +181,18 @@ const title = `Build Runtime Images secure-pr-artifact pr-42 base-${sha("b")} he
 const repository = { full_name: "benhook1013/FireMUD", default_branch: "develop" };
 const source = { id: 4242, workflow_id: 777, path: ".github/workflows/runtime-images.yml", name: title, display_title: title, event: "repository_dispatch", repository, head_repository: repository, head_branch: "develop", head_sha: sha("b"), status: "completed", conclusion: "success" };
 const baseContext = { eventName: "repository_dispatch", ref: "refs/heads/develop", repo: {owner: "benhook1013", repo: "FireMUD"}, runId: 4242, payload: { repository, action: "pr-runtime-image-publication", client_payload: { source_run_id: "4242" } } };
-async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false } = {}) {
+async function resolve({ context = baseContext, runs = [source], workflow = { id: 777, name: "Build Runtime Images", path: source.path }, error = false, jobs = [] } = {}) {
   let reads = 0, clock = 0;
   const output = {};
-  const github = { rest: { actions: {
+  const github = { paginate: async () => jobs, rest: { actions: {
     getWorkflow: async () => ({data: workflow}),
     getWorkflowRun: async request => { assert.equal(request.run_id, 4242); reads++; if (error) throw Error("API unavailable"); return {data: runs[Math.min(reads - 1, runs.length - 1)]}; },
   } } };
-  await resolver(github, context, {setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
+  await resolver(github, context, {notice: () => {}, setOutput: (key, value) => {output[key] = value;}}, {now: () => {clock += 60000; return clock;}}, fn => fn());
+  if (jobs.some(job => (job.steps ?? []).some(step => step.conclusion === "success"))) {
+    assert.deepEqual(output, {}, "exception attempts must expose no publication source");
+    return {reads, output};
+  }
   assert.equal(output.title, title);
   assert.equal(output.artifact_name, `pr-runtime-images-pr-merge-${sha("c")}`);
   assert.equal(JSON.parse(output.source).status, "completed");
@@ -224,7 +228,7 @@ const handoffCondition = runtimeWorkflow.split("  dispatch-pr-runtime-publicatio
   .replace(/needs\.([a-z-]+)/g, (_, key) => `needs[${JSON.stringify(key)}]`);
 const admitted = new Function("github", "needs", "always", "cancelled", "format", `return ${handoffCondition};`);
 const trigger = {event_name: "repository_dispatch", event: {action: "pr-runtime-base-refresh", repository}, ref: "refs/heads/develop"};
-const success = {"image-meta": {result: "success", outputs: {controller_smoke_required: "false"}}, "pr-local-smoke": {result: "success"}, "pr-controller-smoke": {result: "skipped"}};
+const success = {"image-meta": {result: "success", outputs: {controller_smoke_required: "false"}}, "pr-local-smoke": {result: "success", outputs: {publishable: "true"}}, "pr-controller-smoke": {result: "skipped"}};
 function admits(event = trigger, results = success, cancelled = false) {
   return admitted(event, results, () => true, () => cancelled, (pattern, value) => pattern.replace("{0}", value));
 }
@@ -237,6 +241,9 @@ for (const job of ["image-meta", "pr-local-smoke", "pr-controller-smoke"]) {
 assert.equal(admits(trigger, {...success, "image-meta": {result: "success", outputs: {controller_smoke_required: "true"}}}), false);
 assert.equal(admits(trigger, {...success, "image-meta": {result: "success", outputs: {}}}), false);
 assert.equal(admits(trigger, success, true), false);
+for (const publishable of ["false", "", undefined]) {
+  assert.equal(admits(trigger, {...success, "pr-local-smoke": {result: "success", outputs: {publishable}}}), false);
+}
 (async () => {
   for (const path of diagnosticPaths) {
     assert.equal(await smokeDecision([path]), "false", `${path} must not require runtime smoke`);
@@ -252,6 +259,11 @@ assert.equal(admits(trigger, success, true), false);
   await dispatch({rest: {repos: {createDispatchEvent: async payload => {dispatched = payload;}}}}, baseContext);
   assert.deepEqual(dispatched, {...baseContext.repo, event_type: "pr-runtime-image-publication", client_payload: {source_run_id: "4242"}});
   const direct = await resolve();
+  const exceptionJob = {name: "PR Full-Stack Smoke (runtime-required=true)", steps: [{
+    name: "Known canonical transition PLAY failure with successful authenticated cleanup",
+    status: "completed", conclusion: "success"}]};
+  assert.deepEqual((await resolve({jobs: [exceptionJob]})).output, {});
+  assert.equal((await resolve({jobs: [{...exceptionJob, steps: [{...exceptionJob.steps[0], conclusion: "skipped"}]}]})).output.title, title);
   const pending = {...source, status: "in_progress", conclusion: null};
   assert.equal((await resolve({runs: [pending, source]})).reads, 2);
   const callbackContext = {...baseContext, eventName: "workflow_run", payload: {repository, workflow_run: source}};
@@ -263,6 +275,7 @@ assert.equal(admits(trigger, success, true), false);
   assert.equal((await resolve({runs: [prSource]})).output.artifact_name, direct.output.artifact_name);
   assert.equal((await resolve({runs: [prSource], context: prCallback})).output.artifact_name, direct.output.artifact_name);
   const publisherWorkflow = fs.readFileSync(process.argv[5], "utf8");
+  assert.ok(publisherWorkflow.includes("if: ${{ needs.source.outputs.source != '' }}"), "no source must skip privileged publication");
   const download = publisherWorkflow.split("      - name: Download successful PR image artifacts\n")[1]
     .split("      - name: Validate exact PR source and artifact before registry login\n")[0];
   const inputs = Object.fromEntries([...download.matchAll(/^          (name|path|run-id): (.+)$/gm)]
@@ -471,6 +484,20 @@ try:
     assert f"base_ref={request['base']['ref']}\n" in output
     assert f"image_tag=pr-merge-{merge['sha']}\n" in output
     assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
+    assert "canonical_play_transition=false\n" in output
+    labeled_request = json.loads(json.dumps(request))
+    labeled_request["labels"] = [{"name": "canonical-play-transition"}]
+    assert admit(labeled_request, merge, branch).returncode == 0
+    assert "canonical_play_transition=true\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    # Event labels are a separate marker path; only typed-refresh admission may
+    # export verified live-label authority through this metadata output.
+    assert admit(labeled_request, merge, branch, event_name="pull_request").returncode == 0
+    assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    for labels in (None, [], [{"name": "other"}], "canonical-play-transition"):
+        unlabeled_request = {**request, "labels": labels}
+        assert admit(unlabeled_request, merge, branch).returncode == 0
+        assert "canonical_play_transition=false\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+    assert admit(labeled_request, merge, branch, {"EVENT_ACTION": "other"}).returncode != 0
     assert branch["object"]["sha"] not in dict(line.split("=", 1) for line in output.splitlines())["base_image"]
     literal_marker = fixture / "must-not-execute"
     valid_refs = ("feature/topic+fix", "feature/@/parent", "feature/世界", "feature/#fragment", "feature/%encoded",
@@ -496,7 +523,7 @@ try:
         assert not (fixture / "runtime-meta-ref-calls").read_text(), "invalid ref reached GitHub lookup"
     assert admit(request, merge, {**branch, "ref": "refs/heads/feature/other"}).returncode != 0
     for mutation in ("stale-base", "stale-head", "wrong-parents", "fork", "closed", "retarget", "missing-merge", "wrong-default-ref"):
-        mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (request, merge, branch)]
+        mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (labeled_request, merge, branch)]
         overrides = {}
         if mutation == "stale-base":
             mutated_branch["object"]["sha"] = "d" * 40
@@ -516,6 +543,7 @@ try:
             overrides["GITHUB_REF"] = "refs/heads/feature/untrusted"
         rejected = admit(mutated_request, mutated_merge, mutated_branch, overrides)
         assert rejected.returncode != 0, f"runtime metadata admitted {mutation}"
+        assert "canonical_play_transition=true\n" not in Path(env["GITHUB_OUTPUT"]).read_text()
 finally:
     for path, original in zip(paths, originals):
         path.write_text(original)

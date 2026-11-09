@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
@@ -32,6 +33,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReadFence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
@@ -75,14 +78,25 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
     TransactionSynchronizationManager.clear();
   }
 
-  @Test
-  void pendingFirstJoinStagesSourcesAppendsAuditAndCommitsExactTerminalProof() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void pendingFirstJoinStagesSourcesAppendsAuditAndCommitsExactTerminalProof(boolean paid) {
     Fixture fixture = new Fixture();
     fixture.arrangePending();
     fixture.startWritableTransaction();
 
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    when(fixture.eventProducer.publishPaidCanonicalFirstJoinMembershipChange(
+            fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed))
+        .thenReturn(fixture.checkpoint);
     CanonicalJoinTerminalProof result =
-        fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING);
+        paid
+            ? fixture.coordinator.commitPaidCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed)
+            : fixture.coordinator.commitCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING);
 
     assertThat(result).isEqualTo(fixture.expectedProof);
     InOrder ordered = inOrder(fixture.memberships, fixture.roles, fixture.eventProducer);
@@ -91,9 +105,15 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .verify(fixture.roles)
         .replaceCanonical(
             fixture.membership, ACCOUNT_ID, TENANT_ID, fixture.provenance, 2L, List.of("player"));
-    ordered
-        .verify(fixture.eventProducer)
-        .publishCanonicalFirstJoinMembershipChange(fixture.scope, REQUEST_ID, CALLER_BINDING);
+    if (paid)
+      ordered
+          .verify(fixture.eventProducer)
+          .publishPaidCanonicalFirstJoinMembershipChange(
+              fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed);
+    else
+      ordered
+          .verify(fixture.eventProducer)
+          .publishCanonicalFirstJoinMembershipChange(fixture.scope, REQUEST_ID, CALLER_BINDING);
     verify(fixture.audit)
         .appendCanonicalTenant(
             fixture.expectedProof.auditEventId(),
@@ -104,14 +124,25 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .commitCanonicalFirstJoin(REQUEST_ID, fixture.scope, CALLER_BINDING, fixture.expectedProof);
   }
 
-  @Test
-  void committedExactRetryReadsReceiptWithoutCreatingMembershipOrAppendingAudit() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void committedExactRetryReadsReceiptWithoutCreatingMembershipOrAppendingAudit(boolean paid) {
     Fixture fixture = new Fixture();
     fixture.arrangeCommittedReplay();
     fixture.startWritableTransaction();
 
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
     CanonicalJoinTerminalProof result =
-        fixture.coordinator.commitCanonicalFirstJoin(fixture.scope, REQUEST_ID, CALLER_BINDING);
+        paid
+            ? fixture.coordinator.commitPaidCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed)
+            : fixture.coordinator.commitCanonicalFirstJoin(
+                fixture.scope, REQUEST_ID, CALLER_BINDING);
+    verifyNoInteractions(hosting);
+    verify(fixture.eventProducer, never())
+        .publishPaidCanonicalFirstJoinMembershipChange(any(), any(), any(), any(), any(), any());
 
     assertThat(result).isEqualTo(fixture.expectedProof);
     assertThat(fixture.minimalAuditEnvelope.payload()).isNull();
@@ -127,6 +158,194 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .findCanonicalTenantEnvelopeForUpdate(fixture.expectedProof.auditEventId());
     verify(fixture.operations)
         .commitCanonicalFirstJoin(REQUEST_ID, fixture.scope, CALLER_BINDING, fixture.expectedProof);
+  }
+
+  @Test
+  void committedJoinReturnsStoredEvidenceWithoutReadingOrMutatingCurrentAuthority() {
+    Fixture fixture = new Fixture();
+    var committed = Fixture.terminal(fixture.operation, fixture.expectedProof, "COMMITTED");
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
+        .thenReturn(Optional.of(committed));
+    fixture.startWritableTransaction();
+
+    var result =
+        fixture.coordinator.commitCanonicalJoin(
+            fixture.scope, REQUEST_ID, CALLER_BINDING, null, null, null);
+
+    assertThat(result).isSameAs(committed);
+    InOrder ordered = inOrder(fixture.accounts, fixture.operations);
+    ordered.verify(fixture.accounts).findByAccountUuid(ACCOUNT_ID);
+    ordered.verify(fixture.operations).lockAccount(fixture.account.getId());
+    ordered.verify(fixture.operations).findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID);
+    ordered.verifyNoMoreInteractions();
+    verifyNoInteractions(
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
+  @Test
+  void existingJoinRejectsNullScopeBeforeAnyOwnerRead() {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalJoin(
+                    null, REQUEST_ID, CALLER_BINDING, null, null, null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("canonical JOIN scope is required");
+    verifyNoInteractions(
+        fixture.accounts,
+        fixture.operations,
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
+  @Test
+  void existingJoinRejectsUnboundedSelectorsBeforeAnyOwnerRead() {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+
+    for (String requestId : new String[] {null, "", " ", "x".repeat(129)}) {
+      assertThatThrownBy(
+              () ->
+                  fixture.coordinator.commitCanonicalJoin(
+                      fixture.scope, requestId, CALLER_BINDING, null, null, null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("canonical JOIN request ID");
+    }
+    for (String callerBinding : new String[] {null, "", " ", "x".repeat(129)}) {
+      assertThatThrownBy(
+              () ->
+                  fixture.coordinator.commitCanonicalJoin(
+                      fixture.scope, REQUEST_ID, callerBinding, null, null, null))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("verified caller binding");
+    }
+    verifyNoInteractions(
+        fixture.accounts,
+        fixture.operations,
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void inactiveJoinRestoresOnlyPlayerWithoutRegrantingRetainedElevatedRoles(
+      boolean retainedPlayerRole) {
+    Fixture fixture = new Fixture();
+    fixture.arrangePending();
+    AccountTenantMembership inactive = fixture.membership(fixture.account);
+    inactive.setLifecycleState("INACTIVE");
+    inactive.setGameplayAdmissionAllowed(false);
+    inactive.setMembershipVersion(1L);
+    List<String> retainedRoles =
+        retainedPlayerRole
+            ? List.of("designer", "moderator", "player", "tenantAdmin")
+            : List.of("designer", "moderator", "tenantAdmin");
+    RoleSnapshot inactiveRoles =
+        new RoleSnapshot(
+            17L, null, 73L, 1L, retainedRoles, ACCOUNT_ID, TENANT_ID, fixture.provenance);
+    when(fixture.memberships.findFreshMembershipForUpdate(ACCOUNT_ID, TENANT_ID))
+        .thenReturn(Optional.of(inactive));
+    when(fixture.roles.findForCanonicalUpdate(ACCOUNT_ID, TENANT_ID, fixture.provenance, 73L, 1L))
+        .thenReturn(Optional.of(inactiveRoles));
+    when(fixture.memberships.restoreFreshMembershipForJoin(ACCOUNT_ID, TENANT_ID, inactive))
+        .thenReturn(fixture.membership);
+    when(fixture.eventProducer.publishCanonicalRestoredMembershipChange(
+            fixture.scope,
+            REQUEST_ID,
+            CALLER_BINDING,
+            fixture.positivePair(fixture.event.eventId(), fixture.event.eventDigest()),
+            null,
+            null,
+            null))
+        .thenReturn(fixture.checkpoint);
+    var committed = Fixture.committed(fixture.operation, fixture.expectedProof);
+    when(fixture.operations.commitCanonicalJoin(
+            REQUEST_ID, fixture.scope, CALLER_BINDING, "JOINED", fixture.expectedProof))
+        .thenReturn(committed);
+    fixture.startWritableTransaction();
+
+    var result =
+        fixture.coordinator.commitCanonicalJoin(
+            fixture.scope, REQUEST_ID, CALLER_BINDING, null, null, null);
+
+    assertThat(result).isSameAs(committed);
+    verify(fixture.eventProducer)
+        .requireCurrentCanonicalJoinPolicy(
+            fixture.scope, fixture.operation, true, null, null, null);
+    verify(fixture.audit)
+        .appendCanonicalTenant(
+            fixture.expectedProof.auditEventId(),
+            TENANT_ID.toString(),
+            "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+            fixture.auditPayload);
+    verify(fixture.audit).findExactCanonicalTenantEnvelopeForUpdate(fixture.auditEnvelope);
+    verify(fixture.audit, never()).findCanonicalTenantEnvelopeForUpdate(any());
+    InOrder ordered = inOrder(fixture.roles, fixture.eventProducer);
+    ordered
+        .verify(fixture.roles)
+        .findForCanonicalUpdate(ACCOUNT_ID, TENANT_ID, fixture.provenance, 73L, 1L);
+    ordered
+        .verify(fixture.roles)
+        .replaceCanonical(
+            fixture.membership, ACCOUNT_ID, TENANT_ID, fixture.provenance, 2L, List.of("player"));
+    ordered
+        .verify(fixture.eventProducer)
+        .publishCanonicalRestoredMembershipChange(
+            fixture.scope,
+            REQUEST_ID,
+            CALLER_BINDING,
+            fixture.positivePair(fixture.event.eventId(), fixture.event.eventDigest()),
+            null,
+            null,
+            null);
+    // Capture every role write, not the immutable fixture event returned by the mocked producer.
+    org.mockito.ArgumentCaptor<List<String>> writtenRoles =
+        org.mockito.ArgumentCaptor.forClass(List.class);
+    verify(fixture.roles)
+        .replaceCanonical(any(), any(), any(), any(), anyLong(), writtenRoles.capture());
+    assertThat(writtenRoles.getValue()).containsExactly("player");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void committedJoinStillRejectsChangedRequestOrCallerBinding(boolean changedRequest) {
+    Fixture fixture = new Fixture();
+    String requestId = changedRequest ? "different-request" : REQUEST_ID;
+    String callerBinding = changedRequest ? CALLER_BINDING : "different-caller";
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_ID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.operations.findCanonicalEvidenceForUpdateByRequestId(requestId))
+        .thenReturn(Optional.of(Fixture.committed(fixture.operation, fixture.expectedProof)));
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalJoin(
+                    fixture.scope, requestId, callerBinding, null, null, null))
+        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class)
+        .hasMessage("Canonical JOIN intent conflicts");
+    verifyNoInteractions(
+        fixture.memberships,
+        fixture.roles,
+        fixture.outbox,
+        fixture.pairs,
+        fixture.audit,
+        fixture.eventProducer);
   }
 
   @Test
@@ -569,6 +788,12 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
 
     private static CanonicalJoinOperationEvidence committed(
         CanonicalJoinOperationEvidence pending, CanonicalJoinTerminalProof proof) {
+      return terminal(pending, proof, "COMMITTED");
+    }
+
+    private static CanonicalJoinOperationEvidence terminal(
+        CanonicalJoinOperationEvidence pending, CanonicalJoinTerminalProof proof, String status) {
+      boolean success = "COMMITTED".equals(status);
       return new CanonicalJoinOperationEvidence(
           pending.requestId(),
           pending.privateAccountId(),
@@ -587,12 +812,12 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
           pending.lastAttemptAuthorityAvailability(),
           pending.lastAttemptFailureCode(),
           pending.callerBoundAuthorityInvalidated(),
-          "COMMITTED",
-          "JOINED",
-          proof.membershipId(),
-          proof.membershipVersion(),
-          proof.membershipAuthorityGeneration(),
-          proof,
+          status,
+          success ? "JOINED" : "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+          success ? proof.membershipId() : null,
+          success ? proof.membershipVersion() : null,
+          success ? proof.membershipAuthorityGeneration() : null,
+          success ? proof : null,
           pending.scopeEvidence());
     }
 

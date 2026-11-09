@@ -1,12 +1,18 @@
 package net.firedevops.firemud.accountservice.dto;
 
-/** Durable explicit-JOIN outcome; a failure is returned so its receipt can commit first. */
+import java.util.UUID;
+
+/**
+ * Durable membership-operation outcome. Success preserves the exact membership admission flag; it
+ * is not a gameplay admission grant. A failure is returned so its receipt can commit first.
+ */
 public record JoinPublicProductionResult(
     boolean success,
     String outcomeCode,
     String accountId,
-    long tenantId,
+    UUID tenantId,
     long membershipId,
     long membershipVersion,
     long membershipAuthorityGeneration,
+    boolean gameplayAdmissionAllowed,
     boolean replayed) {}

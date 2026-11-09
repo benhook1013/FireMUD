@@ -294,6 +294,51 @@ public class AccountTenantMembershipRepository {
     return readback;
   }
 
+  /** Stages an INACTIVE restore; its event, pair and terminal receipt must commit atomically. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public AccountTenantMembership restoreFreshMembershipForJoin(
+      UUID accountUuid, UUID tenantUuid, AccountTenantMembership expected) {
+    requireOwnerWriteTransaction();
+    AccountTenantMembership current =
+        findFreshMembershipForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(() -> new IllegalStateException("Restore membership is absent"));
+    if (expected == null
+        || !Objects.equals(current.getId(), expected.getId())
+        || !"INACTIVE".equals(current.getLifecycleState())
+        || current.getMembershipVersion() != expected.getMembershipVersion()
+        || current.getMembershipAuthorityGeneration()
+            != expected.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException("Restore membership changed from its locked snapshot");
+    }
+    long next = increment(current.getMembershipVersion(), "membership version");
+    int changed =
+        dsl.execute(
+            "UPDATE account_tenant_membership SET lifecycle_state = 'ACTIVE', "
+                + "gameplay_admission_allowed = TRUE, membership_version = ?, "
+                + "authority_provenance = 'EXPLICIT_JOIN' WHERE id = ? AND account_id = ? "
+                + "AND tenant_id IS NULL AND tenant_uuid = ? AND lifecycle_state = 'INACTIVE' "
+                + "AND membership_version = ? AND membership_authority_generation = ?",
+            next,
+            current.getId(),
+            current.getAccount().getId(),
+            tenantUuid,
+            current.getMembershipVersion(),
+            current.getMembershipAuthorityGeneration());
+    if (changed != 1)
+      throw new IllegalStateException("Restore membership compare-and-advance failed");
+    AccountTenantMembership restored =
+        findCanonicalMembershipForUpdate(accountUuid, tenantUuid).orElseThrow();
+    if (!"ACTIVE".equals(restored.getLifecycleState())
+        || !restored.isGameplayAdmissionAllowed()
+        || restored.getMembershipVersion() != next
+        || restored.getMembershipAuthorityGeneration() != current.getMembershipAuthorityGeneration()
+        || !Objects.equals(restored.getId(), current.getId())
+        || !"EXPLICIT_JOIN".equals(restored.getAuthorityProvenance())) {
+      throw new IllegalStateException("Restore membership readback differs");
+    }
+    return restored;
+  }
+
   /** Account-fenced absence enrollment for the fresh creator owner; creates no membership. */
   @Transactional(propagation = Propagation.MANDATORY)
   public PairAuthority prepareFreshCreatorAbsence(UUID accountUuid, UUID tenantUuid) {

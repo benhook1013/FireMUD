@@ -32,7 +32,7 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.JwtClaims;
-import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.slf4j.Logger;
@@ -306,14 +306,17 @@ public final class AccountClient
     }
     try {
       JwtClaims.requireCanonicalAccountUuid(context.getAccountId(), "accountId");
-      RequestIdValidation.requirePositiveLong(context.getTenantId(), "tenantId");
+      DirectTextConnectScopeTarget.requireUuid(context.getTenantId(), "tenantId");
       DirectTextConnectScopeTarget.requireUuid(context.getRealmId(), "realmId");
       DirectTextConnectScopeTarget.requireUuid(
           context.getPlayableStateNamespaceId(), "playableStateNamespaceId");
       DirectTextConnectScopeTarget.requireScope(context.getPlayableStateScope());
-      RequestIdValidation.requirePositiveLong(context.getGameInstanceId(), "gameInstanceId");
-      return isBoundedText(context.getSessionId(), 128)
-          && isBoundedText(context.getRequestId(), 128);
+      DirectTextConnectScopeTarget.requireUuid(context.getGameInstanceId(), "gameInstanceId");
+      if (!isBoundedText(context.getSessionId(), 32) || !context.getSessionId().matches("[0-9]+")) {
+        return false;
+      }
+      SessionIdParsing.require(context.getSessionId());
+      return isBoundedText(context.getRequestId(), 128);
     } catch (IllegalArgumentException ex) {
       return false;
     }

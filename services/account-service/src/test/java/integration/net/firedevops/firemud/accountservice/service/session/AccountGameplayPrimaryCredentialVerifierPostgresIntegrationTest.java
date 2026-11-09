@@ -31,6 +31,7 @@ import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperatio
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner;
@@ -294,7 +295,6 @@ class AccountGameplayPrimaryCredentialVerifierPostgresIntegrationTest {
             null,
             null,
             null,
-            null,
             challenges,
             null,
             null,
@@ -302,9 +302,7 @@ class AccountGameplayPrimaryCredentialVerifierPostgresIntegrationTest {
             null,
             null,
             null,
-            null,
-            null,
-            null,
+            org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
             null,
             null,
             null,

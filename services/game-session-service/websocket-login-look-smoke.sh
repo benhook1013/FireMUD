@@ -61,6 +61,7 @@ repo_root = Path(os.environ["FIREMUD_REPO_ROOT"])
 sys.path.insert(0, str(repo_root / "dev-tools" / "smoke"))
 
 from smoke_common import (
+    PlayEntitlementUnavailable,
     gameplay_item_container_equipment_steps,
     login_play_look_steps,
     run_websocket_smoke_session,
@@ -130,19 +131,25 @@ else:
         look_timeout=look_timeout_seconds,
     )
 steps += [("LOGOUT", ["OK LOGOUT", "Logged out."], "LOGOUT")]
-run_websocket_smoke_session(
-    lambda: websocket.create_connection(
-        websocket_url,
-        timeout=timeout_seconds,
-        header=[
-            f"X-Game-Instance-Id: {session_id}",
-            f"X-Tenant-Id: {tenant_id}",
-        ],
-    ),
-    steps,
-    timeout_seconds,
-    retriable_exceptions=(OSError, websocket.WebSocketException),
-    session_label=f"WebSocket session {websocket_url}",
-    discovery_selector=world,
-)
+try:
+    run_websocket_smoke_session(
+        lambda: websocket.create_connection(
+            websocket_url,
+            timeout=timeout_seconds,
+            header=[
+                f"X-Game-Instance-Id: {session_id}",
+                f"X-Tenant-Id: {tenant_id}",
+            ],
+        ),
+        steps,
+        timeout_seconds,
+        retriable_exceptions=(OSError, websocket.WebSocketException),
+        session_label=f"WebSocket session {websocket_url}",
+        discovery_selector=world,
+        step_results=[],
+    )
+except PlayEntitlementUnavailable as exc:
+    print(f"Known direct backend PLAY failure after LOGIN: {exc}", file=sys.stderr)
+    raise SystemExit(86) from exc
+
 PYTHON

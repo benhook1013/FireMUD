@@ -34,6 +34,8 @@ import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDe
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
@@ -86,6 +88,246 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   private static final UUID TENANT = UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final long PRIVATE_ACCOUNT = 41L;
   private static final String NAMESPACE = "prod";
+
+  @Test
+  void directProducerUsesExactGameSessionPeerAndCurrentOwnersWithoutBootstrapRegistry() {
+    Fixture f = new Fixture(300000L);
+    f.active.set(false);
+    var target = directTarget(f.target);
+    var caller = directCaller(f.target);
+    java.util.concurrent.atomic.AtomicReference<CanonicalJoinScopeV2> result =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    directPeer(NAMESPACE, "game-session-service")
+        .run(() -> result.set(f.owner.issueDirectTextScope(caller, target).scope()));
+
+    CanonicalJoinScopeV2 scope = result.get();
+    assertThat(scope.accountId()).isEqualTo(ACCOUNT);
+    assertThat(scope.tenantId()).isEqualTo(TENANT);
+    assertThat(scope.gameInstanceId()).isEqualTo(f.target.canonicalGameInstanceId());
+    assertThat(f.retained.get()).isEqualTo(scope);
+    assertThat(f.registryChecks.get()).isZero();
+    assertThat(Instant.parse(scope.connectScopeExpiresAt())).isAfter(f.clock.instant());
+    verifyNoInteractions(f.sessions);
+    verify(f.scopes).insertCanonical(PRIVATE_ACCOUNT, scope, f.provenance());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"00042", "00000000000000000000000000000042", "9223372036854775807"})
+  void directProducerAcceptsPositiveSessionBytesWithinTheJoinBoundary(String sessionId) {
+    Fixture f = new Fixture(300000L);
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () -> {
+              var scope =
+                  f.owner
+                      .issueDirectTextScope(
+                          directCaller(f.target, sessionId), directTarget(f.target))
+                      .scope();
+              assertThat(scope.accountId()).isEqualTo(ACCOUNT);
+              assertThat(f.retained.get()).isEqualTo(scope);
+              verify(f.scopes).insertCanonical(PRIVATE_ACCOUNT, scope, f.provenance());
+            });
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {33, 128, 129})
+  void directProducerRefusesSessionBytesBeyondTheJoinBoundaryBeforeOwnerReads(int length) {
+    Fixture f = new Fixture(300000L);
+    String sessionId = "0".repeat(length - 1) + "1";
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "CONNECT_CONTEXT_INVALID",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target, sessionId), directTarget(f.target))));
+    verifyNoInteractions(
+        f.accounts,
+        f.memberships,
+        f.tenants,
+        f.heads,
+        f.scopes,
+        f.sessions,
+        f.targets,
+        f.entitlements);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "0",
+        "-1",
+        "+1",
+        " 42",
+        "42 ",
+        "1.0",
+        "1e2",
+        "abc",
+        "9223372036854775808",
+        "\u0664\u0662",
+        "\uff14\uff12"
+      })
+  void directProducerRefusesNonPositiveAsciiLongsAndRetainsParseCauseBeforeOwnerReads(
+      String sessionId) {
+    Fixture f = new Fixture(300000L);
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            f.owner.issueDirectTextScope(
+                                directCaller(f.target, sessionId), directTarget(f.target)))
+                    .isInstanceOf(AuthenticationException.class)
+                    .hasCauseInstanceOf(NumberFormatException.class)
+                    .extracting(failure -> ((AuthenticationException) failure).getCode())
+                    .isEqualTo("CONNECT_CONTEXT_INVALID"));
+    verifyNoInteractions(
+        f.accounts,
+        f.memberships,
+        f.tenants,
+        f.heads,
+        f.scopes,
+        f.sessions,
+        f.targets,
+        f.entitlements);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"other-namespace", "wrong-service"})
+  void directProducerRefusesWrongPeerBeforeReadingAccountOrSources(String mismatch) {
+    Fixture f = new Fixture(300000L);
+    var peer =
+        directPeer(
+            mismatch.equals("other-namespace") ? "other" : NAMESPACE,
+            mismatch.equals("wrong-service") ? "world-management-service" : "game-session-service");
+    peer.run(
+        () ->
+            assertCode(
+                "AUTH_UNAVAILABLE",
+                () ->
+                    f.owner.issueDirectTextScope(directCaller(f.target), directTarget(f.target))));
+    verifyNoInteractions(
+        f.accounts,
+        f.memberships,
+        f.tenants,
+        f.heads,
+        f.scopes,
+        f.sessions,
+        f.targets,
+        f.entitlements);
+  }
+
+  @Test
+  void directProducerRejectsUnknownAccountWithoutReadingTargetsOrPersistingScope() {
+    Fixture f = new Fixture(300000L);
+    doReturn(Optional.empty()).when(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "CONNECT_CONTEXT_INVALID",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target), directTarget(f.target))));
+
+    verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+    verifyNoInteractions(
+        f.memberships, f.tenants, f.heads, f.scopes, f.sessions, f.targets, f.entitlements);
+  }
+
+  @Test
+  void directProducerKeepsAccountRepositoryFailureRetryableWithoutReadingTargets() {
+    Fixture f = new Fixture(300000L);
+    doThrow(new IllegalStateException("Account repository unavailable"))
+        .when(f.accounts)
+        .findByAccountUuidForUpdate(ACCOUNT);
+
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "AUTH_UNAVAILABLE",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target), directTarget(f.target))));
+
+    verify(f.accounts).findByAccountUuidForUpdate(ACCOUNT);
+    verifyNoInteractions(
+        f.memberships, f.tenants, f.heads, f.scopes, f.sessions, f.targets, f.entitlements);
+  }
+
+  @Test
+  void directProducerReportsUnavailableEntitlementWithoutMisclassifyingThePointer() {
+    Fixture f = new Fixture(300000L);
+    when(f.entitlements.evaluate(TENANT)).thenReturn(f.evaluation(false));
+
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "ENTITLEMENT_UNAVAILABLE",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target), directTarget(f.target))));
+
+    assertThat(f.targetReads.get()).isEqualTo(2);
+    verifyNoInteractions(f.scopes, f.sessions, f.memberships);
+  }
+
+  @Test
+  void directProducerRechecksCurrentAccountAndTargetBeforePersistingScope() {
+    Fixture f = new Fixture(300000L);
+    f.onSecondTargetRead =
+        () -> f.account.setLifecycleState(AccountLifecycleState.DEACTIVATED_PENDING_DELETE);
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "AUTH_UNAVAILABLE",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target), directTarget(f.target))));
+    verifyNoInteractions(f.scopes, f.sessions);
+  }
+
+  private static io.grpc.Context directPeer(String namespace, String service) {
+    return io.grpc.Context.ROOT.withValue(
+        net.firedevops.firemud.common.grpc.GrpcPeerIdentity.CONTEXT_KEY,
+        new net.firedevops.firemud.common.grpc.GrpcPeerIdentity(
+            "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service));
+  }
+
+  private static DirectTextCallerContext directCaller(Target target) {
+    return directCaller(target, "00042");
+  }
+
+  private static DirectTextCallerContext directCaller(Target target, String sessionId) {
+    return new DirectTextCallerContext(
+        ACCOUNT,
+        target.canonicalTenantId(),
+        target.realmId(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope(),
+        target.canonicalGameInstanceId(),
+        sessionId,
+        "direct-request");
+  }
+
+  private static DirectTextJoinTarget directTarget(Target target) {
+    return new DirectTextJoinTarget(
+        target.canonicalTenantId(),
+        target.realmId(),
+        target.worldSlug(),
+        target.realmSlug(),
+        target.playableStateNamespaceId(),
+        target.playableStateScope(),
+        target.canonicalGameInstanceId(),
+        target.catalogRevision(),
+        target.pointerVersion());
+  }
+
   private static final String HASH = "a".repeat(64);
 
   @AfterEach
@@ -248,6 +490,73 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     assertThat(f.owner.listRealmScopes(f.token, "other-tenant", "world")).isEmpty();
 
     verifyNoInteractions(f.entitlements, f.memberships, f.scopes);
+  }
+
+  @Test
+  void qualifiedWorldUsesTheExactSourceTenantAndRetainedV2Scope() {
+    Fixture f = new Fixture(300000L);
+
+    var result = f.owner.listRealmScopes(f.token, "tenant", "world").getFirst();
+
+    assertThat(result.target()).isEqualTo(f.target);
+    assertThat(result.scope().tenantId()).isEqualTo(f.target.canonicalTenantId());
+    assertThat(result.scope().tenantSlug()).isEqualTo(f.target.tenantSlug());
+    assertThat(result.scope()).isEqualTo(f.retained.get());
+    verify(f.entitlements).evaluate(TENANT);
+  }
+
+  @Test
+  void qualifiedWorldAmbiguityWithinOneTenantRefusesBeforeEntitlementOrAccountScopeSources() {
+    Fixture f = new Fixture(300000L);
+    Target duplicate = target(TENANT, "tenant", 1L);
+    f.firstCollection = List.of(f.target, duplicate);
+
+    assertCode(
+        "ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "tenant", "world"));
+
+    verifyNoInteractions(f.entitlements, f.tenants, f.heads, f.memberships, f.scopes);
+    assertThat(f.transactions.started).isZero();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void qualifiedWorldReplacementOrAmbiguityOnRereadCannotPublishScope(boolean ambiguous) {
+    Fixture f = new Fixture(300000L);
+    Target changed = target(TENANT, "tenant", 2L);
+    f.secondCollection = ambiguous ? List.of(f.target, changed) : List.of(changed);
+
+    assertCode(
+        "ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "tenant", "world"));
+
+    verifyNoInteractions(f.scopes);
+    verify(f.entitlements).evaluate(TENANT);
+  }
+
+  @Test
+  void qualifiedWorldSelectionUsesTheSamePipelineWithinTheCompleteCollection() {
+    Fixture f = new Fixture(300000L);
+    Target other = target(UUID.randomUUID(), "another-tenant", 1L);
+    f.firstCollection = List.of(f.target, other);
+    f.secondCollection = f.firstCollection;
+
+    var result = f.owner.listRealmScopes(f.token, "tenant", "world").getFirst();
+
+    assertThat(result.scope().tenantId()).isEqualTo(TENANT);
+    assertThat(result.target()).isEqualTo(f.target);
+  }
+
+  @Test
+  void qualifiedWorldAbsenceIsRereadWithoutMintingAndMalformedCallerPrecedesSelection() {
+    Fixture f = new Fixture(300000L);
+    f.firstCollection = List.of();
+    f.secondCollection = List.of();
+
+    assertCode(
+        "CONNECT_CONTEXT_INVALID", () -> f.owner.listRealmScopes("malformed", "tenant", "world"));
+    verifyNoInteractions(f.targets, f.entitlements, f.scopes);
+    assertThat(f.owner.listRealmScopes(f.token, "tenant", "world")).isEmpty();
+    assertThat(f.targetReads.get()).isEqualTo(2);
+    verifyNoInteractions(f.entitlements, f.scopes, f.memberships);
   }
 
   @Test
@@ -481,6 +790,8 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     private final String token;
     private final AccountCanonicalPublicRealmScopeOwner owner;
     private Target secondTarget = target;
+    private List<Target> firstCollection;
+    private List<Target> secondCollection;
     private Runnable onSecondTargetRead = () -> {};
     private boolean corruptReadback;
     private boolean corruptDigest;
@@ -548,7 +859,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
                 if (count == 2) onSecondTargetRead.run();
                 var request =
                     new DiscoveryRequest(invocation.getArgument(0, UUID.class), NAMESPACE);
-                List<Target> values = List.of(count == 1 ? target : secondTarget);
+                List<Target> values =
+                    count == 1
+                        ? (firstCollection == null ? List.of(target) : firstCollection)
+                        : (secondCollection == null ? List.of(secondTarget) : secondCollection);
                 return CanonicalGameplayAdmissionDecisionReadGrpcCodec.fromDiscoveryResponse(
                     request,
                     CanonicalGameplayAdmissionDecisionReadGrpcCodec.toDiscoveryResponse(
@@ -757,6 +1071,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   private static Target target(long pointer) {
+    return target(TENANT, "tenant", pointer);
+  }
+
+  private static Target target(UUID tenantId, String tenantSlug, long pointer) {
     UUID realm = UUID.randomUUID();
     UUID playableNamespace = UUID.randomUUID();
     UUID instance = UUID.randomUUID();
@@ -767,7 +1085,7 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     var request =
         new WorldCanonicalInitialAdmissionHold.Request(
             NAMESPACE,
-            TENANT,
+            tenantId,
             "world",
             realm,
             playableNamespace,
@@ -783,8 +1101,8 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
     var hold = new WorldCanonicalInitialAdmissionHold.HoldIdentity(request, holdId, holdFence);
     return new Target(
         NAMESPACE,
-        "tenant",
-        TENANT,
+        tenantSlug,
+        tenantId,
         "world",
         "World",
         realm,

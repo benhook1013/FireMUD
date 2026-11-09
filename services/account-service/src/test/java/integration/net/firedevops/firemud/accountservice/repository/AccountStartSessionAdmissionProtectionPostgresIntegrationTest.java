@@ -196,10 +196,16 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     var dsl = DSL.using(source, SQLDialect.POSTGRES);
     assertThat(
             dsl.fetchSingle(
-                    "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND NOT t.tgisinternal AND t.tgenabled <> 'O'",
+                    "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND NOT t.tgisinternal AND t.tgenabled NOT IN ('O', 'A')",
                     schema)
                 .get(0, Long.class))
         .isZero();
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = 'account_retained_subscription_evidence' AND t.tgname = 'account_retained_subscription_evidence_immutable' AND t.tgenabled = 'A'",
+                    schema)
+                .get(0, Long.class))
+        .isEqualTo(1L);
     for (String signature :
         List.of(
             "account_ss_admission_assert_current(account_start_session_admission_protections,boolean)",

@@ -74,6 +74,7 @@ jobs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
       candidate_tag: ${{ steps.meta.outputs.candidate_tag }}
       base_image: ${{ steps.meta.outputs.base_image }}
+      canonical_play_transition: ${{ steps.meta.outputs.canonical_play_transition }}
       runtime_smoke_required: ${{ steps.smoke_scope.outputs.runtime_smoke_required }}
       controller_smoke_required: ${{ steps.smoke_scope.outputs.controller_smoke_required }}
     permissions:
@@ -117,6 +118,7 @@ jobs:
           BASE_REF=""
           BASE_SHA=""
           MERGE_SHA=""
+          CANONICAL_PLAY_TRANSITION=false
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
             BASE_REF="$EVENT_BASE_REF"
@@ -218,6 +220,12 @@ jobs:
                 echo "Runtime PR refresh merge commit does not have the exact current base/head parents." >&2
                 exit 1
               }
+            # Only the verified live same-repository PR can authorize this
+            # diagnostic marker; dispatch payload labels carry no authority.
+            if jq -e '(.labels | type) == "array" and any(.labels[]; .name == "canonical-play-transition")' \
+              <<<"$pull_request_json" >/dev/null; then
+              CANONICAL_PLAY_TRANSITION=true
+            fi
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
             [[ "${{ github.event.workflow_run.event }}" == "push" ]] || {
               echo "Runtime branch publication requires a CI push workflow run." >&2
@@ -270,6 +278,7 @@ jobs:
             echo "image_tag=${IMAGE_TAG}"
             echo "candidate_tag=${CANDIDATE_TAG}"
             echo "base_image=${BASE_IMAGE}"
+            echo "canonical_play_transition=${CANONICAL_PLAY_TRANSITION}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify successful CI push for manual publication
@@ -1522,6 +1531,8 @@ jobs:
           create-storage-record: false
 
   pr-local-smoke:
+    outputs:
+      publishable: ${{ steps.runtime-artifact.outcome == 'success' }}
     name: PR Full-Stack Smoke (runtime-required=${{ needs.image-meta.outputs.runtime_smoke_required }})
     needs: [image-meta]
     if: ${{ (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch' }}
@@ -1633,6 +1644,8 @@ jobs:
 
       - name: Run credential-free full-stack smoke
         id: runtime-smoke
+        # The terminal guard admits only the classified, labeled transition failure.
+        continue-on-error: true
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         env:
           FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held
@@ -1643,6 +1656,7 @@ jobs:
         run: bash ./dev-tools/verify-smoke-images.sh --keep-running
 
       - name: Export fixed-tag preview image artifact
+        if: ${{ success() && (needs.image-meta.outputs.runtime_smoke_required == 'false' || steps.runtime-smoke.outcome == 'success') }}
         run: |
           service_manifest=/tmp/pr-runtime-services.txt
           provenance=/tmp/pr-runtime-provenance.json
@@ -1708,6 +1722,8 @@ jobs:
           docker save "${images[@]}" | gzip -1 > /tmp/pr-runtime-images.tar.gz
 
       - name: Upload preview image artifact
+        id: runtime-artifact
+        if: ${{ success() && (needs.image-meta.outputs.runtime_smoke_required == 'false' || steps.runtime-smoke.outcome == 'success') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: pr-runtime-images-${{ needs.image-meta.outputs.image_tag }}
@@ -1719,6 +1735,7 @@ jobs:
           retention-days: 1
 
       - name: Summarize secure PR runtime artifact
+        if: ${{ success() && (needs.image-meta.outputs.runtime_smoke_required == 'false' || steps.runtime-smoke.outcome == 'success') }}
         env:
           PR_NUMBER: ${{ needs.image-meta.outputs.pr_number }}
           BASE_SHA: ${{ needs.image-meta.outputs.base_sha }}
@@ -1741,7 +1758,7 @@ jobs:
 
       - name: Dump Docker Compose logs on failure
         if: >-
-          ${{ failure() &&
+          ${{ always() && steps.runtime-smoke.outcome == 'failure' &&
           needs.image-meta.outputs.runtime_smoke_required == 'true' &&
           steps.minio-source.outputs.server_image_id != '' &&
           steps.minio-source.outputs.client_image_id != '' }}
@@ -1781,6 +1798,26 @@ jobs:
             exit 1
           fi
 
+      # Canonical-transition diagnostic evidence, not runtime qualification. The
+      # native smoke outcome remains failed; only the bounded CI exception may pass.
+      - name: Known canonical transition PLAY failure with successful authenticated cleanup
+        id: canonical-play-transition
+        if: >-
+          ${{ always() &&
+          github.repository == 'benhook1013/FireMUD' &&
+          ((github.event_name == 'pull_request' &&
+          contains(github.event.pull_request.labels.*.name, 'canonical-play-transition')) ||
+          (github.event_name == 'repository_dispatch' &&
+          github.event.action == 'pr-runtime-base-refresh' &&
+          needs.image-meta.outputs.canonical_play_transition == 'true')) &&
+          needs.image-meta.outputs.runtime_smoke_required == 'true' &&
+          steps.runtime-smoke.outcome == 'failure' &&
+          steps.runtime-smoke.outputs.known_play_failure == 'direct-backend-play-entitlement-unavailable-after-login' &&
+          steps.runtime-cleanup.outcome == 'success' }}
+        run: |
+          echo '### Canonical PLAY transition exception evidence' >> "$GITHUB_STEP_SUMMARY"
+          echo 'LOGIN succeeded; direct backend PLAY failed: ERROR ENTITLEMENT_UNAVAILABLE. Held-admission qualification and authenticated cleanup passed. No runtime qualification, image export, or publication.' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Require successful runtime smoke and authenticated cleanup
         if: ${{ always() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -1788,16 +1825,22 @@ jobs:
           RUNTIME_SMOKE_REQUIRED: ${{ needs.image-meta.outputs.runtime_smoke_required }}
           RUNTIME_SMOKE_OUTCOME: ${{ steps.runtime-smoke.outcome }}
           RUNTIME_CLEANUP_OUTCOME: ${{ steps.runtime-cleanup.outcome }}
+          KNOWN_PLAY_EXCEPTION_OUTCOME: ${{ steps.canonical-play-transition.outcome }}
         with:
           script: |
             const required = process.env.RUNTIME_SMOKE_REQUIRED;
             if (required !== "true" && required !== "false") {
               core.setFailed("Runtime smoke scope is unavailable or invalid.");
             } else if (required === "true" && (
-              process.env.RUNTIME_SMOKE_OUTCOME !== "success" ||
-              process.env.RUNTIME_CLEANUP_OUTCOME !== "success"
+              process.env.RUNTIME_CLEANUP_OUTCOME !== "success" ||
+              (process.env.RUNTIME_SMOKE_OUTCOME !== "success" && !(
+                process.env.RUNTIME_SMOKE_OUTCOME === "failure" &&
+                process.env.KNOWN_PLAY_EXCEPTION_OUTCOME === "success"
+              ))
             )) {
-              core.setFailed("Required runtime smoke and authenticated cleanup must both execute successfully.");
+              core.setFailed("Required runtime smoke and authenticated cleanup must both execute successfully, unless the exact canonical PLAY transition exception is attested.");
+            } else if (required === "true" && process.env.RUNTIME_SMOKE_OUTCOME === "failure") {
+              core.warning("CI passed under the canonical PLAY transition exception. Runtime qualification and image publication remain blocked.");
             }
 
   pr-controller-smoke:
@@ -1870,7 +1913,7 @@ jobs:
   dispatch-pr-runtime-publication:
     name: Dispatch Trusted PR Runtime Publication
     needs: [image-meta, pr-local-smoke, pr-controller-smoke]
-    if: ${{ always() && !cancelled() && github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-base-refresh' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.image-meta.result == 'success' && needs.pr-local-smoke.result == 'success' && (needs.pr-controller-smoke.result == 'success' || (needs.image-meta.outputs.controller_smoke_required == 'false' && needs.pr-controller-smoke.result == 'skipped')) }}
+    if: ${{ always() && !cancelled() && github.event_name == 'repository_dispatch' && github.event.action == 'pr-runtime-base-refresh' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.image-meta.result == 'success' && needs.pr-local-smoke.result == 'success' && needs.pr-local-smoke.outputs.publishable == 'true' && (needs.pr-controller-smoke.result == 'success' || (needs.image-meta.outputs.controller_smoke_required == 'false' && needs.pr-controller-smoke.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

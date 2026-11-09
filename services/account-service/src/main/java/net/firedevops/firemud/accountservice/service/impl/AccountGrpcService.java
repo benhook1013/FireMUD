@@ -139,13 +139,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       requireGameSessionPeer();
       var context = request.getPlayerContext();
-      long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
+      UUID tenantId = requireCanonicalUuid(request.getTenantId(), "tenantId");
       UUID realmId = requireCanonicalRealmId(request.getRealmId());
-      long gameInstanceId = requirePositiveRequestId(request.getGameInstanceId(), "gameInstanceId");
-      if (requirePositiveRequestId(context.getTenantId(), "tenantId") != tenantId
+      UUID gameInstanceId = requireCanonicalUuid(request.getGameInstanceId(), "gameInstanceId");
+      if (!requireCanonicalUuid(context.getTenantId(), "tenantId").equals(tenantId)
           || !requireCanonicalRealmId(context.getRealmId()).equals(realmId)
-          || requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId")
-              != gameInstanceId
+          || !requireCanonicalUuid(context.getGameInstanceId(), "gameInstanceId")
+              .equals(gameInstanceId)
           || !context.getPlayableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
           || !context.getPlayableStateScope().equals(request.getPlayableStateScope())) {
         throw new InvalidRequestException("Player context and selected realm disagree", null);
@@ -159,7 +159,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                   realmId,
                   requireText(request.getWorldSlug(), "worldSlug"),
                   requireText(request.getRealmSlug(), "realmSlug"),
-                  requireText(request.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
+                  requireCanonicalUuid(
+                      request.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
                   requireText(request.getPlayableStateScope(), "playableStateScope"),
                   gameInstanceId,
                   request.getCatalogRevision(),
@@ -208,17 +209,18 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               new JoinPublicProductionRequest(
                   requireText(request.getConnectScopeId(), "connectScopeId"), requestId));
       if (!request.getPlayerContext().getAccountId().equals(result.accountId())
-          || result.tenantId() != caller.tenantId()) {
+          || !result.tenantId().equals(caller.tenantId())) {
         throw new IllegalStateException("Account JOIN result does not match the validated caller");
       }
       response
           .setSuccess(result.success())
           .setOutcomeCode(result.outcomeCode())
           .setAccountId(result.accountId())
-          .setTenantId(Long.toString(result.tenantId()))
+          .setTenantId(result.tenantId().toString())
           .setMembershipId(Long.toString(result.membershipId()))
           .setMembershipVersion(result.membershipVersion())
           .setMembershipAuthorityGeneration(result.membershipAuthorityGeneration())
+          .setGameplayAdmissionAllowed(result.gameplayAdmissionAllowed())
           .setReplayed(result.replayed());
     } catch (AdminAuthorizationException ex) {
       response.setError(
@@ -302,9 +304,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   private static UUID requireCanonicalAccountUuid(String value) {
+    return requireCanonicalUuid(value, "accountId");
+  }
+
+  private static UUID requireCanonicalUuid(String value, String field) {
     UUID accountUuid = AccountUuidText.parseOrNull(value);
     if (accountUuid == null) {
-      throw new InvalidRequestException("accountId must be a canonical non-nil UUID", null);
+      throw new InvalidRequestException(field + " must be a canonical non-nil UUID", null);
     }
     return accountUuid;
   }
@@ -312,57 +318,39 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private DirectTextCallerContext directTextCaller(
       net.firedevops.firemud.shared.v1.PlayerExecutionContext context) {
     UUID accountUuid = requireCanonicalAccountUuid(context.getAccountId());
-    long tenantId = requirePositiveRequestId(context.getTenantId(), "tenantId");
+    UUID tenantId = requireCanonicalUuid(context.getTenantId(), "tenantId");
     UUID realmId = requireCanonicalRealmId(context.getRealmId());
-    String namespaceId =
-        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId());
+    UUID namespaceId =
+        requireCanonicalUuid(context.getPlayableStateNamespaceId(), "playableStateNamespaceId");
     String scope = requireText(context.getPlayableStateScope(), "playableStateScope");
-    long gameInstanceId = requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId");
-    String sessionId = requireText(context.getSessionId(), "sessionId");
-    String requestId = requireText(context.getRequestId(), "requestId");
-    long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
-    if (accountStorageId <= 0L) {
-      throw new IllegalStateException("Account UUID did not resolve to a persisted owner");
+    if (!java.util.Set.of("SHARED", "ISOLATED").contains(scope)) {
+      throw new InvalidRequestException("playableStateScope must be SHARED or ISOLATED", null);
     }
+    UUID gameInstanceId = requireCanonicalUuid(context.getGameInstanceId(), "gameInstanceId");
+    String sessionId = requireDirectTextTransportSession(context.getSessionId());
+    String requestId = requireText(context.getRequestId(), "requestId");
     return new DirectTextCallerContext(
-        accountStorageId,
-        tenantId,
-        realmId,
-        namespaceId,
-        scope,
-        gameInstanceId,
-        sessionId,
-        requestId);
+        accountUuid, tenantId, realmId, namespaceId, scope, gameInstanceId, sessionId, requestId);
+  }
+
+  private static String requireDirectTextTransportSession(String value) {
+    if (value == null || value.length() > 32) {
+      throw new InvalidRequestException("sessionId must be a bounded numeric transport ID", null);
+    }
+    try {
+      long session = Long.parseLong(value);
+      if (session <= 0 || !value.matches("[0-9]+")) {
+        throw new NumberFormatException("Invalid transport session");
+      }
+    } catch (NumberFormatException malformed) {
+      throw new InvalidRequestException(
+          "sessionId must be a positive numeric transport ID", malformed);
+    }
+    return value;
   }
 
   private UUID requireCanonicalRealmId(String value) {
-    if (value == null || value.isBlank()) {
-      throw new IllegalArgumentException("realmId is required");
-    }
-    try {
-      UUID realmId = UUID.fromString(value);
-      if (!realmId.toString().equals(value)) {
-        throw new IllegalArgumentException("realmId must be a canonical UUID");
-      }
-      return realmId;
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
-    }
-  }
-
-  private String requireCanonicalPlayableStateNamespaceId(String value) {
-    if (value == null || value.isBlank()) {
-      throw new IllegalArgumentException("playableStateNamespaceId is required");
-    }
-    try {
-      UUID namespaceId = UUID.fromString(value);
-      if (!namespaceId.toString().equals(value)) {
-        throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID");
-      }
-      return value;
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID", ex);
-    }
+    return requireCanonicalUuid(value, "realmId");
   }
 
   private String requireText(String value, String fieldName) {

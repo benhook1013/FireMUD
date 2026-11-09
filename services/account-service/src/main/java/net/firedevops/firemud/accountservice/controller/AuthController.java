@@ -73,10 +73,12 @@ public class AuthController {
   @GetMapping("/bootstrap/worlds/{worldSlug}/realms")
   public ResponseEntity<ApiResponse<List<BootstrapRealmDto>>> listBootstrapRealms(
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
-      @PathVariable String worldSlug) {
+      @PathVariable String worldSlug,
+      @RequestParam String tenantSlug) {
     String bootstrapToken = extractBearerToken(authorization);
     return ResponseEntity.ok(
-        ApiResponse.success(accountService.listBootstrapRealms(bootstrapToken, worldSlug)));
+        ApiResponse.success(
+            accountService.listBootstrapRealms(bootstrapToken, tenantSlug, worldSlug)));
   }
 
   @GetMapping("/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters")
