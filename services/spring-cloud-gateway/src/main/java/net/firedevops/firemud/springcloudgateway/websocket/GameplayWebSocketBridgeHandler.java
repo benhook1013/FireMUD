@@ -59,7 +59,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           TRANSPORT_SESSION_HEADER);
 
   private final ReactorNettyWebSocketClient client;
-  private AuthenticatedGameplayWebSocketClient authenticatedClient;
+  private final AuthenticatedGameplayWebSocketClient authenticatedClient;
   private final GameplayWebSocketBridgeProperties properties;
   private final RuntimeIdentity runtimeIdentity;
   private final GameplayWebSocketObservability gameplayWebSocketObservability;
@@ -69,27 +69,28 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
   private final Object lifecycleMonitor = new Object();
   private volatile Mono<Void> shutdownCompletion;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected client, properties, and runtime identity remain internal.")
   public GameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient client,
       GameplayWebSocketBridgeProperties properties,
       RuntimeIdentity runtimeIdentity,
       GameplayWebSocketObservability gameplayWebSocketObservability) {
-    this.client = client;
-    this.properties = properties;
-    this.runtimeIdentity = runtimeIdentity;
-    this.gameplayWebSocketObservability = gameplayWebSocketObservability;
+    this(client, properties, runtimeIdentity, gameplayWebSocketObservability, null);
   }
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "Injected clients, properties, runtime identity, and observability remain internal.")
   public GameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient client,
       GameplayWebSocketBridgeProperties properties,
       RuntimeIdentity runtimeIdentity,
-      GameplayWebSocketObservability observability,
+      GameplayWebSocketObservability gameplayWebSocketObservability,
       AuthenticatedGameplayWebSocketClient authenticatedClient) {
-    this(client, properties, runtimeIdentity, observability);
+    this.client = client;
+    this.properties = properties;
+    this.runtimeIdentity = runtimeIdentity;
+    this.gameplayWebSocketObservability = gameplayWebSocketObservability;
     this.authenticatedClient = authenticatedClient;
   }
 
