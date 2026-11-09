@@ -70,7 +70,6 @@ for label, command, response, prior, expected_type in [
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.PlayEntitlementUnavailable),
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE extra", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly. more", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
-    ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.\n", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
     ("PLAY", "PLAY demo", "ERROR ENTITLEMENT_UNAVAILABLE Another message.", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
     ("PLAY", "PLAY demo", "ERROR UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
     ("PLAY", "LOOK demo", "ERROR ENTITLEMENT_UNAVAILABLE", [{"label": "LOGIN", "response": "OK LOGIN"}], smoke_common.ExplicitProtocolFailure),
@@ -469,6 +468,30 @@ class CommandResponseSession(FakeSession):
         super().send(payload)
         response = self.responses.pop(0)
         self.chunks = list(response) if isinstance(response, list) else [response]
+
+
+# Exercise the newline-bearing server response through the real WebSocket
+# reader. The reader strips the line ending before command-local classification.
+newline_entitlement_session = CommandResponseSession([
+    "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.\n"
+])
+try:
+    smoke_common.send_websocket_command_and_expect(
+        newline_entitlement_session,
+        [],
+        "PLAY demo",
+        ["OK PLAY"],
+        "PLAY",
+        1,
+        step_results=[{"label": "LOGIN", "response": "OK LOGIN account=demo"}],
+    )
+except smoke_common.PlayEntitlementUnavailable as exc:
+    assert str(exc) == (
+        "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly."
+    )
+else:
+    raise AssertionError("newline entitlement failure did not retain its typed classification")
+assert newline_entitlement_session.sent == ["PLAY demo"]
 
 
 class FakeTlsContext:
