@@ -32,6 +32,7 @@ import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObs
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionProvisioner;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionBirthSource.Category;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Disposition;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProvisioningClaim;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
@@ -147,6 +148,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provider_dispatch_claim"))).isZero();
     var first = claim(f, 1);
     assertThat(first.attemptNumber()).isOne();
+    f.transport().duringCreate = f.transport()::confirmFirstInvoice;
     var result =
         (AccountHostingSubscriptionProvisioningService.Committed)
             service(f).provision(first, UUID.randomUUID(), UUID.randomUUID());
@@ -344,6 +346,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     var first = claim(f, 1);
     awaitProvisioningTime(f, "retry_at");
     var second = claim(f, first.subscriptionRowVersion());
+    f.transport().duringCreate = f.transport()::confirmFirstInvoice;
     var result =
         (AccountHostingSubscriptionProvisioningService.Committed)
             service(f).provision(second, UUID.randomUUID(), UUID.randomUUID());
@@ -382,14 +385,42 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   @Test
-  void realInitialSdkCreateFlowsThroughExistingLifecycleCommitAndIndependentCurrentRead() {
+  void paymentRequiredSdkCreateCannotCommitUntilProviderConfirmsFirstInvoice() {
     Fixture f = fixture("1032");
-    var result =
-        (AccountHostingSubscriptionProvisioningService.Committed)
-            service(f).provision(claim(f, 1), UUID.randomUUID(), UUID.randomUUID());
-    assertThat(result.current().current().providerSubscriptionId()).isEqualTo("sub_exact");
-    assertThat(result.current().current().subscriptionId())
-        .isEqualTo(f.creation().subscriptionId());
+    var first = claim(f, 1);
+    UUID lifecycleRequest = UUID.randomUUID();
+    var pending =
+        (AccountHostingSubscriptionProvisioningService.Reconciling)
+            service(f).provision(first, UUID.randomUUID(), lifecycleRequest);
+    assertThat(pending.transition().outcome()).isEqualTo(Outcome.RECONCILING);
+    assertThat(pending.transition().reason()).isEqualTo("UNMAPPED_PROVIDER_STATUS");
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    f.dsl()
+                        .fetchOne(
+                            "SELECT status, provider_subscription_id FROM subscription WHERE subscription_id = ?",
+                            f.creation().subscriptionId()))
+                .intoMap())
+        .containsEntry("status", "provisioning")
+        .containsEntry("provider_subscription_id", null);
+    assertThat(f.transport().creates).isOne();
+
+    f.transport().confirmFirstInvoice();
+    f.clock().now = f.clock().instant().plusSeconds(1);
+    var lifecycle = lifecycle(f, new com.stripe.StripeClient(f.transport()));
+    var transition =
+        lifecycle.reconcile(
+            lifecycleRequest,
+            f.creation().requestId(),
+            first.subscriptionRowVersion(),
+            "sub_exact",
+            first.attemptId());
+    assertThat(transition.outcome()).isEqualTo(Outcome.COMMITTED);
+    var current = lifecycle.readCurrent(f.creation().tenantId()).current();
+    assertThat(current.providerSubscriptionId()).isEqualTo("sub_exact");
+    assertThat(current.subscriptionId()).isEqualTo(f.creation().subscriptionId());
+    assertThat(current.status()).isEqualTo("active");
     assertThat(f.transport().creates).isEqualTo(1);
     assertThat(f.transport().subscriptionReads).isGreaterThanOrEqualTo(3);
   }
@@ -419,6 +450,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
           assertThat(competing.claim()).isNull();
           assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox")))
               .isZero();
+          f.transport().confirmFirstInvoice();
         };
 
     var result =
@@ -443,6 +475,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(((StripeHostingSubscriptionProvisioner.Pending) lost.providerResult()).reason())
         .isEqualTo("PROVIDER_OUTCOME_UNKNOWN");
     assertThat(f.transport().creates).isEqualTo(1);
+    f.transport().confirmFirstInvoice();
     f.transport().emptySearchesRemaining = 1;
     awaitProvisioningTime(f, "retry_at");
     var second = claim(f, first.subscriptionRowVersion());
@@ -813,17 +846,20 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
 
   private static AccountHostingSubscriptionProvisioningService service(Fixture f) {
     var stripe = new com.stripe.StripeClient(f.transport());
-    var lifecycle =
-        new AccountHostingSubscriptionLifecycleService(
-            f.owner(),
-            new StripeHostingSubscriptionObserver(
-                stripe, f.clock(), Duration.ofMillis(250), Duration.ofSeconds(1)),
-            new DataSourceTransactionManager(f.source()));
     return new AccountHostingSubscriptionProvisioningService(
         f.owner(),
         new StripeHostingSubscriptionProvisioner(
             stripe, f.clock(), false, Duration.ofMillis(250), Duration.ofSeconds(1)),
-        lifecycle,
+        lifecycle(f, stripe),
+        new DataSourceTransactionManager(f.source()));
+  }
+
+  private static AccountHostingSubscriptionLifecycleService lifecycle(
+      Fixture f, com.stripe.StripeClient stripe) {
+    return new AccountHostingSubscriptionLifecycleService(
+        f.owner(),
+        new StripeHostingSubscriptionObserver(
+            stripe, f.clock(), Duration.ofMillis(250), Duration.ofSeconds(1)),
         new DataSourceTransactionManager(f.source()));
   }
 
@@ -1121,6 +1157,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     private final String paymentMethod;
     private final Clock clock;
     private boolean exists;
+    private boolean firstInvoiceConfirmed;
     private boolean loseCreateResponse;
     private Runnable duringCreate;
     private int emptySearchesRemaining;
@@ -1195,14 +1232,15 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
             "{\"object\":\"list\",\"has_more\":false,\"data\":["
                 + (visible ? subscription() : "")
                 + "]}";
-      } else if (path.equals("/v1/subscriptions") && method == RequestMethod.POST) {
+      } else if ("/v1/subscriptions".equals(path) && method == RequestMethod.POST) {
         creates++;
         exists = true;
         assertThat(options.getIdempotencyKey())
             .isEqualTo(creation.subscriptionProvisioningRequestId().toString());
         assertThat(params)
             .containsEntry("customer", creation.providerCustomerId())
-            .containsEntry("default_payment_method", paymentMethod);
+            .containsEntry("default_payment_method", paymentMethod)
+            .containsEntry("payment_behavior", "default_incomplete");
         assertThat(params.get("items"))
             .isEqualTo(
                 List.of(
@@ -1219,7 +1257,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
         if (loseCreateResponse) {
           throw org.mockito.Mockito.mock(StripeException.class);
         }
-        response = subscription();
+        response = subscription("incomplete");
       } else if (path.equals("/v1/subscriptions/sub_exact")) {
         subscriptionReads++;
         response = subscription();
@@ -1229,12 +1267,23 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
       return (T) com.stripe.net.ApiResource.GSON.fromJson(response, type);
     }
 
+    private void confirmFirstInvoice() {
+      assertThat(exists).isTrue();
+      firstInvoiceConfirmed = true;
+    }
+
     private String subscription() {
+      return subscription(firstInvoiceConfirmed ? "active" : "incomplete");
+    }
+
+    private String subscription(String status) {
       return "{\"object\":\"subscription\",\"id\":\"sub_exact\",\"customer\":\""
           + creation.providerCustomerId()
           + "\",\"default_payment_method\":\""
           + paymentMethod
-          + "\",\"livemode\":false,\"status\":\"active\",\"cancel_at_period_end\":false,"
+          + "\",\"livemode\":false,\"status\":\""
+          + status
+          + "\",\"cancel_at_period_end\":false,"
           + "\"metadata\":{\"firemud_metadata_schema_version\":\"1\",\"firemud_operation_type\":\"subscription_provisioning\","
           + "\"firemud_operation_id\":\""
           + creation.subscriptionProvisioningRequestId()
