@@ -82,8 +82,13 @@ public final class AccountHostingSubscriptionProvisioningService {
     if (transition.outcome() != Outcome.COMMITTED) {
       return new Reconciling(transition);
     }
-    AccountHostingSubscriptionCurrentReceipt current =
-        lifecycle.readCurrent(claim.creation().tenantId());
+    AccountHostingSubscriptionCurrentReceipt current;
+    try {
+      current = lifecycle.readCurrent(claim.creation().tenantId());
+    } catch (
+        AccountHostingSubscriptionLifecycleService.EntitlementUnavailableException unavailable) {
+      return new ReadbackUnavailable(transition);
+    }
     if (!current.receiptRequestId().equals(lifecycleRequestId)
         || current.current().rowVersion() != transition.committedRowVersion()
         || !current.current().subscriptionId().equals(claim.creation().subscriptionId())
@@ -108,13 +113,16 @@ public final class AccountHostingSubscriptionProvisioningService {
     }
   }
 
-  public sealed interface Result permits Pending, Reconciling, Committed {}
+  public sealed interface Result permits Pending, Reconciling, ReadbackUnavailable, Committed {}
 
   public record Pending(
       Disposition disposition, StripeHostingSubscriptionProvisioner.Result providerResult)
       implements Result {}
 
   public record Reconciling(TransitionResult transition) implements Result {}
+
+  /** The transition committed, but a fresh current receipt could not be obtained. */
+  public record ReadbackUnavailable(TransitionResult transition) implements Result {}
 
   /** Privately constructed after actual lifecycle commit and independent current readback. */
   public static final class Committed implements Result {
