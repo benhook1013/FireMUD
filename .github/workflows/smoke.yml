@@ -608,7 +608,7 @@ jobs:
             }
 
             // One canonical producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "b89a1fb4bb324220c842b2250ca82f8db0d5d17b7ef86e70ad56e107ed4bce34";
+            const canonicalRuntimeWorkflowSha256 = "520407ce97e1ffbe1db824264f0a64e95887f36df2dc07d5738bed4448759ae2";
             // Retain the exact fail-red producer still executed by trusted base refreshes.
             const canonicalLegacyRuntimeWorkflowSha256 = "db0acb4e51630b729eb92362ea3e748f3f96b06d8ef5ca466a718ded67725804";
             // Include held-admission proof, authenticated cleanup, and their executed inputs.
