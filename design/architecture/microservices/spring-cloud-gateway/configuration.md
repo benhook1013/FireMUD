@@ -32,7 +32,7 @@ The trusted default-branch workflow treats the hosted preview Gateway configurat
 
 The Gateway Deployment has a matching exact contract for its per-container `env` and `envFrom` fields. PR-controlled `extraEnv` or additional configuration references cannot replace the managed listener/trust settings or introduce an equivalent route or JVM override. This contract is enforced by the hosted artifact validator and must be updated together with the trusted Helm defaults when a legitimate Gateway setting is added.
 
-The hosted Gateway pod also has default-deny egress. Its only permitted destinations are cluster DNS, the five canonical HTTP route services on TCP/8080 (`account-service`, `game-design-service`, `game-session-service`, `logging-admin-service`, and `social-groups-service`), Cache/Rate-Limit Redis on TCP/6379, and the OpenTelemetry collector on TCP/4317. This egress boundary prevents a surviving configuration or runtime override from turning the Gateway into an arbitrary network proxy.
+The hosted Gateway pod also has default-deny egress. Its only permitted destinations are cluster DNS, the five canonical HTTP route services on TCP/8080 (`account-service`, `game-design-service`, `game-session-service`, `logging-admin-service`, and `social-groups-service`), Game Session on TCP/8444 for the dedicated authenticated mTLS WebSocket receiver at `/ws/game/tcp`, Cache/Rate-Limit Redis on TCP/6379, and the OpenTelemetry collector on TCP/4317. This egress boundary prevents a surviving configuration or runtime override from turning the Gateway into an arbitrary network proxy.
 
 ### TCP Proxy TLS listener
 
