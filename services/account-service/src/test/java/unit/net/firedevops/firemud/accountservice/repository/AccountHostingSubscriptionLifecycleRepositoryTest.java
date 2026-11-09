@@ -72,6 +72,7 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
       long secondsAfterExpiry) {
     Instant expiresAt = Instant.parse("2026-11-07T00:00:10Z");
     UUID requestId = UUID.randomUUID();
+    UUID subscriptionId = UUID.randomUUID();
     UUID attemptId = UUID.randomUUID();
     var controlledIntents = mock(AccountSubscriptionIntentRepository.class);
     var controlledRepository =
@@ -88,20 +89,47 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
             false);
     var creation = mock(AccountSubscriptionCreationRecord.class);
     when(creation.requestId()).thenReturn(requestId);
+    when(creation.subscriptionId()).thenReturn(subscriptionId);
+    when(controlledIntents.findCreation(requestId)).thenReturn(Optional.of(creation));
+    var current = mock(AccountSubscriptionCurrentRecord.class);
+    when(current.subscriptionId()).thenReturn(subscriptionId);
+    when(current.rowVersion()).thenReturn(7L);
+    when(controlledIntents.lockForProvisioningSettlement(requestId, 7L)).thenReturn(current);
     var claim = mock(ProvisioningClaim.class);
     when(claim.creation()).thenReturn(creation);
     when(claim.attemptId()).thenReturn(attemptId);
+    when(claim.attemptNumber()).thenReturn(2);
     when(claim.subscriptionRowVersion()).thenReturn(7L);
     when(claim.claimedAt()).thenReturn(expiresAt.minusSeconds(10));
     when(claim.expiresAt()).thenReturn(expiresAt);
     var retainedWork = mock(Record.class);
     when(retainedWork.get("last_attempt_id", UUID.class)).thenReturn(attemptId);
+    when(retainedWork.get("last_attempt_id")).thenReturn(attemptId);
+    when(retainedWork.get("subscription_id", UUID.class)).thenReturn(subscriptionId);
+    when(retainedWork.get("subscription_row_version", Long.class)).thenReturn(7L);
     when(retainedWork.get("phase", String.class)).thenReturn("CLAIMED");
     when(retainedWork.get("deadline_at", OffsetDateTime.class))
         .thenReturn(expiresAt.plusSeconds(3590).atOffset(ZoneOffset.UTC));
     String lockedWorkSql =
         "SELECT * FROM subscription_provisioning_work WHERE request_id = ? FOR UPDATE";
     when(dsl.fetchOne(lockedWorkSql, requestId)).thenReturn(retainedWork);
+    String linksSql =
+        "SELECT lifecycle_inflight_request_id, current_receipt_request_id "
+            + "FROM subscription WHERE subscription_id = ?";
+    var links = mock(Record.class);
+    when(dsl.fetchOne(linksSql, subscriptionId)).thenReturn(links);
+    String retainedAttemptSql =
+        "SELECT * FROM subscription_provisioning_attempts WHERE attempt_id = ?";
+    var retainedAttempt = mock(Record.class);
+    when(retainedAttempt.get("request_id", UUID.class)).thenReturn(requestId);
+    when(retainedAttempt.get("subscription_id", UUID.class)).thenReturn(subscriptionId);
+    when(retainedAttempt.get("attempt_number", Integer.class)).thenReturn(2);
+    when(retainedAttempt.get("claimed_row_version", Long.class)).thenReturn(7L);
+    when(retainedAttempt.get("claimed_at", OffsetDateTime.class))
+        .thenReturn(expiresAt.minusSeconds(10).atOffset(ZoneOffset.UTC));
+    when(retainedAttempt.get("expires_at", OffsetDateTime.class))
+        .thenReturn(expiresAt.atOffset(ZoneOffset.UTC));
+    when(dsl.fetchOne(retainedAttemptSql, attemptId)).thenReturn(retainedAttempt);
     var databaseClock = mock(Record.class);
     when(databaseClock.get("now", OffsetDateTime.class))
         .thenReturn(expiresAt.plusSeconds(secondsAfterExpiry).atOffset(ZoneOffset.UTC));
@@ -110,10 +138,13 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
 
     assertThat(controlledRepository.deferUnresolved(claim)).isEqualTo(Disposition.ATTEMPT_EXPIRED);
 
-    // Only owner/retained-work locks and the database clock are read: no SQL writes, settlement,
-    // reservation release, or replacement attempt can occur on this return.
-    verify(controlledIntents).lockForProvisioningRecovery(requestId, 7L);
+    // Only the exact local owner/work locks, retained attempt, lifecycle ownership and DB clock
+    // are read: no SQL writes, reservation release, or replacement attempt occur on this return.
+    verify(controlledIntents).lockForProvisioningSettlement(requestId, 7L);
+    verify(controlledIntents).findCreation(requestId);
     verify(dsl).fetchOne(lockedWorkSql, requestId);
+    verify(dsl).fetchOne(linksSql, subscriptionId);
+    verify(dsl).fetchOne(retainedAttemptSql, attemptId);
     verify(dsl).fetchOne("SELECT clock_timestamp() AS now");
     verifyNoMoreInteractions(controlledIntents, dsl);
   }
