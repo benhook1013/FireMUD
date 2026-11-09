@@ -513,6 +513,9 @@ class SmokeConfig:
             )
         if telnet_ca_file is None and os.environ.get("PLAYER_EXPERIENCE_TELNET_CA_FILE"):
             telnet_ca_file = Path(os.environ["PLAYER_EXPERIENCE_TELNET_CA_FILE"])
+        tenant_slug = os.environ.get("PLAYER_EXPERIENCE_TENANT_SLUG")
+        if tenant_slug is not None:
+            tenant_slug = tenant_slug.strip() or None
         return cls(
             source=source,
             canary_path=canary_path,
@@ -544,7 +547,7 @@ class SmokeConfig:
             username=os.environ.get("SMOKE_USERNAME", DEFAULT_SMOKE_USERNAME),
             password=os.environ.get("SMOKE_PASSWORD", DEFAULT_SMOKE_PASSWORD),
             world=os.environ.get("PLAYER_EXPERIENCE_WORLD", "demo"),
-            tenant_slug=os.environ.get("PLAYER_EXPERIENCE_TENANT_SLUG"),
+            tenant_slug=tenant_slug,
             timeout_seconds=int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10")),
             startup_wait_seconds=int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90")),
             external_authority_evidence=external_authority_evidence,

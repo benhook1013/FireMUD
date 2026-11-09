@@ -140,6 +140,8 @@ with patch.object(runner_module.sys, "argv", [
     str(root / "run-player-experience-smoke.py"),
     "--external-authority-evidence", "/tmp/contract-authority.json",
     "--player-flow-canary", "omitted",
+    "--queryability-profile", "staging",
+    "--queryability-freshness-budget-seconds", "7200",
     "--evidence-out", "/tmp/contract-evidence.json",
 ]):
     with patch.object(
@@ -149,18 +151,25 @@ with patch.object(runner_module.sys, "argv", [
         runner_module, "wait_for_http_readiness"
     ) as wait_http, patch.object(runner_module, "verify_smoke_account") as verify_account, patch.object(
         runner_module, "http_request_json"
-    ) as auth_request, patch.object(runner_module, "execute_smoke") as execute:
+    ) as auth_request, patch.object(
+        runner_module, "http_request_json_with_headers"
+    ) as auth_request_with_headers, patch.object(
+        runner_module, "execute_smoke"
+    ) as execute:
+        stderr = io.StringIO()
         try:
-            with patch("sys.stderr", new_callable=io.StringIO):
+            with patch("sys.stderr", stderr):
                 runner_module.main()
         except SystemExit as exc:
             assert exc.code == 2
         else:
             raise AssertionError("live CLI did not reject a missing WebSocket tenant selector")
+        assert "PLAYER_EXPERIENCE_TENANT_SLUG" in stderr.getvalue()
         wait_schema.assert_not_called()
         wait_http.assert_not_called()
         verify_account.assert_not_called()
         auth_request.assert_not_called()
+        auth_request_with_headers.assert_not_called()
         execute.assert_not_called()
 
 # Browser world selection remains qualified even when another tenant reuses its slug.
@@ -173,8 +182,14 @@ with patch.object(runner_module, "http_request_json") as request:
     else:
         raise AssertionError("Bare browser world selector was accepted")
     request.assert_not_called()
-with patch.dict("os.environ", {"PLAYER_EXPERIENCE_TENANT_SLUG": "tenant-b"}):
+with patch.dict("os.environ", {"PLAYER_EXPERIENCE_TENANT_SLUG": "  tenant-b \t"}):
     qualified = runner_module.SmokeConfig.from_env("contract-test", "websocket", None)
+assert qualified.tenant_slug == "tenant-b"
+with patch.object(runner_module, "http_request_json", return_value={"data": [
+    {"worldSlug": qualified.world, "tenantSlug": qualified.tenant_slug}
+]}) as request:
+    runner_module.require_visible_world(qualified, "bootstrap")
+    request.assert_called_once()
 with patch.object(runner_module, "http_request_json", return_value={"data": [
     {"worldSlug": qualified.world, "tenantSlug": "tenant-a"}
 ]}) as request:
@@ -189,6 +204,19 @@ with patch.object(runner_module, "http_request_json", return_value={"data": [
 ]}) as request:
     assert runner_module.resolve_connect_scope_id(qualified, "bootstrap") == "qualified-scope"
     assert request.call_args.args[0].endswith("/realms?tenantSlug=tenant-b")
+with patch.dict("os.environ", {"PLAYER_EXPERIENCE_TENANT_SLUG": " \t "}):
+    whitespace_only = runner_module.SmokeConfig.from_env(
+        "contract-test", "websocket", None
+    )
+assert whitespace_only.tenant_slug is None
+with patch.object(runner_module, "http_request_json") as request:
+    try:
+        runner_module.resolve_connect_scope_id(whitespace_only, "bootstrap")
+    except runner_module.ProbeOperationalFailure as exc:
+        assert "PLAYER_EXPERIENCE_TENANT_SLUG" in str(exc)
+    else:
+        raise AssertionError("Whitespace-only tenant selector was accepted")
+    request.assert_not_called()
 
 runner_module.validate_telnet_transport_config(
     env_config, {"websocket"}, simulate=False
