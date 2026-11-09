@@ -117,11 +117,6 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     transaction.setReadOnly(false);
   }
 
-  /** Resolves a world only when the complete public collection identifies one exact target. */
-  public List<RealmScope> listRealmScopes(String bootstrapToken, String worldSlug) {
-    return listRealmScopes(bootstrapToken, null, worldSlug, false);
-  }
-
   /** Selects the canonical tenant/world pair through the same complete-source pipeline. */
   public List<RealmScope> listRealmScopes(
       String bootstrapToken, String tenantSlug, String worldSlug) {
