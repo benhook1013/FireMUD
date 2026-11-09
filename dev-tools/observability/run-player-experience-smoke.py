@@ -303,6 +303,14 @@ def main() -> int:
     )
     establish_player_flow_canary_capability(config, initial_external_authority)
     try:
+        validate_live_websocket_tenant_selector(
+            config,
+            declared_exposed_paths(initial_external_authority),
+            simulate=args.simulate,
+        )
+    except ProbeOperationalFailure as exc:
+        parser.error(str(exc))
+    try:
         validate_telnet_transport_config(
             config,
             declared_exposed_paths(initial_external_authority),
@@ -2077,6 +2085,16 @@ def require_tenant_selector(config: SmokeConfig) -> None:
         raise ProbeOperationalFailure(
             "PLAYER_EXPERIENCE_TENANT_SLUG must select the world's tenant; world slugs are not global"
         )
+
+
+def validate_live_websocket_tenant_selector(
+    config: SmokeConfig, exposed_paths: set[str], *, simulate: bool
+) -> None:
+    """Preflight tenant selection when a live WebSocket smoke will execute."""
+    if simulate or "websocket" not in exposed_paths:
+        return
+    if config.prometheus_mirrors == "published" or canary_producer_is_authorized(config):
+        require_tenant_selector(config)
 
 
 def require_visible_world(config: SmokeConfig, bootstrap_token: str) -> None:
