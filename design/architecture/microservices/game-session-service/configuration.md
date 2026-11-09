@@ -14,6 +14,8 @@ Game Session follows the configuration scheme from [Environment Variables & Secr
 
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`. The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT`.
 
+The authenticated TCP gameplay receiver uses a separate internal TLS listener, disabled by default and distinct from the configured ordinary HTTP port. [Security Architecture](../../system-architecture-security.md#authenticated-tcp-gateway-to-game-session-receiving) owns the mTLS trust and custody contract. The [environment and secrets catalog](../../infrastructure/environment-and-secrets-catalog.md#authenticated-tcp-gameplay-bridge) records the deployed bindings.
+
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `GAME_TICK_DURATION_MS` | Tick cadence (`tick_interval_ms`): target interval between ticks for a region | `1000` |
@@ -25,6 +27,8 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for World Management Service | `world-management-service:6565` |
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED` | Enables the separate mTLS listener for authenticated TCP gameplay receiving. | `false` (hosted Helm: `true`) |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT` | Port for the separate listener; must differ from the ordinary HTTP port. | `8444` (hosted Helm: `8444`) |
 
 ## FireMUD Settings Domains
 

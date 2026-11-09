@@ -164,21 +164,11 @@ class GameSessionWebSocketHandshakeInterceptorTest {
     missingCertificate.removeAttribute("jakarta.servlet.request.X509Certificate");
     assertRejected(missingCertificate);
 
-    var missingClientAuth =
-        authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
-    var nonClientAuthCertificate =
-        (X509Certificate[])
-            missingClientAuth.getAttribute("jakarta.servlet.request.X509Certificate");
-    when(nonClientAuthCertificate[0].getExtendedKeyUsage())
-        .thenReturn(List.of("1.3.6.1.5.5.7.3.1"));
-    assertRejected(missingClientAuth);
-
-    var missingSpiffeSan = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
-    var certificateWithNoUriSan =
-        (X509Certificate[])
-            missingSpiffeSan.getAttribute("jakarta.servlet.request.X509Certificate");
-    when(certificateWithNoUriSan[0].getSubjectAlternativeNames()).thenReturn(List.of());
-    assertRejected(missingSpiffeSan);
+    assertRejected(
+        authenticatedRequest(
+            List.of(List.of(6, "spiffe://firemud/ns/test/sa/spring-cloud-gateway")),
+            "1.3.6.1.5.5.7.3.1"));
+    assertRejected(authenticatedRequest(List.of(), "1.3.6.1.5.5.7.3.2"));
   }
 
   private void assertRejected(MockHttpServletRequest request) {
@@ -200,12 +190,17 @@ class GameSessionWebSocketHandshakeInterceptorTest {
   }
 
   private static MockHttpServletRequest authenticatedRequest(String peer) throws Exception {
+    return authenticatedRequest(List.of(List.of(6, peer)), "1.3.6.1.5.5.7.3.2");
+  }
+
+  private static MockHttpServletRequest authenticatedRequest(
+      List<List<?>> subjectAlternativeNames, String keyUsage) throws Exception {
     var request = new MockHttpServletRequest("GET", "/ws/game/tcp");
     request.setSecure(true);
     request.setLocalPort(8444);
     var certificate = mock(X509Certificate.class);
-    when(certificate.getExtendedKeyUsage()).thenReturn(List.of("1.3.6.1.5.5.7.3.2"));
-    when(certificate.getSubjectAlternativeNames()).thenReturn(List.of(List.of(6, peer)));
+    when(certificate.getExtendedKeyUsage()).thenReturn(List.of(keyUsage));
+    when(certificate.getSubjectAlternativeNames()).thenReturn(subjectAlternativeNames);
     request.setAttribute(
         "jakarta.servlet.request.X509Certificate", new X509Certificate[] {certificate});
     request.addHeader("X-Client-IP", "203.0.113.7");

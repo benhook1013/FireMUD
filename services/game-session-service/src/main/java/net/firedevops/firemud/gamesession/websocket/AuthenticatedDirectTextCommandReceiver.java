@@ -5,6 +5,7 @@ import java.util.Map;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -113,6 +114,10 @@ public final class AuthenticatedDirectTextCommandReceiver {
       };
     } catch (AuthenticatedDirectTextSessions.LoginRequiredException missingLogin) {
       return failure("LOGIN_REQUIRED", "Use LOGIN <email> <password> before REALMS or JOIN");
+    } catch (UnknownWorldSelectorException unknownSelector) {
+      return failure(
+          "INVALID_ARGUMENT",
+          "Unknown or ambiguous world selector. Run WORLDS and choose a listed selector.");
     } catch (AuthenticatedDirectTextSessions.LoginRejectedException rejected) {
       return switch (rejected.code()) {
         case AuthenticationErrorCodes.INVALID_CREDENTIALS ->

@@ -16,6 +16,7 @@ import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
@@ -104,6 +105,41 @@ class AuthenticatedDirectTextCommandReceiverTest {
   }
 
   @Test
+  void unknownRealmSelectorReturnsActionableInvalidArgument() {
+    var fixture = fixture();
+    when(fixture.lobby.realms(null, null, fixture.connection, fixture.connection.menu, "missing"))
+        .thenThrow(new UnknownWorldSelectorException());
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket,
+            new TextCommand(TextCommandType.REALMS, List.of("missing"), "REALMS missing"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("Unknown or ambiguous world selector. Run WORLDS and choose a listed selector.");
+  }
+
+  @Test
+  void unknownJoinSelectorReturnsActionableInvalidArgumentBeforeLobbyDispatch() {
+    var fixture = fixture();
+    when(fixture.selections.resolve(fixture.connection.menu, "missing"))
+        .thenThrow(new UnknownWorldSelectorException());
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket,
+            new TextCommand(TextCommandType.JOIN, List.of("missing"), "JOIN missing"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("Unknown or ambiguous world selector. Run WORLDS and choose a listed selector.");
+    verifyNoInteractions(fixture.lobby);
+  }
+
+  @Test
   void refusedJoinReportsTheExactInvalidArgumentOrUnavailableError() {
     var fixture = fixture();
     var empty =
@@ -121,14 +157,17 @@ class AuthenticatedDirectTextCommandReceiverTest {
     assertThat(excessive.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(excessive.commandResult().errorMessage()).isEqualTo("Usage: JOIN <world>");
 
-    var unresolved =
-        fixture.receiver.receive(
-            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("other"), "JOIN other"));
-    assertThat(unresolved.commandResult().accepted()).isFalse();
-    assertThat(unresolved.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
-    assertThat(unresolved.commandResult().errorMessage())
+    var unresolved = fixture();
+    when(unresolved.selections.resolve(unresolved.connection.menu, "demo"))
+        .thenReturn(Optional.empty());
+    var unresolvedResult =
+        unresolved.receiver.receive(
+            unresolved.socket, new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"));
+    assertThat(unresolvedResult.commandResult().accepted()).isFalse();
+    assertThat(unresolvedResult.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
+    assertThat(unresolvedResult.commandResult().errorMessage())
         .isEqualTo("Authenticated gameplay authority unavailable");
-    verifyNoInteractions(fixture.lobby);
+    verifyNoInteractions(unresolved.lobby);
   }
 
   @Test
