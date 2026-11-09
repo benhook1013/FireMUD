@@ -1207,7 +1207,7 @@ class AccountServiceImplTest {
           .finishCanonicalFailure(f.requestId, f.scope, f.binding, code);
     } else {
       org.mockito.Mockito.verify(accountJoinOperationRepository)
-          .recordCanonicalAttemptFailure(f.requestId, f.scope, f.binding, "UNAVAILABLE", code);
+          .recordCanonicalAttemptFailure(f.requestId, f.scope, f.binding, "NOT_EVALUATED", code);
     }
     verifyNoInteractions(f.terminal);
   }
@@ -1320,7 +1320,7 @@ class AccountServiceImplTest {
     assertSame(failure, result.getCause());
     org.mockito.Mockito.verify(accountJoinOperationRepository)
         .recordCanonicalAttemptFailure(
-            f.requestId, f.scope, f.binding, "UNAVAILABLE", "ADMISSION_POINTER_UNAVAILABLE");
+            f.requestId, f.scope, f.binding, "NOT_EVALUATED", "ADMISSION_POINTER_UNAVAILABLE");
     verifyNoInteractions(f.terminal);
   }
 
@@ -1336,7 +1336,28 @@ class AccountServiceImplTest {
         assertThrows(AuthenticationException.class, f::browserJoin).getCode());
     org.mockito.Mockito.verify(accountJoinOperationRepository)
         .recordCanonicalAttemptFailure(
-            f.requestId, f.scope, f.binding, "UNAVAILABLE", "ADMISSION_POINTER_UNAVAILABLE");
+            f.requestId, f.scope, f.binding, "NOT_EVALUATED", "ADMISSION_POINTER_UNAVAILABLE");
+    verifyNoInteractions(f.terminal);
+  }
+
+  @Test
+  void canonicalJoinNonEntitlementFailureAfterPolicyBindingKeepsPolicySeparateFromAttempt() {
+    var f = canonicalJoinFixture();
+    var failure = new AuthenticationException("AUTH_UNAVAILABLE", "controlled member outage");
+    when(accountTenantMembershipRepository.findFreshMembershipForUpdate(
+            f.scope.accountId(), f.scope.tenantId()))
+        .thenThrow(failure);
+
+    assertSame(failure, assertThrows(AuthenticationException.class, f::browserJoin));
+
+    var order = org.mockito.Mockito.inOrder(accountJoinOperationRepository);
+    order
+        .verify(accountJoinOperationRepository)
+        .bindCanonicalPolicyEvidence(f.requestId, f.scope, f.binding, true, 1L);
+    order
+        .verify(accountJoinOperationRepository)
+        .recordCanonicalAttemptFailure(
+            f.requestId, f.scope, f.binding, "NOT_EVALUATED", "AUTH_UNAVAILABLE");
     verifyNoInteractions(f.terminal);
   }
 
@@ -1425,9 +1446,13 @@ class AccountServiceImplTest {
   }
 
   @ParameterizedTest
-  @ValueSource(
-      strings = {"AUTH_UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE", "ADMISSION_POINTER_UNAVAILABLE"})
-  void canonicalJoinPreservesTypedFailureWhenRecordingFails(String code) {
+  @CsvSource({
+    "AUTH_UNAVAILABLE,NOT_EVALUATED",
+    "ENTITLEMENT_UNAVAILABLE,UNAVAILABLE",
+    "ADMISSION_POINTER_UNAVAILABLE,NOT_EVALUATED"
+  })
+  void canonicalJoinPreservesTypedFailureWhenRecordingFails(
+      String code, String authorityAvailability) {
     var f = canonicalJoinFixture();
     var primary = new AuthenticationException(code, "controlled primary source failure");
     var recording =
@@ -1438,7 +1463,8 @@ class AccountServiceImplTest {
         .resolvePublishedRealmAdmissionTarget(org.mockito.ArgumentMatchers.any());
     org.mockito.Mockito.doThrow(recording)
         .when(accountJoinOperationRepository)
-        .recordCanonicalAttemptFailure(f.requestId, f.scope, f.binding, "UNAVAILABLE", code);
+        .recordCanonicalAttemptFailure(
+            f.requestId, f.scope, f.binding, authorityAvailability, code);
 
     var failure = assertThrows(AuthenticationException.class, f::browserJoin);
 
