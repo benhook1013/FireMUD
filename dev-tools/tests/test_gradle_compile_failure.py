@@ -414,6 +414,37 @@ class CaptureTests(unittest.TestCase):
         observer.observe.assert_called_once_with(b'original output\n')
         observer.close.assert_called_once()
 
+    def test_stall_capture_falls_back_for_regular_file_input(self):
+        input_path = self.root / 'build-output.log'
+        input_path.write_bytes(b'original build output\n')
+        observer = Mock()
+        destination = io.BytesIO()
+        with patch.object(CAPTURE, 'MAX_LOG_BYTES', 8), patch.object(
+                CAPTURE, 'stall_marker') as marker, input_path.open('rb') as source:
+            status = CAPTURE.capture_log(source, destination, self.log, observer)
+        self.assertEqual(0, status)
+        self.assertEqual(b'original build output\n', destination.getvalue())
+        self.assertEqual(b' output\n', self.log.read_bytes())
+        marker.assert_called_once_with('observer-failed')
+        observer.observe.assert_not_called()
+        observer.close.assert_called_once()
+
+    def test_stall_capture_registration_failure_closes_observer_without_hiding_read_error(self):
+        selector = Mock()
+        selector.register.side_effect = PermissionError('regular files cannot be epoll-registered')
+        observer = Mock()
+
+        class BrokenSource:
+            def read(self, size):
+                raise OSError('direct read failed')
+
+        with patch.object(CAPTURE.selectors, 'DefaultSelector', return_value=selector), patch.object(
+                CAPTURE, 'stall_marker') as marker, self.assertRaisesRegex(OSError, 'direct read failed'):
+            list(CAPTURE.capture_chunks(BrokenSource(), observer))
+        selector.close.assert_called_once()
+        observer.close.assert_called_once()
+        marker.assert_called_once_with('observer-failed')
+
     def test_module_wrapper_uses_two_workers_including_fallback(self):
         for module, partition, expected in [('account-service', '4', [2, 2]),
                                             ('account-service', 'full', [2]),
