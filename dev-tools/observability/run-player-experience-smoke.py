@@ -2114,7 +2114,8 @@ def require_visible_world(config: SmokeConfig, bootstrap_token: str) -> None:
         ):
             return
     raise ProbeOperationalFailure(
-        f"World {config.world!r} was not visible during bootstrap discovery"
+        f"World {config.world!r} for tenant {config.tenant_slug!r} "
+        "was not visible during bootstrap discovery"
     )
 
 
