@@ -672,6 +672,12 @@ require_equal(
     "${{ failure() || cancelled() }}",
     "ci workflow",
 )
+require_equal(
+    test_logs_step,
+    ("with", "name"),
+    "test-logs-${{ matrix.module }}-${{ matrix.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+    "ci workflow",
+)
 
 junit_results_step = find_step(
     module_ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
