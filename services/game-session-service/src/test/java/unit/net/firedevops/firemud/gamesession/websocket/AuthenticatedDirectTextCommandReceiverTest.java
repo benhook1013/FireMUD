@@ -12,9 +12,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiFunction;
+import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
@@ -25,6 +27,8 @@ import net.firedevops.firemud.gamesession.service.InitialGameplayLoginOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyOwner;
 import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthenticatedLobbyScope;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -97,6 +101,125 @@ class AuthenticatedDirectTextCommandReceiverTest {
         .isEqualTo("ERROR ADMISSION_UNAVAILABLE Canonical gameplay admission unavailable")
         .doesNotContain("ENTITLEMENT_UNAVAILABLE");
     verifyNoInteractions(fixture.lobby, fixture.selections);
+  }
+
+  @ParameterizedTest
+  @MethodSource("malformedCommands")
+  void malformedCommandsReturnUsageBeforeOwnerOrLoginDispatch(TextCommand command) {
+    var fixture = fixture();
+
+    var result = fixture.receiver.receive(fixture.socket, command);
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage()).startsWith("Usage: " + command.type());
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .renderAll(command, result.commandResult(), result.outputs()))
+        .startsWith("ERROR INVALID_ARGUMENT Usage: " + command.type());
+    verifyNoInteractions(fixture.connection, fixture.lobby, fixture.selections);
+  }
+
+  private static Stream<TextCommand> malformedCommands() {
+    return Stream.of(
+        new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN"),
+        new TextCommand(TextCommandType.LOGIN, List.of("player@example.test"), "LOGIN"),
+        new TextCommand(
+            TextCommandType.LOGIN, List.of("player@example.test", "secret", "extra"), "LOGIN"),
+        new TextCommand(TextCommandType.LOGIN, List.of(" ", "secret"), "LOGIN"),
+        new TextCommand(TextCommandType.LOGIN, List.of("player@example.test", ""), "LOGIN"),
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("player@example.test", "secret"),
+            "LOGIN",
+            "LOGIN",
+            new TextCommandPayload.Credentials(null, "secret")),
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("player@example.test", "secret"),
+            "LOGIN",
+            "LOGIN",
+            new TextCommandPayload.Credentials("player@example.test", null)),
+        new TextCommand(TextCommandType.REALMS, List.of(), "REALMS"),
+        new TextCommand(TextCommandType.REALMS, List.of("demo", "extra"), "REALMS"),
+        new TextCommand(TextCommandType.REALMS, List.of(" "), "REALMS"),
+        new TextCommand(TextCommandType.JOIN, List.of(), "JOIN"),
+        new TextCommand(TextCommandType.JOIN, List.of("demo", "extra"), "JOIN"),
+        new TextCommand(TextCommandType.JOIN, List.of(" "), "JOIN"));
+  }
+
+  @Test
+  void realmsBeforeWorldsExplainsTheRequiredLocalSequence() {
+    var fixture = fixture();
+    fixture.connection.menu = null;
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket,
+            new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("Run WORLDS before REALMS <world>");
+    verifyNoInteractions(fixture.lobby, fixture.selections);
+  }
+
+  @Test
+  void joinBeforeRealmsExplainsTheRequiredLocalSequence() {
+    var fixture = fixture();
+    fixture.connection.selectedScope = null;
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("Run WORLDS and REALMS <world> before JOIN <world>");
+    verifyNoInteractions(fixture.lobby, fixture.selections);
+  }
+
+  @Test
+  void differentResolvedWorldRequiresItsOwnRealmsSelection() {
+    var fixture = fixture();
+    when(fixture.selections.resolve(fixture.connection.menu, "other"))
+        .thenReturn(Optional.of(mock(CanonicalPlayableTarget.class)));
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("other"), "JOIN other"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage()).contains("REALMS <world>");
+    verifyNoInteractions(fixture.lobby);
+  }
+
+  @Test
+  void protectedOwnerAndSelectionFailuresRemainUnavailableRatherThanUsageErrors() {
+    for (RuntimeException failure :
+        List.of(
+            new IllegalArgumentException("private-source"),
+            new IllegalStateException("private-custody"))) {
+      var realms = fixture();
+      when(realms.lobby.realms(null, null, realms.connection, realms.connection.menu, "demo"))
+          .thenThrow(failure);
+      var realmResult =
+          realms.receiver.receive(
+              realms.socket,
+              new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"));
+      assertThat(realmResult.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
+      assertThat(realmResult.commandResult().errorMessage())
+          .isEqualTo("Authenticated gameplay authority unavailable");
+
+      var join = fixture();
+      when(join.selections.resolve(join.connection.menu, "demo")).thenThrow(failure);
+      var joinResult =
+          join.receiver.receive(
+              join.socket, new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"));
+      assertThat(joinResult.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
+      assertThat(joinResult.commandResult().errorMessage())
+          .isEqualTo("Authenticated gameplay authority unavailable");
+      verifyNoInteractions(join.lobby);
+    }
   }
 
   private Fixture fixture() {

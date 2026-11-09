@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamesession.service.directtext.DirectTextAuthentic
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -90,6 +91,36 @@ class AuthenticatedDirectTextSessionsTest {
     verify(outcome, never()).withOwnedPrivateResult(any());
     sessions.close(socket, CloseStatus.NORMAL);
     verify(outcome).close();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = TextCommandType.class,
+      names = {"REALMS", "JOIN"})
+  void missingLoginIsActionableButClosedCustodyRemainsUnavailable(TextCommandType type)
+      throws Exception {
+    var socket = socket();
+    sessions.open(socket);
+    var beans = new StaticListableBeanFactory();
+    var receiver =
+        new AuthenticatedDirectTextCommandReceiver(
+            sessions,
+            beans.getBeanProvider(InitialGameplayLoginOwner.class),
+            beans.getBeanProvider(DirectTextWorldSelectionService.class),
+            beans.getBeanProvider(DirectTextAuthenticatedLobbyOwner.class));
+    var command = new TextCommand(type, List.of("demo"), type + " demo");
+
+    var missingLogin = receiver.receive(socket, command);
+
+    assertThat(missingLogin.commandResult().errorCode()).isEqualTo("LOGIN_REQUIRED");
+    assertThat(missingLogin.commandResult().errorMessage()).contains("LOGIN <email> <password>");
+    sessions.close(socket, CloseStatus.NORMAL);
+
+    var closedCustody = receiver.receive(socket, command);
+
+    assertThat(closedCustody.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
+    assertThat(closedCustody.commandResult().errorMessage())
+        .isEqualTo("Authenticated gameplay authority unavailable");
   }
 
   @Test

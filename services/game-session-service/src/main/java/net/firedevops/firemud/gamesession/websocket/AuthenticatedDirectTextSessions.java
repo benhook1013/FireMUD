@@ -159,7 +159,7 @@ public final class AuthenticatedDirectTextSessions {
       try {
         requireLive();
         InitialGameplayLoginOwner.Outcome owned = outcome;
-        if (owned == null) throw unavailable();
+        if (owned == null) throw new LoginRequiredException();
         return owned.withOwnedPrivateResult(
             result -> {
               if (borrowed.putIfAbsent(Thread.currentThread(), result) != null) throw unavailable();
@@ -257,6 +257,15 @@ public final class AuthenticatedDirectTextSessions {
         previous.close(GENERATION_CLOSED);
         predecessor = null;
       }
+    }
+  }
+
+  /** A live connection has not installed a LOGIN result; this grants no custody or authority. */
+  static final class LoginRequiredException extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+
+    private LoginRequiredException() {
+      super("LOGIN is required on this live connection");
     }
   }
 
