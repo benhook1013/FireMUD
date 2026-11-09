@@ -10,10 +10,10 @@ import re
 import shlex
 import subprocess
 import tempfile
-import tomllib
 from collections import Counter
 from pathlib import Path
 
+import tomllib
 import yaml
 
 
