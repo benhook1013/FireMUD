@@ -12,6 +12,7 @@ lombok-mapstruct-binding = "0.2.0"
 grpc = "1.85.1"
 protobuf = "4.36.2"
 spotbugs = "4.10.5"
+google-java-format = "1.36.1"
 opentelemetry = "1.68.0"
 micrometer = "1.17.2"
 jjwt = "0.13.0"
@@ -85,6 +86,7 @@ protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "p
 protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }
 
 spotbugs-annotations = { module = "com.github.spotbugs:spotbugs-annotations", version.ref = "spotbugs" }
+google-java-format = { module = "com.google.googlejavaformat:google-java-format", version.ref = "google-java-format" }
 jetbrains-annotations = { module = "org.jetbrains:annotations", version.ref = "jetbrains-annotations" }
 
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry" }

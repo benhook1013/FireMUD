@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import tomllib
 from collections import Counter
 from pathlib import Path
 
@@ -2212,6 +2213,16 @@ def main() -> int:
     annotations_source = root / "buildSrc/src/main/kotlin/net/firedevops/firemud/FiremudServiceConventionsPlugin.kt"
     if 'libs.findLibrary("spotbugs.annotations").get()' not in annotations_source.read_text():
         fail("Service conventions must consume catalog-managed SpotBugs annotations")
+    catalog = tomllib.loads((root / "gradle/libs.versions.toml").read_text())
+    formatter = catalog["libraries"].get("google-java-format", {})
+    if (
+        formatter.get("module") != "com.google.googlejavaformat:google-java-format"
+        or formatter.get("version") != {"ref": "google-java-format"}
+        or not re.fullmatch(r"\d+\.\d+\.\d+", catalog["versions"].get("google-java-format", ""))
+        or 'googleJavaFormat(libs.findVersion("google-java-format").get().requiredVersion)'
+        not in (root / "build.gradle.kts").read_text()
+    ):
+        fail("Spotless must consume the independently catalog-managed Google Java formatter version")
     rules = renovate.get("packageRules", [])
     infra_rule = next((rule for rule in rules if rule.get("groupName") == "infrastructure non-major updates"), None)
     velero_rule = next(
