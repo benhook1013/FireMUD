@@ -879,9 +879,11 @@ class AccountApplicationIntegrationTest {
     f.assertTransitionCount(1L);
   }
 
-  @Test
-  void publicJoinRestoresControlledInactiveSnapshotOnceAndPreservesAuthorityGeneration() {
-    var f = publicJoinFixture(false);
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void publicJoinRestoresControlledInactiveSnapshotOnceAndPreservesAuthorityGeneration(
+      boolean paid) {
+    var f = publicJoinFixture(paid);
     String token = f.browserScope();
     assertThat(f.join(token, UUID.randomUUID().toString()).success()).isTrue();
     f.seedControlledInactiveSnapshot();
@@ -902,6 +904,13 @@ class AccountApplicationIntegrationTest {
                 "SELECT COUNT(*) FROM account_audit_outbox WHERE tenant_uuid = ? AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
                 f.tenantId))
         .isEqualTo(2L);
+    var restoredEvent = f.in(() -> f.outbox.findEvent(f.stream(), 3L).orElseThrow());
+    var decodedRestoredEvent =
+        MembershipAuthorityEventV1Codec.verify(
+            new String(restoredEvent.payload(), StandardCharsets.UTF_8));
+    assertThat(decodedRestoredEvent.requestId()).isEqualTo(request);
+    assertThat(decodedRestoredEvent.outboxSequence()).isEqualTo("3");
+    assertThat(decodedRestoredEvent.callerBoundAuthorityInvalidated()).isFalse();
     var committed = f.state(request);
     assertThat(f.join(token, request).replayed()).isTrue();
     assertThat(f.state(request)).isEqualTo(committed);
