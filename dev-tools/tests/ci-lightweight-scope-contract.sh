@@ -659,7 +659,7 @@ require_equal(
 require_equal(
     runtime_jar_step,
     ("run",),
-    "./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
+    "bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
     "ci workflow",
 )
 
