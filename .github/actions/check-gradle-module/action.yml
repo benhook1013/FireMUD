@@ -99,7 +99,7 @@ runs:
       if: ${{ failure() || cancelled() }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
-        name: test-logs-${{ inputs.module }}-${{ inputs.partition }}-${{ github.sha }}
+        name: test-logs-${{ inputs.module }}-${{ inputs.partition }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
         path: ${{ inputs.module == 'load-testing' && 'dev-tools/load-testing/build/reports/tests/' || format('services/{0}/build/reports/tests/', inputs.module) }}
 
     - name: 📤 Upload JUnit Test Results
