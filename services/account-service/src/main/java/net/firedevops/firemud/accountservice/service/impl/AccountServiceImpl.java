@@ -1142,8 +1142,10 @@ public class AccountServiceImpl implements AccountService {
                         .contains(failureCode)
                     ? failureCode
                     : "AUTH_UNAVAILABLE";
+            String authorityAvailability =
+                "ENTITLEMENT_UNAVAILABLE".equals(retryCode) ? "UNAVAILABLE" : "NOT_EVALUATED";
             accountJoinOperationRepository.recordCanonicalAttemptFailure(
-                requestId, scope, callerBinding, "UNAVAILABLE", retryCode);
+                requestId, scope, callerBinding, authorityAvailability, retryCode);
           }
         });
   }
