@@ -424,7 +424,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     fixture.seedControlledMembershipSnapshot("ACTIVE", java.util.List.of());
     BrowserFacade browser = fixture.browserFacade();
     var selected =
-        browser.service().listBootstrapRealms(browser.bootstrapToken(), "world").getFirst();
+        browser
+            .service()
+            .listBootstrapRealms(browser.bootstrapToken(), "tenant", "world")
+            .getFirst();
     var request =
         new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
             selected.connectScopeId(), UUID.randomUUID().toString());
@@ -663,7 +666,7 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
   void browserFacadeComposesRealV2ProducerReaderAndTerminalOwnersAndReplaysCommittedReceipt() {
     Fixture fixture = newFixture();
     BrowserFacade browser = fixture.browserFacade();
-    var realms = browser.service().listBootstrapRealms(browser.bootstrapToken(), "world");
+    var realms = browser.service().listBootstrapRealms(browser.bootstrapToken(), "tenant", "world");
     var selected = realms.getFirst();
     String requestId = UUID.randomUUID().toString();
     var request =
@@ -708,7 +711,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     Fixture fixture = newFixture();
     BrowserFacade browser = fixture.browserFacade();
     var selected =
-        browser.service().listBootstrapRealms(browser.bootstrapToken(), "world").getFirst();
+        browser
+            .service()
+            .listBootstrapRealms(browser.bootstrapToken(), "tenant", "world")
+            .getFirst();
     String requestId = UUID.randomUUID().toString();
     var request =
         new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
@@ -794,7 +800,10 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
     Fixture fixture = newFixture();
     BrowserFacade browser = fixture.browserFacade();
     var selected =
-        browser.service().listBootstrapRealms(browser.bootstrapToken(), "world").getFirst();
+        browser
+            .service()
+            .listBootstrapRealms(browser.bootstrapToken(), "tenant", "world")
+            .getFirst();
     String requestId = UUID.randomUUID().toString();
     var request =
         new net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest(
