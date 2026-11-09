@@ -1044,3 +1044,175 @@ run_case common-web-support 125
 assert_no_retry
 
 echo "Gradle dependency-recovery contract passed."
+
+
+# The normal module path retries the unchanged invocation once after a verified
+# archive recovery. A second wrapper failure remains failed and is not retried.
+for retry_result in success failure; do
+  new_case "distribution-$retry_result"
+  mkdir -p "$CASE_DIR/gradle/wrapper"
+  fixture_sha="$(printf '%s' 'controlled pinned distribution archive' | sha256sum | cut -d ' ' -f 1)"
+  printf '%s\n' 'distributionBase=GRADLE_USER_HOME' 'distributionPath=wrapper/dists' \
+    'zipStoreBase=GRADLE_USER_HOME' 'zipStorePath=wrapper/dists' \
+    'distributionUrl=https\://services.gradle.org/distributions/gradle-9.9.0-bin.zip' \
+    "distributionSha256Sum=$fixture_sha" > "$CASE_DIR/gradle/wrapper/gradle-wrapper.properties"
+  cat > "$CASE_DIR/bin/curl" <<'CURL_DISTRIBUTION'
+#!/usr/bin/env python3
+import hashlib
+import json
+from pathlib import Path
+import sys
+payload = b"controlled pinned distribution archive"
+output = Path(sys.argv[sys.argv.index("-o") + 1])
+if sys.argv[-1].endswith("/releases/tags/v9.9.0"):
+    output.write_text(json.dumps({"tag_name": "v9.9.0", "assets": [{"id": 7, "name": "gradle-9.9.0-bin.zip", "size": len(payload), "digest": "sha256:" + hashlib.sha256(payload).hexdigest()}]}))
+else:
+    assert sys.argv[-1] == "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/7"
+    output.write_bytes(payload)
+CURL_DISTRIBUTION
+  chmod +x "$CASE_DIR/bin/curl"
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 || "${FAKE_DISTRIBUTION_RETRY_RESULT:-}" == failure ]]; then
+    echo "Downloading https://services.gradle.org/distributions/gradle-9.9.0-bin.zip"
+    echo "java.io.IOException: Server returned HTTP response code: 504 for URL: https://services.gradle.org/distributions/gradle-9.9.0-bin.zip"
+    exit 1
+  fi
+  exit 0'
+  expected=0
+  [[ "$retry_result" == success ]] || expected=1
+  GRADLE_USER_HOME="$CASE_DIR/gradle-cache" FAKE_DISTRIBUTION_RETRY_RESULT="$retry_result" run_case common-web-support "$expected"
+  assert_call_count 2
+  [[ "$(sed -n '1p' "$CASE_DIR/calls")" == "$(sed -n '2p' "$CASE_DIR/calls")" ]] || fail "distribution recovery changed the Gradle invocation"
+  ! grep -Fq -- '--refresh-dependencies' "$CASE_DIR/calls" || fail "distribution transport must not force dependency refresh"
+  assert_output_contains "Recovered the pinned wrapper distribution before task execution"
+done
+
+# Exercise the wrapper transport recovery separately from Maven metadata refresh.
+python3 - "$RECOVERY_RUNNER" <<'PY_DISTRIBUTION_TEST'
+import contextlib
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+runner = Path(sys.argv[1]).read_text()
+code = runner.split("<<'PY_DISTRIBUTION'\n", 1)[1].split("\nPY_DISTRIBUTION\n", 1)[0]
+url = "https://services.gradle.org/distributions/gradle-9.9.0-bin.zip"
+payload = b"controlled pinned distribution archive"
+checksum = hashlib.sha256(payload).hexdigest()
+
+class DistributionRecovery(unittest.TestCase):
+    def attempt(self, *, log=None, changes=None, metadata=None, body=payload, args=(), error=None, existing=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            props = {
+                "distributionBase": "GRADLE_USER_HOME", "distributionPath": "wrapper/dists",
+                "zipStoreBase": "GRADLE_USER_HOME", "zipStorePath": "wrapper/dists",
+                "distributionUrl": url.replace(":", "\\:"), "distributionSha256Sum": checksum,
+            }
+            props.update(changes or {})
+            properties = root / "gradle/wrapper/gradle-wrapper.properties"
+            properties.parent.mkdir(parents=True)
+            properties.write_text("".join(f"{key}={value}\n" for key, value in props.items() if value is not None))
+            log_path = root / "normal.log"
+            log_path.write_text(log if log is not None else f'Downloading {url}\nException in thread "main" java.io.IOException: Server returned HTTP response code: 504 for URL: {url}\n')
+            release = metadata if metadata is not None else {"tag_name": "v9.9.0", "assets": [{"id": 7, "name": "gradle-9.9.0-bin.zip", "size": len(payload), "digest": f"sha256:{checksum}"}]}
+            cache = root / "cache"
+            number = int.from_bytes(hashlib.md5(url.encode()).digest(), "big")
+            key = ""
+            while number:
+                number, remainder = divmod(number, 36)
+                key = "0123456789abcdefghijklmnopqrstuvwxyz"[remainder] + key
+            target = cache / "wrapper/dists/gradle-9.9.0-bin" / key / "gradle-9.9.0-bin.zip"
+            if existing is not None:
+                target.parent.mkdir(parents=True)
+                target.write_bytes(existing)
+            calls = []
+            def fetch(command, **options):
+                calls.append(command)
+                self.assertEqual(command[0], "curl")
+                self.assertTrue(options["check"])
+                self.assertLessEqual(options["timeout"], 80)
+                if error is not None:
+                    raise error
+                output = Path(command[command.index("-o") + 1])
+                if command[-1].endswith("/releases/tags/v9.9.0"):
+                    self.assertIn("Accept: application/vnd.github+json", command)
+                    output.write_text(json.dumps(release))
+                else:
+                    self.assertEqual(command[-1], "https://api.github.com/repos/gradle/gradle-distributions/releases/assets/7")
+                    self.assertIn("Accept: application/octet-stream", command)
+                    output.write_bytes(body)
+                return subprocess.CompletedProcess(command, 0)
+            with patch.object(sys, "argv", ["recovery", str(root), str(log_path), *args]), patch.dict(os.environ, {"GRADLE_USER_HOME": str(cache)}), patch("subprocess.run", side_effect=fetch), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as outcome:
+                    exec(compile(code, "distribution-recovery", "exec"), {})
+            return outcome.exception.code, calls, target.read_bytes() if target.exists() else None
+
+    def test_exact_pinned_distribution_uses_official_api_and_keeps_bytes(self):
+        status, calls, stored = self.attempt()
+        self.assertEqual(status, 0)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(stored, payload)
+
+    def test_existing_verified_archive_is_not_replaced(self):
+        status, calls, stored = self.attempt(existing=payload)
+        self.assertEqual((status, calls, stored), (0, [], payload))
+        status, calls, stored = self.attempt(existing=b"unexpected existing archive")
+        self.assertEqual((status, calls, stored), (1, [], b"unexpected existing archive"))
+
+    def test_task_test_compile_and_unrecognized_failures_never_fetch(self):
+        base = f'Downloading {url}\nException in thread "main" java.io.IOException: Server returned HTTP response code: 504 for URL: {url}\n'
+        for log in ["unrelated failure", base.replace("504", "404"), base.replace(url, url.replace("9.9.0", "9.8.2")), "> Task :account-service:test\n" + base, "\x1b[31m> Task :account-service:test\x1b[0m\n" + base, "Compilation failed\n" + base, "There were failing tests\n" + base, "BUILD FAILED\n" + base, "java.lang.IllegalStateException: unrelated failure\n" + base, base + "Downloading https://untrusted.example/other.zip\n"]:
+            with self.subTest(log=log):
+                status, calls, stored = self.attempt(log=log)
+                self.assertEqual((status, calls, stored), (1, [], None))
+
+    def test_bad_pin_layout_and_different_cache_args_never_fetch(self):
+        for changes in [{"distributionSha256Sum": None}, {"distributionSha256Sum": "bad"}, {"distributionUrl": "https://untrusted.example/gradle-9.9.0-bin.zip"}, {"zipStorePath": "other"}, {"distributionBase": "PROJECT"}]:
+            with self.subTest(changes=changes):
+                self.assertEqual(self.attempt(changes=changes)[:2], (1, []))
+        for args in [("-g", "/other"), ("--gradle-user-home=/other",)]:
+            self.assertEqual(self.attempt(args=args)[:2], (1, []))
+
+    def test_malformed_or_mismatched_release_metadata_does_not_download_asset(self):
+        base = {"tag_name": "v9.9.0", "assets": [{"id": 7, "name": "gradle-9.9.0-bin.zip", "size": len(payload), "digest": f"sha256:{checksum}"}]}
+        variants = [{}, [], {**base, "assets": None}, {**base, "assets": ["malformed"]}, {**base, "tag_name": "v9.8.2"}, {**base, "draft": True}, {**base, "prerelease": True}, {**base, "assets": []}, {**base, "assets": base["assets"] * 2}]
+        for change in [{"id": True}, {"id": 0}, {"size": 0}, {"size": 536870913}, {"digest": "sha256:" + "0" * 64}]:
+            variants.append({**base, "assets": [{**base["assets"][0], **change}]})
+        for metadata in variants:
+            with self.subTest(metadata=metadata):
+                status, calls, stored = self.attempt(metadata=metadata)
+                self.assertEqual(status, 1)
+                self.assertEqual(len(calls), 1)
+                self.assertIsNone(stored)
+
+    def test_download_error_and_checksum_or_size_mismatch_publish_nothing(self):
+        for body in [payload + b"extra", b"x" * len(payload)]:
+            status, calls, stored = self.attempt(body=body)
+            self.assertEqual((status, len(calls), stored), (1, 2, None))
+        status, calls, stored = self.attempt(error=subprocess.CalledProcessError(22, "curl"))
+        self.assertEqual((status, len(calls), stored), (1, 1, None))
+
+unittest.main(argv=["distribution-recovery"], exit=True)
+PY_DISTRIBUTION_TEST
+GRADLE_COMMAND_PATTERN='^[[:space:]]*(-[[:space:]]+)?(run:[[:space:]]+)?\./gradlew([[:space:]]|$)'
+for command_form in '- run: ./gradlew :check' './gradlew'; do
+  printf '%s\n' "$command_form" | grep -Eq "$GRADLE_COMMAND_PATTERN" || fail "Gradle wrapper command form was not detected: $command_form"
+done
+
+for workflow in "$ROOT_DIR/.github/workflows/ci.yml" "$ROOT_DIR/.github/workflows/runtime-images.yml" \
+  "$ROOT_DIR/.github/actions/check-gradle-module/action.yml" \
+  "$ROOT_DIR/.github/actions/aggregate-slow-service-coverage/action.yml"; do
+  [[ -f "$workflow" ]] || fail "Missing Gradle bootstrap owner: $workflow"
+  if grep -Eq "$GRADLE_COMMAND_PATTERN" "$workflow"; then
+    fail "Gradle bootstrap bypasses bounded distribution recovery in $workflow"
+  fi
+done
+echo "Official Gradle distribution transport contracts passed"

@@ -147,19 +147,21 @@ public final class AccountCanonicalPublicRealmScopeOwner {
         || caller.requestId() == null
         || caller.sessionId().isBlank()
         || caller.requestId().isBlank()
-        || caller.sessionId().length() > 128
+        || caller.sessionId().length() > 32
         || caller.requestId().length() > 128) {
       throw new AuthenticationException(
           "CONNECT_CONTEXT_INVALID", "Direct caller correlation is invalid");
     }
     try {
-      long session = Long.parseLong(caller.sessionId());
-      if (session <= 0 || !caller.sessionId().matches("[0-9]+")) {
+      if (!caller.sessionId().matches("[0-9]+")) {
+        throw new NumberFormatException("Invalid transport session");
+      }
+      if (Long.parseLong(caller.sessionId()) <= 0) {
         throw new NumberFormatException("Invalid transport session");
       }
     } catch (NumberFormatException failure) {
       throw new AuthenticationException(
-          "CONNECT_CONTEXT_INVALID", "Direct caller session is invalid");
+          "CONNECT_CONTEXT_INVALID", "Direct caller session is invalid", failure);
     }
     // These times describe this Account producer invocation, not a fabricated bootstrap lifetime.
     Instant issuedAt = now();
