@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -223,7 +224,7 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
   }
 
   @Test
-  void ambiguousWorldSlugAcrossTwoRealDemoTenantsRefusesInsteadOfChoosingOne() {
+  void repeatedWorldSlugAcrossTwoRealDemoTenantsReturnsBothQualifiedSelectorsInOrder() {
     Fixture f = fixture();
     DemoTenant first = f.demo("same-world", true);
     DemoTenant second = f.demo("same-world", true);
@@ -231,7 +232,20 @@ class AccountPublicBootstrapDemoWorldsOwnerPostgresIntegrationTest {
         List.of(first.target(), second.target()), List.of(second.target(), first.target()));
     Map<String, String> before = f.snapshot();
 
-    assertCode("ADMISSION_POINTER_UNAVAILABLE", () -> f.worlds.listWorlds(f.token));
+    List<BootstrapWorldDto> expected =
+        List.of(first, second).stream()
+            .sorted(
+                Comparator.comparing((DemoTenant tenant) -> tenant.target().worldSlug())
+                    .thenComparing(tenant -> tenant.target().tenantSlug()))
+            .map(
+                tenant ->
+                    new BootstrapWorldDto(
+                        tenant.target().tenantSlug(),
+                        tenant.target().worldSlug(),
+                        tenant.target().worldDisplayName()))
+            .toList();
+
+    assertThat(f.worlds.listWorlds(f.token)).containsExactlyElementsOf(expected);
 
     assertThat(f.snapshot()).isEqualTo(before);
     f.assertNoAdmissionRowsOrPaidReads();

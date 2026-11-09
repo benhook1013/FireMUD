@@ -407,10 +407,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   @Test
-  void globallyUniqueWorldUsesTheExactSourceTenantAndRetainedV2Scope() {
+  void qualifiedWorldUsesTheExactSourceTenantAndRetainedV2Scope() {
     Fixture f = new Fixture(300000L);
 
-    var result = f.owner.listRealmScopes(f.token, "world").getFirst();
+    var result = f.owner.listRealmScopes(f.token, "tenant", "world").getFirst();
 
     assertThat(result.target()).isEqualTo(f.target);
     assertThat(result.scope().tenantId()).isEqualTo(f.target.canonicalTenantId());
@@ -420,12 +420,13 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   @Test
-  void globalWorldAmbiguityRefusesBeforeEntitlementOrAccountScopeSources() {
+  void qualifiedWorldAmbiguityWithinOneTenantRefusesBeforeEntitlementOrAccountScopeSources() {
     Fixture f = new Fixture(300000L);
-    Target other = target(UUID.randomUUID(), "another-tenant", 1L);
-    f.firstCollection = List.of(f.target, other);
+    Target duplicate = target(TENANT, "tenant", 1L);
+    f.firstCollection = List.of(f.target, duplicate);
 
-    assertCode("ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "world"));
+    assertCode(
+        "ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "tenant", "world"));
 
     verifyNoInteractions(f.entitlements, f.tenants, f.heads, f.memberships, f.scopes);
     assertThat(f.transactions.started).isZero();
@@ -433,12 +434,13 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void globalWorldTenantReplacementOrNewAmbiguityOnRereadCannotPublishScope(boolean ambiguous) {
+  void qualifiedWorldReplacementOrAmbiguityOnRereadCannotPublishScope(boolean ambiguous) {
     Fixture f = new Fixture(300000L);
-    Target other = target(UUID.randomUUID(), "another-tenant", 1L);
-    f.secondCollection = ambiguous ? List.of(f.target, other) : List.of(other);
+    Target changed = target(TENANT, "tenant", 2L);
+    f.secondCollection = ambiguous ? List.of(f.target, changed) : List.of(changed);
 
-    assertCode("ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "world"));
+    assertCode(
+        "ADMISSION_POINTER_UNAVAILABLE", () -> f.owner.listRealmScopes(f.token, "tenant", "world"));
 
     verifyNoInteractions(f.scopes);
     verify(f.entitlements).evaluate(TENANT);
@@ -458,14 +460,15 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   @Test
-  void globalWorldAbsenceIsRereadWithoutMintingAndMalformedCallerPrecedesSelection() {
+  void qualifiedWorldAbsenceIsRereadWithoutMintingAndMalformedCallerPrecedesSelection() {
     Fixture f = new Fixture(300000L);
     f.firstCollection = List.of();
     f.secondCollection = List.of();
 
-    assertCode("CONNECT_CONTEXT_INVALID", () -> f.owner.listRealmScopes("malformed", "world"));
+    assertCode(
+        "CONNECT_CONTEXT_INVALID", () -> f.owner.listRealmScopes("malformed", "tenant", "world"));
     verifyNoInteractions(f.targets, f.entitlements, f.scopes);
-    assertThat(f.owner.listRealmScopes(f.token, "world")).isEmpty();
+    assertThat(f.owner.listRealmScopes(f.token, "tenant", "world")).isEmpty();
     assertThat(f.targetReads.get()).isEqualTo(2);
     verifyNoInteractions(f.entitlements, f.scopes, f.memberships);
   }
