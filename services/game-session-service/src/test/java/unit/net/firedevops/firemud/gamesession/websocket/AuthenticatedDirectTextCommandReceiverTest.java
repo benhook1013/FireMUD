@@ -104,14 +104,30 @@ class AuthenticatedDirectTextCommandReceiverTest {
   }
 
   @Test
-  void emptyOrDifferentJoinSelectionNeverCallsAccountLobbyOwner() {
+  void refusedJoinReportsTheExactInvalidArgumentOrUnavailableError() {
     var fixture = fixture();
-    for (var args : List.of(List.<String>of(), List.of("other"), List.of("demo", "production"))) {
-      var result =
-          fixture.receiver.receive(
-              fixture.socket, new TextCommand(TextCommandType.JOIN, args, "JOIN"));
-      assertThat(result.commandResult().accepted()).isFalse();
-    }
+    var empty =
+        fixture.receiver.receive(
+            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of(), "JOIN"));
+    assertThat(empty.commandResult().accepted()).isFalse();
+    assertThat(empty.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(empty.commandResult().errorMessage()).isEqualTo("Usage: JOIN <world>");
+
+    var excessive =
+        fixture.receiver.receive(
+            fixture.socket,
+            new TextCommand(TextCommandType.JOIN, List.of("demo", "production"), "JOIN"));
+    assertThat(excessive.commandResult().accepted()).isFalse();
+    assertThat(excessive.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(excessive.commandResult().errorMessage()).isEqualTo("Usage: JOIN <world>");
+
+    var unresolved =
+        fixture.receiver.receive(
+            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("other"), "JOIN other"));
+    assertThat(unresolved.commandResult().accepted()).isFalse();
+    assertThat(unresolved.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
+    assertThat(unresolved.commandResult().errorMessage())
+        .isEqualTo("Authenticated gameplay authority unavailable");
     verifyNoInteractions(fixture.lobby);
   }
 

@@ -157,6 +157,30 @@ class GameSessionWebSocketHandshakeInterceptorTest {
     assertRejected(duplicateMode);
   }
 
+  @Test
+  void rejectsMissingCertificateClientAuthEkuAndSpiffeSan() throws Exception {
+    var missingCertificate =
+        authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    missingCertificate.removeAttribute("jakarta.servlet.request.X509Certificate");
+    assertRejected(missingCertificate);
+
+    var missingClientAuth =
+        authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    var nonClientAuthCertificate =
+        (X509Certificate[])
+            missingClientAuth.getAttribute("jakarta.servlet.request.X509Certificate");
+    when(nonClientAuthCertificate[0].getExtendedKeyUsage())
+        .thenReturn(List.of("1.3.6.1.5.5.7.3.1"));
+    assertRejected(missingClientAuth);
+
+    var missingSpiffeSan = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    var certificateWithNoUriSan =
+        (X509Certificate[])
+            missingSpiffeSan.getAttribute("jakarta.servlet.request.X509Certificate");
+    when(certificateWithNoUriSan[0].getSubjectAlternativeNames()).thenReturn(List.of());
+    assertRejected(missingSpiffeSan);
+  }
+
   private void assertRejected(MockHttpServletRequest request) {
     var attributes = new HashMap<String, Object>();
     var response = new MockHttpServletResponse();

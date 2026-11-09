@@ -17,7 +17,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
 import net.firedevops.firemud.springcloudgateway.filter.VerifiedTcpProxyOrigin;
@@ -117,6 +120,61 @@ class AuthenticatedGameplayWebSocketClientTest {
                         && "Authenticated gameplay client unavailable".equals(error.getMessage()))
             .verify(Duration.ofSeconds(5));
       }
+    }
+  }
+
+  @Test
+  void lateReloadCannotRepublishClientAfterClose() throws Exception {
+    CountDownLatch candidateBuilt = new CountDownLatch(1);
+    CountDownLatch finishReload = new CountDownLatch(1);
+    AtomicInteger reloads = new AtomicInteger();
+    Runnable beforePublish =
+        () -> {
+          if (reloads.incrementAndGet() == 2) {
+            candidateBuilt.countDown();
+            try {
+              finishReload.await();
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+              throw new IllegalStateException(interrupted);
+            }
+          }
+        };
+    try (var client =
+        new AuthenticatedGameplayWebSocketClient(
+            pki.clientProperties(directory, pki.identity("gateway")),
+            "test",
+            "wss://localhost:8444/ws/game/tcp",
+            beforePublish)) {
+      client.initialize();
+      AtomicReference<Exception> reloadFailure = new AtomicReference<>();
+      Thread lateReload =
+          new Thread(
+              () -> {
+                try {
+                  client.reload();
+                } catch (Exception failure) {
+                  reloadFailure.set(failure);
+                }
+              });
+      lateReload.start();
+      try {
+        assertThat(candidateBuilt.await(5, TimeUnit.SECONDS)).isTrue();
+        client.close();
+        assertThat(lateReload.isAlive()).isTrue();
+      } finally {
+        finishReload.countDown();
+        lateReload.join(Duration.ofSeconds(5).toMillis());
+      }
+
+      assertThat(lateReload.isAlive()).isFalse();
+      assertThat(reloadFailure.get()).isNull();
+      StepVerifier.create(client.execute(new HttpHeaders(), socket -> Mono.empty()))
+          .expectErrorMatches(
+              error ->
+                  error instanceof IllegalStateException
+                      && "Authenticated gameplay client unavailable".equals(error.getMessage()))
+          .verify(Duration.ofSeconds(5));
     }
   }
 
