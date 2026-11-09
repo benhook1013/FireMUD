@@ -158,9 +158,12 @@ function moduleForFile(file) {
   return null;
 }
 
+function isRecognizedServiceFile(file) {
+  return file.startsWith("services/") && moduleForFile(file) !== null;
+}
+
 function isServiceSourceMarkdown(file) {
-  return file.startsWith("services/") &&
-    moduleForFile(file) !== null &&
+  return isRecognizedServiceFile(file) &&
     /^services\/[^/]+\/src\/.*\.md$/.test(file);
 }
 
@@ -171,10 +174,7 @@ function classifyChangeScope(inputFiles, options = {}) {
   // selecting runtime modules, including README files under shared common-* paths.
   // Unknown services, source resources and non-lightweight inputs remain fail closed.
   const moduleInputFiles = files.filter(
-    (file) =>
-      !(file.startsWith("services/") &&
-        moduleForFile(file) !== null &&
-        isLightweightEligible(file)),
+    (file) => !(isRecognizedServiceFile(file) && isLightweightEligible(file)),
   );
   const runAll =
     forceAll ||
