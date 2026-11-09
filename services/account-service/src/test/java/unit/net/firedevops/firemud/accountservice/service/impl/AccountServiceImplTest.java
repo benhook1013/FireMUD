@@ -60,12 +60,15 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceKind;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
@@ -918,6 +921,7 @@ class AccountServiceImplTest {
     assertTrue(result.replayed());
     assertTrue(result.success());
     assertEquals("JOINED", result.outcomeCode());
+    assertEquals(gameplay, result.gameplayAdmissionAllowed());
     org.mockito.Mockito.verify(f.demos).revalidate(f.demo);
     org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
         .finishCanonicalFailure(
@@ -925,6 +929,94 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
     org.mockito.Mockito.verify(f.terminal)
         .commitCanonicalJoin(f.scope, f.requestId, f.binding, null, null, null);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"demo", "paid"})
+  void canonicalCommittedReplayPreservesReceiptWhenCurrentGameplayIsUnavailable(String sourceKind) {
+    var f = canonicalJoinFixture();
+    when(f.pending.status()).thenReturn("COMMITTED");
+    f.joined.set(true);
+    f.currentMembership.setMembershipVersion(9L);
+    f.currentMembership.setMembershipAuthorityGeneration(4L);
+    f.currentMembership.setGameplayAdmissionAllowed(true);
+    var originalProof = f.committed.terminalProof();
+    AccountHostingSubscriptionLifecycleRepository.ReadFence paidFence = null;
+
+    if ("paid".equals(sourceKind)) {
+      when(f.source.kind()).thenReturn(SourceKind.PAID_HOSTING);
+      paidFence =
+          org.mockito.Mockito.mock(AccountHostingSubscriptionLifecycleRepository.ReadFence.class);
+      var receipt = org.mockito.Mockito.mock(AccountHostingSubscriptionCurrentReceipt.class);
+      when(f.hosting.prepareCurrentRead(f.scope.tenantId())).thenReturn(paidFence);
+      when(f.hosting.readCurrent(
+              org.mockito.ArgumentMatchers.eq(paidFence), org.mockito.ArgumentMatchers.isNull()))
+          .thenReturn(receipt);
+      when(receipt.gameplayAvailable()).thenReturn(false);
+      when(receipt.allowPublicJoin()).thenReturn(true);
+      when(receipt.entitlementVersion()).thenReturn(1L);
+      when(f.terminal.commitCanonicalJoin(
+              org.mockito.ArgumentMatchers.eq(f.scope),
+              org.mockito.ArgumentMatchers.eq(f.requestId),
+              org.mockito.ArgumentMatchers.eq(f.binding),
+              org.mockito.ArgumentMatchers.eq(f.hosting),
+              org.mockito.ArgumentMatchers.eq(paidFence),
+              org.mockito.ArgumentMatchers.isNull()))
+          .thenReturn(f.committed);
+    } else {
+      when(f.demo.gameplayAvailable()).thenReturn(false);
+    }
+
+    var result = f.browserJoin();
+
+    assertTrue(result.success());
+    assertTrue(result.replayed());
+    assertEquals("JOINED", result.outcomeCode());
+    assertEquals("JOINED", f.committed.outcome());
+    assertSame(originalProof, f.committed.terminalProof());
+    assertEquals(originalProof.membershipId(), result.membershipId());
+    assertEquals(originalProof.membershipVersion(), result.membershipVersion());
+    assertEquals(
+        originalProof.membershipAuthorityGeneration(), result.membershipAuthorityGeneration());
+    assertFalse(result.gameplayAdmissionAllowed());
+    assertTrue(f.currentMembership.isGameplayAdmissionAllowed());
+    assertEquals(701L, f.currentMembership.getId());
+    assertEquals("ACTIVE", f.currentMembership.getLifecycleState());
+    assertEquals(9L, f.currentMembership.getMembershipVersion());
+    assertEquals(4L, f.currentMembership.getMembershipAuthorityGeneration());
+
+    org.mockito.Mockito.verify(f.terminal)
+        .commitCanonicalJoin(
+            f.scope,
+            f.requestId,
+            f.binding,
+            "paid".equals(sourceKind) ? f.hosting : null,
+            paidFence,
+            null);
+    if ("paid".equals(sourceKind)) {
+      org.mockito.Mockito.verify(f.hosting).prepareCurrentRead(f.scope.tenantId());
+      org.mockito.Mockito.verify(f.observer).observe(org.mockito.ArgumentMatchers.isNull());
+      org.mockito.Mockito.verify(f.hosting)
+          .readCurrent(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.isNull());
+      verifyNoInteractions(f.demos);
+    } else {
+      org.mockito.Mockito.verify(f.demos).revalidate(f.demo);
+      verifyNoInteractions(f.hosting, f.observer);
+    }
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finishCanonicalFailure(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .recordCanonicalAttemptFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any());
+    verifyNoInteractions(accountAuditOutboxRepository);
   }
 
   @Test
