@@ -351,7 +351,16 @@ def capture_chunks(source, observer):
             yield chunk
         return
     selector = selectors.DefaultSelector()
-    selector.register(source, selectors.EVENT_READ)
+    try:
+        selector.register(source, selectors.EVENT_READ)
+    except OSError:
+        selector.close()
+        stall_marker('observer-failed')
+        observer.close()
+        reader = getattr(source, 'read1', source.read)
+        while chunk := reader(64 * 1024):
+            yield chunk
+        return
     try:
         while True:
             observer.tick()
