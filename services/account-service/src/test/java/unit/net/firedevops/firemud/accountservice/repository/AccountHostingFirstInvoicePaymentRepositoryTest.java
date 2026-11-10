@@ -306,6 +306,19 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
       when(evidence.evidenceId()).thenReturn(evidenceId);
       when(evidence.purpose()).thenReturn(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
       when(evidence.creationOperationId()).thenReturn(authorizationId);
+      when(evidence.billingContext())
+          .thenReturn(
+              new AccountRecentReauthenticationEvidence.BillingContext(
+                  invoice.ownerAccountId(),
+                  invoice.subscriptionId(),
+                  originalId,
+                  invoice.digest(),
+                  3L,
+                  invoice.expiresAt(),
+                  authorizationId,
+                  1L,
+                  AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose
+                      .FOLLOWUP_RENEWAL));
       when(evidence.issuedAt()).thenReturn(NOW);
       when(evidence.recentAgeSeconds()).thenReturn(120L);
       when(evidence.maxClockSkewSeconds()).thenReturn(5L);
@@ -346,6 +359,7 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
                 Object[] values = (Object[]) call.getRawArguments()[1];
                 if (sql.contains("account_hosting_billing_policy_current")) return commercial;
                 if (sql.contains("FROM subscription_first_invoice_confirmations")) return original;
+                if (sql.contains("subscription_first_invoice_operation_fences")) return null;
                 if (sql.contains("COALESCE(MAX")) return row(Map.of("version", latestVersion));
                 if (sql.contains("FROM subscription_first_invoice_authorizations"))
                   return authorizations.get(values[0]);

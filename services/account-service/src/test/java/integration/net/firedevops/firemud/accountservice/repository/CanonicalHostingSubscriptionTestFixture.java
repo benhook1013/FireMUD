@@ -79,6 +79,7 @@ import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSo
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiKeyring;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiResponseCryptography;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicyRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationRepository;
@@ -509,6 +510,14 @@ public final class CanonicalHostingSubscriptionTestFixture {
       return transport.confirmations;
     }
 
+    public void loseNextConfirmationResponse() {
+      transport.loseNextConfirmationResponse = true;
+    }
+
+    public String lastConfirmationIdempotencyKey() {
+      return transport.lastConfirmationIdempotencyKey;
+    }
+
     public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch
         authorizeAndRetainSuccess(String password) {
       authorize(password);
@@ -522,19 +531,42 @@ public final class CanonicalHostingSubscriptionTestFixture {
           in(
               transaction,
               () -> accounts.findByAccountUuidForUpdate(invoice.ownerAccountId()).orElseThrow());
+      long expectedRowVersion =
+          in(
+              transaction,
+              () -> payments.ownerRowVersion(invoice.subscriptionId(), invoice.ownerAccountId()));
+      var billingContext =
+          new AccountRecentReauthenticationEvidence.BillingContext(
+              invoice.ownerAccountId(),
+              invoice.subscriptionId(),
+              requestId,
+              invoice.digest(),
+              expectedRowVersion,
+              invoice.expiresAt(),
+              requestId,
+              0L,
+              AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose
+                  .INITIAL_CONFIRMATION);
       var evidence =
-          reauthentication.reauthenticate(
-              new AccountRecentReauthenticationService.Request(
-                  UUID.randomUUID(),
-                  invoice.ownerAccountId(),
-                  AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
-                  requestId,
-                  account.getEmail(),
-                  password));
+          reauthentication
+              .reauthenticate(
+                  new AccountRecentReauthenticationService.Request(
+                      UUID.randomUUID(),
+                      invoice.ownerAccountId(),
+                      AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+                      requestId,
+                      billingContext,
+                      account.getEmail(),
+                      password));
       var prepared =
           in(
               transaction,
               () -> {
+                payments.bindReauthenticationContext(
+                    invoice.ownerAccountId(),
+                    invoice.subscriptionId(),
+                    billingContext,
+                    evidence);
                 reauthentication.validateAndConsumeLocked(
                     evidence,
                     invoice.ownerAccountId(),
@@ -544,7 +576,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
                     invoice.ownerAccountId(),
                     requestId,
                     invoice.subscriptionId(),
-                    payments.ownerRowVersion(invoice.subscriptionId(), invoice.ownerAccountId()),
+                    expectedRowVersion,
                     invoice.digest(),
                     evidence);
               });
@@ -619,6 +651,8 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private String status = "requires_confirmation";
     private int confirmations;
     private String confirmationStatus = "succeeded";
+    private boolean loseNextConfirmationResponse;
+    private String lastConfirmationIdempotencyKey;
 
     private ControlledFirstInvoiceTransport(
         AccountSubscriptionCreationRecord creation,
@@ -692,11 +726,17 @@ public final class CanonicalHostingSubscriptionTestFixture {
       } else if (path.equals("/v1/payment_intents/" + intentId + "/confirm")) {
         assertThat(method).isEqualTo(RequestMethod.POST);
         assertThat(options.getIdempotencyKey()).isNotBlank();
+        lastConfirmationIdempotencyKey = options.getIdempotencyKey();
         assertThat(params)
             .containsEntry("payment_method", instrument.providerPaymentMethodId())
             .containsEntry("use_stripe_sdk", true);
         assertThat(++confirmations).isOne();
         status = confirmationStatus;
+        if (loseNextConfirmationResponse) {
+          loseNextConfirmationResponse = false;
+          throw new com.stripe.exception.ApiConnectionException(
+              "Controlled accepted confirmation response was lost");
+        }
         json = intent(status);
       } else {
         throw new AssertionError("Unexpected controlled Stripe call: " + path);
@@ -914,6 +954,14 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public int firstInvoiceConfirmations() {
       return awaitFirstInvoice().confirmations();
+    }
+
+    public void loseNextFirstInvoiceConfirmationResponse() {
+      awaitFirstInvoice().loseNextConfirmationResponse();
+    }
+
+    public String lastFirstInvoiceConfirmationIdempotencyKey() {
+      return awaitFirstInvoice().lastConfirmationIdempotencyKey();
     }
 
     public String signedSuccessPayload() {

@@ -3,9 +3,11 @@ package net.firedevops.firemud.accountservice.controller;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.exception.StripeException;
 import jakarta.servlet.http.HttpServletRequest;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.service.session.AccountHostingFirstInvoicePaymentService;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -43,13 +45,32 @@ public final class AccountHostingFirstInvoiceController {
       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @PathVariable UUID subscriptionId,
       @RequestBody ReauthenticationRequest request) {
+    String token = bearer(transport, authorization);
+    if (request.billingBinding() == null) {
+      return noStore(
+          new ReauthenticationResponse(
+              payments.reauthenticate(
+                  token,
+                  subscriptionId,
+                  request.requestId(),
+                  request.confirmationRequestId(),
+                  request.email(),
+                  request.secret())));
+    }
+    var binding = request.billingBinding();
     return noStore(
         new ReauthenticationResponse(
             payments.reauthenticate(
-                bearer(transport, authorization),
+                token,
                 subscriptionId,
                 request.requestId(),
                 request.confirmationRequestId(),
+                binding.originalRequestId(),
+                binding.expectedRowVersion(),
+                binding.expectedAuthorizationVersion(),
+                binding.acceptedTupleDigest(),
+                binding.invoiceExpiresAt(),
+                binding.authorizationPurpose(),
                 request.email(),
                 request.secret())));
   }
@@ -158,12 +179,29 @@ public final class AccountHostingFirstInvoiceController {
   }
 
   public record ReauthenticationRequest(
-      UUID requestId, UUID confirmationRequestId, String email, String secret) {
+      UUID requestId,
+      UUID confirmationRequestId,
+      BillingReauthenticationBinding billingBinding,
+      String email,
+      String secret) {
+    public ReauthenticationRequest(
+        UUID requestId, UUID confirmationRequestId, String email, String secret) {
+      this(requestId, confirmationRequestId, null, email, secret);
+    }
+
     @Override
     public String toString() {
       return "HostingBillingReauthenticationRequest[redacted]";
     }
   }
+
+  public record BillingReauthenticationBinding(
+      UUID originalRequestId,
+      long expectedRowVersion,
+      long expectedAuthorizationVersion,
+      String acceptedTupleDigest,
+      Instant invoiceExpiresAt,
+      BillingAuthorizationPurpose authorizationPurpose) {}
 
   public record ReauthenticationResponse(UUID evidenceId) {}
 

@@ -137,6 +137,51 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
   }
 
   @Test
+  void typedBillingBindingRoundTripsJavaFractionGroupsThroughPostgres() {
+    Context c = context();
+    Account account = c.account("PASSWORD");
+    for (Instant expiry :
+        List.of(
+            Instant.parse("2026-11-01T01:02:03.123400Z"),
+            Instant.parse("2026-11-01T01:02:03.100000Z"))) {
+      UUID requestId = UUID.randomUUID();
+      UUID authorizationId = UUID.randomUUID();
+      var binding =
+          new AccountRecentReauthenticationEvidence.BillingContext(
+              account.getAccountUuid(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              "sha256:" + "d".repeat(64),
+              3L,
+              expiry,
+              authorizationId,
+              0L,
+              AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose.PRE_ROW_RENEWAL);
+      var request =
+          new AccountRecentReauthenticationService.Request(
+              requestId,
+              account.getAccountUuid(),
+              AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+              authorizationId,
+              binding,
+              account.getEmail(),
+              PASSWORD);
+
+      var original = c.service.reauthenticate(request);
+      Record row = c.evidenceRow(original.evidenceId());
+      var replay = c.service.reauthenticate(request);
+
+      assertThat(original.billingContext()).isEqualTo(binding);
+      assertThat(row.get("billing_context_invoice_expires_at", java.time.OffsetDateTime.class).toInstant())
+          .isEqualTo(expiry);
+      assertThat(row.get("billing_context_digest", String.class)).isEqualTo(binding.digest());
+      assertThat(row.get("request_digest", String.class)).isEqualTo(original.requestDigest());
+      assertThat(replay.evidenceId()).isEqualTo(original.evidenceId());
+      assertThat(replay.billingContext()).isEqualTo(binding);
+    }
+  }
+
+  @Test
   void nonV4RequestAndCreationIdsAreAcceptedForPersistedAccountIdentity() {
     Context c = context();
     Account account = c.account("PASSWORD");

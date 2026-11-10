@@ -98,6 +98,72 @@ public final class AccountHostingFirstInvoicePaymentService {
     return evidence.evidenceId();
   }
 
+  /** Genuine reauthentication bound to one exact invoice and its intended authorization attempt. */
+  public UUID reauthenticate(
+      String bearer,
+      UUID subscriptionId,
+      UUID reauthenticationRequestId,
+      UUID authorizationRequestId,
+      UUID originalRequestId,
+      long expectedRowVersion,
+      long expectedAuthorizationVersion,
+      String acceptedTupleDigest,
+      java.time.Instant invoiceExpiresAt,
+      AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose authorizationPurpose,
+      String email,
+      String secret) {
+    outsideSql();
+    var snapshot =
+        actors.withCurrentAccount(
+            bearer,
+            actor -> {
+              var invoice = payments.requireOwner(subscriptionId, actor.accountId());
+              return new OwnerReauthenticationSnapshot(
+                  actor.accountId(),
+                  invoice,
+                  payments.ownerRowVersion(subscriptionId, actor.accountId()));
+            });
+    if (expectedRowVersion != snapshot.rowVersion()
+        || !Objects.equals(acceptedTupleDigest, snapshot.invoice().digest())
+        || !Objects.equals(invoiceExpiresAt, snapshot.invoice().expiresAt())) {
+      throw new IllegalStateException("Exact current first-invoice reauthentication binding refused");
+    }
+    var context =
+        new AccountRecentReauthenticationEvidence.BillingContext(
+            snapshot.accountId(),
+            subscriptionId,
+            originalRequestId,
+            acceptedTupleDigest,
+            expectedRowVersion,
+            invoiceExpiresAt,
+            authorizationRequestId,
+            expectedAuthorizationVersion,
+            authorizationPurpose);
+    var evidence =
+        reauthentication.reauthenticate(
+            new AccountRecentReauthenticationService.Request(
+                reauthenticationRequestId,
+                snapshot.accountId(),
+                AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+                authorizationRequestId,
+                context,
+                email,
+                secret));
+    return actors.withCurrentAccount(
+        bearer,
+        actor -> {
+          var current =
+              reauthentication.requireCurrentBillingEvidenceLocked(
+                  evidence.evidenceId(), actor.accountId(), authorizationRequestId);
+          if (!context.equals(current.billingContext())) {
+            throw new IllegalStateException("Exact billing evidence context refused");
+          }
+          payments.bindReauthenticationContext(
+              actor.accountId(), subscriptionId, context, current);
+          return current.evidenceId();
+        });
+  }
+
   /**
    * Explicit consent names the immutable tuple shown to the owner; browser success grants nothing.
    */
@@ -270,4 +336,7 @@ public final class AccountHostingFirstInvoicePaymentService {
       long authorizationVersion) {}
 
   public record Completion(String state, UUID requestId) {}
+
+  private record OwnerReauthenticationSnapshot(
+      UUID accountId, AccountHostingFirstInvoicePayment invoice, long rowVersion) {}
 }

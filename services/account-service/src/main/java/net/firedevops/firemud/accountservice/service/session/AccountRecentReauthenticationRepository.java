@@ -74,8 +74,14 @@ public final class AccountRecentReauthenticationRepository {
                 + "account_uuid_source_numeric_id, account_lifecycle_state, "
                 + "account_authority_generation, account_authority_source_version, issuance_fence, "
                 + "issuance_fence_source_version, platform_policy_version, deployment_policy_version, "
-                + "effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz)",
+                + "effective_policy_version, recent_age_seconds, max_clock_skew_seconds, issued_at, "
+                + "billing_context_subscription_id, billing_context_original_request_id, "
+                + "billing_context_tuple_digest, billing_context_expected_row_version, "
+                + "billing_context_invoice_expires_at, billing_context_authorization_request_id, "
+                + "billing_context_expected_authorization_version, billing_context_authorization_purpose, "
+                + "billing_context_digest) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, "
+                + "?, ?, ?, ?, ?::timestamptz, ?, ?, ?, ?)",
             evidence.evidenceId(),
             evidence.requestId(),
             evidence.accountId(),
@@ -95,7 +101,16 @@ public final class AccountRecentReauthenticationRepository {
             evidence.effectivePolicyVersion(),
             evidence.recentAgeSeconds(),
             evidence.maxClockSkewSeconds(),
-            OffsetDateTime.ofInstant(evidence.issuedAt(), ZoneOffset.UTC));
+            OffsetDateTime.ofInstant(evidence.issuedAt(), ZoneOffset.UTC),
+            contextValue(evidence, BillingField.SUBSCRIPTION_ID),
+            contextValue(evidence, BillingField.ORIGINAL_REQUEST_ID),
+            contextValue(evidence, BillingField.TUPLE_DIGEST),
+            contextValue(evidence, BillingField.EXPECTED_ROW_VERSION),
+            contextValue(evidence, BillingField.INVOICE_EXPIRES_AT),
+            contextValue(evidence, BillingField.AUTHORIZATION_REQUEST_ID),
+            contextValue(evidence, BillingField.EXPECTED_AUTHORIZATION_VERSION),
+            contextValue(evidence, BillingField.AUTHORIZATION_PURPOSE),
+            evidence.billingContext() == null ? null : evidence.billingContext().digest());
     if (inserted != 1) {
       throw unavailable();
     }
@@ -279,8 +294,18 @@ public final class AccountRecentReauthenticationRepository {
   }
 
   static byte[] requestPayload(UUID requestId, UUID accountId, String purpose, UUID operationId) {
+    return requestPayload(requestId, accountId, purpose, operationId, null);
+  }
+
+  static byte[] requestPayload(
+      UUID requestId,
+      UUID accountId,
+      String purpose,
+      UUID operationId,
+      AccountRecentReauthenticationEvidence.BillingContext billingContext) {
+    String version = billingContext == null ? "v1" : "v2";
     String payload =
-        "account-recent-reauthentication-request/v1\n"
+        "account-recent-reauthentication-request/" + version + "\n"
             + "requestId="
             + requestId
             + "\naccountId="
@@ -290,6 +315,7 @@ public final class AccountRecentReauthenticationRepository {
             + "\ncreationOperationId="
             + operationId
             + "\n";
+    if (billingContext != null) payload += "billingContextDigest=" + billingContext.digest() + "\n";
     return payload.getBytes(StandardCharsets.UTF_8);
   }
 
@@ -321,9 +347,11 @@ public final class AccountRecentReauthenticationRepository {
       UUID operationId = required(row, "creation_operation_id", UUID.class);
       byte[] payload = required(row, "request_payload", byte[].class);
       String requestDigest = required(row, "request_digest", String.class);
+      AccountRecentReauthenticationEvidence.BillingContext context =
+          billingContext(row, accountId);
       if (!requestDigest.equals(digest(payload))
           || !java.util.Arrays.equals(
-              payload, requestPayload(requestId, accountId, purpose, operationId))) {
+              payload, requestPayload(requestId, accountId, purpose, operationId, context))) {
         throw unavailable();
       }
       OffsetDateTime issuedAt = required(row, "issued_at", OffsetDateTime.class);
@@ -347,7 +375,8 @@ public final class AccountRecentReauthenticationRepository {
           required(row, "effective_policy_version", String.class),
           requiredPositive(row, "recent_age_seconds"),
           requiredNonnegative(row, "max_clock_skew_seconds"),
-          issuedAt.toInstant());
+          issuedAt.toInstant(),
+          context);
     } catch (IllegalArgumentException | IllegalStateException malformed) {
       throw unavailable();
     }
@@ -373,7 +402,83 @@ public final class AccountRecentReauthenticationRepository {
         && first.effectivePolicyVersion().equals(second.effectivePolicyVersion())
         && first.recentAgeSeconds() == second.recentAgeSeconds()
         && first.maxClockSkewSeconds() == second.maxClockSkewSeconds()
-        && first.issuedAt().equals(second.issuedAt());
+        && first.issuedAt().equals(second.issuedAt())
+        && Objects.equals(first.billingContext(), second.billingContext());
+  }
+
+  private static AccountRecentReauthenticationEvidence.BillingContext billingContext(
+      Record row, UUID accountId) {
+    UUID subscriptionId = row.get("billing_context_subscription_id", UUID.class);
+    UUID originalRequestId = row.get("billing_context_original_request_id", UUID.class);
+    String tupleDigest = row.get("billing_context_tuple_digest", String.class);
+    Long expectedRowVersion = row.get("billing_context_expected_row_version", Long.class);
+    OffsetDateTime expiresAt = row.get("billing_context_invoice_expires_at", OffsetDateTime.class);
+    UUID authorizationRequestId =
+        row.get("billing_context_authorization_request_id", UUID.class);
+    Long expectedAuthorizationVersion =
+        row.get("billing_context_expected_authorization_version", Long.class);
+    String authorizationPurpose =
+        row.get("billing_context_authorization_purpose", String.class);
+    String digest = row.get("billing_context_digest", String.class);
+    Object[] fields = {
+      subscriptionId,
+      originalRequestId,
+      tupleDigest,
+      expectedRowVersion,
+      expiresAt,
+      authorizationRequestId,
+      expectedAuthorizationVersion,
+      authorizationPurpose,
+      digest
+    };
+    boolean any = java.util.Arrays.stream(fields).anyMatch(Objects::nonNull);
+    if (!any) return null;
+    if (java.util.Arrays.stream(fields).anyMatch(Objects::isNull)) throw unavailable();
+    try {
+      var context =
+          new AccountRecentReauthenticationEvidence.BillingContext(
+              accountId,
+              subscriptionId,
+              originalRequestId,
+              tupleDigest,
+              expectedRowVersion,
+              expiresAt.toInstant(),
+              authorizationRequestId,
+              expectedAuthorizationVersion,
+              AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose.valueOf(
+                  authorizationPurpose));
+      if (!context.digest().equals(digest)) throw unavailable();
+      return context;
+    } catch (IllegalArgumentException malformed) {
+      throw unavailable();
+    }
+  }
+
+  private static Object contextValue(
+      AccountRecentReauthenticationEvidence evidence, BillingField field) {
+    var context = evidence.billingContext();
+    if (context == null) return null;
+    return switch (field) {
+      case SUBSCRIPTION_ID -> context.subscriptionId();
+      case ORIGINAL_REQUEST_ID -> context.originalRequestId();
+      case TUPLE_DIGEST -> context.tupleDigest();
+      case EXPECTED_ROW_VERSION -> context.expectedRowVersion();
+      case INVOICE_EXPIRES_AT -> OffsetDateTime.ofInstant(context.invoiceExpiresAt(), ZoneOffset.UTC);
+      case AUTHORIZATION_REQUEST_ID -> context.authorizationRequestId();
+      case EXPECTED_AUTHORIZATION_VERSION -> context.expectedAuthorizationVersion();
+      case AUTHORIZATION_PURPOSE -> context.authorizationPurpose().name();
+    };
+  }
+
+  private enum BillingField {
+    SUBSCRIPTION_ID,
+    ORIGINAL_REQUEST_ID,
+    TUPLE_DIGEST,
+    EXPECTED_ROW_VERSION,
+    INVOICE_EXPIRES_AT,
+    AUTHORIZATION_REQUEST_ID,
+    EXPECTED_AUTHORIZATION_VERSION,
+    AUTHORIZATION_PURPOSE
   }
 
   private static long requiredPositive(Record row, String field) {
