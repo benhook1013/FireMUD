@@ -11,12 +11,15 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -24,13 +27,16 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.filter.HeaderTrustFilter;
 import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import net.firedevops.firemud.springcloudgateway.filter.VerifiedTcpProxyOrigin;
+import net.firedevops.firemud.springcloudgateway.websocket.AuthenticatedGameplayWebSocketClient;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketBridgeHandler;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.MockedConstruction;
 import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.http.server.reactive.SslInfo;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -69,6 +75,53 @@ class GameplayWebSocketBridgeConfigTest {
               .isInstanceOf(WebHandler.class)
               .isSameAs(mapping.getUrlMap().get("/ws/game/**"));
         });
+  }
+
+  @Test
+  void authenticatedGameplayClientIsOmittedForUnsetBlankOrExplicitFalseEndpoint() {
+    contextRunner.run(
+        context -> assertThat(context).doesNotHaveBean(AuthenticatedGameplayWebSocketClient.class));
+
+    for (String endpoint : new String[] {"", " \t ", "false"}) {
+      contextRunner
+          .withInitializer(
+              applicationContext ->
+                  applicationContext
+                      .getEnvironment()
+                      .getPropertySources()
+                      .addFirst(
+                          new MapPropertySource(
+                              "test-authenticated-upstream",
+                              Map.of(
+                                  "firemud.gateway.gameplay.bridge.authenticated-upstream-url",
+                                  endpoint))))
+          .run(
+              context ->
+                  assertThat(context)
+                      .as("endpoint=%s", endpoint)
+                      .doesNotHaveBean(AuthenticatedGameplayWebSocketClient.class));
+    }
+  }
+
+  @Test
+  void malformedNonblankAuthenticatedEndpointFailsFast(@TempDir Path dir) throws Exception {
+    Path certificate = Files.createFile(dir.resolve("client.pem"));
+    Path privateKey = Files.createFile(dir.resolve("client.key"));
+    Path caCertificate = Files.createFile(dir.resolve("ca.pem"));
+
+    contextRunner
+        .withPropertyValues(
+            "firemud.grpc.workload-namespace=test",
+            "firemud.gateway.gameplay.bridge.authenticated-upstream-url=http://game-session:8444/ws/game/tcp",
+            "firemud.gateway.gameplay.bridge.tls.cert-chain=" + certificate,
+            "firemud.gateway.gameplay.bridge.tls.private-key=" + privateKey,
+            "firemud.gateway.gameplay.bridge.tls.ca-cert=" + caCertificate)
+        .run(
+            context ->
+                assertThat(context)
+                    .hasFailed()
+                    .getFailure()
+                    .hasRootCauseMessage("Dedicated authenticated gameplay wss endpoint required"));
   }
 
   @Test

@@ -100,6 +100,15 @@ public final class GameplayWebSocketObservability {
     };
   }
 
+  CloseClassification authenticatedTcpOriginRequired() {
+    return new CloseClassification(
+        new CloseStatus(1008, "authenticated_tcp_origin_required"),
+        POLICY_VIOLATION,
+        NO_SUBREASON,
+        false,
+        UNATTRIBUTED_FAILURE);
+  }
+
   public CloseClassification slowClientClose() {
     return close(POLICY_VIOLATION, EDGE_BACKPRESSURE, true, UNATTRIBUTED_FAILURE);
   }
