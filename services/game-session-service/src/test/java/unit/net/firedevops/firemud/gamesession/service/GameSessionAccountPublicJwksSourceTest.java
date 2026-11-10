@@ -335,6 +335,7 @@ class GameSessionAccountPublicJwksSourceTest {
           fixture.converge();
         });
     assertThatThrownBy(() -> cache.keyFor("next")).isInstanceOf(SourceUnavailableException.class);
+    cache.refresh();
     assertThat(cache.keyFor("next")).isEqualTo(fixture.key);
   }
 
