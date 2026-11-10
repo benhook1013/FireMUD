@@ -783,7 +783,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
         assertThat(f.evidence(original.request()))
             .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
         assertThat(f.count(SNAPSHOTS)).isEqualTo(1);
-        assertThat(f.count(EPOCHS)).isEqualTo(7);
+        assertThat(f.count(EPOCHS)).isEqualTo(8);
       }
     }
   }
