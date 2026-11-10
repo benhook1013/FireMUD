@@ -184,6 +184,8 @@ public class HostedIdentityScopeService {
     names.add(plan.grpcGameSessionSourceSecretName() + "-previous");
     names.add(plan.grpcSocialGroupsSourceSecretName());
     names.add(plan.grpcSocialGroupsSourceSecretName() + "-previous");
+    names.add(plan.grpcGatewayClientSourceSecretName());
+    names.add(plan.grpcGatewayClientSourceSecretName() + "-previous");
     return List.copyOf(names);
   }
 
@@ -244,6 +246,7 @@ public class HostedIdentityScopeService {
     names.add(plan.grpcAccountCertificateName());
     names.add(plan.grpcGameSessionCertificateName());
     names.add(plan.grpcSocialGroupsCertificateName());
+    names.add(plan.grpcGatewayClientCertificateName());
     return List.copyOf(names);
   }
 
@@ -263,6 +266,7 @@ public class HostedIdentityScopeService {
     names.add(plan.grpcAccountSecretName());
     names.add(plan.grpcGameSessionSecretName());
     names.add(plan.grpcSocialGroupsSecretName());
+    names.add(plan.grpcGatewayClientSecretName());
     return List.copyOf(names);
   }
 

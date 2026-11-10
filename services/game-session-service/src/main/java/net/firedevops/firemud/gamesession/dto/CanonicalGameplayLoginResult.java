@@ -9,12 +9,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -64,6 +66,8 @@ public final class CanonicalGameplayLoginResult implements AutoCloseable {
   private final byte[] compactJwt;
   private final NonSecretEvidence evidence;
   private final Object lifecycleMutex = new Object();
+  private final Set<Thread> borrowers = new HashSet<>();
+  private Thread closingThread;
   private boolean closed;
 
   private CanonicalGameplayLoginResult(byte[] compactJwt, NonSecretEvidence evidence) {
@@ -294,20 +298,83 @@ public final class CanonicalGameplayLoginResult implements AutoCloseable {
 
   public byte[] compactJwtBytes() {
     synchronized (lifecycleMutex) {
-      if (closed) throw new IllegalStateException("Canonical LOGIN private result is closed");
+      if (closed || (closingThread != null && !borrowers.contains(Thread.currentThread()))) {
+        throw new IllegalStateException("Canonical LOGIN private result is closed");
+      }
       return compactJwt.clone();
     }
   }
 
-  /** Ends this invocation's owned compact-token custody and overwrites its private byte array. */
-  @Override
-  public void close() {
+  /**
+   * Pins this identical process-local result and its private bytes through the callback. Closing
+   * refuses new pins and drains existing callbacks before erasure, without holding a monitor across
+   * callback work. A callback must not retain the result or perform reentrant lifecycle operations.
+   * This lifetime guard supplies no transport, currentness, or admission authority.
+   */
+  public <T> T withLivePrivateResult(Function<CanonicalGameplayLoginResult, T> action) {
+    Objects.requireNonNull(action, "Private result action required");
+    Thread borrower = Thread.currentThread();
     synchronized (lifecycleMutex) {
-      if (!closed) {
-        Arrays.fill(compactJwt, (byte) 0);
-        closed = true;
+      if (closed || closingThread != null || !borrowers.add(borrower)) {
+        throw new IllegalStateException("Canonical LOGIN private result is unavailable");
       }
     }
+    try {
+      return action.apply(this);
+    } finally {
+      synchronized (lifecycleMutex) {
+        borrowers.remove(borrower);
+        lifecycleMutex.notifyAll();
+      }
+    }
+  }
+
+  /**
+   * Refuses lifecycle mutation by this result's current callback thread, without changing state.
+   */
+  public void requireNotBorrowedByCurrentThread() {
+    synchronized (lifecycleMutex) {
+      if (borrowers.contains(Thread.currentThread()) || closingThread == Thread.currentThread()) {
+        throw new IllegalStateException("Canonical LOGIN private result is borrowed");
+      }
+    }
+  }
+
+  @Override
+  public void close() {
+    boolean interrupted = false;
+    synchronized (lifecycleMutex) {
+      if (borrowers.contains(Thread.currentThread()) || closingThread == Thread.currentThread()) {
+        throw new IllegalStateException("Canonical LOGIN private result is borrowed");
+      }
+      while (closingThread != null) {
+        try {
+          lifecycleMutex.wait();
+        } catch (InterruptedException interruption) {
+          interrupted = true;
+        }
+      }
+      if (closed) {
+        if (interrupted) Thread.currentThread().interrupt();
+        return;
+      }
+      closingThread = Thread.currentThread();
+      while (!borrowers.isEmpty()) {
+        try {
+          lifecycleMutex.wait();
+        } catch (InterruptedException interruption) {
+          interrupted = true;
+        }
+      }
+    }
+    // No callback or secret reader can start while erasure runs outside the lifecycle monitor.
+    Arrays.fill(compactJwt, (byte) 0);
+    synchronized (lifecycleMutex) {
+      closed = true;
+      closingThread = null;
+      lifecycleMutex.notifyAll();
+    }
+    if (interrupted) Thread.currentThread().interrupt();
   }
 
   public NonSecretEvidence evidence() {

@@ -78,6 +78,72 @@ import org.springframework.mock.env.MockEnvironment;
 import org.springframework.transaction.CannotCreateTransactionException;
 
 class AccountGrpcServiceTest {
+  @Test
+  void canonicalGameplayEnvelopeNeverFallsBackToLegacyCredentialAuthentication() {
+    var accounts = Mockito.mock(AccountService.class);
+    var service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accounts, null, WORKLOAD_NAMESPACE);
+    var failure = new AtomicReference<Throwable>();
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                AuthenticateRequest.newBuilder()
+                    .setEmail("player@example.test")
+                    .setPassword("transient-secret")
+                    .setRequestId(UUID.randomUUID().toString())
+                    .build(),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(AuthenticateResponse value) {
+                    throw new AssertionError("No canonical owner");
+                  }
+
+                  @Override
+                  public void onError(Throwable error) {
+                    failure.set(error);
+                  }
+
+                  @Override
+                  public void onCompleted() {
+                    throw new AssertionError("No canonical owner");
+                  }
+                }));
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(failure.get()).getCode());
+    Mockito.verifyNoInteractions(accounts);
+  }
+
+  @Test
+  void canonicalAuthenticateAndExactRetirementShareSingleRegisteredAccountService() {
+    var accounts = Mockito.mock(AccountService.class);
+    var receiver =
+        Mockito.mock(
+            net.firedevops.firemud.accountservice.service.session
+                .AccountGameplayAuthenticateReceiver.class);
+    var provider =
+        Mockito
+            .<org.springframework.beans.factory.ObjectProvider<
+                    net.firedevops.firemud.accountservice.service.session
+                        .AccountGameplayAuthenticateReceiver>>
+                mock();
+    Mockito.when(provider.getIfAvailable()).thenReturn(receiver);
+    var service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accounts, null, WORKLOAD_NAMESPACE);
+    service.canonicalGameplayReceiver(provider);
+    var request =
+        AuthenticateRequest.newBuilder().setRequestId(UUID.randomUUID().toString()).build();
+    StreamObserver<AuthenticateResponse> auth = Mockito.mock();
+    withPeer(GAME_SESSION_PEER, () -> service.authenticate(request, auth));
+    Mockito.verify(receiver).authenticate(request, auth);
+    var retirement =
+        net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.newBuilder().build();
+    StreamObserver<net.firedevops.firemud.account.v1.RetireInitialGameplayLoginResponse> cleanup =
+        Mockito.mock();
+    service.retireInitialGameplayLogin(retirement, cleanup);
+    Mockito.verify(receiver).retireInitialGameplayLogin(retirement, cleanup);
+    Mockito.verifyNoInteractions(accounts);
+  }
+
   private static final String WORKLOAD_NAMESPACE = "test";
   private static final String ACCOUNT_UUID = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
   private static final String ACCOUNT_UUID_READBACK_FAILURE =

@@ -69,6 +69,8 @@ public final class HostedIdentityContract {
   public static final String GRPC_GAME_SESSION_ROLE = "grpc-game-session-service";
   public static final String GRPC_SOCIAL_GROUPS_WORKLOAD = "social-groups-service";
   public static final String GRPC_SOCIAL_GROUPS_ROLE = "grpc-social-groups-service";
+  public static final String GRPC_GATEWAY_WORKLOAD = "spring-cloud-gateway";
+  public static final String GRPC_GATEWAY_CLIENT_ROLE = "grpc-spring-cloud-gateway";
   public static final List<String> GRPC_PUBLICATION_WORKLOADS =
       List.of(
           "game-design-service",
@@ -107,7 +109,15 @@ public final class HostedIdentityContract {
     return GRPC_ACCOUNT_ROLE.equals(role)
         || GRPC_GAME_SESSION_ROLE.equals(role)
         || GRPC_SOCIAL_GROUPS_ROLE.equals(role)
+        || GRPC_GATEWAY_CLIENT_ROLE.equals(role)
         || isGrpcPublicationRole(role);
+  }
+
+  /**
+   * Gateway's workload identity is client-only; the other workload identity roles also serve TLS.
+   */
+  public static boolean grpcWorkloadIdentityServesTls(String role) {
+    return !GRPC_GATEWAY_CLIENT_ROLE.equals(role);
   }
 
   public static boolean isGrpcPublicationRole(String role) {

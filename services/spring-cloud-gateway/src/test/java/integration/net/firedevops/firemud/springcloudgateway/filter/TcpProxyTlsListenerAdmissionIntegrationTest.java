@@ -54,6 +54,8 @@ import reactor.netty.http.client.HttpClient;
 
 class TcpProxyTlsListenerAdmissionIntegrationTest {
   private static final String TCP_PROXY_URI = "spiffe://firemud/ns/firemud/sa/tcp-proxy-service";
+  private static final String PROXY_CONNECTION_ID = "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814";
+  private static final String NO_FRAME_PROXY_CONNECTION_ID = "7c507311-b226-4d26-8f34-1bbb4159fd33";
 
   @Test
   void productionConfigurationMapsHealthAndReadinessWhenInternalTlsIsDisabled() {
@@ -138,9 +140,8 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
             session -> {
               admittedHeaders.set(session.getHandshakeInfo().getHeaders());
               admittedConnections.incrementAndGet();
-              if ("no-frame"
-                  .equals(
-                      session.getHandshakeInfo().getHeaders().getFirst("X-Proxy-Connection-Id"))) {
+              if (NO_FRAME_PROXY_CONNECTION_ID.equals(
+                  session.getHandshakeInfo().getHeaders().getFirst("X-Proxy-Connection-Id"))) {
                 return reactor.core.publisher.Mono.never();
               }
               return session.send(
@@ -163,7 +164,8 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
       assertThat(admittedConnections).hasValue(1);
       assertThat(admittedHeaders.get().getFirst("X-Client-IP")).isEqualTo("203.0.113.99");
       assertThat(admittedHeaders.get().getFirst("X-Proxy-Client-IP")).isNull();
-      assertThat(admittedHeaders.get().getFirst("X-Proxy-Connection-Id")).isEqualTo("conn-123");
+      assertThat(admittedHeaders.get().getFirst("X-Proxy-Connection-Id"))
+          .isEqualTo(PROXY_CONNECTION_ID);
       assertThat(admittedHeaders.get().getFirst("X-Tenant-Id")).isEqualTo("7");
       assertThat(admittedHeaders.get().getFirst("X-Game-Instance-Id")).isEqualTo("42");
       assertThat(admittedHeaders.get().getFirst("X-Firemud-Connection-Mode"))
@@ -187,7 +189,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
           .hasValue(2);
 
       HttpHeaders noFrameHeaders = bridgeHeaders();
-      noFrameHeaders.set("X-Proxy-Connection-Id", "no-frame");
+      noFrameHeaders.set("X-Proxy-Connection-Id", NO_FRAME_PROXY_CONNECTION_ID);
       assertThatThrownBy(
               () ->
                   connect(
@@ -348,7 +350,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
   private static HttpHeaders bridgeHeaders() {
     HttpHeaders headers = new HttpHeaders();
     headers.set("X-Proxy-Client-IP", "203.0.113.99");
-    headers.set("X-Proxy-Connection-Id", "conn-123");
+    headers.set("X-Proxy-Connection-Id", PROXY_CONNECTION_ID);
     headers.set("X-Proxy-Tenant-Id", "7");
     headers.set("X-Proxy-Game-Instance-Id", "42");
     headers.set("X-Firemud-Connection-Mode", "first_party_web");

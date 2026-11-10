@@ -244,7 +244,7 @@ class HostedIdentityReconcilerSafetyTest {
         status.getGrpcPublication().keySet());
     assertTrue(status.getGrpcPublication().values().stream().allMatch(java.util.Objects::nonNull));
     assertEquals(
-        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 8,
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 9,
         acknowledgedProjections.size());
     assertEquals(
         "awaiting-acceptance",
@@ -1651,7 +1651,8 @@ class HostedIdentityReconcilerSafetyTest {
         List.of(
             HostedIdentityContract.GRPC_ACCOUNT_ROLE,
             HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
-            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE)) {
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+            HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE)) {
       for (SourceProgressCase rollbackCase : rollbackCases) {
         DeploymentHeadGateFixture fixture =
             new DeploymentHeadGateFixture(
@@ -1689,6 +1690,8 @@ class HostedIdentityReconcilerSafetyTest {
           when(fixture.batch.grpcAccount()).thenReturn(olderSource);
         } else if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
           when(fixture.batch.grpcGameSession()).thenReturn(olderSource);
+        } else if (HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+          when(fixture.batch.grpcGatewayClient()).thenReturn(olderSource);
         } else {
           when(fixture.batch.grpcSocialGroups()).thenReturn(olderSource);
         }
@@ -1734,6 +1737,9 @@ class HostedIdentityReconcilerSafetyTest {
     assertNull(
         HostedIdentityReconciler.previousRole(
             resource, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE));
+    assertNull(
+        HostedIdentityReconciler.previousRole(
+            resource, HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE));
 
     HostedEnvironmentIdentityStatus.RoleStatus account =
         roleStatus("account-revision", 4L, 2L, "a".repeat(64));
@@ -1744,6 +1750,9 @@ class HostedIdentityReconcilerSafetyTest {
     status.setGrpcAccountService(account);
     status.setGrpcGameSessionService(gameSession);
     status.setGrpcSocialGroupsService(socialGroups);
+    HostedEnvironmentIdentityStatus.RoleStatus gatewayClient =
+        roleStatus("gateway-client-revision", 7L, 5L, "d".repeat(64));
+    status.setGrpcGatewayClient(gatewayClient);
     resource.setStatus(status);
 
     HostedEnvironmentIdentityStatus.RoleStatus accountReadback =
@@ -1754,6 +1763,16 @@ class HostedIdentityReconcilerSafetyTest {
     HostedEnvironmentIdentityStatus.RoleStatus socialGroupsReadback =
         HostedIdentityReconciler.previousRole(
             resource, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+    HostedEnvironmentIdentityStatus.RoleStatus gatewayClientReadback =
+        HostedIdentityReconciler.previousRole(
+            resource, HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE);
+    assertNotSame(gatewayClient, gatewayClientReadback);
+    assertEquals(gatewayClient.getRevision(), gatewayClientReadback.getRevision());
+    assertEquals(gatewayClient.getSourceGeneration(), gatewayClientReadback.getSourceGeneration());
+    assertEquals(
+        gatewayClient.getSourceObjectGeneration(),
+        gatewayClientReadback.getSourceObjectGeneration());
+    assertEquals(gatewayClient.getSpkiSha256(), gatewayClientReadback.getSpkiSha256());
     assertNotSame(account, accountReadback);
     assertNotSame(gameSession, gameSessionReadback);
     assertEquals(account.getRevision(), accountReadback.getRevision());
@@ -1976,6 +1995,7 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(consumerSchema, statusProperties.get("grpcAccountService"));
     assertEquals(consumerSchema, statusProperties.get("grpcGameSessionService"));
     assertEquals(consumerSchema, statusProperties.get("grpcSocialGroupsService"));
+    assertEquals(consumerSchema, statusProperties.get("grpcGatewayClient"));
     assertEquals(
         consumerSchema,
         publicationSchema.get("additionalProperties"),
@@ -2363,6 +2383,8 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(1L, status.getGrpcAccountService().getSourceGeneration());
     assertEquals(1L, status.getGrpcGameSessionService().getSourceGeneration());
     assertEquals(1L, status.getGrpcSocialGroupsService().getSourceGeneration());
+    assertEquals("e".repeat(64), status.getGrpcGatewayClient().getSpkiSha256());
+    assertEquals(1L, status.getGrpcGatewayClient().getSourceGeneration());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<Map<String, String>> workloadIdentityRevisions =
         ArgumentCaptor.forClass(Map.class);
@@ -2394,7 +2416,9 @@ class HostedIdentityReconcilerSafetyTest {
             HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
             "revision-" + HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
             HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
-            "revision-" + HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE),
+            "revision-" + HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+            HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE,
+            "revision-" + HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE),
         workloadIdentityRevisions.getValue());
     verify(fixture.runtime, times(2))
         .validateTcpProxyService(fixture.client, fixture.plan, expected);
@@ -2490,6 +2514,8 @@ class HostedIdentityReconcilerSafetyTest {
       status.setGrpcAccountService(roleStatus);
     } else if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
       status.setGrpcGameSessionService(roleStatus);
+    } else if (HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+      status.setGrpcGatewayClient(roleStatus);
     } else if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
       status.setGrpcSocialGroupsService(roleStatus);
     } else {
@@ -2504,6 +2530,9 @@ class HostedIdentityReconcilerSafetyTest {
     }
     if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
       return status.getGrpcGameSessionService();
+    }
+    if (HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+      return status.getGrpcGatewayClient();
     }
     if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
       return status.getGrpcSocialGroupsService();
@@ -2597,6 +2626,8 @@ class HostedIdentityReconcilerSafetyTest {
           .thenReturn(material(plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE, "c"));
       when(batch.grpcSocialGroups())
           .thenReturn(material(plan, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE, "d"));
+      when(batch.grpcGatewayClient())
+          .thenReturn(material(plan, HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE, "e"));
       when(batch.grpcPublication(anyString()))
           .thenAnswer(
               invocation -> {

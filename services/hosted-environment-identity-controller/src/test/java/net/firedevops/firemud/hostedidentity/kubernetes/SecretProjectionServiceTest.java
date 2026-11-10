@@ -1407,7 +1407,8 @@ class SecretProjectionServiceTest {
         List.of(
             HostedIdentityContract.GRPC_ACCOUNT_ROLE,
             HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
-            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE)) {
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+            HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE)) {
       stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
     }
     stubCertificate(
@@ -1589,7 +1590,8 @@ class SecretProjectionServiceTest {
         List.of(
             HostedIdentityContract.GRPC_ACCOUNT_ROLE,
             HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
-            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE)) {
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+            HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE)) {
       stubProjectionAndSource(secretClient, plan, role, acceptedData, acceptedData, acceptedData);
     }
     stubCertificate(

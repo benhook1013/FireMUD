@@ -6,7 +6,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 import java.util.Map;
-import net.firedevops.firemud.gamesession.command.text.ObservedDirectTextTransport;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.stereotype.Component;
@@ -17,6 +19,24 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 /** Copies required request headers into stable WebSocket session attributes during upgrade. */
 @Component
 public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterceptor {
+  private final boolean authenticatedListenerEnabled;
+  private final int authenticatedPort;
+  private final String namespace;
+
+  public GameSessionWebSocketHandshakeInterceptor() {
+    this(false, 8444, "");
+  }
+
+  @Autowired
+  public GameSessionWebSocketHandshakeInterceptor(
+      @Value("${firemud.gameplay.authenticated-listener.enabled:false}") boolean enabled,
+      @Value("${firemud.gameplay.authenticated-listener.port:8444}") int port,
+      @Value("${firemud.grpc.workload-namespace:}") String namespace) {
+    authenticatedListenerEnabled = enabled;
+    authenticatedPort = port;
+    this.namespace = namespace;
+  }
+
   static final String GAME_INSTANCE_HEADER = "X-Game-Instance-Id";
   static final String PROXY_CONNECTION_HEADER = "X-Proxy-Connection-Id";
   static final String TENANT_HEADER = "X-Tenant-Id";
@@ -56,17 +76,26 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
             bootstrapGameInstanceId,
             request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
     attributes.put(SESSION_ID_ATTR, sessionId);
+    attributes.remove(AuthenticatedDirectTextIngress.ATTRIBUTE);
     attributes.remove(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR);
+    boolean tcp = "trusted_tcp_proxy".equals(request.getHeaders().getFirst(CONNECTION_MODE_HEADER));
+    if (tcp || "/ws/game/tcp".equals(request.getURI().getPath())) {
+      try {
+        if (!authenticatedListenerEnabled)
+          throw new IllegalArgumentException("Listener unavailable");
+        var ingress =
+            AuthenticatedDirectTextIngress.authenticate(
+                request, authenticatedPort, namespace, sessionId);
+        attributes.put(AuthenticatedDirectTextIngress.ATTRIBUTE, ingress);
+        attributes.put(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR, ingress.transport());
+      } catch (IllegalArgumentException unavailable) {
+        response.setStatusCode(HttpStatus.FORBIDDEN);
+        return false;
+      }
+    }
     boolean firstParty =
         "first_party_web".equals(request.getHeaders().getFirst(CONNECTION_MODE_HEADER))
             || StringUtils.hasText(request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
-    if (!firstParty) {
-      ObservedDirectTextTransport.fromHandshake(
-              request.getHeaders().getFirst(CONNECTION_MODE_HEADER),
-              sessionId,
-              request.getHeaders().getFirst(PROXY_CONNECTION_HEADER))
-          .ifPresent(value -> attributes.put(OBSERVED_DIRECT_TEXT_TRANSPORT_ATTR, value));
-    }
     if (firstParty) {
       attributes.put(CONNECTION_MODE_ATTR, "first_party_web");
       attributes.put(CONNECT_CONTEXT_ATTR, request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));

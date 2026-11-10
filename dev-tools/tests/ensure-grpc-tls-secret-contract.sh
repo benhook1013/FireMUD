@@ -24,12 +24,13 @@ workloads=(
   account-service
   game-session-service
   social-groups-service
+  spring-cloud-gateway
 )
 data_dir="$fixture_dir/data"
 mock_bin="$fixture_dir/bin"
 mkdir -p "$data_dir" "$mock_bin"
 
-# Build one shared issuer and eight distinct workload identities. The helper
+# Build one shared issuer and nine distinct workload identities. The helper
 # validates the real X.509 extensions, SANs, key pairs, and issuer chains.
 openssl ecparam -genkey -name prime256v1 -noout -out "$fixture_dir/shared-issuer.key"
 openssl req -x509 -new -key "$fixture_dir/shared-issuer.key" -sha256 -days 30 \
@@ -56,12 +57,18 @@ for workload in "${workloads[@]}"; do
   openssl ecparam -genkey -name prime256v1 -noout -out "$data_dir/$workload.key"
   openssl req -new -key "$data_dir/$workload.key" -subj "/CN=$workload" \
     -out "$fixture_dir/$workload.csr"
+  eku='serverAuth,clientAuth'
+  sans="URI:spiffe://firemud/ns/dev/sa/$workload,DNS:$workload,DNS:$workload.dev,DNS:$workload.dev.svc,DNS:$workload.dev.svc.cluster.local"
+  if [[ "$workload" == spring-cloud-gateway ]]; then
+    eku=clientAuth
+    sans="URI:spiffe://firemud/ns/dev/sa/$workload"
+  fi
   cat >"$fixture_dir/$workload.ext" <<EOF
 [leaf]
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
-extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=URI:spiffe://firemud/ns/dev/sa/$workload,DNS:$workload,DNS:$workload.dev,DNS:$workload.dev.svc,DNS:$workload.dev.svc.cluster.local
+extendedKeyUsage=$eku
+subjectAltName=$sans
 EOF
   openssl x509 -req -in "$fixture_dir/$workload.csr" \
     -CA "$data_dir/publication-issuer.crt" -CAkey "$fixture_dir/publication-issuer.key" \
@@ -290,8 +297,8 @@ if ! run_helper complete "$success_log" "$fixture_dir/success-state" "" 30 \
   cat "$fixture_dir/success.out" "$fixture_dir/success.err" >&2
   exit 1
 fi
-grep -Fq '8 distinct workload leaves' "$fixture_dir/success.out" || {
-  echo "the helper did not accept eight valid cert-manager projections" >&2
+grep -Fq '9 distinct workload leaves' "$fixture_dir/success.out" || {
+  echo "the helper did not accept nine valid cert-manager projections" >&2
   exit 1
 }
 large_constraints_log="$fixture_dir/large-constraints.log"
@@ -302,7 +309,7 @@ if ! FORCE_LARGE_BASIC_CONSTRAINTS_OUTPUT=true run_helper complete "$large_const
   echo "the helper failed to validate a CA extension after capturing its complete output" >&2
   exit 1
 fi
-grep -Fq '8 distinct workload leaves' "$fixture_dir/large-constraints.out" || {
+grep -Fq '9 distinct workload leaves' "$fixture_dir/large-constraints.out" || {
   echo "the helper did not accept valid CA constraints with large extension output" >&2
   exit 1
 }
@@ -323,7 +330,7 @@ for secret in firemud-grpc-tls "${workloads[@]/#/firemud-grpc-}"; do
     exit 1
   }
 done
-last_projection_line="$(grep -n '^snapshot dev/firemud-grpc-social-groups-service fields=tls.crt,tls.key,ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
+last_projection_line="$(grep -n '^snapshot dev/firemud-grpc-spring-cloud-gateway fields=tls.crt,tls.key,ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
 reapply_line="$(grep -n '^apply dev/firemud-grpc-tls$' "$success_log" | cut -d: -f1)"
 legacy_delete_line="$(grep -n '^delete dev/firemud-grpc-ca$' "$success_log" | cut -d: -f1)"
 [[ -n "$last_projection_line" && -n "$reapply_line" && -n "$legacy_delete_line" && \
@@ -341,7 +348,7 @@ if ! run_helper complete "$warning_lookup_log" "$fixture_dir/warning-lookup-stat
   cat "$fixture_dir/warning-lookup.out" "$fixture_dir/warning-lookup.err" >&2
   exit 1
 fi
-grep -Fq '8 distinct workload leaves' "$fixture_dir/warning-lookup.out" || {
+grep -Fq '9 distinct workload leaves' "$fixture_dir/warning-lookup.out" || {
   echo "a warning on an absent Secret was treated as an existing Secret" >&2
   exit 1
 }
@@ -378,6 +385,40 @@ for resource in \
     exit 1
   }
 done
+
+# A Gateway credential must never acquire serving authority or DNS aliases.
+cp "$data_dir/spring-cloud-gateway.crt" "$fixture_dir/gateway-good.crt"
+for invalid_gateway_profile in serving dns; do
+  if [[ "$invalid_gateway_profile" == serving ]]; then
+    bad_eku='serverAuth,clientAuth'
+    bad_sans='URI:spiffe://firemud/ns/dev/sa/spring-cloud-gateway'
+  else
+    bad_eku=clientAuth
+    bad_sans='URI:spiffe://firemud/ns/dev/sa/spring-cloud-gateway,DNS:spring-cloud-gateway'
+  fi
+  cat >"$fixture_dir/gateway-invalid.ext" <<EOF
+[leaf]
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=$bad_eku
+subjectAltName=$bad_sans
+EOF
+  openssl x509 -req -in "$fixture_dir/spring-cloud-gateway.csr" \
+    -CA "$data_dir/publication-issuer.crt" -CAkey "$fixture_dir/publication-issuer.key" \
+    -CAcreateserial -days 30 -sha256 -extfile "$fixture_dir/gateway-invalid.ext" \
+    -extensions leaf -out "$data_dir/spring-cloud-gateway.crt"
+  if run_helper complete "$fixture_dir/gateway-$invalid_gateway_profile.log" \
+    "$fixture_dir/gateway-$invalid_gateway_profile-state" "" 30 \
+    >"$fixture_dir/gateway-$invalid_gateway_profile.out" 2>"$fixture_dir/gateway-$invalid_gateway_profile.err"; then
+    echo "the helper accepted Gateway $invalid_gateway_profile authority" >&2
+    exit 1
+  fi
+  if grep -q '^delete ' "$fixture_dir/gateway-$invalid_gateway_profile.log"; then
+    echo "the helper removed retained material before rejecting Gateway $invalid_gateway_profile authority" >&2
+    exit 1
+  fi
+done
+cp "$fixture_dir/gateway-good.crt" "$data_dir/spring-cloud-gateway.crt"
 
 # A failed lookup must retain its diagnostic and remove the temporary stderr
 # capture along with the helper's certificate workspace.
@@ -479,7 +520,7 @@ if grep -q '^delete ' "$incomplete_log"; then
 fi
 
 # Each workload projection becomes ready on its second read, one simulated
-# second later. The helper must apply one timeout to all eight workloads rather
+# second later. The helper must apply one timeout to all nine workloads rather
 # than resetting a fresh timeout for every workload.
 aggregate_timeout_log="$fixture_dir/aggregate-timeout.log"
 if run_helper delayed-each-workload "$aggregate_timeout_log" \

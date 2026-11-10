@@ -37,6 +37,8 @@ import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
+import net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest;
+import net.firedevops.firemud.account.v1.RetireInitialGameplayLoginResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
@@ -52,6 +54,7 @@ import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayAuthenticateReceiver;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -61,6 +64,7 @@ import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
@@ -85,6 +89,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private final String workloadNamespace;
   private final boolean localDemoAuthenticationEnabled;
   private final String localDemoEmail;
+  private AccountGameplayAuthenticateReceiver canonicalGameplay;
+
+  /** Canonical methods share this one AccountService registration; absence never selects legacy. */
+  @Autowired
+  void canonicalGameplayReceiver(ObjectProvider<AccountGameplayAuthenticateReceiver> receiver) {
+    canonicalGameplay = receiver.getIfAvailable();
+  }
 
   public AccountGrpcService(PingService pingService, AccountService accountService) {
     this(pingService, accountService, null, null);
@@ -415,6 +426,17 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
       requireCredentialPeer(request);
+      if (request.hasSourceContext() || !request.getRequestId().isEmpty()) {
+        if (canonicalGameplay == null) {
+          responseObserver.onError(
+              Status.UNAVAILABLE
+                  .withDescription("Canonical LOGIN authority unavailable")
+                  .asRuntimeException());
+        } else {
+          canonicalGameplay.authenticate(request, responseObserver);
+        }
+        return;
+      }
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
           accountService.authenticateForGameplay(request.getEmail(), request.getPassword());
       AuthenticateResponse response =
@@ -459,6 +481,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  @Override
+  public void retireInitialGameplayLogin(
+      RetireInitialGameplayLoginRequest request,
+      StreamObserver<RetireInitialGameplayLoginResponse> observer) {
+    if (canonicalGameplay == null) {
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("Canonical LOGIN cleanup unavailable")
+              .asRuntimeException());
+      return;
+    }
+    canonicalGameplay.retireInitialGameplayLogin(request, observer);
   }
 
   @Override
