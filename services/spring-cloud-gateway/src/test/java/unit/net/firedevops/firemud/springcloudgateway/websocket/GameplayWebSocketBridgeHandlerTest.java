@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -340,6 +341,62 @@ class GameplayWebSocketBridgeHandlerTest {
             "private-credential",
             "private-cookie",
             "private-downstream-session");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectedTcpOriginCloseIsBoundedAndRecorded(boolean verifiedOrigin) {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    AuthenticatedGameplayWebSocketClient authenticated =
+        mock(AuthenticatedGameplayWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
+    Map<String, Object> attributes =
+        verifiedOrigin
+            ? Map.of(VerifiedTcpProxyOrigin.class.getName(), mock(VerifiedTcpProxyOrigin.class))
+            : Map.of();
+    when(downstream.getId()).thenReturn("tcp-downstream");
+    when(downstream.getAttributes()).thenReturn(attributes);
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    when(handshake.getHeaders()).thenReturn(headers);
+    when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.never());
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 1, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            new GameplayWebSocketObservability(meterRegistry),
+            verifiedOrigin ? null : authenticated);
+
+    StepVerifier.withVirtualTime(() -> handler.handle(downstream))
+        .thenAwait(Duration.ofSeconds(2))
+        .expectError(TimeoutException.class)
+        .verify(Duration.ofSeconds(5));
+
+    CloseStatus expected =
+        verifiedOrigin
+            ? new CloseStatus(1013, "backend_unavailable")
+            : new CloseStatus(1008, "authenticated_tcp_origin_required");
+    verify(downstream).close(expected);
+    verify(client, never())
+        .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+    verify(authenticated, never()).execute(any(), any());
+    assertThat(
+            meterRegistry
+                .get("gateway.websocket.closes")
+                .tags(
+                    "reason", verifiedOrigin ? "backend_unavailable" : "policy_violation",
+                    "subreason", "none",
+                    "bridge_shutdown_class", "unattributed_failure")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
