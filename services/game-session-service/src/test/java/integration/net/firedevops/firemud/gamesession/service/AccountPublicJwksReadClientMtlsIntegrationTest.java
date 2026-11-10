@@ -80,6 +80,7 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
   private static Identity accountIdentity;
   private static List<Identity> invalidAccounts;
   private Server server;
+  private final AtomicReference<Status> upstreamFailure = new AtomicReference<>();
   private final AtomicReference<String> clientUri = new AtomicReference<>();
   private final AtomicReference<String> authorization = new AtomicReference<>();
   private final AtomicReference<GetCurrentAccountPublicJwksRequest> request =
@@ -153,10 +154,31 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
   @Test
   void reachableUnavailableDiffersFromAuthenticationFailure() throws Exception {
     start(accountIdentity, response(), false, true);
-    assertThatThrownBy(() -> client().readCurrent()).isInstanceOf(SourceUnavailableException.class);
+    var reader = client();
+    assertThatThrownBy(reader::readCurrent).isInstanceOf(SourceUnavailableException.class);
+    upstreamFailure.set(null);
+    assertThat(reader.readCurrent().jwksBytes()).containsExactly(PUBLIC_BYTES);
     stopServer();
     start(invalidAccounts.getFirst(), response(), false, true);
     assertThatThrownBy(() -> client().readCurrent()).isInstanceOf(InvalidJwksException.class);
+  }
+
+  @Test
+  void genericStatusCodesRemainTerminalEvenFromTheExactAccountPeer() throws Exception {
+    start(accountIdentity, response(), false, false);
+    var reader = client();
+    for (Status failure :
+        List.of(
+            Status.UNKNOWN,
+            Status.CANCELLED,
+            Status.ABORTED,
+            Status.INTERNAL,
+            Status.RESOURCE_EXHAUSTED,
+            Status.FAILED_PRECONDITION,
+            Status.INVALID_ARGUMENT)) {
+      upstreamFailure.set(failure);
+      assertThatThrownBy(reader::readCurrent).isInstanceOf(InvalidJwksException.class);
+    }
   }
 
   @Test
@@ -186,6 +208,7 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
       boolean neverReply,
       boolean unavailable)
       throws Exception {
+    upstreamFailure.set(unavailable ? Status.UNAVAILABLE : null);
     // This fixture mimics only the private Account read, and enforces the caller's exact URI.
     var producer =
         new AccountPublicJwksReadServiceGrpc.AccountPublicJwksReadServiceImplBase() {
@@ -201,7 +224,8 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
             clientUri.set(peer.uri());
             request.set(incoming);
             AccountPublicJwksReadCodec.requireRequest(incoming);
-            if (unavailable) observer.onError(Status.UNAVAILABLE.asRuntimeException());
+            Status failure = upstreamFailure.get();
+            if (failure != null) observer.onError(failure.asRuntimeException());
             else if (!neverReply) {
               observer.onNext(reply);
               observer.onCompleted();

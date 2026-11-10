@@ -286,6 +286,23 @@ class AccountPublicJwksReadRegistrationMtlsIntegrationTest {
                       () -> client.stub().getCurrentPublicJwks(malformed));
                   verifyNoInteractions(source);
                 }
+                doThrow(new IllegalStateException("private internal handler fault"))
+                    .when(source)
+                    .load();
+                assertCode(
+                    Status.Code.UNAVAILABLE,
+                    () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
+                doReturn(
+                        new PublicJwksSnapshot(
+                            sourceIdentity(), new byte[AccountPublicJwksCache.MAX_JWKS_BYTES + 1]))
+                    .when(source)
+                    .load();
+                assertCode(
+                    Status.Code.FAILED_PRECONDITION,
+                    () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
+                doReturn(snapshot).when(source).load();
+                assertThat(client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()))
+                    .isEqualTo(AccountPublicJwksReadCodec.response(snapshot));
                 doThrow(new AccountPublicJwksCache.InvalidJwksException()).when(source).load();
                 assertCode(
                     Status.Code.FAILED_PRECONDITION,
