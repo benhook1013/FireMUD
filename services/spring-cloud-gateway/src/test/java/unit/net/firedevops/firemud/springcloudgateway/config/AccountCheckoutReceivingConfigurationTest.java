@@ -123,7 +123,7 @@ class AccountCheckoutReceivingConfigurationTest {
             + secret
             + "\"}";
     var request =
-        MockServerHttpRequest.post(URI.create("https://localhost/api/account/auth/login"))
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
             .sslInfo(mock(SslInfo.class))
             .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .body(body);
