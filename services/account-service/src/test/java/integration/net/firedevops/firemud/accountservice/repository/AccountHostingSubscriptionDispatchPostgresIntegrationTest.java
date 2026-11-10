@@ -1219,7 +1219,8 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
             .isEqualTo(creation.subscriptionProvisioningRequestId().toString());
         assertThat(params)
             .containsEntry("customer", creation.providerCustomerId())
-            .containsEntry("default_payment_method", paymentMethod);
+            .containsEntry("default_payment_method", paymentMethod)
+            .containsEntry("payment_behavior", "default_incomplete");
         assertThat(params.get("items"))
             .isEqualTo(
                 List.of(

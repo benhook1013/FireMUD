@@ -97,6 +97,16 @@ jobs:
               }
               if (run.status === "completed") {
                 if (run.conclusion !== "success") throw new Error("publication source run did not succeed");
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  ...context.repo, run_id: sourceId, per_page: 100,
+                });
+                if (jobs.some(job => job.name === "PR Full-Stack Smoke (runtime-required=true)" &&
+                    (job.steps ?? []).some(step =>
+                      step.name === "Known canonical transition PLAY failure with successful authenticated cleanup" &&
+                      step.status === "completed" && step.conclusion === "success"))) {
+                  core.notice("CI passed under the canonical PLAY transition exception; no runtime images are eligible for publication.");
+                  return;
+                }
                 core.setOutput("source", JSON.stringify(run));
                 core.setOutput("title", run.display_title);
                 core.setOutput("artifact_name", `pr-runtime-images-pr-merge-${title[4]}`);
@@ -112,6 +122,7 @@ jobs:
   publish:
     name: Publish Fixed PR Merge Image Tags
     needs: [source]
+    if: ${{ needs.source.outputs.source != '' }}
     concurrency:
       group: publish-pr-merge-images-${{ needs.source.outputs.title }}
       cancel-in-progress: false

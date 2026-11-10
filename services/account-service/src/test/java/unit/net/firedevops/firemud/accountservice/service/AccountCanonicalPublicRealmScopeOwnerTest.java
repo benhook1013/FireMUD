@@ -112,6 +112,88 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   @ParameterizedTest
+  @ValueSource(strings = {"00042", "00000000000000000000000000000042", "9223372036854775807"})
+  void directProducerAcceptsPositiveSessionBytesWithinTheJoinBoundary(String sessionId) {
+    Fixture f = new Fixture(300000L);
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () -> {
+              var scope =
+                  f.owner
+                      .issueDirectTextScope(
+                          directCaller(f.target, sessionId), directTarget(f.target))
+                      .scope();
+              assertThat(scope.accountId()).isEqualTo(ACCOUNT);
+              assertThat(f.retained.get()).isEqualTo(scope);
+              verify(f.scopes).insertCanonical(PRIVATE_ACCOUNT, scope, f.provenance());
+            });
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {33, 128, 129})
+  void directProducerRefusesSessionBytesBeyondTheJoinBoundaryBeforeOwnerReads(int length) {
+    Fixture f = new Fixture(300000L);
+    String sessionId = "0".repeat(length - 1) + "1";
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertCode(
+                    "CONNECT_CONTEXT_INVALID",
+                    () ->
+                        f.owner.issueDirectTextScope(
+                            directCaller(f.target, sessionId), directTarget(f.target))));
+    verifyNoInteractions(
+        f.accounts,
+        f.memberships,
+        f.tenants,
+        f.heads,
+        f.scopes,
+        f.sessions,
+        f.targets,
+        f.entitlements);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "0",
+        "-1",
+        "+1",
+        " 42",
+        "42 ",
+        "1.0",
+        "1e2",
+        "abc",
+        "9223372036854775808",
+        "\u0664\u0662",
+        "\uff14\uff12"
+      })
+  void directProducerRefusesNonPositiveAsciiLongsAndRetainsParseCauseBeforeOwnerReads(
+      String sessionId) {
+    Fixture f = new Fixture(300000L);
+    directPeer(NAMESPACE, "game-session-service")
+        .run(
+            () ->
+                assertThatThrownBy(
+                        () ->
+                            f.owner.issueDirectTextScope(
+                                directCaller(f.target, sessionId), directTarget(f.target)))
+                    .isInstanceOf(AuthenticationException.class)
+                    .hasCauseInstanceOf(NumberFormatException.class)
+                    .extracting(failure -> ((AuthenticationException) failure).getCode())
+                    .isEqualTo("CONNECT_CONTEXT_INVALID"));
+    verifyNoInteractions(
+        f.accounts,
+        f.memberships,
+        f.tenants,
+        f.heads,
+        f.scopes,
+        f.sessions,
+        f.targets,
+        f.entitlements);
+  }
+
+  @ParameterizedTest
   @ValueSource(strings = {"other-namespace", "wrong-service"})
   void directProducerRefusesWrongPeerBeforeReadingAccountOrSources(String mismatch) {
     Fixture f = new Fixture(300000L);
@@ -218,6 +300,10 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
   }
 
   private static DirectTextCallerContext directCaller(Target target) {
+    return directCaller(target, "00042");
+  }
+
+  private static DirectTextCallerContext directCaller(Target target, String sessionId) {
     return new DirectTextCallerContext(
         ACCOUNT,
         target.canonicalTenantId(),
@@ -225,7 +311,7 @@ class AccountCanonicalPublicRealmScopeOwnerTest {
         target.playableStateNamespaceId(),
         target.playableStateScope(),
         target.canonicalGameInstanceId(),
-        "00042",
+        sessionId,
         "direct-request");
   }
 
