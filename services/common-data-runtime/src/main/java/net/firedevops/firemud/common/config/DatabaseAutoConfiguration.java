@@ -30,6 +30,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 @AutoConfigureBefore(
     name = {
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+      "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration",
+      "org.springframework.boot.data.redis.autoconfigure.DataRedisReactiveAutoConfiguration",
       "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
       "org.springframework.boot.sql.autoconfigure.flyway.FlywayAutoConfiguration"
     })
