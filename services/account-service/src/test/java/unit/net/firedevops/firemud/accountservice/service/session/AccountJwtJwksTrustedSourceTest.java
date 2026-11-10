@@ -82,12 +82,83 @@ class AccountJwtJwksTrustedSourceTest {
   private static final String GENERATION_OPERATION_DIGEST = "1".repeat(64);
   private static final String GENERATION_REQUEST_DIGEST = "2".repeat(64);
   private static final String GENERATION_RECEIPT_DIGEST = "3".repeat(64);
-  private static final String JWK_1 =
-      "{\"alg\":\"RS256\",\"e\":\"AQAB\",\"key_ops\":[\"verify\"],\"kid\":\"key_1\",\"kty\":\"RSA\",\"n\":\"AQID\",\"use\":\"sig\"}";
-  private static final String JWK_2 =
-      "{\"alg\":\"RS256\",\"e\":\"AQAB\",\"key_ops\":[\"verify\"],\"kid\":\"key_2\",\"kty\":\"RSA\",\"n\":\"BAUG\",\"use\":\"sig\"}";
+  private static final String JWK_1 = publicTestJwk("key_1");
+  private static final String JWK_2 = publicTestJwk("key_2");
   private static final String JWKS_1 = "{\"keys\":[" + JWK_1 + "]}";
   private static final String JWKS_1_AND_2 = "{\"keys\":[" + JWK_1 + "," + JWK_2 + "]}";
+
+  @Test
+  void sameUidUnownedPublicKeyRemovalIsTerminalAndCannotRepopulateWarmCache() {
+    Fixture fixture = new Fixture();
+    fixture.useCommittedState();
+    var pin = fixture.source.sourceIdentity();
+    var cache =
+        new net.firedevops.firemud.common.security.AccountPublicJwksCache(
+            fixture.source,
+            pin,
+            java.time.Clock.fixed(
+                java.time.Instant.parse("2026-11-10T00:00:00Z"), java.time.ZoneOffset.UTC),
+            java.time.Duration.ofSeconds(10));
+    cache.refresh();
+    assertThat(cache.keyFor("key_1")).isNotNull();
+    assertThat(cache.keyFor("key_2")).isNotNull();
+    var original =
+        new ConfigMapSnapshot(
+            CONFIG_MAP_UID,
+            "43",
+            Map.of(
+                AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
+                JWKS_1_AND_2,
+                AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
+                fixture.nextPublication.intent().generationMarkerJson()));
+    var pruned = new java.util.LinkedHashMap<>(original.data());
+    pruned.put(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY, "{\"keys\":[" + JWK_2 + "]}");
+    when(fixture.configMapClient.observe())
+        .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "44", pruned));
+    // Same UID and a valid retained key profile cannot replace exact Account owner evidence.
+    assertRejectedPublicRead(fixture);
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(
+            net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException
+                .class);
+    for (String kid : List.of("key_1", "key_2")) {
+      assertThatThrownBy(() -> cache.keyFor(kid))
+          .isInstanceOf(
+              net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException
+                  .class);
+    }
+    when(fixture.configMapClient.observe()).thenReturn(original);
+    assertThat(fixture.source.currentPublicRead().jwksBytes())
+        .containsExactly(JWKS_1_AND_2.getBytes(StandardCharsets.UTF_8));
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(
+            net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException
+                .class);
+    assertThatThrownBy(() -> cache.keyFor("key_1"))
+        .isInstanceOf(
+            net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException
+                .class);
+  }
+
+  private static String publicTestJwk(String kid) {
+    try {
+      var generator = java.security.KeyPairGenerator.getInstance("RSA");
+      generator.initialize(3072);
+      var key = (java.security.interfaces.RSAPublicKey) generator.generateKeyPair().getPublic();
+      byte[] modulus = key.getModulus().toByteArray();
+      if (modulus[0] == 0) modulus = java.util.Arrays.copyOfRange(modulus, 1, modulus.length);
+      var encoder = java.util.Base64.getUrlEncoder().withoutPadding();
+      return "{\"alg\":\"RS256\",\"e\":\""
+          + encoder.encodeToString(key.getPublicExponent().toByteArray())
+          + "\",\"key_ops\":[\"verify\"],\"kid\":\""
+          + kid
+          + "\",\"kty\":\"RSA\",\"n\":\""
+          + encoder.encodeToString(modulus)
+          + "\",\"use\":\"sig\"}";
+    } catch (java.security.GeneralSecurityException failure) {
+      throw new ExceptionInInitializerError(failure);
+    }
+  }
 
   @Test
   void derivesPinAndReturnsOnlyExactReceiptBackedPublicBytes() {
@@ -113,7 +184,8 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
-  void allowsAbsentKeyOperationsOnlyForTrustedPublishedKeysAndRejectsOtherShapes() {
+  void allowsAbsentKeyOperationsOnlyForTrustedPublishedKeysAndRejectsOtherShapes()
+      throws Exception {
     String jwkWithoutKeyOps = JWK_1.replace("\"key_ops\":[\"verify\"],", "");
     Fixture absentKeyOps = new Fixture("{\"keys\":[" + jwkWithoutKeyOps + "]}");
 
@@ -127,11 +199,14 @@ class AccountJwtJwksTrustedSourceTest {
                 .getBytes(StandardCharsets.UTF_8));
     assertThat(identity.configMapUid()).isEqualTo(CONFIG_MAP_UID);
 
+    var mapper = JsonMapper.builder().build();
+    var missingModulus = (tools.jackson.databind.node.ObjectNode) mapper.readTree(JWK_1);
+    missingModulus.remove("n");
     for (String malformedJwk :
         List.of(
             JWK_1.replace("\"use\":\"sig\"", "\"use\":\"sig\",\"unexpected\":true"),
             JWK_1.replace("\"use\":\"sig\"", "\"use\":\"sig\",\"d\":\"AQID\""),
-            JWK_1.replace("\"n\":\"AQID\",", ""),
+            mapper.writeValueAsString(missingModulus),
             JWK_1.replace("[\"verify\"]", "[\"verify\",\"sign\"]"))) {
       Fixture malformed = new Fixture("{\"keys\":[" + malformedJwk + "]}");
       assertThatThrownBy(malformed.source::sourceIdentity)
@@ -1292,9 +1367,15 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   private static String fingerprint(String jwk) {
-    String modulus = jwk.contains("key_1") ? "AQID" : "BAUG";
-    String preimage = "{\"e\":\"AQAB\",\"kty\":\"RSA\",\"n\":\"" + modulus + "\"}";
     try {
+      var mapper = JsonMapper.builder().build();
+      var key = mapper.readTree(jwk);
+      String preimage =
+          mapper.writeValueAsString(
+              Map.of(
+                  "e", key.path("e").asText(),
+                  "kty", key.path("kty").asText(),
+                  "n", key.path("n").asText()));
       return java.util.HexFormat.of()
           .formatHex(
               MessageDigest.getInstance("SHA-256")
