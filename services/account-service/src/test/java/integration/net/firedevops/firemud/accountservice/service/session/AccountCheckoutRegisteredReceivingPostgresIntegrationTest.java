@@ -18,6 +18,8 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -283,8 +285,20 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         // Let the original controlled ten-second provider-dispatch lease expire without issuing
         // repeated reconciliation commands or changing the real receiving clock.
         Thread.sleep(Duration.ofSeconds(11));
-        var completion =
-            receiving.rawWebhook(hosting.signedSuccessPayload(), hosting.signedSuccessHeader());
+        // The controlled provider event follows real owner consent. Advance only the provider
+        // fixture clock; receiving keeps its genuine clock and unchanged consent/lease guards.
+        hosting.clock().advance(Duration.between(hosting.clock().instant(), Instant.now()));
+        var success = hosting.signedSuccess();
+        var consentedAt =
+            source
+                .dsl
+                .fetchSingle(
+                    "SELECT consented_at FROM subscription_first_invoice_confirmations WHERE request_id = ?",
+                    confirmation)
+                .get(0, OffsetDateTime.class);
+        assertThat(JSON.readTree(success.payload()).path("created").asLong())
+            .isGreaterThanOrEqualTo(consentedAt.toEpochSecond());
+        var completion = receiving.rawWebhook(success.payload(), success.signature());
         assertThat(completion.statusCode()).isEqualTo(200);
         assertThat(JSON.readTree(completion.body()).path("state").asText()).isEqualTo("COMMITTED");
         assertThat(hosting.firstInvoiceConfirmations()).isOne();
@@ -293,10 +307,7 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                     .path("state")
                     .asText())
             .isEqualTo("COMMITTED");
-        assertThat(
-                receiving
-                    .rawWebhook(hosting.signedSuccessPayload(), hosting.signedSuccessHeader())
-                    .statusCode())
+        assertThat(receiving.rawWebhook(success.payload(), success.signature()).statusCode())
             .isEqualTo(200);
         assertThat(
                 source
