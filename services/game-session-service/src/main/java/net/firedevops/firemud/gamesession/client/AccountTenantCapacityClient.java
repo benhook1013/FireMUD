@@ -55,7 +55,7 @@ public final class AccountTenantCapacityClient
    */
   public Result commit(Request request) {
     requireNoAmbientSql("Capacity commitment requires no ambient SQL");
-    request.requireCommittable();
+    request.requireStructurallyValid();
     if (request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
         || !namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Exact Game Session context required");

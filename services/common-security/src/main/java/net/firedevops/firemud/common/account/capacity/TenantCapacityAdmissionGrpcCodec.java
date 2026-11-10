@@ -32,7 +32,7 @@ public final class TenantCapacityAdmissionGrpcCodec {
   private TenantCapacityAdmissionGrpcCodec() {}
 
   public static CommitTenantCapacityAdmissionRequest toRequest(Request value) {
-    value.requireCommittable();
+    value.requireStructurallyValid();
     var attempt =
         TenantCapacityAdmissionAttempt.newBuilder()
             .addTenantId(value.identity().tenantId().toString())
@@ -85,7 +85,7 @@ public final class TenantCapacityAdmissionGrpcCodec {
                 one(attempt.getCanonicalAccountEvidenceList()).toByteArray(), context.owner()),
             wire.getCapacityDelta(),
             one(attempt.getMutationDigestList()));
-    request.requireCommittable();
+    request.requireStructurallyValid();
     return request;
   }
 

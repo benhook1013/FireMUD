@@ -65,6 +65,7 @@ class AccountTenantCapacityOwnerTest {
     var f = new Fixture(false);
     for (Request changed :
         java.util.List.of(
+            CapacityAdmissionTestFixture.playerRequest(false),
             new Request(
                     f.request.identity(),
                     UUID.randomUUID(),
@@ -147,6 +148,63 @@ class AccountTenantCapacityOwnerTest {
     verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes);
   }
 
+  @Test
+  void unretainedNonCreatingEvidenceRemainsUnavailableWithoutAnyUsageWrite() throws Exception {
+    var f = new Fixture(false, CapacityAdmissionTestFixture.playerRequest(false));
+    f.existing = false;
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .hasMessage("ENTITLEMENT_UNAVAILABLE");
+    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void staleNonCreatingEvidenceStaysInvalidInsteadOfBecomingPolicyDenial() throws Exception {
+    var f = new Fixture(true, CapacityAdmissionTestFixture.playerRequest(false));
+    f.existing = false;
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void nonCreatingEvidenceCannotStartRecoveryOrRearmWork() throws Exception {
+    var f = new Fixture(false);
+    var source =
+        mock(
+            net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                .ExecutionReadClient.class);
+    var recovery =
+        new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+            f.owner, f.dsl, source, Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC));
+    var denied = CapacityAdmissionTestFixture.playerRequest(false);
+    var next =
+        new Request(
+                denied.identity(),
+                UUID.randomUUID(),
+                2,
+                denied.targetNamespace(),
+                denied.context(),
+                denied.operation(),
+                denied.priorShape(),
+                denied.requestedShape(),
+                denied.evidence(),
+                denied.capacityDelta(),
+                null)
+            .withDigest();
+    assertThatThrownBy(() -> recovery.rearm(f.request, next))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                recovery.reconcile(
+                    denied,
+                    net.firedevops.firemud.accountservice.service
+                        .AccountTenantCapacityRecoveryWorker.NoCommitAction.RETAIN_FOR_REARM))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes, source);
+  }
+
   private static final class Fixture {
     private final DSLContext dsl = mock(DSLContext.class);
     private final AccountRepository accounts = mock(AccountRepository.class);
@@ -155,12 +213,17 @@ class AccountTenantCapacityOwnerTest {
     private final AccountGameplayDelegationIssuanceRepository issuances =
         mock(AccountGameplayDelegationIssuanceRepository.class);
     private final AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
-    private final Request request = CapacityAdmissionTestFixture.playerRequest();
+    private final Request request;
     private final UUID reservation = UUID.randomUUID();
     private final AccountTenantCapacityOwner owner;
     private boolean existing = true;
 
     private Fixture(boolean expired) throws Exception {
+      this(expired, CapacityAdmissionTestFixture.playerRequest());
+    }
+
+    private Fixture(boolean expired, Request request) throws Exception {
+      this.request = request;
       when(accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
           .thenReturn(Optional.of(new Account()));
       Connection connection = mock(Connection.class);

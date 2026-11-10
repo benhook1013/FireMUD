@@ -292,7 +292,14 @@ public final class TenantCapacityAdmission {
           CapacityAdmissionDigest.digest(this));
     }
 
+    /** Strong guard for rearm and selected-owner execution; content alone grants no authority. */
     public void requireCommittable() {
+      requireStructurallyValid();
+      if (operation == Operation.CAPACITY_CREATING && !evidence.permitsCreation()) throw invalid();
+    }
+
+    /** Account resolves exact replay/conflict and current policy after this content check. */
+    public void requireStructurallyValid() {
       if (capacityDelta == null
           || mutationDigest == null
           || !mutationDigest.equals(CapacityAdmissionDigest.digest(this))
@@ -302,8 +309,7 @@ public final class TenantCapacityAdmission {
           Math.subtractExact(
               requestedShape.units(context.owner()), priorShape.units(context.owner()));
       if (operation == Operation.CAPACITY_CREATING) {
-        if (capacityDelta <= 0 || net <= 0 || capacityDelta > net || !evidence.permitsCreation())
-          throw invalid();
+        if (capacityDelta <= 0 || net <= 0 || capacityDelta > net) throw invalid();
         // A scalar commitment cannot hide expansion in another resource dimension.
         if (context.owner() == Owner.GAME_SESSION
             ? requestedShape.concurrentGameInstances() > priorShape.concurrentGameInstances()
