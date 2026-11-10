@@ -435,6 +435,42 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void rejectsNonCanonicalProxyConnectionIdsOnAuthenticatedListener() throws Exception {
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    GatewayTcpProxyListenerProperties listenerProperties = certificateListenerProperties();
+    TcpProxyTrustPolicy policy =
+        new TcpProxyTrustPolicy(
+            listenerProperties,
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    SslInfo authenticatedPeer = authenticatedTcpProxyPeer();
+
+    for (String connectionId :
+        new String[] {
+          null,
+          "opaque",
+          "9FB38C88-2F1D-42AA-8E0B-7EB69CAF8814",
+          "9fb38c88-2f1d-12aa-8e0b-7eb69caf8814",
+          "9fb38c88-2f1d-42aa-ce0b-7eb69caf8814"
+        }) {
+      MockServerHttpRequest.BaseBuilder<?> requestBuilder =
+          MockServerHttpRequest.get("/ws/game/test")
+              .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+              .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+              .sslInfo(authenticatedPeer)
+              .header("X-Proxy-Client-IP", "203.0.113.99");
+      if (connectionId != null) {
+        requestBuilder.header("X-Proxy-Connection-Id", connectionId);
+      }
+      MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
+      assertForbiddenWithoutDelegation(filter, exchange, "connectionId=" + connectionId);
+    }
+  }
+
+  @Test
   void rejectsLegacyTrustedProxyWhenProxyClientIpIsMissingOrMalformed() {
     GatewayHeaderTrustProperties properties = new GatewayHeaderTrustProperties();
     properties.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);

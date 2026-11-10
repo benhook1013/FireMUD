@@ -137,6 +137,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
       upstreamConnector =
           upstreamHandler -> client.execute(upstreamUri, upstreamHeaders, upstreamHandler);
     } else {
+      upstreamHeaders.remove(TRANSPORT_SESSION_HEADER);
       upstreamHeaders.set("X-Client-IP", origin.clientAddress());
       upstreamHeaders.set("X-Proxy-Connection-Id", origin.proxyConnectionId().toString());
       upstreamHeaders.set(CONNECTION_MODE_HEADER, "trusted_tcp_proxy");

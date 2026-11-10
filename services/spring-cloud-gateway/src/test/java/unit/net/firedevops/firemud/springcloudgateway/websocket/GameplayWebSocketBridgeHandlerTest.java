@@ -264,6 +264,7 @@ class GameplayWebSocketBridgeHandlerTest {
     HttpHeaders headers = new HttpHeaders();
     headers.set("X-Client-IP", "unverified");
     headers.set("X-Proxy-Connection-Id", "unverified");
+    headers.set("X-Firemud-Transport-Session-Id", "9001");
     when(handshake.getHeaders()).thenReturn(headers);
     when(downstream.send(any())).thenReturn(Mono.never());
     when(downstream.receive()).thenReturn(Flux.never());
@@ -288,6 +289,7 @@ class GameplayWebSocketBridgeHandlerTest {
         .isEqualTo(connectionId.toString());
     assertThat(forwarded.getValue().getFirst("X-Firemud-Connection-Mode"))
         .isEqualTo("trusted_tcp_proxy");
+    assertThat(forwarded.getValue().getFirst("X-Firemud-Transport-Session-Id")).isNull();
   }
 
   @Test
