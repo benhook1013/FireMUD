@@ -350,13 +350,15 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     try (Session session = session()) {
       var denied = session.retainControlledNonCreatingEvaluation();
       assertThat(denied.evidence().permitsCreation()).isFalse();
+      byte[] candidate = session.gs.physicalSession();
+      assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
       for (int attempt = 0; attempt < 2; attempt++) {
         StatusRuntimeException failure =
             assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(denied));
         assertCapacityFailure(failure, Status.Code.RESOURCE_EXHAUSTED, "TENANT_BILLING_BLOCKED");
         assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
-        assertThat(session.gs.physicalSession()).isNull();
+        assertProvisionalUnchanged(session, candidate);
       }
     }
   }
@@ -366,14 +368,29 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     try (Session session = session()) {
       var first = session.capacityClient.commit(session.capacityRequest);
       var changed = session.retainControlledNonCreatingEvaluation();
+      byte[] candidate = session.gs.physicalSession();
+      assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
       StatusRuntimeException failure =
           assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(changed));
       assertCapacityFailure(failure, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       assertThat(session.capacityClient.commit(session.capacityRequest)).isEqualTo(first);
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
-      assertThat(session.gs.physicalSession()).isNull();
+      assertProvisionalUnchanged(session, candidate);
     }
+  }
+
+  private static void assertProvisionalUnchanged(Session session, byte[] candidate) {
+    assertThat(session.gs.physicalSession()).containsExactly(candidate);
+    assertThat(
+            session
+                .gs
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                    session.gs.decisionId())
+                .get(0, String.class))
+        .isEqualTo("PROVISIONAL");
   }
 
   private static void assertCapacityFailure(
