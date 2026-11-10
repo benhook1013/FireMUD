@@ -444,7 +444,12 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
         String prior = requiredText(root, "capacityExecutionDigest");
         if (!"UNBOUND".equals(prior) && !execution.digest().equals(prior)) throw invalid();
         root.put("capacityExecutionDigest", execution.digest());
-        return new Template(canonicalNode(root), clock, canonicalSessionDurationMillis);
+        byte[] bound = canonicalNode(root);
+        try {
+          return new Template(bound, clock, canonicalSessionDurationMillis);
+        } finally {
+          wipe(bound);
+        }
       } catch (IOException | RuntimeException malformed) {
         throw invalid();
       }
