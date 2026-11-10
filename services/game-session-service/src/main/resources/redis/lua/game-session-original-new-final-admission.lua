@@ -114,6 +114,14 @@ if action == 'CLOSE' then
       or redis.call('SISMEMBER', KEYS[3], sessionId) ~= 1
       or redis.call('TYPE', KEYS[4]).ok ~= 'set' or redis.call('PTTL', KEYS[4]) ~= -1
       or redis.call('SISMEMBER', KEYS[4], sessionId) ~= 1 then return -1 end
+  -- Completed replay above is read-only; a first CLOSE mutation must meet this operation's deadline.
+  local closeTime = redis.call('TIME')
+  local closeSeconds, closeMicros = tonumber(closeTime[1]), tonumber(closeTime[2])
+  if not closeSeconds or not closeMicros or closeSeconds < 1 or closeSeconds ~= math.floor(closeSeconds)
+      or closeSeconds > math.floor((9007199254740991 - 999) / 1000)
+      or closeMicros < 0 or closeMicros >= 1000000 or closeMicros ~= math.floor(closeMicros) then return -1 end
+  local closeNow = closeSeconds * 1000 + math.floor(closeMicros / 1000)
+  if closeNow <= 0 or closeNow >= deadline then return -1 end
   redis.call('HSET', KEYS[7], 'state', 'CLOSED')
   return 4
 end

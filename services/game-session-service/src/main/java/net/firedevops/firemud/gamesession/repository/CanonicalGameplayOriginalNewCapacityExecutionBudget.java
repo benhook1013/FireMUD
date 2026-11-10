@@ -38,6 +38,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final Clock clock;
   private final long explicitDeadline;
   private final Deadline deadline;
+  private final long absoluteDeadlineMillis;
   private final AtomicBoolean cancelled = new AtomicBoolean();
   private final CompletableFuture<Object> result = new CompletableFuture<>();
   private final Object resources = new Object();
@@ -57,19 +58,27 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     this.explicitDeadline = explicitDeadline;
     this.cancellationThreads = Objects.requireNonNull(cancellationThreads);
     caller = Context.current();
+    long startedMillis = clock.millis();
     long nanos = TimeUnit.SECONDS.toNanos(5);
     if (caller.getDeadline() != null)
       nanos = Math.min(nanos, caller.getDeadline().timeRemaining(TimeUnit.NANOSECONDS));
     if (explicitDeadline != Long.MAX_VALUE) {
       long remaining;
       try {
-        remaining = Math.subtractExact(explicitDeadline, clock.millis());
+        remaining = Math.subtractExact(explicitDeadline, startedMillis);
       } catch (ArithmeticException invalid) {
         throw unavailable();
       }
       nanos = Math.min(nanos, TimeUnit.MILLISECONDS.toNanos(Math.min(5000, remaining)));
     }
     if (nanos <= 0 || caller.isCancelled()) throw unavailable();
+    try {
+      absoluteDeadlineMillis =
+          Math.min(
+              explicitDeadline, Math.addExact(startedMillis, TimeUnit.NANOSECONDS.toMillis(nanos)));
+    } catch (ArithmeticException invalid) {
+      throw unavailable();
+    }
     Deadline local = Deadline.after(nanos, TimeUnit.NANOSECONDS);
     deadline = caller.getDeadline() == null ? local : local.minimum(caller.getDeadline());
   }
@@ -171,6 +180,11 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
 
   long remainingMillis() {
     return Math.max(1, TimeUnit.NANOSECONDS.toMillis(remainingNanos()));
+  }
+
+  long absoluteDeadlineMillis() {
+    check();
+    return absoluteDeadlineMillis;
   }
 
   void check() {
