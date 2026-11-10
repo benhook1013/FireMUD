@@ -225,6 +225,107 @@ describe('owner first-invoice checkout', () => {
     );
   });
 
+  it.each([409, 410])(
+    'keeps an uncertain original request held after status %i and a null confirmation ID',
+    async (status) => {
+      const { client, stripe, setCurrent } = setup();
+      client.confirm
+        .mockRejectedValueOnce(new Error('private uncertain response'))
+        .mockRejectedValueOnce(new FirstInvoiceError(status));
+      fireEvent.click(await consent());
+      await screen.findByText(
+        'The result is unknown. Check Account status or retry this same confirmation. Do not start another payment.'
+      );
+      const original = client.confirm.mock.calls[0][2];
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Resume exact confirmation' })
+      );
+      await screen.findByText(
+        'Your earlier confirmation is unresolved. Check Account status for this same payment. Do not start another payment. Authorization cannot safely be renewed yet.'
+      );
+      expect(client.confirm.mock.calls[1]).toEqual(
+        client.confirm.mock.calls[0]
+      );
+      expect(screen.queryByRole('checkbox')).toBeNull();
+      expect(
+        screen.queryByLabelText('Primary authentication secret')
+      ).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: 'Renew exact authorization' })
+      ).toBeNull();
+
+      for (let count = 0; count < 2; count += 1) {
+        const reads = client.read.mock.calls.length;
+        fireEvent.click(
+          screen.getByRole('button', { name: 'Check Account status' })
+        );
+        await waitFor(() =>
+          expect(client.read.mock.calls.length).toBeGreaterThan(reads)
+        );
+        await waitFor(() =>
+          expect(
+            (
+              screen.getByRole('button', {
+                name: 'Check Account status',
+              }) as HTMLButtonElement
+            ).disabled
+          ).toBe(false)
+        );
+      }
+      expect(client.confirm).toHaveBeenCalledTimes(2);
+      expect(client.reauthenticate).toHaveBeenCalledOnce();
+      expect(client.renew).not.toHaveBeenCalled();
+      expect(stripe.handleNextAction).not.toHaveBeenCalled();
+      expect(document.body.textContent).not.toContain(
+        'private uncertain response'
+      );
+
+      // A later read of that exact retained operation enables the existing explicit renewal path.
+      setCurrent({
+        ...initial,
+        confirmationRequestId: original.requestId,
+        authorizationVersion: 1,
+      });
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Check Account status' })
+      );
+      const renewal = await screen.findByRole('button', {
+        name: 'Renew exact authorization',
+      });
+      expect(client.reauthenticate).toHaveBeenCalledOnce();
+      expect(client.renew).not.toHaveBeenCalled();
+      client.reauthenticate.mockResolvedValueOnce({
+        evidenceId: '55555555-5555-4555-8555-555555555555',
+      });
+      client.renew.mockResolvedValue({
+        status: 'processing',
+        clientSecret: null,
+      });
+      fireEvent.click(renewal);
+      fireEvent.change(screen.getByLabelText('Account email'), {
+        target: { value: 'owner@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText('Primary authentication secret'), {
+        target: { value: 'fresh-secret' },
+      });
+      fireEvent.click(screen.getByRole('checkbox'));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Resume exact confirmation' })
+      );
+      await waitFor(() => expect(client.renew).toHaveBeenCalledOnce());
+      expect(client.renew.mock.calls[0][2]).toMatchObject({
+        requestId: original.requestId,
+        acceptedTupleDigest: original.acceptedTupleDigest,
+        expectedRowVersion: original.expectedRowVersion,
+        expectedAuthorizationVersion: 1,
+        reauthenticationEvidenceId: '55555555-5555-4555-8555-555555555555',
+        acceptCharge: true,
+      });
+      expect(client.confirm).toHaveBeenCalledTimes(2);
+      expect(stripe.handleNextAction).not.toHaveBeenCalled();
+    }
+  );
+
   it('does not dispatch after local close interrupts primary reauthentication', async () => {
     const { client } = setup();
     const proof = deferred<{ evidenceId: string }>();
