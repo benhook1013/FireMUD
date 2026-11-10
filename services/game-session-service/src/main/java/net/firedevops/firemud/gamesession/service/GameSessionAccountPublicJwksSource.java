@@ -54,16 +54,31 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
     if (quarantined) throw new SourceCustodyRejectedException();
     byte[] first = null;
     byte[] last = null;
+    byte[] rechecked = null;
+    boolean qualifiedTransition = false;
     try {
       first = projection.read();
       PublicJwksSnapshot before = requireSnapshot(account.load());
       requireBytes(before, first);
       PublicJwksSnapshot after = requireSnapshot(account.load());
       last = projection.read();
-      if (!before.sourceIdentity().equals(after.sourceIdentity()) || !Arrays.equals(first, last)) {
+      if (!before.sourceIdentity().equals(after.sourceIdentity())) {
         throw new InvalidJwksException();
       }
       requireBytes(after, last);
+      if (!Arrays.equals(first, last)) {
+        if (pinned == null
+            || lastAcceptedBytes == null
+            || !Arrays.equals(first, lastAcceptedBytes)) {
+          throw new InvalidJwksException();
+        }
+        AccountPublicJwksCache.validatePublicJwks(first);
+        AccountPublicJwksCache.validatePublicJwks(last);
+        // Both protected reads matched their authenticated same-pin Account snapshots. A
+        // publication between those intact reads requires a later stable load, not requalification.
+        qualifiedTransition = true;
+        throw new SourceUnavailableException();
+      }
       pinned = before.sourceIdentity();
       if (lastAcceptedBytes != null) Arrays.fill(lastAcceptedBytes, (byte) 0);
       lastAcceptedBytes = first.clone();
@@ -71,10 +86,13 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
     } catch (SourceUnavailableException unavailable) {
       // A network outage cannot conceal local custody loss or changed projected content.
       try {
-        last = projection.read();
-        if (first == null
-            || !Arrays.equals(first, last)
-            || (lastAcceptedBytes != null && !Arrays.equals(lastAcceptedBytes, last))) {
+        rechecked = projection.read();
+        byte[] expected = qualifiedTransition ? last : first;
+        if (expected == null
+            || !Arrays.equals(expected, rechecked)
+            || (!qualifiedTransition
+                && lastAcceptedBytes != null
+                && !Arrays.equals(lastAcceptedBytes, rechecked))) {
           throw new InvalidJwksException();
         }
       } catch (RuntimeException | IOException invalid) {
@@ -89,6 +107,7 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
     } finally {
       if (first != null) Arrays.fill(first, (byte) 0);
       if (last != null) Arrays.fill(last, (byte) 0);
+      if (rechecked != null) Arrays.fill(rechecked, (byte) 0);
     }
   }
 
