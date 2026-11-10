@@ -396,6 +396,11 @@ public final class AccountPublicJwksCache {
     }
   }
 
+  /** Validates the public-key profile without installing trust or changing any cache state. */
+  public static void validatePublicJwks(byte[] bytes) {
+    parseJwks(bytes);
+  }
+
   private static Map<String, RSAPublicKey> parseJwks(byte[] bytes) {
     if (bytes == null || bytes.length == 0 || bytes.length > MAX_JWKS_BYTES) {
       throw new InvalidJwksException();

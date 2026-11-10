@@ -121,22 +121,55 @@ class InitialGameplayLoginProtectedSourcesConfigurationTest {
             () ->
                 configuration.initialGameplayLoginRedisBinding(
                     connections, "", "REPLICATED", 1, 1, 875))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Protected Coordination binding identity required")
+        .hasNoCause();
     assertThatThrownBy(
             () ->
                 configuration.initialGameplayLoginRedisBinding(
                     connections, "delivered-binding", "", 1, 1, 875))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Protected Coordination profile is invalid")
+        .hasNoCause();
     assertThatThrownBy(
             () ->
                 configuration.initialGameplayLoginRedisBinding(
                     connections, "delivered-binding", "REPLICATED", 1, 0, 875))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Explicit Coordination ACK policy is invalid")
+        .hasNoCause();
     assertThatThrownBy(
             () ->
                 configuration.initialGameplayLoginRedisBinding(
                     connections, "delivered-binding", "SINGLE_NODE_NO_FAILOVER", 1, 1, 875))
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Explicit Coordination ACK policy is invalid")
+        .hasNoCause();
+    verifyNoInteractions(connections);
+  }
+
+  @Test
+  void invalidBindingDiagnosticsDoNotRetainDeliveredValuesOrCauses() {
+    var connections = mock(LettuceInitialGameplayLoginConnectionProvider.class);
+    assertThatThrownBy(
+            () ->
+                configuration.initialGameplayLoginRedisBinding(
+                    connections,
+                    "delivered-binding",
+                    "rediss://user:do-not-log@private.example.invalid:6380/0",
+                    1,
+                    1,
+                    875))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Protected Coordination profile is invalid")
+        .hasNoCause();
+    assertThatThrownBy(
+            () ->
+                configuration.initialGameplayLoginRedisBinding(
+                    connections, "do-not-log-binding\n", "REPLICATED", 1, 1, 875))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Protected Coordination binding identity required")
+        .hasNoCause();
     verifyNoInteractions(connections);
   }
 
