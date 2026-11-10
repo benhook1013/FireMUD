@@ -24,6 +24,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.EnrollmentIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationRequest;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationResult;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PrivatePromotionReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PromotionOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient.BindingIdentity;
@@ -228,13 +229,29 @@ public final class AccountJwtJwksTrustedSource
       throw unavailable();
     }
     PublishedProjection projection = ownerAfter.projection();
+    if (ownerAfter.pendingPrepublication() != null) {
+      try {
+        requireUnreceiptedPrepublicationReadback(ownerAfter, live);
+      } catch (RuntimeException malformedOrUnproven) {
+        throw rejected();
+      }
+      // No snapshot, cache-age renewal or PREPARED latch before pending-key readiness.
+      throw unavailable();
+    }
     if (ownerAfter.preparedPromotion() != null
         && ownerAfter
             .preparedPromotion()
             .expectedActiveMarkerJson()
             .equals(
                 live.data().get(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY))) {
-      projection = preparedActiveProjection(ownerAfter.preparedPromotion());
+      PromotionOperationEvidence promotion = ownerAfter.preparedPromotion();
+      if (promotion.activeJwksObservedResourceVersion().isEmpty()
+          && promotion.activeJwksPublicDataDigest().isEmpty()
+          && promotion.activeJwksReceiptDigest().isEmpty()) {
+        projection = unreceiptedPreparedActiveProjection(ownerAfter, live);
+      } else {
+        projection = preparedActiveProjection(promotion);
+      }
     }
     requireExactReadback(projection, live);
 
@@ -319,10 +336,8 @@ public final class AccountJwtJwksTrustedSource
                 PublicationEvidence evidence = currentPublication.orElseThrow();
                 requirePublicationBinding(evidence, binding, api);
                 PrepublicationIntent intent = evidence.intent();
-                var receipt =
-                    evidence
-                        .receipt()
-                        .orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
+                PublicationReceipt receipt = evidence.receipt().orElse(null);
+                if (receipt == null && !allowPreparedDeny) throw unavailable();
                 if (!intent.operationId().equals(request.operationId())
                     || !intent.operationDigest().equals(request.operationDigest())
                     || !intent.generationRequestDigest().equals(request.generationRequestDigest())
@@ -333,12 +348,22 @@ public final class AccountJwtJwksTrustedSource
                     || !intent.expectedDurableActive().equals(Optional.of(currentActive))
                     || !intent.expectedPublishedActive().equals(Optional.of(currentActive))
                     || !intent.configMapUid().equals(committed.promotion().publicConfigMapUid())
-                    || !receipt.configMapUid().equals(committed.promotion().publicConfigMapUid())
+                    || (receipt != null
+                        && !receipt
+                            .configMapUid()
+                            .equals(committed.promotion().publicConfigMapUid()))
                     || !intent.apiBindingDigest().equals(api.bindingDigest())
                     || !intent.apiConfigRevision().equals(api.configRevision())) {
                   throw rejected();
                 }
                 requireRetainedPublicKeySet(committed, intent);
+                if (receipt == null) {
+                  requirePrepublicationMarker(intent, binding, api);
+                  if (!intent.expectedResourceVersion().equals(projection.resourceVersion())) {
+                    throw rejected();
+                  }
+                  return new OwnerProjection(committed, projection, null, null, intent);
+                }
                 return new OwnerProjection(
                     committed,
                     new PublishedProjection(
@@ -441,6 +466,24 @@ public final class AccountJwtJwksTrustedSource
             .equals(publicKeyFingerprints(intent.jwksJson()).get(promotion.targetKid()))) {
       throw rejected();
     }
+    PrivatePromotionReceipt privateReceipt = null;
+    if (promotion.privatePromotionObservedResourceVersion().isPresent()
+        || promotion.privatePromotionReceiptDigest().isPresent()) {
+      privateReceipt =
+          desiredStateRepository.readPreparedPrivatePromotionReceiptForRecovery(
+              binding.accountBinding(), trustFence(binding));
+      if (privateReceipt == null
+          || !privateReceipt.promotionOperationId().equals(promotion.operationId())
+          || !privateReceipt.generationOperationId().equals(promotion.generationOperationId())
+          || !promotion
+              .privatePromotionObservedResourceVersion()
+              .equals(Optional.of(privateReceipt.observedResourceVersion()))
+          || !promotion
+              .privatePromotionReceiptDigest()
+              .equals(Optional.of(privateReceipt.receiptDigest()))) {
+        throw rejected();
+      }
+    }
     return new OwnerProjection(
         null,
         new PublishedProjection(
@@ -449,7 +492,32 @@ public final class AccountJwtJwksTrustedSource
             intent.jwksJson(),
             intent.generationMarkerJson(),
             receipt.publicDataDigest()),
-        promotion);
+        promotion,
+        privateReceipt,
+        null);
+  }
+
+  /** Exact writer intent/private proof can deny keys while its ACTIVE receipt is not committed. */
+  private static PublishedProjection unreceiptedPreparedActiveProjection(
+      OwnerProjection owner, ConfigMapSnapshot live) {
+    PromotionOperationEvidence promotion = owner.preparedPromotion();
+    if (owner.preparedPrivateReceipt() == null
+        || !promotion.privatePromotionDispatched()
+        || !validResourceVersion(live.resourceVersion())
+        || live.resourceVersion().equals(promotion.expectedPublicResourceVersion())) {
+      throw rejected();
+    }
+    return new PublishedProjection(
+        promotion.publicConfigMapUid(),
+        live.resourceVersion(),
+        promotion.expectedPublicJwksJson(),
+        promotion.expectedActiveMarkerJson(),
+        AccountJwtJwksPublicationRepository.publicDataDigest(
+            promotion.expectedPublicJwksJson(), promotion.expectedActiveMarkerJson()));
+  }
+
+  private static boolean validResourceVersion(String value) {
+    return value != null && value.matches("[!-~]{1,256}");
   }
 
   /** Reconstructs the exact owner-bound ACTIVE receipt without mutating lifecycle state. */
@@ -555,7 +623,8 @@ public final class AccountJwtJwksTrustedSource
             .orElseThrow(() -> publicRead ? rejected() : unavailable());
     requirePublicationBinding(evidence, binding, api);
     PrepublicationIntent intent = evidence.intent();
-    var receipt = evidence.receipt().orElseThrow(() -> publicRead ? rejected() : unavailable());
+    PublicationReceipt receipt = evidence.receipt().orElse(null);
+    if (receipt == null && !publicRead) throw unavailable();
     if (!intent.operationId().equals(result.operationId())
         || !intent.operationDigest().equals(result.operationDigest())
         || !intent.generationRequestDigest().equals(result.generationRequestDigest())
@@ -564,7 +633,7 @@ public final class AccountJwtJwksTrustedSource
         || !intent.expectedDurableActive().isEmpty()
         || !intent.expectedPublishedActive().isEmpty()
         || !intent.configMapUid().equals(enrollment.publicConfigMapUid())
-        || !receipt.configMapUid().equals(enrollment.publicConfigMapUid())
+        || (receipt != null && !receipt.configMapUid().equals(enrollment.publicConfigMapUid()))
         || !intent.apiBindingDigest().equals(enrollment.apiBindingDigest())
         || !intent.apiConfigRevision().equals(enrollment.apiConfigRevision())
         || !intent.targetGeneration().equals(result.targetGeneration())
@@ -577,7 +646,24 @@ public final class AccountJwtJwksTrustedSource
         || !result.publicKeyFingerprint().equals(publicKeys.get(result.targetKid()))) {
       throw rejected();
     }
-    requireInitialPrepublicationMarker(intent, result, binding, api);
+    requirePrepublicationMarker(intent, binding, api);
+    if (receipt == null) {
+      if (!intent.expectedResourceVersion().equals(enrollment.publicConfigMapResourceVersion())
+          || !intent.expectedSnapshotDigest().equals(enrollment.publicConfigMapSnapshotDigest())) {
+        throw rejected();
+      }
+      return new OwnerProjection(
+          null,
+          new PublishedProjection(
+              intent.configMapUid(),
+              intent.expectedResourceVersion(),
+              intent.jwksJson(),
+              intent.generationMarkerJson(),
+              intent.publicDataDigest()),
+          null,
+          null,
+          intent);
+    }
     return new OwnerProjection(
         null,
         new PublishedProjection(
@@ -588,8 +674,70 @@ public final class AccountJwtJwksTrustedSource
             receipt.publicDataDigest()));
   }
 
-  private static void requireInitialPrepublicationMarker(
-      PrepublicationIntent intent, GenerationResult result, Binding binding, BindingIdentity api) {
+  /** Qualifies only an exact prior projection or this operation's exact additive intended set. */
+  private static void requireUnreceiptedPrepublicationReadback(
+      OwnerProjection owner, ConfigMapSnapshot live) {
+    PrepublicationIntent intent = owner.pendingPrepublication();
+    if (!intent.configMapUid().equals(live.uid())
+        || !validResourceVersion(live.resourceVersion())) {
+      throw rejected();
+    }
+    String jwks = live.data().get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY);
+    String marker = live.data().get(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY);
+    boolean prior =
+        intent.expectedResourceVersion().equals(live.resourceVersion())
+            && intent
+                .expectedSnapshotDigest()
+                .equals(AccountJwtJwksPublicationRepository.snapshotDigest(live.data()));
+    boolean intended =
+        !intent.expectedResourceVersion().equals(live.resourceVersion())
+            && intent.jwksJson().equals(jwks)
+            && intent.generationMarkerJson().equals(marker)
+            && intent
+                .publicDataDigest()
+                .equals(AccountJwtJwksPublicationRepository.publicDataDigest(jwks, marker));
+    if (!prior && !intended) throw rejected();
+    if (owner.committedSigner() != null) {
+      PublishedProjection previous = committedProjection(owner.committedSigner());
+      Map<String, String> previousKeys = publicKeyFingerprints(previous.jwksJson());
+      Map<String, String> intendedKeys = publicKeyFingerprints(intent.jwksJson());
+      if (previousKeys.containsKey(intent.targetKid())
+          || intendedKeys.size() != previousKeys.size() + 1) throw rejected();
+      Map<String, String> previousData = new LinkedHashMap<>(live.data());
+      previousData.put(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY, previous.jwksJson());
+      previousData.put(
+          AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY, previous.markerJson());
+      if (!intent
+          .expectedSnapshotDigest()
+          .equals(AccountJwtJwksPublicationRepository.snapshotDigest(previousData)))
+        throw rejected();
+      if (prior) requireExactReadback(previous, live);
+      return;
+    }
+    // Initial serving supports the first generated key only. Reconstruct the known empty
+    // predecessor from unchanged unowned data and prove it against enrollment's exact digest.
+    if (prior) {
+      if (marker != null || jwks == null || jwks.isBlank()) throw rejected();
+      try {
+        JsonNode empty = STRICT_JSON.readTree(jwks);
+        if (!hasExactFields(empty, JWKS_FIELDS)
+            || !empty.get("keys").isArray()
+            || !empty.get("keys").isEmpty()) throw rejected();
+      } catch (RuntimeException malformed) {
+        throw rejected();
+      }
+      return;
+    }
+    Map<String, String> previousData = new LinkedHashMap<>(live.data());
+    previousData.remove(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY);
+    previousData.put(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY, "{\"keys\":[]}");
+    if (!intent
+        .expectedSnapshotDigest()
+        .equals(AccountJwtJwksPublicationRepository.snapshotDigest(previousData))) throw rejected();
+  }
+
+  private static void requirePrepublicationMarker(
+      PrepublicationIntent intent, Binding binding, BindingIdentity api) {
     try {
       JsonNode marker = STRICT_JSON.readTree(intent.generationMarkerJson());
       JsonNode markerBinding = marker == null ? null : marker.get("binding");
@@ -654,17 +802,26 @@ public final class AccountJwtJwksTrustedSource
               requiredText(publicConfigMap, "name"))
           || !hasExactFields(
               pending, java.util.Set.of("generation", "kid", "algorithm", "publicKeyFingerprint"))
-          || !result.targetGeneration().equals(requiredText(pending, "generation"))
-          || !result.targetKid().equals(requiredText(pending, "kid"))
+          || !intent.targetGeneration().equals(requiredText(pending, "generation"))
+          || !intent.targetKid().equals(requiredText(pending, "kid"))
           || !"RS256".equals(requiredText(pending, "algorithm"))
-          || !result.publicKeyFingerprint().equals(requiredText(pending, "publicKeyFingerprint"))
-          || !inactiveMarker(durable)
-          || !inactiveMarker(published)) {
+          || !intent.publicKeyFingerprint().equals(requiredText(pending, "publicKeyFingerprint"))
+          || !activeMarkerMatches(durable, intent.expectedDurableActive())
+          || !activeMarkerMatches(published, intent.expectedPublishedActive())) {
         throw rejected();
       }
     } catch (RuntimeException malformed) {
       throw rejected();
     }
+  }
+
+  private static boolean activeMarkerMatches(JsonNode marker, Optional<ActiveSigner> expected) {
+    if (expected.isEmpty()) return inactiveMarker(marker);
+    return hasExactFields(marker, java.util.Set.of("present", "generation", "kid"))
+        && marker.get("present").isBoolean()
+        && marker.get("present").booleanValue()
+        && expected.orElseThrow().generation().equals(requiredText(marker, "generation"))
+        && expected.orElseThrow().kid().equals(requiredText(marker, "kid"));
   }
 
   private static boolean inactiveMarker(JsonNode marker) {
@@ -966,10 +1123,12 @@ public final class AccountJwtJwksTrustedSource
   private record OwnerProjection(
       CommittedSignerEvidence committedSigner,
       PublishedProjection projection,
-      PromotionOperationEvidence preparedPromotion) {
+      PromotionOperationEvidence preparedPromotion,
+      PrivatePromotionReceipt preparedPrivateReceipt,
+      PrepublicationIntent pendingPrepublication) {
     private OwnerProjection(
         CommittedSignerEvidence committedSigner, PublishedProjection projection) {
-      this(committedSigner, projection, null);
+      this(committedSigner, projection, null, null, null);
     }
   }
 

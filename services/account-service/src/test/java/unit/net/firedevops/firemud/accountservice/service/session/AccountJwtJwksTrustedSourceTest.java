@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +47,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationRequest;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationResult;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PreparedGenerationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PrivatePromotionReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PromotionOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.accountservice.service.impl.AccountPublicJwksReadGrpcService;
@@ -65,6 +67,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 class AccountJwtJwksTrustedSourceTest {
   private static final String ENVIRONMENT = "test";
@@ -84,6 +87,8 @@ class AccountJwtJwksTrustedSourceTest {
   private static final String GENERATION_RECEIPT_DIGEST = "3".repeat(64);
   private static final String JWK_1 = publicTestJwk("key_1");
   private static final String JWK_2 = publicTestJwk("key_2");
+  private static final Map<String, String> INITIAL_PRIOR_DATA =
+      Map.of("jwks.json", "{\"keys\":[]}", "operator.note", "retained");
   private static final String JWKS_1 = "{\"keys\":[" + JWK_1 + "]}";
   private static final String JWKS_1_AND_2 = "{\"keys\":[" + JWK_1 + "," + JWK_2 + "]}";
 
@@ -707,17 +712,125 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
-  void preparedActiveRequiresExactOwnerReceiptAndStillOnlyDenies() {
-    Fixture receipted = new Fixture();
-    receipted.usePreparedState(true, true);
-    var result = receipted.source.currentPublicRead();
-    assertThat(result.preparedDeny()).isTrue();
-    assertThat(result.committedRecoveryEligible()).isFalse();
-    assertThat(result.jwksBytes()).isEmpty();
+  void preparedActiveDeniesWithExactActiveReceiptOrFullyVerifiedPrivatePromotionProof() {
+    for (boolean hasActiveReceipt : List.of(false, true)) {
+      Fixture fixture = new Fixture();
+      fixture.usePreparedState(true, hasActiveReceipt);
+      var result = fixture.source.currentPublicRead();
+      assertThat(result.preparedDeny()).isTrue();
+      assertThat(result.committedRecoveryEligible()).isFalse();
+      assertThat(result.jwksBytes()).isEmpty();
+      assertThat(result.sourceIdentity().configMapUid()).isEqualTo(CONFIG_MAP_UID);
+      verify(fixture.desiredStateRepository, times(2))
+          .readPreparedPrivatePromotionReceiptForRecovery(
+              fixture.accountBinding, fixture.trustFence);
+      assertThatThrownBy(fixture.source::load)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account trusted public JWKS source was rejected");
+    }
+  }
 
-    Fixture unreceipted = new Fixture();
-    unreceipted.usePreparedState(true, false);
-    assertRejectedPublicRead(unreceipted);
+  @Test
+  void unreceiptedPreparedActiveRejectsMissingMismatchedOrUnverifiedPrivateReceipt() {
+    for (String tamper :
+        List.of(
+            "missing",
+            "helper-rejected",
+            "digest",
+            "operation",
+            "generation",
+            "private-rv",
+            "stored-digest",
+            "stored-rv",
+            "not-dispatched")) {
+      Fixture fixture = new Fixture();
+      PromotionOperationEvidence promotion = fixture.usePreparedState(true, false);
+      UUID promotionId = promotion.operationId();
+      String receiptDigest = promotion.privatePromotionReceiptDigest().orElseThrow();
+      switch (tamper) {
+        case "missing" -> {
+          when(promotion.privatePromotionObservedResourceVersion()).thenReturn(Optional.empty());
+          when(promotion.privatePromotionReceiptDigest()).thenReturn(Optional.empty());
+        }
+        case "helper-rejected" ->
+            when(fixture.desiredStateRepository.readPreparedPrivatePromotionReceiptForRecovery(
+                    eq(fixture.accountBinding), eq(fixture.trustFence)))
+                .thenThrow(
+                    new AccountJwtSignerDesiredStateRepository.QuarantinedStateException(
+                        "Full canonical private promotion receipt verification failed"));
+        case "digest", "operation", "generation", "private-rv" -> {
+          PrivatePromotionReceipt mismatched =
+              new PrivatePromotionReceipt(
+                  tamper.equals("operation") ? NEXT_OPERATION_ID : promotionId,
+                  tamper.equals("generation") ? NEXT_OPERATION_ID : INITIAL_OPERATION_ID,
+                  tamper.equals("private-rv") ? "private-other" : "private-result",
+                  tamper.equals("digest") ? "0".repeat(64) : receiptDigest);
+          when(fixture.desiredStateRepository.readPreparedPrivatePromotionReceiptForRecovery(
+                  eq(fixture.accountBinding), eq(fixture.trustFence)))
+              .thenReturn(mismatched);
+        }
+        case "stored-digest" ->
+            when(promotion.privatePromotionReceiptDigest()).thenReturn(Optional.of("0".repeat(64)));
+        case "stored-rv" ->
+            when(promotion.privatePromotionObservedResourceVersion())
+                .thenReturn(Optional.of("private-other"));
+        case "not-dispatched" -> when(promotion.privatePromotionDispatched()).thenReturn(false);
+        default -> throw new AssertionError(tamper);
+      }
+      assertRejectedPublicRead(fixture);
+    }
+  }
+
+  @Test
+  void unreceiptedPreparedActiveAcceptsOpaqueChangedRvAndRejectsPriorRv() {
+    Fixture opaque = new Fixture();
+    PromotionOperationEvidence promotion = opaque.usePreparedState(true, false);
+    String marker = promotion.expectedActiveMarkerJson();
+    Map<String, String> data =
+        Map.of(
+            AccountJwtJwksPublicationRepository.JWKS_DATA_KEY, JWKS_1,
+            AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY, marker);
+    when(opaque.configMapClient.observe())
+        .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "etcd:opaque_v-7", data));
+    var result = opaque.source.currentPublicRead();
+    assertThat(result.preparedDeny()).isTrue();
+    assertThat(result.jwksBytes()).isEmpty();
+    assertThat(result.committedRecoveryEligible()).isFalse();
+
+    Fixture priorRv = new Fixture();
+    priorRv.usePreparedState(true, false);
+    when(priorRv.configMapClient.observe())
+        .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "42", data));
+    assertRejectedPublicRead(priorRv);
+  }
+
+  @Test
+  void unreceiptedPreparedActiveRejectsChangedUidCompletePayloadAndMarker() {
+    for (String tamper : List.of("uid", "missing-key", "substituted-key", "marker")) {
+      Fixture fixture = new Fixture();
+      PromotionOperationEvidence promotion = fixture.usePreparedState(true, false);
+      String marker = promotion.expectedActiveMarkerJson();
+      String jwks =
+          switch (tamper) {
+            case "missing-key" -> "{\"keys\":[]}";
+            case "substituted-key" -> "{\"keys\":[" + JWK_2 + "]}";
+            default -> JWKS_1;
+          };
+      if (tamper.equals("missing-key") || tamper.equals("substituted-key")) {
+        assertThat(jwks).isNotEqualTo(JWKS_1);
+      }
+      var snapshot =
+          new ConfigMapSnapshot(
+              tamper.equals("uid") ? "44444444-4444-4444-8444-444444444444" : CONFIG_MAP_UID,
+              "43",
+              Map.of(
+                  AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
+                  jwks,
+                  AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
+                  tamper.equals("marker") ? marker + " " : marker));
+      when(fixture.configMapClient.observe()).thenReturn(snapshot);
+      assertRejectedPublicRead(fixture);
+    }
   }
 
   @Test
@@ -809,7 +922,130 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
-  void publicReadRejectsMissingPublicationReceiptWhileOrdinarySourceKeepsOutageSemantics() {
+  void unreceiptedInitialPrepublicationIsTemporaryForExactIntendedOrEnrolledPriorProjection() {
+    for (boolean intendedPublished : List.of(false, true)) {
+      Fixture fixture = new Fixture();
+      when(fixture.publicationRepository.readCurrentPublication(
+              eq(fixture.accountBinding), eq(fixture.trustFence)))
+          .thenReturn(
+              Optional.of(
+                  new PublicationEvidence(
+                      fixture.publication.intent(), Optional.empty(), Optional.empty())));
+      if (!intendedPublished) {
+        when(fixture.configMapClient.observe())
+            .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "41", INITIAL_PRIOR_DATA));
+      }
+      assertThatThrownBy(fixture.source::currentPublicRead)
+          .isExactlyInstanceOf(SourceUnavailableException.class)
+          .hasNoCause();
+      assertThatThrownBy(fixture.source::sourceIdentity)
+          .isInstanceOf(SourceUnavailableException.class);
+      MountObservation mount =
+          MountObservation.create(
+              fixture.publication.intent(), fixture.publication.receipt().orElseThrow());
+      var recovered =
+          new PublicationEvidence(
+              fixture.publication.intent(), fixture.publication.receipt(), Optional.of(mount));
+      when(fixture.publicationRepository.readCurrentPublication(
+              eq(fixture.accountBinding), eq(fixture.trustFence)))
+          .thenReturn(Optional.of(recovered));
+      when(fixture.configMapClient.observe()).thenReturn(fixture.snapshot);
+      var result = fixture.source.currentPublicRead();
+      assertThat(result.preparedDeny()).isFalse();
+      assertThat(result.committedRecoveryEligible()).isFalse();
+      assertThat(result.jwksBytes()).isEqualTo(JWKS_1.getBytes(StandardCharsets.UTF_8));
+      assertThat(result.sourceIdentity()).isEqualTo(fixture.source.sourceIdentity());
+    }
+  }
+
+  @Test
+  void unreceiptedAdditivePrepublicationReturnsNoNewKeysAndRecoversWithoutRepinning() {
+    for (boolean intendedPublished : List.of(false, true)) {
+      Fixture fixture = new Fixture();
+      SourceIdentity pin = fixture.source.sourceIdentity();
+      fixture.useCommittedState();
+      fixture.removeCurrentPublicationReceipt();
+      if (!intendedPublished) {
+        var prior =
+            new ConfigMapSnapshot(
+                CONFIG_MAP_UID,
+                "42",
+                Map.of(
+                    AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
+                    JWKS_1,
+                    AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
+                    activeMarker(new ActiveSigner("1", "key_1")),
+                    "operator.note",
+                    "preserved"));
+        when(fixture.configMapClient.observe()).thenReturn(prior);
+      }
+      for (int attempt = 0; attempt < 2; attempt++) {
+        assertThatThrownBy(fixture.source::currentPublicRead)
+            .isExactlyInstanceOf(SourceUnavailableException.class)
+            .hasNoCause();
+        assertThat(fixture.source.sourceIdentity()).isEqualTo(pin);
+      }
+      // Exact receipt/mount recording completes the same intended additive publication.
+      fixture.useCommittedState();
+      var receipt = fixture.nextPublication.receipt().orElseThrow();
+      var mount = MountObservation.create(fixture.nextPublication.intent(), receipt);
+      var recovered =
+          new PublicationEvidence(
+              fixture.nextPublication.intent(), Optional.of(receipt), Optional.of(mount));
+      when(fixture.publicationRepository.readCurrentPublication(
+              eq(fixture.accountBinding), eq(fixture.trustFence)))
+          .thenReturn(Optional.of(recovered));
+      var result = fixture.source.currentPublicRead();
+      assertThat(result.sourceIdentity()).isEqualTo(pin);
+      assertThat(result.preparedDeny()).isFalse();
+      assertThat(result.committedRecoveryEligible()).isFalse();
+      assertThat(result.jwksBytes()).isEqualTo(JWKS_1_AND_2.getBytes(StandardCharsets.UTF_8));
+    }
+  }
+
+  @Test
+  void unreceiptedAdditivePublicationPreservesOnlyOriginalFreshCachedKeys() {
+    Fixture fixture = new Fixture();
+    var pin = fixture.source.sourceIdentity();
+    java.time.Clock clock = mock(java.time.Clock.class);
+    var start = java.time.Instant.parse("2026-11-10T00:00:00Z");
+    when(clock.instant()).thenReturn(start);
+    var cache =
+        new net.firedevops.firemud.common.security.AccountPublicJwksCache(
+            () -> {
+              var read = fixture.source.currentPublicRead();
+              if (read.preparedDeny()) {
+                throw new net.firedevops.firemud.common.security.AccountPublicJwksCache
+                    .SourcePreparedDenyException();
+              }
+              return new PublicJwksSnapshot(
+                  read.sourceIdentity(), read.jwksBytes(), read.committedRecoveryEligible());
+            },
+            pin,
+            clock,
+            java.time.Duration.ofSeconds(5));
+    cache.refresh();
+    assertThat(cache.keyFor("key_1")).isNotNull();
+    fixture.useCommittedState();
+    fixture.removeCurrentPublicationReceipt();
+    when(clock.instant()).thenReturn(start.plusSeconds(4));
+    cache.refresh();
+    assertThat(cache.sourceIdentity()).isEqualTo(pin);
+    assertThat(cache.keyFor("key_1")).isNotNull();
+    assertThatThrownBy(() -> cache.keyFor("key_2"))
+        .isInstanceOf(
+            net.firedevops.firemud.common.security.AccountPublicJwksCache.UnknownKeyException
+                .class);
+    when(clock.instant()).thenReturn(start.plusSeconds(5));
+    assertThatThrownBy(() -> cache.keyFor("key_1")).isInstanceOf(SourceUnavailableException.class);
+    fixture.useCommittedState();
+    cache.refresh();
+    assertThat(cache.sourceIdentity()).isEqualTo(pin);
+    assertThat(cache.keyFor("key_2")).isNotNull();
+  }
+
+  @Test
+  void unreceiptedPublicationRejectsUnprovenPredecessorAndExtraAdditions() {
     Fixture initial = new Fixture();
     when(initial.publicationRepository.readCurrentPublication(
             eq(initial.accountBinding), eq(initial.trustFence)))
@@ -817,14 +1053,164 @@ class AccountJwtJwksTrustedSourceTest {
             Optional.of(
                 new PublicationEvidence(
                     initial.publication.intent(), Optional.empty(), Optional.empty())));
+    var changed = new LinkedHashMap<>(initial.snapshot.data());
+    changed.put("operator.note", "changed");
+    when(initial.configMapClient.observe())
+        .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "42", changed));
     assertRejectedPublicRead(initial);
-    assertThatThrownBy(initial.source::sourceIdentity)
-        .isInstanceOf(SourceUnavailableException.class);
-    Fixture next = new Fixture();
-    next.useCommittedState();
-    next.removeCurrentPublicationReceipt();
-    assertRejectedPublicRead(next);
-    assertThatThrownBy(next.source::sourceIdentity).isInstanceOf(SourceUnavailableException.class);
+
+    Fixture extra = new Fixture();
+    extra.useCommittedState();
+    String unauthorized =
+        "{\"keys\":[" + JWK_1 + "," + JWK_2 + "," + JWK_1.replace("\"key_1\"", "\"key_3\"") + "]}";
+    assertThat(unauthorized).isNotEqualTo(JWKS_1_AND_2);
+    extra.replaceNextJwks(unauthorized);
+    extra.removeCurrentPublicationReceipt();
+    assertRejectedPublicRead(extra);
+  }
+
+  @Test
+  void unreceiptedPrepublicationRejectsUidMarkerPayloadAndGenerationMismatch() {
+    for (boolean initial : List.of(false, true)) {
+      for (String tamper : List.of("uid", "marker", "payload", "generation")) {
+        Fixture fixture = new Fixture();
+        if (!initial) fixture.useCommittedState();
+        PublicationEvidence publication = initial ? fixture.publication : fixture.nextPublication;
+        String marker = publication.intent().generationMarkerJson();
+        String jwks = publication.intent().jwksJson();
+        String liveJwks = tamper.equals("payload") ? jwks + " " : jwks;
+        if (tamper.equals("payload")) {
+          assertThat(liveJwks).isNotEqualTo(jwks);
+        }
+        var live =
+            new ConfigMapSnapshot(
+                tamper.equals("uid") ? "44444444-4444-4444-8444-444444444444" : CONFIG_MAP_UID,
+                "43",
+                Map.of(
+                    AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
+                    liveJwks,
+                    AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
+                    tamper.equals("marker") ? marker + " " : marker));
+        when(fixture.publicationRepository.readCurrentPublication(
+                eq(fixture.accountBinding), eq(fixture.trustFence)))
+            .thenReturn(
+                Optional.of(
+                    new PublicationEvidence(
+                        publication.intent(), Optional.empty(), Optional.empty())));
+        when(fixture.configMapClient.observe()).thenReturn(live);
+        if (tamper.equals("generation")) {
+          GenerationRequest request =
+              fixture.desiredStateRepository.readCurrentGenerationRequest(
+                  fixture.accountBinding, fixture.trustFence);
+          when(request.operationDigest()).thenReturn("0".repeat(64));
+        }
+        assertRejectedPublicRead(fixture);
+      }
+    }
+  }
+
+  @Test
+  void unreceiptedAdditivePublicationRejectsSelfConsistentButUnqualifiedMarker() throws Exception {
+    var json = JsonMapper.builder().build();
+    ActiveSigner active = new ActiveSigner("1", "key_1");
+    for (String tamper :
+        List.of(
+            "malformed",
+            "unknown-phase",
+            "active-phase",
+            "unknown-field",
+            "missing-field",
+            "schema",
+            "operation-id",
+            "operation-digest",
+            "request-digest",
+            "receipt-digest",
+            "trust-digest",
+            "trust-revision",
+            "api-digest",
+            "api-revision",
+            "namespace",
+            "pending-generation",
+            "pending-kid",
+            "pending-fingerprint",
+            "durable-absent",
+            "durable-generation",
+            "durable-kid",
+            "published-absent",
+            "published-generation",
+            "published-kid")) {
+      Fixture fixture = new Fixture();
+      fixture.useCommittedState();
+      String originalMarker = fixture.nextPublication.intent().generationMarkerJson();
+      ObjectNode marker = (ObjectNode) json.readTree(originalMarker);
+      ObjectNode binding = (ObjectNode) marker.get("binding");
+      ObjectNode pending = (ObjectNode) marker.get("pending");
+      ObjectNode durable = (ObjectNode) marker.get("expectedDurableActive");
+      ObjectNode published = (ObjectNode) marker.get("expectedPublishedActive");
+      switch (tamper) {
+        case "malformed" -> {
+          /* The serialized projection is replaced below. */
+        }
+        case "unknown-phase" -> marker.put("phase", "UNKNOWN");
+        case "active-phase" -> marker.put("phase", "ACTIVE");
+        case "unknown-field" -> marker.put("unexpected", true);
+        case "missing-field" -> marker.remove("generationRequestDigest");
+        case "schema" -> marker.put("schemaVersion", 2);
+        case "operation-id" -> marker.put("operationId", INITIAL_OPERATION_ID.toString());
+        case "operation-digest" -> marker.put("operationDigest", "0".repeat(64));
+        case "request-digest" -> marker.put("generationRequestDigest", "0".repeat(64));
+        case "receipt-digest" -> marker.put("generationReceiptDigest", "0".repeat(64));
+        case "trust-digest" -> binding.put("trustBindingDigest", "0".repeat(64));
+        case "trust-revision" -> binding.put("trustConfigRevision", "obsolete");
+        case "api-digest" -> binding.put("apiBindingDigest", "0".repeat(64));
+        case "api-revision" -> binding.put("apiConfigRevision", "obsolete");
+        case "namespace" -> binding.put("namespace", "other-namespace");
+        case "pending-generation" -> pending.put("generation", "3");
+        case "pending-kid" -> pending.put("kid", "key_other");
+        case "pending-fingerprint" -> pending.put("publicKeyFingerprint", "0".repeat(64));
+        case "durable-absent" -> {
+          durable.removeAll();
+          durable.put("present", false);
+        }
+        case "durable-generation" -> durable.put("generation", "3");
+        case "durable-kid" -> durable.put("kid", "key_other");
+        case "published-absent" -> {
+          published.removeAll();
+          published.put("present", false);
+        }
+        case "published-generation" -> published.put("generation", "3");
+        case "published-kid" -> published.put("kid", "key_other");
+        default -> throw new AssertionError(tamper);
+      }
+      String alteredMarker = tamper.equals("malformed") ? "{" : json.writeValueAsString(marker);
+      assertThat(alteredMarker).as(tamper).isNotEqualTo(originalMarker);
+      PublicationEvidence altered =
+          fixture.publication(
+              JWKS_1_AND_2, alteredMarker, "42", "43", "2", "key_2", Optional.of(active));
+      // Recompute all immutable intent hashes; rejection must come from marker semantics.
+      assertThat(altered.intent().generationMarkerDigest()).isEqualTo(sha256(alteredMarker));
+      assertThat(altered.intent().publicDataDigest())
+          .isEqualTo(
+              AccountJwtJwksPublicationRepository.publicDataDigest(JWKS_1_AND_2, alteredMarker));
+      var unreceipted =
+          new PublicationEvidence(altered.intent(), Optional.empty(), Optional.empty());
+      var live =
+          new ConfigMapSnapshot(
+              CONFIG_MAP_UID,
+              "43",
+              Map.of(
+                  AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
+                  JWKS_1_AND_2,
+                  AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
+                  alteredMarker,
+                  "operator.note",
+                  "preserved"));
+      when(fixture.publicationRepository.readCurrentPublication(
+              eq(fixture.accountBinding), eq(fixture.trustFence)))
+          .thenReturn(Optional.of(unreceipted));
+      when(fixture.configMapClient.observe()).thenReturn(live);
+      assertRejectedPublicRead(fixture);
+    }
   }
 
   @Test
@@ -973,8 +1359,8 @@ class AccountJwtJwksTrustedSourceTest {
               API_BINDING_DIGEST,
               "api-r1",
               CONFIG_MAP_UID,
-              "40",
-              "6".repeat(64));
+              "41",
+              AccountJwtJwksPublicationRepository.snapshotDigest(INITIAL_PRIOR_DATA));
       initialMarker =
           marker(INITIAL_OPERATION_ID, "1", "key_1", publicFingerprint, Optional.empty());
       initialRequest = mock(GenerationRequest.class);
@@ -1090,6 +1476,52 @@ class AccountJwtJwksTrustedSourceTest {
       when(promotion.prepublicationIntentDigest()).thenReturn(publication.intent().intentDigest());
       when(promotion.prepublicationReceiptDigest()).thenReturn(receipt.receiptDigest());
       when(promotion.mountedObservationDigest()).thenReturn(mount.observationDigest());
+      String secretUid = "77777777-7777-4777-8777-777777777777";
+      when(promotion.secretUid()).thenReturn(secretUid);
+      when(promotion.expectedPrivateResourceVersion()).thenReturn("private-prior");
+      when(promotion.privatePromotionDispatched()).thenReturn(true);
+      Map<String, Object> privatePreimage = new LinkedHashMap<>();
+      privatePreimage.put("receiptVersion", 1);
+      privatePreimage.put("promotionOperationId", promotionId.toString());
+      privatePreimage.put("promotionRequestDigest", promotion.requestDigest());
+      privatePreimage.put("generationOperationId", INITIAL_OPERATION_ID.toString());
+      privatePreimage.put("generationOperationDigest", GENERATION_OPERATION_DIGEST);
+      privatePreimage.put("generationReceiptDigest", GENERATION_RECEIPT_DIGEST);
+      privatePreimage.put(
+          "secretResource",
+          Map.of(
+              "kind",
+              "Secret",
+              "name",
+              AccountJwtSignerDesiredStateRepository.PRIVATE_SECRET_NAME));
+      privatePreimage.put("secretUid", secretUid);
+      privatePreimage.put("expectedPriorResourceVersion", "private-prior");
+      privatePreimage.put("observedResourceVersion", "private-result");
+      privatePreimage.put("action", "PROMOTE_PENDING");
+      privatePreimage.put("resultingSlots", List.of("current"));
+      privatePreimage.put(
+          "current",
+          Map.of("generation", "1", "kid", "key_1", "publicKeyFingerprint", publicFingerprint));
+      privatePreimage.put("previous", Map.of("present", false));
+      try {
+        String privateDigest =
+            sha256(
+                new String(
+                    Rfc8785CanonicalJson.canonicalizeUtf8(
+                        JsonMapper.builder().build().writeValueAsString(privatePreimage)),
+                    StandardCharsets.UTF_8));
+        when(promotion.privatePromotionObservedResourceVersion())
+            .thenReturn(Optional.of("private-result"));
+        when(promotion.privatePromotionReceiptDigest()).thenReturn(Optional.of(privateDigest));
+        var privateReceipt =
+            new PrivatePromotionReceipt(
+                promotionId, INITIAL_OPERATION_ID, "private-result", privateDigest);
+        when(desiredStateRepository.readPreparedPrivatePromotionReceiptForRecovery(
+                eq(accountBinding), eq(trustFence)))
+            .thenReturn(privateReceipt);
+      } catch (Exception invalidFixture) {
+        throw new AssertionError(invalidFixture);
+      }
       when(promotion.activeJwksObservedResourceVersion()).thenReturn(Optional.empty());
       when(promotion.activeJwksPublicDataDigest()).thenReturn(Optional.empty());
       when(promotion.activeJwksReceiptDigest()).thenReturn(Optional.empty());
@@ -1195,6 +1627,10 @@ class AccountJwtJwksTrustedSourceTest {
       when(nextRequest.generationRequestDigest()).thenReturn(GENERATION_REQUEST_DIGEST);
       when(nextRequest.generationReceiptDigest()).thenReturn(GENERATION_RECEIPT_DIGEST);
       when(nextRequest.desiredStateVersion()).thenReturn(2L);
+      when(nextRequest.binding()).thenReturn(accountBinding);
+      when(nextRequest.trustFence()).thenReturn(trustFence);
+      when(nextRequest.targetAlgorithm()).thenReturn("RS256");
+      when(nextRequest.publicJwkJson()).thenReturn(JWK_2);
       when(nextRequest.targetGeneration()).thenReturn("2");
       when(nextRequest.targetKid()).thenReturn("key_2");
       when(nextRequest.publicKeyFingerprint()).thenReturn(fingerprint(JWK_2));
@@ -1202,6 +1638,22 @@ class AccountJwtJwksTrustedSourceTest {
       when(nextRequest.expectedPublishedActive()).thenReturn(Optional.of(active));
       when(desiredStateRepository.readCurrentGenerationRequest(eq(accountBinding), eq(trustFence)))
           .thenReturn(nextRequest);
+
+      GenerationResult nextResult = mock(GenerationResult.class);
+      when(nextResult.operationId()).thenReturn(NEXT_OPERATION_ID);
+      when(nextResult.binding()).thenReturn(accountBinding);
+      when(nextResult.trustFence()).thenReturn(trustFence);
+      when(nextResult.operationDigest()).thenReturn(GENERATION_OPERATION_DIGEST);
+      when(nextResult.generationRequestDigest()).thenReturn(GENERATION_REQUEST_DIGEST);
+      when(nextResult.receiptDigest()).thenReturn(GENERATION_RECEIPT_DIGEST);
+      when(nextResult.desiredStateVersion()).thenReturn(2L);
+      when(nextResult.targetGeneration()).thenReturn("2");
+      when(nextResult.targetKid()).thenReturn("key_2");
+      when(nextResult.targetAlgorithm()).thenReturn("RS256");
+      when(nextResult.publicKeyFingerprint()).thenReturn(fingerprint(JWK_2));
+      when(nextResult.publicJwkJson()).thenReturn(JWK_2);
+      when(desiredStateRepository.readCurrentGenerationResult(eq(accountBinding), eq(trustFence)))
+          .thenReturn(nextResult);
 
       String nextMarker =
           marker(NEXT_OPERATION_ID, "2", "key_2", fingerprint(JWK_2), Optional.of(active));
@@ -1295,7 +1747,16 @@ class AccountJwtJwksTrustedSourceTest {
               AccountJwtJwksPublicationRepository.PUBLIC_JWKS_NAME,
               CONFIG_MAP_UID,
               expectedResourceVersion,
-              "4".repeat(64),
+              AccountJwtJwksPublicationRepository.snapshotDigest(
+                  expectedActive.isEmpty()
+                      ? INITIAL_PRIOR_DATA
+                      : Map.of(
+                          AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
+                          JWKS_1,
+                          AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
+                          activeMarker(expectedActive.orElseThrow()),
+                          "operator.note",
+                          "preserved")),
               generation,
               kid,
               keyFingerprint,

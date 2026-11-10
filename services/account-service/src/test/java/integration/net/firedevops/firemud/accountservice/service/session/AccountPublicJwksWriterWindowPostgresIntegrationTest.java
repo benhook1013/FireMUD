@@ -19,6 +19,9 @@ import java.security.MessageDigest;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -60,6 +63,7 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourcePreparedDenyException;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec;
 import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 import org.awaitility.Awaitility;
@@ -89,7 +93,8 @@ import tools.jackson.databind.json.JsonMapper;
  * guards and owner repositories produce all durable evidence. Only API transport, projected files
  * and authenticated readiness-receiver inputs are controlled. A common-cache bridge consumes real
  * public service responses; it is not Game Session transport, protected-mount or activation proof.
- * The terminal consumer effect of an unreceipted writer cut is deliberately retained.
+ * Exact pending prepublication is unavailable without a deny latch; exact PREPARED ACTIVE writer
+ * windows deny without keys until the real owner commit. Genuine tamper remains terminal.
  */
 class AccountPublicJwksWriterWindowPostgresIntegrationTest {
   private static final String SCHEMA_PREFIX = "jwks_writer_window";
@@ -128,7 +133,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
   }
 
   @Test
-  void initialPrepublicationIntentAndCasCutsDenyUntilExactFailedReceiptReconciliation()
+  void initialPrepublicationCutsRemainUnavailableUntilExactFailedReceiptReconciliation()
       throws Exception {
     Harness harness = harness();
     harness.generate();
@@ -138,17 +143,18 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
           assertThat(harness.count("account_jwt_jwks_prepublication_intents")).isEqualTo(1);
           assertThat(harness.count("account_jwt_jwks_publication_receipts")).isZero();
           assertThat(harness.transport.data.get("jwks.json")).isEqualTo("{\"keys\":[]}");
-          harness.assertInvalidRead();
+          harness.assertUnavailableRead();
         };
     harness.transport.afterPatch =
         () -> {
           publishedVersion.set(harness.transport.version);
           harness.assertLiveMatchesCurrentPrepublicationIntent();
           assertThat(harness.count("account_jwt_jwks_publication_receipts")).isZero();
-          harness.assertInvalidRead();
+          harness.assertUnavailableRead();
           harness.manager.beforeCommit.set(
               () ->
                   harness.observeBlockedPublicRead(
+                      harness::assertUnavailableRead,
                       () ->
                           assertThat(harness.count("account_jwt_jwks_publication_receipts"))
                               .isZero()));
@@ -161,7 +167,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     }
     assertThat(harness.count("account_jwt_jwks_publication_receipts")).isZero();
     assertThat(harness.transport.patches).isEqualTo(1);
-    harness.assertInvalidRead();
+    harness.assertUnavailableRead();
     harness.transport.clearHooks();
     var receipt = harness.prepublication.prepublishCurrentGeneration();
     assertThat(receipt.observedResourceVersion()).isEqualTo(publishedVersion.get());
@@ -256,16 +262,16 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
   }
 
   @Test
-  void activeCasWithoutReceiptIsTerminalWhileExactReceiptPreparedDenyRecoversAtOwnerCommit()
+  void activeCasWithoutReceiptDeniesCachedKeysAcrossOutageAndRecoversAfterExactOwnerCommit()
       throws Exception {
     Harness harness = harness();
     harness.generate();
     harness.prepublication.prepublishCurrentGeneration();
     harness.mountAndObserve();
-    AccountPublicJwksCache terminalCache = harness.cache();
+    AccountPublicJwksCache transitionCache = harness.cache();
     AccountPublicJwksCache preparedCache = harness.cache();
     String kid = harness.result.targetKid();
-    assertThat(terminalCache.keyFor(kid)).isNotNull();
+    assertThat(transitionCache.keyFor(kid)).isNotNull();
     assertThat(preparedCache.keyFor(kid)).isNotNull();
     harness.prepareAndRecordPrivatePromotion();
     harness.assertPreparedDeny();
@@ -277,11 +283,13 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
         () -> {
           harness.assertLiveMatchesPreparedActiveIntent();
           harness.assertNoActiveReceipt();
-          harness.assertInvalidRead();
-          assertThatThrownBy(terminalCache::refresh).isInstanceOf(InvalidJwksException.class);
+          harness.assertPreparedDeny();
+          assertThatThrownBy(transitionCache::refresh)
+              .isInstanceOf(SourcePreparedDenyException.class);
           harness.manager.beforeCommit.set(
               () ->
                   harness.observeBlockedPublicRead(
+                      harness::assertPreparedDeny,
                       () ->
                           assertThat(
                                   harness
@@ -300,9 +308,22 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     }
     harness.assertNoActiveReceipt();
     harness.assertLiveMatchesPreparedActiveIntent();
-    harness.assertInvalidRead();
+    harness.assertPreparedDeny();
     int writtenPatches = harness.transport.patches;
     harness.transport.clearHooks();
+    harness.assertChangedPrivateReceiptReplayRefused();
+    harness.transport.unavailable = true;
+    try {
+      harness.assertUnavailableRead();
+      assertThatThrownBy(transitionCache::refresh).isInstanceOf(SourcePreparedDenyException.class);
+      assertThatThrownBy(() -> transitionCache.keyFor(kid))
+          .isInstanceOf(SourcePreparedDenyException.class);
+      assertThatThrownBy(() -> preparedCache.keyFor(kid))
+          .isInstanceOf(SourcePreparedDenyException.class);
+    } finally {
+      harness.transport.unavailable = false;
+    }
+    harness.assertPreparedDeny();
     AtomicInteger exactReceiptPreparedReads = new AtomicInteger();
     harness.afterInventory =
         () -> {
@@ -340,8 +361,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     assertThat(stable.jwksBytes()).isEqualTo(harness.publicBytes());
     preparedCache.refresh();
     assertThat(preparedCache.keyFor(kid)).isNotNull();
-    assertThatThrownBy(terminalCache::refresh).isInstanceOf(InvalidJwksException.class);
-    assertThatThrownBy(() -> terminalCache.keyFor(kid)).isInstanceOf(InvalidJwksException.class);
+    harness.assertCurrentMountedKeyCorrespondence();
+    assertThat(stable.sourceIdentity()).isEqualTo(transitionCache.sourceIdentity());
+    transitionCache.refresh();
+    assertThat(transitionCache.keyFor(kid)).isNotNull();
     harness.reconcilePromotion();
     assertThat(harness.transport.patches).isEqualTo(writtenPatches);
     assertThat(
@@ -480,7 +503,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
         () -> {
           harness.assertLiveMatchesCurrentPrepublicationIntent();
           assertThat(harness.count("account_jwt_jwks_publication_receipts")).isZero();
-          harness.assertInvalidRead();
+          harness.assertUnavailableRead();
         };
     var receipt = harness.prepublication.prepublishCurrentGeneration();
     harness.transport.clearHooks();
@@ -497,7 +520,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
         () -> {
           harness.assertLiveMatchesPreparedActiveIntent();
           harness.assertNoActiveReceipt();
-          harness.assertInvalidRead();
+          harness.assertPreparedDeny();
         };
     harness.reconcilePromotion();
     harness.transport.clearHooks();
@@ -517,6 +540,76 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     harness.reconcilePromotion();
     assertThat(harness.transport.patches).isEqualTo(2);
     assertThat(harness.count("account_jwt_jwks_publication_receipts")).isEqualTo(1);
+  }
+
+  @Test
+  void ordinaryPrepublicationOutagePreservesOriginalCacheAgeAndPendingReadinessCanProgress()
+      throws Exception {
+    Harness harness = harness();
+    harness.generate();
+    harness.prepublication.prepublishCurrentGeneration();
+    harness.mountAndObserve();
+    AdjustableClock clock = new AdjustableClock(Instant.parse("2026-11-10T12:00:00Z"));
+    AccountPublicJwksCache cache = harness.cache(clock, Duration.ofSeconds(5));
+    String kid = harness.result.targetKid();
+    assertThat(cache.keyFor(kid)).isNotNull();
+    var pin = cache.sourceIdentity();
+    assertThat(harness.read().committedRecoveryEligible()).isFalse();
+    clock.advance(Duration.ofSeconds(4));
+    harness.transport.unavailable = true;
+    try {
+      harness.assertUnavailableRead();
+      cache.refresh();
+      assertThat(cache.keyFor(kid)).isNotNull();
+      clock.advance(Duration.ofSeconds(1));
+      assertThatThrownBy(() -> cache.keyFor(kid)).isInstanceOf(SourceUnavailableException.class);
+      clock.advance(Duration.ofSeconds(1));
+      assertThatThrownBy(cache::refresh).isInstanceOf(SourceUnavailableException.class);
+    } finally {
+      harness.transport.unavailable = false;
+    }
+    cache.refresh();
+    assertThat(cache.keyFor(kid)).isNotNull();
+    assertThat(harness.read().sourceIdentity()).isEqualTo(pin);
+    assertThat(harness.read().committedRecoveryEligible()).isFalse();
+    // Receipt-backed pending keys are usable for real mounted-key readiness before PREPARED.
+    harness.prepareAndRecordPrivatePromotion();
+    harness.assertPreparedDeny();
+    assertThatThrownBy(cache::refresh).isInstanceOf(SourcePreparedDenyException.class);
+    assertThatThrownBy(() -> cache.keyFor(kid)).isInstanceOf(SourcePreparedDenyException.class);
+    harness.reconcilePromotion();
+    harness.assertCurrentMountedKeyCorrespondence();
+    assertThat(harness.read().sourceIdentity()).isEqualTo(pin);
+    assertThat(harness.read().committedRecoveryEligible()).isTrue();
+    cache.refresh();
+    assertThat(cache.keyFor(kid)).isNotNull();
+  }
+
+  private static final class AdjustableClock extends Clock {
+    private Instant now;
+
+    private AdjustableClock(Instant now) {
+      this.now = now;
+    }
+
+    private void advance(Duration duration) {
+      now = now.plus(duration);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return Clock.fixed(now, zone);
+    }
+
+    @Override
+    public Instant instant() {
+      return now;
+    }
   }
 
   private Harness harness() throws Exception {
@@ -821,6 +914,10 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
       }
     }
 
+    private void assertUnavailableRead() {
+      assertThatThrownBy(this::read).isExactlyInstanceOf(SourceUnavailableException.class);
+    }
+
     private void assertInvalidRead() {
       assertThatThrownBy(this::read).isExactlyInstanceOf(InvalidJwksException.class);
     }
@@ -898,7 +995,65 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
                   promotion.expectedPublicJwksJson(), promotion.expectedActiveMarkerJson()));
     }
 
+    private void assertChangedPrivateReceiptReplayRefused() {
+      Map<String, List<String>> retained = ownerHistoryImages();
+      PrivatePromotionObservation changed =
+          new PrivatePromotionObservation(
+              privateObservation.promotionOperationId(),
+              privateObservation.promotionRequestDigest(),
+              privateObservation.generationOperationId(),
+              privateObservation.generationOperationDigest(),
+              privateObservation.secretUid(),
+              privateObservation.expectedPriorResourceVersion(),
+              privateObservation.observedResourceVersion() + "-changed",
+              privateObservation.current(),
+              privateObservation.previous(),
+              privateObservation.resultingSlots());
+      assertThatThrownBy(
+              () ->
+                  tx(
+                      () ->
+                          desired.recordPrivatePromotionResult(
+                              binding.accountBinding(), trust, changed)))
+          .isExactlyInstanceOf(
+              AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class)
+          .hasMessage("Private promotion readback changed for the same Account operation");
+      assertThat(ownerHistoryImages()).isEqualTo(retained);
+      assertThat(
+              tx(
+                  () ->
+                      desired.recordPrivatePromotionResult(
+                          binding.accountBinding(), trust, privateObservation)))
+          .isEqualTo(privateReceipt);
+      assertPreparedDeny();
+    }
+
+    private void assertCurrentMountedKeyCorrespondence() {
+      var identity =
+          new AccountMountedJwtSignerBundle.ExpectedIdentity(
+              binding.environmentId(),
+              binding.clusterId(),
+              binding.namespace(),
+              result.operationId().toString(),
+              result.targetGeneration(),
+              result.targetKid(),
+              result.publicKeyFingerprint());
+      assertThat(
+              AccountMountedJwtSignerBundle.observeMounted(
+                      privateMount,
+                      Path.of("current.key"),
+                      publicMount,
+                      Path.of("jwks.json"),
+                      identity)
+                  .expectedIdentity())
+          .isEqualTo(identity);
+    }
+
     private AccountPublicJwksCache cache() {
+      return cache(Clock.systemUTC(), Duration.ofMinutes(5));
+    }
+
+    private AccountPublicJwksCache cache(Clock clock, Duration maximumAge) {
       ReadResult initial = read();
       return new AccountPublicJwksCache(
           () -> {
@@ -908,8 +1063,8 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
                 current.sourceIdentity(), current.jwksBytes(), current.committedRecoveryEligible());
           },
           initial.sourceIdentity(),
-          Clock.systemUTC(),
-          Duration.ofMinutes(5));
+          clock,
+          maximumAge);
     }
 
     private byte[] publicBytes() {
@@ -921,7 +1076,8 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     }
 
     /** The same public read waits on real owner locks and is awaited only after rollback. */
-    private void observeBlockedPublicRead(Runnable assertCommittedReceiptAbsent) {
+    private void observeBlockedPublicRead(
+        Runnable assertAfterRollback, Runnable assertCommittedReceiptAbsent) {
       int writerPid =
           java.util.Objects.requireNonNull(
               dsl.resultQuery("SELECT pg_backend_pid()").fetchOne(0, Integer.class));
@@ -935,7 +1091,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
                       if (readerPid.compareAndSet(0, pid)) readerBegan.countDown();
                     });
                 try {
-                  assertInvalidRead();
+                  assertAfterRollback.run();
                 } finally {
                   manager.readerBackend.remove();
                 }
@@ -976,7 +1132,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
         reader.get(10, TimeUnit.SECONDS);
       } catch (Exception failure) {
         throw new IllegalStateException(
-            "Same public reader did not refuse after rollback", failure);
+            "Same public reader did not reach its expected classification after rollback", failure);
       } finally {
         reader.cancel(true);
       }
@@ -1029,6 +1185,7 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
         Map.of("jwks.json", "{\"keys\":[]}", "unrelated.txt", "preserve");
     private String version = "41";
     private int patches;
+    private boolean unavailable;
     private final AtomicBoolean losePatchReply = new AtomicBoolean();
     private int lostPatchReplies;
     private Runnable projectPublishedData = () -> {};
@@ -1047,6 +1204,9 @@ class AccountPublicJwksWriterWindowPostgresIntegrationTest {
     @Override
     public ApiResponse send(ApiCall call, byte[] body) {
       try {
+        if (unavailable && call == ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL) {
+          return response(503, Map.of());
+        }
         return switch (call) {
           case REVIEW_AUTHENTICATED_PRINCIPAL ->
               response(

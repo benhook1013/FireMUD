@@ -491,6 +491,21 @@ public class AccountJwtSignerDesiredStateRepository {
   }
 
   /**
+   * Validates the complete private receipt for the exact locked PREPARED owner. This read does not
+   * advance promotion or substitute for its separate completed public receipt.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PrivatePromotionReceipt readPreparedPrivatePromotionReceiptForRecovery(
+      Binding expectedBinding, TrustFence trust) {
+    PreparedGenerationEvidence prepared = readPreparedGenerationForRecovery(expectedBinding, trust);
+    StoredPromotion promotion = selectPromotion(prepared.promotion().operationId(), true);
+    if (promotion == null) {
+      throw new QuarantinedStateException("Account PREPARED private promotion is missing");
+    }
+    return PrivatePromotionReceipt.fromStored(promotion);
+  }
+
+  /**
    * Atomically records that the authenticated materializer may receive the immutable private-slot
    * promotion operation. This marker is deliberately sticky: after it is committed, a lost RPC
    * response is an uncertain external mutation and the operation must remain PREPARED for forward
