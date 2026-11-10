@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.regex.Pattern;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.type.TypeReference;
@@ -64,6 +66,7 @@ public final class AccountPublicJwksCache {
   private final Map<String, String> rememberedFingerprints = new LinkedHashMap<>();
   private final Set<String> hardDeniedKids = new LinkedHashSet<>();
 
+  private RefreshFlight inFlight;
   private Map<String, RSAPublicKey> keys = Map.of();
   private boolean hardCutoverQuarantined;
   private boolean sourceRejected;
@@ -94,79 +97,7 @@ public final class AccountPublicJwksCache {
    * Returns a currently usable key; unknown-kid lookups can trigger at most one refresh per second.
    */
   public RSAPublicKey keyFor(String kid) {
-    if (kid == null || !KID.matcher(kid).matches()) {
-      throw new UnknownKeyException();
-    }
-    synchronized (monitor) {
-      rejectHardDenied(kid);
-      if (sourceRejected) {
-        throw new InvalidJwksException();
-      }
-      Instant now = clock.instant();
-      boolean cachedKidKnown = keys.containsKey(kid);
-      if (!cachedKidKnown && loadedAt != null) {
-        if (now.isBefore(loadedAt) || !unknownKidRefreshEligible(now)) {
-          throw new UnknownKeyException();
-        }
-      }
-      if (!isFresh(now)
-          && lastStaleRefreshFailureAt != null
-          && !now.isBefore(lastStaleRefreshFailureAt)
-          && Duration.between(lastStaleRefreshFailureAt, now).compareTo(STALE_SOURCE_RETRY_BACKOFF)
-              < 0) {
-        if (unknownKidsRefreshedForSnapshot.contains(kid)) {
-          throw new UnknownKeyException();
-        }
-        throw staleRefreshFailureException();
-      }
-      if (isFresh(now)) {
-        RSAPublicKey existing = keys.get(kid);
-        if (existing != null) {
-          return existing;
-        }
-        if (!unknownKidsRefreshedForSnapshot.contains(kid)
-            && unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
-          recordUnknownKidRefresh(kid, now);
-          refreshFromSource();
-          rejectHardDenied(kid);
-          RSAPublicKey refreshed = keys.get(kid);
-          if (refreshed != null) {
-            return refreshed;
-          }
-          if (unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
-            unknownKidsRefreshedForSnapshot.add(kid);
-          }
-        }
-        throw new UnknownKeyException();
-      }
-
-      try {
-        if (!cachedKidKnown && loadedAt != null) {
-          recordUnknownKidRefresh(kid, now);
-        }
-        refreshFromSource();
-      } catch (SourceUnavailableException unavailable) {
-        recordStaleRefreshFailure(StaleRefreshFailure.SOURCE_UNAVAILABLE);
-        if (loadedAt != null
-            && !cachedKidKnown
-            && unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
-          unknownKidsRefreshedForSnapshot.add(kid);
-        }
-        throw unavailable;
-      } catch (InvalidJwksException invalid) {
-        recordStaleRefreshFailure(StaleRefreshFailure.INVALID_JWKS);
-        throw invalid;
-      }
-      rejectHardDenied(kid);
-      RSAPublicKey refreshed = keys.get(kid);
-      if (refreshed == null) {
-        if (unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
-          unknownKidsRefreshedForSnapshot.add(kid);
-        }
-        throw new UnknownKeyException();
-      }
-      return refreshed;
-    }
+    return lookupKey(kid, null, null);
   }
 
   /**
@@ -179,16 +110,77 @@ public final class AccountPublicJwksCache {
         || !SHA256.matcher(requiredJwksSha256).matches()) {
       throw new InvalidJwksException();
     }
-    synchronized (monitor) {
-      RSAPublicKey key = keyFor(kid);
-      // Every installed snapshot has already matched expectedSource. Keep the lookup and
-      // comparison under the same monitor so a concurrent refresh cannot relabel this key.
-      if (!expectedSource.equals(requiredSource)
-          || !requiredJwksSha256.equals(loadedJwksFingerprint)) {
-        throw new InvalidJwksException();
-      }
-      return key;
+    return lookupKey(kid, requiredSource, requiredJwksSha256);
+  }
+
+  private RSAPublicKey lookupKey(
+      String kid, SourceIdentity requiredSource, String requiredJwksSha256) {
+    if (kid == null || !KID.matcher(kid).matches()) {
+      throw new UnknownKeyException();
     }
+    final RefreshRequest refresh;
+    synchronized (monitor) {
+      rejectHardDenied(kid);
+      rejectSource();
+      Instant now = clock.instant();
+      boolean cachedKidKnown = keys.containsKey(kid);
+      if (!cachedKidKnown && loadedAt != null) {
+        if (now.isBefore(loadedAt) || !unknownKidRefreshEligible(now)) {
+          throw new UnknownKeyException();
+        }
+      }
+      boolean fresh = isFresh(now);
+      if (!fresh
+          && lastStaleRefreshFailureAt != null
+          && !now.isBefore(lastStaleRefreshFailureAt)
+          && Duration.between(lastStaleRefreshFailureAt, now).compareTo(STALE_SOURCE_RETRY_BACKOFF)
+              < 0) {
+        if (unknownKidsRefreshedForSnapshot.contains(kid)) {
+          throw new UnknownKeyException();
+        }
+        throw staleRefreshFailureException();
+      }
+      if (fresh) {
+        if (cachedKidKnown) {
+          return boundKey(kid, requiredSource, requiredJwksSha256);
+        }
+        if (unknownKidsRefreshedForSnapshot.contains(kid)
+            || unknownKidsRefreshedForSnapshot.size() >= MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
+          throw new UnknownKeyException();
+        }
+      }
+      if (!cachedKidKnown && loadedAt != null) {
+        recordUnknownKidRefresh(kid, now);
+      }
+      refresh = beginRefresh(false, !fresh);
+    }
+    refreshFromSource(refresh);
+    synchronized (monitor) {
+      rejectHardDenied(kid);
+      rejectSource();
+      if (!isFresh(clock.instant())) {
+        throw new SourceUnavailableException();
+      }
+      return boundKey(kid, requiredSource, requiredJwksSha256);
+    }
+  }
+
+  // Call only under monitor, so neither the key nor its binding can change during this comparison.
+  private RSAPublicKey boundKey(
+      String kid, SourceIdentity requiredSource, String requiredJwksSha256) {
+    RSAPublicKey key = keys.get(kid);
+    if (key == null) {
+      if (unknownKidsRefreshedForSnapshot.size() < MAX_UNKNOWN_KID_REFRESHES_PER_SNAPSHOT) {
+        unknownKidsRefreshedForSnapshot.add(kid);
+      }
+      throw new UnknownKeyException();
+    }
+    if (requiredSource != null
+        && (!expectedSource.equals(requiredSource)
+            || !requiredJwksSha256.equals(loadedJwksFingerprint))) {
+      throw new InvalidJwksException();
+    }
+    return key;
   }
 
   /**
@@ -219,20 +211,39 @@ public final class AccountPublicJwksCache {
    * explicitly requalified replacement instance may resume. Deny history remains independent.
    */
   public void refresh() {
+    final RefreshRequest refresh;
     synchronized (monitor) {
-      if (sourceRejected) {
-        throw new InvalidJwksException();
-      }
-      try {
-        refreshFromSource();
-      } catch (SourceUnavailableException unavailable) {
-        throw unavailable;
-      } catch (RuntimeException rejected) {
-        sourceRejected = true;
-        throw new InvalidJwksException();
-      }
+      rejectSource();
+      refresh = beginRefresh(true, false);
+    }
+    refreshFromSource(refresh);
+  }
+
+  private void rejectSource() {
+    if (sourceRejected) {
+      throw new InvalidJwksException();
     }
   }
+
+  // All refresh triggers share one flight. No older load can install after a newer load, and
+  // joining a proactive refresh retains its stricter terminal-rejection behavior.
+  private RefreshRequest beginRefresh(boolean proactive, boolean stale) {
+    boolean owner = inFlight == null;
+    if (owner) {
+      inFlight = new RefreshFlight();
+    }
+    inFlight.proactive |= proactive;
+    inFlight.stale |= stale;
+    return new RefreshRequest(inFlight, owner);
+  }
+
+  private static final class RefreshFlight {
+    private final CompletableFuture<Void> completion = new CompletableFuture<>();
+    private boolean proactive;
+    private boolean stale;
+  }
+
+  private record RefreshRequest(RefreshFlight flight, boolean owner) {}
 
   /** Exposes only the non-secret source pin for integration correspondence checks. */
   public SourceIdentity sourceIdentity() {
@@ -261,19 +272,75 @@ public final class AccountPublicJwksCache {
     }
   }
 
-  private void refreshFromSource() {
-    final PublicJwksSnapshot snapshot;
+  private void refreshFromSource(RefreshRequest request) {
+    RefreshFlight flight = request.flight();
+    if (request.owner()) {
+      PublicJwksSnapshot snapshot = null;
+      RuntimeException sourceFailure = null;
+      try {
+        // Never hold monitor over remote I/O, including demand-triggered source reads.
+        snapshot = source.load();
+      } catch (RuntimeException failure) {
+        sourceFailure = failure;
+      } catch (Error failure) {
+        synchronized (monitor) {
+          inFlight = null;
+          flight.completion.completeExceptionally(failure);
+        }
+        throw failure;
+      }
+      synchronized (monitor) {
+        try {
+          installSnapshot(snapshot, sourceFailure);
+          flight.completion.complete(null);
+        } catch (RuntimeException failure) {
+          RuntimeException reported = failure;
+          if (!(failure instanceof SourceUnavailableException)) {
+            sourceRejected |= flight.proactive;
+            reported = new InvalidJwksException();
+          }
+          if (flight.stale) {
+            recordStaleRefreshFailure(
+                reported instanceof SourceUnavailableException
+                    ? StaleRefreshFailure.SOURCE_UNAVAILABLE
+                    : StaleRefreshFailure.INVALID_JWKS);
+          }
+          flight.completion.completeExceptionally(reported);
+        } catch (Error failure) {
+          flight.completion.completeExceptionally(failure);
+          throw failure;
+        } finally {
+          inFlight = null;
+        }
+      }
+    }
     try {
-      snapshot = source.load();
-    } catch (SourceUnavailableException unavailable) {
-      if (loadedAt == null || !isFresh(clock.instant())) {
+      flight.completion.join();
+    } catch (CompletionException failure) {
+      if (failure.getCause() instanceof RuntimeException cause) {
+        throw cause;
+      }
+      if (failure.getCause() instanceof Error cause) {
+        throw cause;
+      }
+      throw new InvalidJwksException();
+    }
+  }
+
+  // Source identity, freshness, remembered fingerprints, and invalidation history are checked
+  // atomically against the current state, including invalidations made while the load was blocked.
+  private void installSnapshot(PublicJwksSnapshot snapshot, RuntimeException sourceFailure) {
+    rejectSource();
+    if (sourceFailure instanceof SourceUnavailableException) {
+      if (!isFresh(clock.instant())) {
         throw new SourceUnavailableException();
       }
       return;
-    } catch (SourceCustodyRejectedException rejected) {
+    }
+    if (sourceFailure instanceof SourceCustodyRejectedException) {
       sourceRejected = true;
-      throw new InvalidJwksException();
-    } catch (RuntimeException invalidSource) {
+    }
+    if (sourceFailure != null) {
       throw new InvalidJwksException();
     }
     if (snapshot == null) {
@@ -299,6 +366,7 @@ public final class AccountPublicJwksCache {
     }
     rememberedFingerprints.clear();
     rememberedFingerprints.putAll(nextFingerprints);
+    parsed.keySet().removeAll(hardDeniedKids);
     keys = Collections.unmodifiableMap(parsed);
     String nextJwksFingerprint = fingerprintBytes(snapshotBytes);
     if (!Objects.equals(loadedJwksFingerprint, nextJwksFingerprint)) {
