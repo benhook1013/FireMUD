@@ -198,7 +198,13 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       long result =
           scopedFinalOwner()
               .dispatchCapacityAction(
-                  source, template, accountOpen, issuerOpen, execution, "INSTALL", deadline);
+                  source,
+                  template,
+                  accountOpen,
+                  issuerOpen,
+                  execution,
+                  "INSTALL",
+                  budget.absoluteDeadlineMillis());
       if (result != 3) throw unavailable();
     }
     Map<String, byte[]> physical = readExecution(execution, assignment.tenantGameplayTag());
@@ -259,7 +265,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     var assignment = scopedTags().assignmentForTransition(execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
-    long result = scopedFinalOwner().closeCapacityExecutionOnce(execution, candidate, assignment);
+    long result =
+        scopedFinalOwner()
+            .closeCapacityExecutionOnce(
+                execution, candidate, assignment, budget.absoluteDeadlineMillis());
     if (result != 4) throw unavailable();
     Map<String, byte[]> physical = readExecution(execution, assignment.tenantGameplayTag());
     exactPhysicalBinding(physical, execution, "CLOSED");
@@ -675,7 +684,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner scopedFinalOwner() {
     return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-        redis, scripts, clock, scopedTags());
+        redis, scripts, clock, scopedTags(), this::connectForRead, budget::remainingMillis);
   }
 
   private <T> T within(
