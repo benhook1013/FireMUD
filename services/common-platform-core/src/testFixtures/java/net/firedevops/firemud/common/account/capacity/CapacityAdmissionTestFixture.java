@@ -39,6 +39,14 @@ public final class CapacityAdmissionTestFixture {
   }
 
   public static TenantCapacityAdmission.Request playerRequest() {
+    return playerRequest(true);
+  }
+
+  /** Controlled policy content, never proof of current Account entitlement custody. */
+  public static TenantCapacityAdmission.Request playerRequest(boolean permitsCreation) {
+    Map<String, Object> policyFacts = facts();
+    policyFacts.put("allowNewGameplayBindings", permitsCreation);
+    var evidence = capture(target(), policyFacts, sources(), NOW);
     return new TenantCapacityAdmission.Request(
             new TenantCapacityAdmission.Identity(TENANT, REQUEST, ADMISSION),
             ATTEMPT,
@@ -49,7 +57,7 @@ public final class CapacityAdmissionTestFixture {
             TenantCapacityAdmission.Operation.CAPACITY_CREATING,
             new TenantCapacityAdmission.Shape(0, 0, 0),
             new TenantCapacityAdmission.Shape(1, 0, 0),
-            TenantCapacityAdmission.Evidence.player(playerEvidence()),
+            TenantCapacityAdmission.Evidence.player(evidence),
             1L,
             null)
         .withDigest();

@@ -3,18 +3,22 @@ package net.firedevops.firemud.gamesession.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.Any;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -28,6 +32,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -65,6 +70,35 @@ class AccountTenantCapacityClientMtlsTest {
       assertThat(client.commit(request)).isEqualTo(first);
       assertThat(first.identity()).isEqualTo(request.identity());
       assertThat(calls).hasValue(2);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void nonCreatingEvidenceReachesControlledAccountAndReturnsStructuredPolicyDenial()
+      throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    Server server = server("account", calls, false);
+    try (var client = client(server)) {
+      client.init();
+      var request = CapacityAdmissionTestFixture.playerRequest(false);
+      assertThatThrownBy(() -> client.commit(request))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure -> {
+                assertThat(Status.fromThrowable(failure).getCode())
+                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+                var status = Objects.requireNonNull(StatusProto.fromThrowable(failure));
+                assertThat(status.getDetailsList())
+                    .containsExactly(
+                        Any.pack(
+                            ErrorDetail.newBuilder()
+                                .setCode("TENANT_BILLING_BLOCKED")
+                                .setMessage("Tenant capacity commitment did not complete")
+                                .build()));
+              });
+      assertThat(calls).hasValue(1);
     } finally {
       stop(server);
     }
@@ -121,6 +155,23 @@ class AccountTenantCapacityClientMtlsTest {
             assertThat(GrpcPeerIdentity.current().uri())
                 .isEqualTo("spiffe://firemud/ns/prod/sa/game-session-service");
             var request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
+            if (!request.evidence().permitsCreation()) {
+              assertThat(request).isEqualTo(CapacityAdmissionTestFixture.playerRequest(false));
+              // Controlled transport response only; the real Account owner proves policy authority.
+              observer.onError(
+                  StatusProto.toStatusRuntimeException(
+                      com.google.rpc.Status.newBuilder()
+                          .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
+                          .setMessage("Tenant capacity commitment did not complete")
+                          .addDetails(
+                              Any.pack(
+                                  ErrorDetail.newBuilder()
+                                      .setCode("TENANT_BILLING_BLOCKED")
+                                      .setMessage("Tenant capacity commitment did not complete")
+                                      .build()))
+                          .build()));
+              return;
+            }
             var result =
                 new TenantCapacityAdmission.Result(
                     request.identity(),

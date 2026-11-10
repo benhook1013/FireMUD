@@ -73,6 +73,69 @@ class CapacityAdmissionDigestTest {
   }
 
   @Test
+  void nonCreatingEvidenceIsValidContentButCannotAuthorizeExecution() {
+    Request denied = CapacityAdmissionTestFixture.playerRequest(false);
+    denied.requireStructurallyValid();
+    assertThat(denied.evidence().permitsCreation()).isFalse();
+    assertThat(CapacityAdmissionTestFixture.playerRequest().evidence().permitsCreation()).isTrue();
+    assertThat(denied.mutationDigest())
+        .isNotEqualTo(CapacityAdmissionTestFixture.playerRequest().mutationDigest());
+    assertThatThrownBy(denied::requireCommittable).isInstanceOf(IllegalArgumentException.class);
+    var reservation =
+        new TenantCapacityAdmission.Result(
+            denied.identity(),
+            denied.admissionAttemptId(),
+            denied.capacityRearmFence(),
+            denied.mutationDigest(),
+            java.util.UUID.randomUUID(),
+            1,
+            denied.evidence().expiresAt(),
+            TenantCapacityAdmission.State.RESERVED,
+            denied.evidence().snapshotIdentity(),
+            denied.evidence().evaluationIdentity());
+    assertThatThrownBy(
+            () ->
+                new OriginalNewCapacityExecution(
+                    denied,
+                    reservation,
+                    denied.identity().admissionId(),
+                    "sha256:" + "a".repeat(64),
+                    "owner-1",
+                    1))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    for (Request invalid :
+        List.of(
+            playerMutation(denied, null, denied.requestedShape(), null).withDigest(),
+            playerMutation(denied, 1L, denied.requestedShape(), null),
+            playerMutation(denied, 1L, denied.requestedShape(), "b".repeat(64)),
+            playerMutation(denied, 0L, denied.requestedShape(), null).withDigest(),
+            playerMutation(denied, 2L, denied.requestedShape(), null).withDigest(),
+            playerMutation(denied, 1L, denied.priorShape(), null).withDigest(),
+            playerMutation(denied, 1L, new Shape(1, 1, 0), null).withDigest(),
+            playerMutation(denied, 1L, new Shape(1, 0, 1), null).withDigest())) {
+      assertThatThrownBy(invalid::requireStructurallyValid)
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(invalid::requireCommittable).isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  private static Request playerMutation(Request base, Long delta, Shape requested, String digest) {
+    return new Request(
+        base.identity(),
+        base.admissionAttemptId(),
+        base.capacityRearmFence(),
+        base.targetNamespace(),
+        base.context(),
+        base.operation(),
+        base.priorShape(),
+        requested,
+        base.evidence(),
+        delta,
+        digest);
+  }
+
+  @Test
   void decimalWireGrammarRejectsNegativesOverflowAndMalformedSpellingsBeforeHash() {
     for (String value :
         List.of("9223372036854775808", "-1", "+1", "01", "1e0", "1.0", " 1", "1 ")) {
