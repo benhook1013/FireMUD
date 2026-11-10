@@ -436,7 +436,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
     assertThat(f.transport().creates).isOne();
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_attempts"))).isEqualTo(3);
     assertThat(f.dsl().fetchCount(DSL.table("subscription_provisioning_operator_outbox"))).isZero();
-    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isOne();
+    assertThat(f.dsl().fetchCount(DSL.table("subscription_lifecycle_receipts"))).isZero();
   }
 
   @Test
@@ -820,7 +820,7 @@ class AccountHostingSubscriptionDispatchPostgresIntegrationTest {
   }
 
   private static AccountHostingSubscriptionProvisioningService service(Fixture f) {
-    migrate(f.source(), f.schema(), "1039");
+    migrate(f.source(), f.schema(), "1041");
     f.dsl()
         .execute(
             "INSERT INTO account_hosting_billing_policy_values (provider_price_id, policy_version, quantity, amount, currency) "
