@@ -366,19 +366,20 @@ class AccountCanonicalJoinScopePersistenceIntegrationTest {
         .isEqualTo(MigrationVersion.fromVersion("1041"));
 
     List<Map<String, Object>> upgradedHistory = flywayHistory(setupDsl);
-    assertThat(upgradedHistory).hasSize(parentHistory.size() + 4);
+    assertThat(upgradedHistory).hasSize(parentHistory.size() + 5);
     assertThat(upgradedHistory.subList(0, parentHistory.size()))
         .containsExactlyElementsOf(parentHistory);
     List<Map<String, Object>> addedHistory =
         upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
     assertThat(addedHistory)
         .extracting(row -> row.get("version"))
-        .containsExactly("1037", "1038", "1040", "1041");
+        .containsExactly("1037", "1038", "1039", "1040", "1041");
     assertThat(addedHistory)
         .extracting(row -> row.get("script"))
         .containsExactly(
             "V1037__canonical_join_failure_and_attempt_diagnostics.sql",
             "V1038__canonical_join_existing_membership_terminal.sql",
+            "V1039__hosting_unclaimed_wallet_settlement.sql",
             "V1040__account_tenant_capacity_owner.sql",
             "V1041__hosting_first_invoice_completion.sql");
     assertThat(addedHistory)
