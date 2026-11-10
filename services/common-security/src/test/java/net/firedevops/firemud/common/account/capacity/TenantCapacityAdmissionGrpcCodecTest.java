@@ -30,6 +30,23 @@ class TenantCapacityAdmissionGrpcCodecTest {
   }
 
   @Test
+  void nonCreatingEvidenceRoundTripsWithoutChangingAnyCanonicalBytes() {
+    Request request = CapacityAdmissionTestFixture.playerRequest(false);
+    var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
+    var parsed = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
+    assertThat(wire.getAttempt(0).getCanonicalAccountEvidence(0).toByteArray())
+        .containsExactly(request.evidence().canonicalBytes());
+    assertThat(parsed).isEqualTo(request);
+    assertThat(parsed.evidence().canonicalBytes())
+        .containsExactly(request.evidence().canonicalBytes());
+    assertThat(parsed.evidence().permitsCreation()).isFalse();
+    assertThat(TenantCapacityAdmissionGrpcCodec.toRequest(parsed).toByteArray())
+        .containsExactly(wire.toByteArray());
+    parsed.requireStructurallyValid();
+    assertThatThrownBy(parsed::requireCommittable).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void absentNegativeDuplicateUnknownAndMixedCallerContextFailBeforeCommit() {
     Request request = CapacityAdmissionTestFixture.playerRequest();
     var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);

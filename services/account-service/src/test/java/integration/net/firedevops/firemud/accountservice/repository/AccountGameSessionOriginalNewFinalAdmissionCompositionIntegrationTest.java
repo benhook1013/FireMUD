@@ -2,9 +2,13 @@ package net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.google.protobuf.ByteString;
 import io.grpc.Server;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.protobuf.StatusProto;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +17,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -32,6 +40,8 @@ import net.firedevops.firemud.accountservice.service.session.AccountResponseEnve
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
+import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -41,6 +51,7 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -332,6 +343,63 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   .get(0, String.class))
           .isEqualTo("PROVISIONAL");
     }
+  }
+
+  @Test
+  void freshRetainedNonCreatingEvaluationIsPolicyDeniedWithoutOwnerMutation() throws Exception {
+    try (Session session = session()) {
+      var denied = session.retainControlledNonCreatingEvaluation();
+      assertThat(denied.evidence().permitsCreation()).isFalse();
+      byte[] candidate = session.gs.physicalSession();
+      assertThat(candidate).isNotNull();
+      String before = session.capacityImage() + session.durableImage();
+      for (int attempt = 0; attempt < 2; attempt++) {
+        StatusRuntimeException failure =
+            assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(denied));
+        assertCapacityFailure(failure, Status.Code.RESOURCE_EXHAUSTED, "TENANT_BILLING_BLOCKED");
+        assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+        assertProvisionalUnchanged(session, candidate);
+      }
+    }
+  }
+
+  @Test
+  void retainedOriginalReplaysBeforeChangedNonCreatingEvidenceCanBecomeADenial() throws Exception {
+    try (Session session = session()) {
+      var first = session.capacityClient.commit(session.capacityRequest);
+      var changed = session.retainControlledNonCreatingEvaluation();
+      byte[] candidate = session.gs.physicalSession();
+      assertThat(candidate).isNotNull();
+      String before = session.capacityImage() + session.durableImage();
+      StatusRuntimeException failure =
+          assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(changed));
+      assertCapacityFailure(failure, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
+      assertThat(session.capacityClient.commit(session.capacityRequest)).isEqualTo(first);
+      assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+      assertProvisionalUnchanged(session, candidate);
+    }
+  }
+
+  private static void assertProvisionalUnchanged(Session session, byte[] candidate) {
+    assertThat(session.gs.physicalSession()).containsExactly(candidate);
+    assertThat(
+            session
+                .gs
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                    session.gs.decisionId())
+                .get(0, String.class))
+        .isEqualTo("PROVISIONAL");
+  }
+
+  private static void assertCapacityFailure(
+      StatusRuntimeException failure, Status.Code expectedStatus, String expectedCode)
+      throws Exception {
+    assertThat(failure.getStatus().getCode()).isEqualTo(expectedStatus);
+    var status = Objects.requireNonNull(StatusProto.fromThrowable(failure));
+    assertThat(status.getDetailsCount()).isOne();
+    assertThat(status.getDetails(0).unpack(ErrorDetail.class).getCode()).isEqualTo(expectedCode);
   }
 
   private Session session() throws Exception {
@@ -630,6 +698,79 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           status ->
               new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
                   .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
+    }
+
+    /** Controlled entitlement facts, real current caller/scope and actual immutable retention. */
+    @SuppressWarnings("unchecked")
+    private TenantCapacityAdmission.Request retainControlledNonCreatingEvaluation() {
+      var original = capacityRequest;
+      var parsed =
+          RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
+              original.evidence().canonicalBytes());
+      var fields = parsed.fields();
+      Map<String, Object> facts = new LinkedHashMap<>();
+      for (String name :
+          List.of(
+              "sourceKind",
+              "subscriptionStatus",
+              "provisioningStatus",
+              "gameplayAvailable",
+              "allowPublicJoin",
+              "allowNewGameplayBindings",
+              "allowNewInstanceStarts",
+              "quotas",
+              "entitlementVersion",
+              "tenantBillingSequence",
+              "tenantAuthorityGeneration")) {
+        facts.put(name, fields.get(name));
+      }
+      facts.put("allowNewGameplayBindings", false);
+      var denied =
+          RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+              original.identity().requestId(),
+              original.evidence().callerWorkload(),
+              (String) fields.get("verifiedConnectScopeId"),
+              parsed.membershipSource(),
+              (Map<String, Object>) fields.get("target"),
+              facts,
+              (Map<String, Object>) fields.get("sourceReferences"),
+              CLOCK.instant());
+      serializable.executeWithoutResult(
+          ignored -> new AccountTenantCapacityRepository(dsl).retainPlayerEvaluation(denied));
+      return new TenantCapacityAdmission.Request(
+              original.identity(),
+              original.admissionAttemptId(),
+              original.capacityRearmFence(),
+              original.targetNamespace(),
+              original.context(),
+              original.operation(),
+              original.priorShape(),
+              original.requestedShape(),
+              TenantCapacityAdmission.Evidence.player(denied),
+              original.capacityDelta(),
+              null)
+          .withDigest();
+    }
+
+    private String capacityImage() {
+      StringBuilder image = new StringBuilder();
+      for (String table :
+          List.of(
+              "account_tenant_capacity_evaluations",
+              "account_tenant_capacity_usage",
+              "account_tenant_capacity_reservations",
+              "account_tenant_capacity_attempt_history",
+              "account_tenant_capacity_recovery_evidence")) {
+        image
+            .append(table)
+            .append(
+                dsl.fetch(
+                        "SELECT (to_jsonb(t) || jsonb_build_object('_original_xmin', t.xmin::text))::text AS image FROM "
+                            + table
+                            + " t ORDER BY 1")
+                    .getValues("image", String.class));
+      }
+      return image.toString();
     }
 
     private String durableImage() {

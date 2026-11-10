@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.conflict;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.number;
+import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.quota;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.unavailable;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -81,7 +82,7 @@ public final class AccountTenantCapacityOwner {
 
   public Result commit(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);
-    request.requireCommittable();
+    request.requireStructurallyValid();
     return inTransaction(
         () -> {
           lockPlayerAccount(request);
@@ -91,6 +92,7 @@ public final class AccountTenantCapacityOwner {
           if (request.capacityRearmFence() != 1) throw conflict();
           current(request);
           requireSupportedShape(request);
+          if (!request.evidence().permitsCreation()) throw quota();
           return capacity.create(request, request.evidence().expiresAt());
         });
   }
