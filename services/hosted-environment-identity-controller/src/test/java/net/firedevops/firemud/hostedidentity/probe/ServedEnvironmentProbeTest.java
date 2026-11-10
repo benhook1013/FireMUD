@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -564,10 +566,11 @@ class ServedEnvironmentProbeTest {
     String connectionId = requestHeader(fixture.request(), "X-Proxy-Connection-Id");
     String nonce = requestHeader(fixture.request(), "Sec-WebSocket-Key");
     assertNotNull(connectionId);
-    assertTrue(connectionId.matches("[A-Za-z0-9_-]{22}"));
+    assertCanonicalTcpProxyConnectionId(connectionId);
+    assertEquals(16, Base64.getDecoder().decode(nonce).length);
     assertFalse(
         java.util.Arrays.equals(
-            Base64.getDecoder().decode(nonce), Base64.getUrlDecoder().decode(connectionId)));
+            Base64.getDecoder().decode(nonce), uuidBytes(UUID.fromString(connectionId))));
   }
 
   @Test
@@ -589,8 +592,11 @@ class ServedEnvironmentProbeTest {
     assertNotNull(firstConnectionId);
     assertNotNull(secondConnectionId);
     assertNotEquals(firstConnectionId, secondConnectionId);
-    assertTrue(firstConnectionId.matches("[A-Za-z0-9_-]{22}"));
-    assertTrue(secondConnectionId.matches("[A-Za-z0-9_-]{22}"));
+    assertCanonicalTcpProxyConnectionId(firstConnectionId);
+    assertCanonicalTcpProxyConnectionId(secondConnectionId);
+    assertNotEquals(
+        requestHeader(first.request(), "Sec-WebSocket-Key"),
+        requestHeader(second.request(), "Sec-WebSocket-Key"));
   }
 
   @Test
@@ -836,6 +842,20 @@ class ServedEnvironmentProbeTest {
       }
     }
     return null;
+  }
+
+  private static void assertCanonicalTcpProxyConnectionId(String connectionId) {
+    UUID parsed = UUID.fromString(connectionId);
+    assertEquals(parsed.toString(), connectionId);
+    assertEquals(4, parsed.version());
+    assertEquals(2, parsed.variant());
+  }
+
+  private static byte[] uuidBytes(UUID uuid) {
+    return ByteBuffer.allocate(16)
+        .putLong(uuid.getMostSignificantBits())
+        .putLong(uuid.getLeastSignificantBits())
+        .array();
   }
 
   private static String websocketAccept(String nonce) throws Exception {

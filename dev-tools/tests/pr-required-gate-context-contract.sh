@@ -3472,13 +3472,16 @@ for (const [declaration] of icons) {
   assert.equal(statusIcon("skipped"), "⏭️");
 }
 const bytes = fs.readFileSync(process.argv[2] + ".producer");
-const start = script.indexOf("async function verifyKnownPlayFailure(");
+const start = script.indexOf("function isSuccessfulRuntimeWorkflowDefinition(");
 const end = script.indexOf("// Commit objects", start);
 const fn = script.slice(start, end);
 const workflowPath = ".github/workflows/runtime-images.yml";
 const repositoryName = "benhook1013/FireMUD";
 const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
 const canonicalRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+const previousRefreshBytes = Buffer.concat([bytes, Buffer.from("\n# Previous trusted refresh definition\n")]);
+const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = require("node:crypto").createHash("sha256")
+  .update(previousRefreshBytes).digest("hex");
 // Separate test authority lets the same verifier exercise both immutable modes.
 const canonicalLegacyRuntimeWorkflowSha256 = "0".repeat(64);
 const canonicalPlayClassifierSha256 = JSON.parse(script.match(/const canonicalPlayClassifierSha256 = (\{[\s\S]*?\});/)[1]);
@@ -3497,7 +3500,7 @@ const candidate = {id: 123, run_id: 99, run_attempt: 2, head_sha: headSha, name:
   steps: [...failures.map(name => step(name, "success")), step("Stop smoke stack", "success"),
     step("Known canonical transition PLAY failure with successful authenticated cleanup", "success"),
     step("Export fixed-tag preview image artifact", "skipped"), step("Upload preview image artifact", "skipped")]};
-async function verify(mutate = () => {}, event = "pull_request") {
+async function verify(mutate = () => {}, event = "pull_request", knownPlay = true) {
   const data = structuredClone({pr: "3390", consumerRepository: repositoryName, run, identity, source, candidate, jobs: [candidate], latest: {...source},
     eventHeadRepository: repositoryName,
     currentPullRequest: {state: "open", head: {sha: headSha, repo: {full_name: repositoryName}},
@@ -3511,6 +3514,10 @@ async function verify(mutate = () => {}, event = "pull_request") {
     data.source.head_branch = data.latest.head_branch = "develop";
     data.source.head_sha = data.latest.head_sha = workflowSha;
     data.candidate.head_sha = data.jobs[0].head_sha = workflowSha;
+  }
+  if (!knownPlay) {
+    data.candidate.steps.find(step => step.name ===
+      "Known canonical transition PLAY failure with successful authenticated cleanup").conclusion = "skipped";
   }
   mutate(data);
   const contentRequests = [];
@@ -3526,14 +3533,17 @@ async function verify(mutate = () => {}, event = "pull_request") {
         if (!data.definitions[path]) throw Object.assign(new Error("definition unavailable"), {status: 404});
         return {data: data.definitions[path]};
       }}}};
+  const verifier = knownPlay ? "verifyKnownPlayFailure" : "verifyCanonicalSmokeProducer";
   const accepted = await new Function("github", "prNumber", "repositoryName", "canonicalSmokeJobName", "workflowPath",
-    "canonicalRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
-    `${fn}; return verifyKnownPlayFailure(data.run, data.candidate, data.identity);`)(
-      github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256, data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
+    "canonicalRuntimeWorkflowSha256", "canonicalPreviousTrustedRefreshRuntimeWorkflowSha256", "canonicalLegacyRuntimeWorkflowSha256", "canonicalPlayClassifierSha256", "positiveInteger", "withTransientGitHubRetry", "context", "owner", "repo", "require", "data",
+    `${fn}; return ${verifier}(data.run, data.candidate, data.identity);`)(
+      github, data.pr, data.consumerRepository, canonicalSmokeJobName, workflowPath, canonicalRuntimeWorkflowSha256,
+      canonicalPreviousTrustedRefreshRuntimeWorkflowSha256,
+      data.legacyDefinition ? canonicalRuntimeWorkflowSha256 : canonicalLegacyRuntimeWorkflowSha256, canonicalPlayClassifierSha256,
       value => Number.isSafeInteger(value) && value > 0, (_label, call) => call(),
       {payload: {repository: {default_branch: "develop"}, pull_request: {head: {repo: {full_name: data.eventHeadRepository}}}}},
       "benhook1013", "FireMUD", require, data);
-  if (accepted) assert.deepEqual(contentRequests, [workflowPath, ...Object.keys(classifierDefinitions)]);
+  if (accepted) assert.deepEqual(contentRequests, knownPlay ? [workflowPath, ...Object.keys(classifierDefinitions)] : [workflowPath]);
   return accepted;
 }
 // Proof errors in a successful exception attempt must fail closed.
@@ -3644,6 +3654,15 @@ function markerAccepted(overrides = {}) {
     }, event), true, "exact old fail-red default-branch producer remains a diagnostic exception only");
   }
   assert.equal(await verify(() => {}, "repository_dispatch"), true);
+  const usePreviousRefresh = data => Object.assign(data.definitions[workflowPath], {
+    content: previousRefreshBytes.toString("base64"), size: previousRefreshBytes.length,
+  });
+  for (const knownPlay of [true, false]) {
+    assert.equal(await verify(usePreviousRefresh, "repository_dispatch", knownPlay), true,
+      "trusted refresh may retain the previous successful producer proof");
+    assert.equal(await verify(usePreviousRefresh, "pull_request", knownPlay), false,
+      "the previous successful definition cannot attest a PR producer");
+  }
   for (const path of Object.keys(classifierDefinitions)) {
     assert.equal(await verify(d => {
       const altered = Buffer.concat([Buffer.from(d.definitions[path].content, "base64"), Buffer.from("\n# altered classifier\n")]);

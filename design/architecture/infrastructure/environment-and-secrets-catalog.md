@@ -121,6 +121,21 @@ A sample `Certificate` manifest is provided at `k8s/base/firemud-grpc-certificat
 | `FIREMUD_GRPC_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the certificate chain | `certs/client.key` |
 | `FIREMUD_GRPC_CA_CERT_PATH` | Filesystem path to the CA bundle used to verify peer services | `certs/ca.crt` |
 
+### Authenticated TCP Gameplay Bridge
+
+Ordinary Gateway-to-backend HTTP and WebSocket routes remain explicit in-cluster exceptions with their existing Gateway trust, header-canonicalization, and NetworkPolicy controls. Authenticated TCP gameplay receiving uses a separate verified-origin `wss://` connection from Gateway to Game Session, with a dedicated client identity and a dedicated Game Session TLS listener. The [Security Architecture](../system-architecture-security.md#authenticated-tcp-gateway-to-game-session-receiving) owns the trust and custody contract; the [player access tracker](../../project-management/implementation-tracking/player-access-and-session.md) records current registration and deployment proof status.
+
+| Variable | Purpose | Default / current binding |
+| -------- | ------- | ------- |
+| `FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_AUTHENTICATED_UPSTREAM_URL` | Gateway's authenticated receiver URI; the authenticated client is absent when this property is unset. | No code default; unset unless deployment binds it. Hosted Helm binds `wss://game-session-service.$(FIREMUD_GRPC_WORKLOAD_NAMESPACE).svc.cluster.local:8444/ws/game/tcp`. |
+| `FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH` | Gateway's dedicated client certificate chain for the authenticated receiver. | Empty by default; base and hosted bindings use `/gameplay-client-tls/tls.crt`. |
+| `FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH` | Private key matching the dedicated Gateway client certificate. | Empty by default; base and hosted bindings use `/gameplay-client-tls/tls.key`. |
+| `FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH` | Trust bundle used by Gateway to verify Game Session's authenticated listener certificate. | Empty by default; base and hosted bindings use `/gameplay-client-trust/ca.crt`. |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED` | Enables Game Session's separate authenticated gameplay TLS listener. | `false`; hosted Helm sets `true`. |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT` | Port for the separate listener, distinct from the configured ordinary HTTP port. | `8444`; hosted Helm sets `8444`. |
+
+The TLS path defaults are empty in Gateway's authenticated-client binding; Kubernetes supplies the dedicated mounted paths shown above. Game Session's listener is disabled unless enabled explicitly. The shared `firemud-grpc` SSL bundle currently supplies the listener certificate and reload source; these gameplay-specific Gateway client paths do not replace Gateway's `FIREMUD_GRPC_*` management-plane paths or its independent TCP Proxy-facing WebSocket server identity. Exact registration, issuance, and deployment evidence remains subject to the linked owner and tracker.
+
 ### Gateway HTTP Management-Plane TLS (Target State)
 
 Gateway-owned HTTP management endpoints use a dedicated operator client identity and listener trust bundle. These paths are separate from the Gateway service's `FIREMUD_GRPC_*` workload identity and are resolved from the selected `operator-credential-binding/v1` record. For `SECRET_BACKED` and `CERT_MANAGER` bindings, the client certificate/key and trust bundle are file-backed through the variables below; a `WORKLOAD_IDENTITY` binding uses its provider-projected client identity and trust bundle and does not require a substitute Secret or these file paths. The binding record's closed `bindingType` and source-specific resolution, not this catalog or endpoint-local configuration, determine which representation applies:
