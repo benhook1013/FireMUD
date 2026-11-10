@@ -111,7 +111,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       PredecessorImage before1041 = predecessorImage(dsl);
       configureFlyway(data, schema, "1041").migrate();
       assertThat(migrationHistoryImage(dsl))
-          .startsWithElementsOf(before1041.migrationHistoryImage());
+          .startsWith(before1041.migrationHistoryImage().toArray(String[]::new));
       assertThat(capacityTableImages(dsl)).isEqualTo(before1041.tableImages());
       assertThat(otherCapacityTriggerImages(dsl)).isEqualTo(before1041.otherTriggerImages());
       assertThat(exactUsageFunctionImage(dsl)).isEqualTo(before1041.exactUsageFunctionImage());
