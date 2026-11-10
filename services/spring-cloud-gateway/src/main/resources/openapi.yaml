@@ -77,7 +77,12 @@ paths:
                       expiresAt: {type: string, format: date-time}
         '400': {description: Invalid bounded request or actual HTTPS required}
         '401': {description: Primary authentication denied}
-        '503': {description: Current Account authentication authority unavailable}
+        '409': {description: Account login request conflicts with retained idempotency evidence}
+        '413': {description: Login request exceeds the Gateway body limit}
+        '415': {description: Login requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway could not safely complete the Account authentication call}
+        '503': {description: Account authentication or receiving rate-limit authority unavailable}
   /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice:
     parameters:
       - name: subscriptionId
@@ -94,7 +99,10 @@ paths:
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
         '409': {description: Exact retained evidence refused or outcome uncertain}
-        '502': {description: Upstream outcome uncertain; never automatically resend}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
   /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice/reauthenticate:
     parameters:
       - name: subscriptionId
@@ -111,7 +119,11 @@ paths:
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
         '409': {description: Exact retained evidence refused or outcome uncertain}
-        '502': {description: Upstream outcome uncertain; never automatically resend}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '415': {description: Action requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
   /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm:
     parameters:
       - name: subscriptionId
@@ -128,7 +140,11 @@ paths:
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
         '409': {description: Exact retained evidence refused or outcome uncertain}
-        '502': {description: Upstream outcome uncertain; never automatically resend}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '415': {description: Action requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
   /api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice/renew:
     parameters:
       - name: subscriptionId
@@ -145,7 +161,11 @@ paths:
         '400': {description: Malformed request}
         '401': {description: Current control-ui owner authority required}
         '409': {description: Exact retained evidence refused or outcome uncertain}
-        '502': {description: Upstream outcome uncertain; never automatically resend}
+        '413': {description: Request exceeds the subscription-operation body limit}
+        '415': {description: Action requires an application/json request}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome uncertain; never automatically resend}
+        '503': {description: Account authentication/reconciliation or Gateway rate-limit authority unavailable; no automatic retry}
   /api/account/billing/hosting/webhook:
     post:
       operationId: receiveAccountHostingFirstInvoiceSignedEvent
@@ -161,8 +181,12 @@ paths:
       responses:
         '200': {description: No-store Account completion state}
         '400': {description: Invalid signed event}
-        '413': {description: Request exceeds the bound}
-        '502': {description: Upstream outcome remains uncertain}
+        '401': {description: Account rejected provider-event authentication}
+        '409': {description: Account could not accept this event against retained state}
+        '413': {description: Request exceeds the webhook body limit}
+        '429': {description: Receiving rate limit exceeded}
+        '502': {description: Gateway transport or upstream outcome remains uncertain}
+        '503': {description: Account reconciliation or Gateway rate-limit authority unavailable; provider delivery may be retried}
   /ping:
     get:
       summary: Health check

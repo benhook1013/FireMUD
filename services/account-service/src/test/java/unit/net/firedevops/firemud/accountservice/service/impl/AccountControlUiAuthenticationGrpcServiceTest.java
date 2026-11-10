@@ -119,7 +119,7 @@ class AccountControlUiAuthenticationGrpcServiceTest {
     var issuer = mock(AccountControlUiIssuanceService.class);
     var actors = mock(AccountControlUiActorService.class);
     when(issuer.issueAccount(any()))
-        .thenThrow(new IllegalArgumentException("retained input differs"));
+        .thenThrow(new AccountControlUiIssuanceService.IdempotencyConflictException());
     var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
     var result = new Result();
 
@@ -130,6 +130,30 @@ class AccountControlUiAuthenticationGrpcServiceTest {
                     AccountControlUiAuthenticationGrpcCodec.toRequest(request("test")), result));
 
     assertThat(result.failureCode).isEqualTo(Status.Code.ALREADY_EXISTS);
+    assertThat(result.failureDescription).isEqualTo("Account login request conflicts");
+    verifyNoInteractions(actors);
+  }
+
+  @Test
+  void signerStyleIllegalArgumentIsUnavailableAndSanitized() {
+    var issuer = mock(AccountControlUiIssuanceService.class);
+    var actors = mock(AccountControlUiActorService.class);
+    when(issuer.issueAccount(any()))
+        .thenThrow(new IllegalArgumentException("mounted signer rejected configured key material"));
+    var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
+    var request = request("test");
+    var result = new Result();
+
+    gateway()
+        .run(
+            () ->
+                receiver.authLogin(
+                    AccountControlUiAuthenticationGrpcCodec.toRequest(request), result));
+
+    assertThat(result.failureCode).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(result.failureDescription).isEqualTo("Account login authority unavailable");
+    assertThat(result.failureDescription)
+        .doesNotContain("mounted signer rejected", request.email(), request.secret());
     verifyNoInteractions(actors);
   }
 
@@ -149,6 +173,7 @@ class AccountControlUiAuthenticationGrpcServiceTest {
   private static final class Result implements StreamObserver<AuthLoginResponse> {
     AuthLoginResponse value;
     Status.Code failureCode;
+    String failureDescription;
     boolean completed;
 
     @Override
@@ -158,7 +183,9 @@ class AccountControlUiAuthenticationGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      failureCode = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      failureCode = status.getCode();
+      failureDescription = status.getDescription();
     }
 
     @Override

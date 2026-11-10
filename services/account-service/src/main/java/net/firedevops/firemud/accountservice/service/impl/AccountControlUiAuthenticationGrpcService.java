@@ -77,7 +77,7 @@ public final class AccountControlUiAuthenticationGrpcService
     } catch (AuthenticationException denied) {
       response.onNext(AccountControlUiAuthenticationGrpcCodec.toResponse(request, null));
       response.onCompleted();
-    } catch (IllegalArgumentException conflict) {
+    } catch (AccountControlUiIssuanceService.IdempotencyConflictException conflict) {
       response.onError(
           Status.ALREADY_EXISTS
               .withDescription("Account login request conflicts")

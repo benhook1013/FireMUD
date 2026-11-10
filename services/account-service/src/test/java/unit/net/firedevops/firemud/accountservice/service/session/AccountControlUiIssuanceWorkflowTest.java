@@ -403,7 +403,7 @@ class AccountControlUiIssuanceWorkflowTest {
               .isInstanceOf(IllegalArgumentException.class);
         } else {
           assertThatThrownBy(() -> conflict.service().issueAccount(conflict.accountRequest()))
-              .isInstanceOf(IllegalArgumentException.class);
+              .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
         }
       }
       verify(conflict.operations, never()).beginRecoveryFailure(any());

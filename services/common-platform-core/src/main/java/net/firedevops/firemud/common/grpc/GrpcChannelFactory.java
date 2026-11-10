@@ -95,7 +95,7 @@ public class GrpcChannelFactory {
     return ManagedChannelBuilder.forAddress(host, port).usePlaintext();
   }
 
-  private NettyChannelBuilder createTlsBuilder(String resolved, int defaultPort) {
+  protected NettyChannelBuilder createTlsBuilder(String resolved, int defaultPort) {
     if (resolved.contains("://")) {
       return NettyChannelBuilder.forTarget(resolved);
     }

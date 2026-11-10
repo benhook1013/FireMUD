@@ -336,7 +336,13 @@ public final class AccountControlUiIssuanceService {
         || !stored.callerContextId.equals(request.callerContextId)
         || !stored.requestDigest.equals(
             cryptography.requestDigest(stored.requestMacKeyId, exactRequest))) {
-      throw new IllegalArgumentException("Control-ui issuance idempotency conflict");
+      throw new IdempotencyConflictException();
+    }
+  }
+
+  public static final class IdempotencyConflictException extends IllegalArgumentException {
+    public IdempotencyConflictException() {
+      super("Control-ui issuance idempotency conflict");
     }
   }
 
