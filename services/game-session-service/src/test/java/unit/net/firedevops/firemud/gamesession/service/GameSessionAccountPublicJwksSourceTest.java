@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.GeneralSecurityException;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPublicKey;
 import java.time.Clock;
@@ -294,10 +295,118 @@ class GameSessionAccountPublicJwksSourceTest {
     }
   }
 
-  private static RSAPublicKey newPublicKey() throws Exception {
-    var generator = KeyPairGenerator.getInstance("RSA");
-    generator.initialize(3072);
-    return (RSAPublicKey) generator.generateKeyPair().getPublic();
+  @Test
+  void matchedPublicationTransitionPreservesExpiryUntilALaterStableLoad() throws Exception {
+    for (boolean proactive : new boolean[] {true, false}) {
+      var fixture = new PublicationFixture();
+      var cache = fixture.cache();
+      cache.refresh();
+      fixture.advance(5);
+      fixture.afterAccountRead.set(
+          () -> {
+            fixture.publishNext();
+            fixture.converge();
+          });
+      if (proactive) {
+        cache.refresh();
+      } else {
+        assertThatThrownBy(() -> cache.keyFor("next")).isInstanceOf(UnknownKeyException.class);
+      }
+      int readsAfterTransition = fixture.accountReads.get();
+      assertThat(cache.keyFor("known")).isEqualTo(fixture.key);
+      assertThat(fixture.accountReads.get()).isEqualTo(readsAfterTransition);
+      assertThat(fixture.source.sourceIdentity()).isEqualTo(identity("test", "revision-1"));
+      fixture.advance(5);
+      assertThat(cache.keyFor("known")).isEqualTo(fixture.key);
+      assertThat(fixture.accountReads.get()).isEqualTo(readsAfterTransition + 2);
+      assertThat(cache.keyFor("next")).isEqualTo(fixture.key);
+    }
+  }
+
+  @Test
+  void matchedTransitionDoesNotRenewExpiredCacheOrInstallAnUnknownKey() throws Exception {
+    var fixture = new PublicationFixture();
+    var cache = fixture.cache();
+    cache.refresh();
+    fixture.advance(10);
+    fixture.afterAccountRead.set(
+        () -> {
+          fixture.publishNext();
+          fixture.converge();
+        });
+    assertThatThrownBy(() -> cache.keyFor("next")).isInstanceOf(SourceUnavailableException.class);
+    cache.refresh();
+    assertThat(cache.keyFor("next")).isEqualTo(fixture.key);
+  }
+
+  @Test
+  void matchedTransitionCannotQualifyStartupOrAReplacementIdentity() throws Exception {
+    for (boolean qualified : new boolean[] {false, true}) {
+      var fixture = new PublicationFixture();
+      if (qualified) fixture.source.load();
+      fixture.afterAccountRead.set(
+          () -> {
+            fixture.publishNext();
+            fixture.converge();
+            if (qualified) fixture.pin.set(identity("test", "revision-2"));
+          });
+      assertInvalid(fixture.source);
+      fixture.pin.set(identity("test", "revision-1"));
+      assertInvalid(fixture.source);
+    }
+  }
+
+  @Test
+  void transitionRequiresAnExactValidAuthenticatedNewSnapshot() throws Exception {
+    for (boolean matched : new boolean[] {false, true}) {
+      var fixture = new PublicationFixture();
+      fixture.source.load();
+      fixture.afterAccountRead.set(
+          () -> {
+            fixture.current.set("{broken".getBytes(StandardCharsets.US_ASCII));
+            fixture.mounted.set(
+                matched ? fixture.current.get() : publicJwks(fixture.key, "unexplained"));
+          });
+      assertInvalid(fixture.source);
+      fixture.publishNext();
+      fixture.converge();
+      assertInvalid(fixture.source);
+    }
+  }
+
+  @Test
+  void matchedTransitionCannotHideUnsafeOrChangedProjectionOnRecheck() throws Exception {
+    for (boolean unsafe : new boolean[] {false, true}) {
+      var fixture = new PublicationFixture();
+      fixture.source.load();
+      AtomicInteger projectionReads = new AtomicInteger();
+      when(fixture.projection.read())
+          .thenAnswer(
+              invocation -> {
+                if (projectionReads.incrementAndGet() == 3) {
+                  if (unsafe) throw new IllegalArgumentException("unsafe projection");
+                  return publicJwks(fixture.key, "unexplained");
+                }
+                return fixture.mounted.get().clone();
+              });
+      fixture.afterAccountRead.set(
+          () -> {
+            fixture.publishNext();
+            fixture.converge();
+          });
+      assertInvalid(fixture.source);
+      assertInvalid(fixture.source);
+    }
+  }
+
+  private static RSAPublicKey newPublicKey() {
+    try {
+      var generator = KeyPairGenerator.getInstance("RSA");
+      generator.initialize(3072);
+      return (RSAPublicKey) generator.generateKeyPair().getPublic();
+    } catch (GeneralSecurityException failure) {
+      throw new ExceptionInInitializerError(failure);
+    }
   }
 
   private static byte[] publicJwks(RSAPublicKey key, String... kids) {
@@ -323,7 +432,10 @@ class GameSessionAccountPublicJwksSourceTest {
   }
 
   private static final class PublicationFixture {
-    private final RSAPublicKey key = newPublicKey();
+    private static final RSAPublicKey SHARED_KEY = newPublicKey();
+    private final RSAPublicKey key = SHARED_KEY;
+    private final AtomicReference<Runnable> afterAccountRead = new AtomicReference<>();
+    private final AtomicInteger accountReads = new AtomicInteger();
     private final AtomicReference<SourceIdentity> pin =
         new AtomicReference<>(identity("test", "revision-1"));
     private final AtomicReference<byte[]> current = new AtomicReference<>(publicJwks(key, "known"));
@@ -336,7 +448,16 @@ class GameSessionAccountPublicJwksSourceTest {
 
     private PublicationFixture() throws Exception {
       when(projection.read()).thenAnswer(invocation -> mounted.get().clone());
-      source = source(() -> new PublicJwksSnapshot(pin.get(), current.get()), projection);
+      source =
+          source(
+              () -> {
+                accountReads.incrementAndGet();
+                var snapshot = new PublicJwksSnapshot(pin.get(), current.get());
+                Runnable action = afterAccountRead.getAndSet(null);
+                if (action != null) action.run();
+                return snapshot;
+              },
+              projection);
     }
 
     private AccountPublicJwksCache cache() {
