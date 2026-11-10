@@ -92,6 +92,47 @@ class AccountControlUiAuthenticationGrpcServiceTest {
     verifyNoInteractions(actors);
   }
 
+  @Test
+  void overlongSecretIsInvalidArgumentBeforeIssuance() {
+    var issuer = mock(AccountControlUiIssuanceService.class);
+    var actors = mock(AccountControlUiActorService.class);
+    var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
+    var wire =
+        AuthLoginRequest.newBuilder()
+            .addSchemaVersion(1)
+            .addTargetNamespace("test")
+            .addRequestId(UUID.randomUUID().toString())
+            .addCallerContextId(UUID.randomUUID().toString())
+            .addEmail("owner@example.test")
+            .addSecret("s".repeat(1025))
+            .build();
+    var result = new Result();
+
+    gateway().run(() -> receiver.authLogin(wire, result));
+
+    assertThat(result.failureCode).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    verifyNoInteractions(issuer, actors);
+  }
+
+  @Test
+  void issuanceConflictRemainsAlreadyExists() {
+    var issuer = mock(AccountControlUiIssuanceService.class);
+    var actors = mock(AccountControlUiActorService.class);
+    when(issuer.issueAccount(any()))
+        .thenThrow(new IllegalArgumentException("retained input differs"));
+    var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
+    var result = new Result();
+
+    gateway()
+        .run(
+            () ->
+                receiver.authLogin(
+                    AccountControlUiAuthenticationGrpcCodec.toRequest(request("test")), result));
+
+    assertThat(result.failureCode).isEqualTo(Status.Code.ALREADY_EXISTS);
+    verifyNoInteractions(actors);
+  }
+
   private static AccountControlUiAuthenticationGrpcCodec.Request request(String namespace) {
     return new AccountControlUiAuthenticationGrpcCodec.Request(
         UUID.randomUUID(), UUID.randomUUID(), namespace, "owner@example.test", "controlled-secret");

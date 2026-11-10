@@ -125,6 +125,11 @@ public final class AccountCheckoutGatewayController {
                         }
                       })
                   .onErrorResume(
+                      AccountControlUiAuthenticationClient.AuthenticationInvalidRequestException
+                          .class,
+                      invalid ->
+                          Mono.just(jsonResponse(HttpStatus.BAD_REQUEST, errorJson("ERROR"))))
+                  .onErrorResume(
                       AccountControlUiAuthenticationClient.AuthenticationConflictException.class,
                       conflict ->
                           Mono.just(jsonResponse(HttpStatus.CONFLICT, errorJson("CONFLICT"))))

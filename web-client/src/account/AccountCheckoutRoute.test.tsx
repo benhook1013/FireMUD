@@ -10,7 +10,10 @@ import {
 } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from '../App';
-import type { AccountControlUiApi } from '../api/accountControlUi';
+import {
+  AccountControlUiApiError,
+  type AccountControlUiApi,
+} from '../api/accountControlUi';
 import type { HostingStripe } from '../billing/hostingStripe';
 import {
   createControlUiSessionStore,
@@ -223,6 +226,36 @@ describe('App-owned first-invoice route', () => {
     expect(api.login).not.toHaveBeenCalled();
     expect(loadStripeClient).not.toHaveBeenCalled();
   });
+
+  it.each([429, 0])(
+    'shows safe temporary feedback for sign-in status %i without retrying',
+    async (status) => {
+      const { api } = setupApp();
+      vi.mocked(api.login).mockRejectedValue(
+        new AccountControlUiApiError(status)
+      );
+      fireEvent.change(screen.getByLabelText('Account email'), {
+        target: { value: 'owner@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText('Primary authentication secret'), {
+        target: { value: 'primary-secret' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+      await screen.findByText(
+        'Account sign-in is temporarily unavailable. Try again later.'
+      );
+      expect(api.login).toHaveBeenCalledOnce();
+      expect(vi.mocked(api.login).mock.calls[0][0].secret).toBe('');
+      expect(
+        (
+          screen.getByLabelText(
+            'Primary authentication secret'
+          ) as HTMLInputElement
+        ).value
+      ).toBe('');
+    }
+  );
 
   it('handles browser Back and Forward by remounting read-only checkout without confirming', async () => {
     const { fetchImpl } = setupApp();

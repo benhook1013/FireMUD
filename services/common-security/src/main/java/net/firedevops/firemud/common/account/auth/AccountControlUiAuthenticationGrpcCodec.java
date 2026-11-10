@@ -21,6 +21,8 @@ public final class AccountControlUiAuthenticationGrpcCodec {
   public static final int MAX_RESPONSE_WIRE_BYTES = 20 * 1024;
   public static final int MAX_EMAIL_UTF8_BYTES = 320;
   public static final int MAX_SECRET_UTF8_BYTES = 4 * 1024;
+  public static final int MAX_EMAIL_CHARS = 254;
+  public static final int MAX_SECRET_CHARS = 1024;
   public static final int MAX_COMPACT_AUTH_TOKEN_BYTES = 16 * 1024;
 
   private static final int SCHEMA_VERSION = 1;
@@ -198,8 +200,11 @@ public final class AccountControlUiAuthenticationGrpcCodec {
   }
 
   private static void requireEmail(String value) {
-    int length = utf8Length(value);
-    if (length < 3 || length > MAX_EMAIL_UTF8_BYTES || value.indexOf('@') <= 0) throw invalid();
+    int bytes = utf8Length(value);
+    if (bytes < 3
+        || bytes > MAX_EMAIL_UTF8_BYTES
+        || value.length() > MAX_EMAIL_CHARS
+        || value.indexOf('@') <= 0) throw invalid();
     int at = value.indexOf('@');
     if (at != value.lastIndexOf('@')
         || at == value.length() - 1
@@ -208,8 +213,11 @@ public final class AccountControlUiAuthenticationGrpcCodec {
   }
 
   private static void requireSecret(String value) {
-    int length = utf8Length(value);
-    if (length < 1 || length > MAX_SECRET_UTF8_BYTES || value.indexOf('\0') >= 0) throw invalid();
+    int bytes = utf8Length(value);
+    if (bytes < 1
+        || bytes > MAX_SECRET_UTF8_BYTES
+        || value.length() > MAX_SECRET_CHARS
+        || value.indexOf('\0') >= 0) throw invalid();
   }
 
   private static void requireToken(String value) {

@@ -20,6 +20,10 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Narrow no-retry HTTPS proxy for Account's first-invoice and Stripe webhook routes. */
 public final class AccountCheckoutHttpClient {
@@ -32,6 +36,12 @@ public final class AccountCheckoutHttpClient {
           "/billing/hosting/subscriptions/"
               + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
               + "/first-invoice(?:/(?:reauthenticate|confirm|renew))?");
+  private static final int MAX_ERROR_RESPONSE_BYTES = 1024;
+  private static final JsonMapper ERROR_JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
   private static final String WEBHOOK_PATH = "/billing/hosting/webhook";
   private static final Duration TOTAL_TIMEOUT_CEILING = Duration.ofSeconds(60);
 
@@ -148,6 +158,8 @@ public final class AccountCheckoutHttpClient {
         .exchangeToMono(
             response ->
                 readResponse(
+                    method,
+                    accountPath,
                     response.statusCode(),
                     response.headers().asHttpHeaders(),
                     response.bodyToMono(byte[].class)))
@@ -156,13 +168,23 @@ public final class AccountCheckoutHttpClient {
   }
 
   private Mono<ForwardedResponse> readResponse(
-      HttpStatusCode status, HttpHeaders headers, Mono<byte[]> responseBody) {
+      HttpMethod method,
+      String path,
+      HttpStatusCode status,
+      HttpHeaders headers,
+      Mono<byte[]> responseBody) {
     if (!status.is2xxSuccessful()) {
       HttpStatusCode safeStatus =
-          status.is3xxRedirection() || status.is5xxServerError() ? HttpStatus.BAD_GATEWAY : status;
+          status.value() == HttpStatus.SERVICE_UNAVAILABLE.value()
+              ? status
+              : status.is3xxRedirection() || status.is5xxServerError()
+                  ? HttpStatus.BAD_GATEWAY
+                  : status;
+      var empty = new ForwardedResponse(safeStatus, null, new byte[0]);
       return responseBody
-          .onErrorResume(ignored -> Mono.empty())
-          .thenReturn(new ForwardedResponse(safeStatus, null, new byte[0]));
+          .map(body -> closedErrorResponse(method, path, status, safeStatus, headers, body))
+          .onErrorReturn(empty)
+          .defaultIfEmpty(empty);
     }
     String contentType = oneHeader(headers, HttpHeaders.CONTENT_TYPE);
     if (status.value() == HttpStatus.NO_CONTENT.value()
@@ -175,6 +197,46 @@ public final class AccountCheckoutHttpClient {
     return responseBody
         .defaultIfEmpty(new byte[0])
         .map(body -> new ForwardedResponse(status, contentType, body));
+  }
+
+  private static ForwardedResponse closedErrorResponse(
+      HttpMethod method,
+      String path,
+      HttpStatusCode upstreamStatus,
+      HttpStatusCode safeStatus,
+      HttpHeaders headers,
+      byte[] body) {
+    var empty = new ForwardedResponse(safeStatus, null, new byte[0]);
+    if (!isSubscriptionRoute(method, path)
+        || body.length == 0
+        || body.length > MAX_ERROR_RESPONSE_BYTES
+        || !isJsonContentType(oneHeader(headers, HttpHeaders.CONTENT_TYPE))) return empty;
+    boolean confirmation =
+        HttpMethod.POST.equals(method) && (path.endsWith("/confirm") || path.endsWith("/renew"));
+    String expected =
+        switch (upstreamStatus.value()) {
+          case 400 -> "FIRST_INVOICE_INVALID_REQUEST";
+          case 401 -> "AUTH_SESSION_REVOKED";
+          case 409 -> "FIRST_INVOICE_EVIDENCE_REFUSED";
+          case 502 -> confirmation ? "FIRST_INVOICE_PROVIDER_UNCERTAIN" : null;
+          case 503 -> "AUTH_UNAVAILABLE";
+          default -> null;
+        };
+    if (expected == null) return empty;
+    try {
+      JsonNode root = ERROR_JSON.readTree(body);
+      if (root == null
+          || !root.isObject()
+          || root.size() != 1
+          || !root.has("code")
+          || !root.get("code").isTextual()
+          || !expected.equals(root.get("code").textValue())) return empty;
+      byte[] safeBody =
+          ("{\"code\":\"" + expected + "\"}").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+      return new ForwardedResponse(safeStatus, MediaType.APPLICATION_JSON_VALUE, safeBody);
+    } catch (RuntimeException invalid) {
+      return empty;
+    }
   }
 
   private static boolean isWebhook(HttpMethod method, String path) {

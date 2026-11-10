@@ -46,9 +46,13 @@ public final class AccountControlUiAuthenticationGrpcService
       return;
     }
     AccountControlUiAuthenticationGrpcCodec.Request request;
+    AccountControlUiIssuanceService.AccountSignInRequest signInRequest;
     try {
       request = AccountControlUiAuthenticationGrpcCodec.parseRequest(wire);
       if (!namespace.equals(request.callerNamespace())) throw new IllegalArgumentException();
+      signInRequest =
+          new AccountControlUiIssuanceService.AccountSignInRequest(
+              request.requestId(), request.email(), request.secret(), request.callerContextId());
     } catch (IllegalArgumentException invalid) {
       response.onError(
           Status.INVALID_ARGUMENT
@@ -56,13 +60,7 @@ public final class AccountControlUiAuthenticationGrpcService
               .asRuntimeException());
       return;
     }
-    try (var credential =
-        issuance.issueAccount(
-            new AccountControlUiIssuanceService.AccountSignInRequest(
-                request.requestId(),
-                request.email(),
-                request.secret(),
-                request.callerContextId()))) {
+    try (var credential = issuance.issueAccount(signInRequest)) {
       byte[] compact = credential.compactBytes();
       try {
         String token = new String(compact, StandardCharsets.US_ASCII);

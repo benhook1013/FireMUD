@@ -33,6 +33,27 @@ class AccountControlUiAuthenticationGrpcCodecTest {
   }
 
   @Test
+  void enforcesAccountUtf16CharacterLimitsAndAcceptsBoundedUnicode() {
+    String unicodeBoundaryEmail = "\u00e9".repeat(66) + "a".repeat(186) + "@x";
+    String unicodeBoundarySecret = new String(Character.toChars(0x1F510)).repeat(512);
+    assertThat(unicodeBoundaryEmail).hasSize(254);
+    assertThat(unicodeBoundarySecret).hasSize(1024);
+    Request boundary =
+        new Request(
+            REQUEST_ID, CALLER_CONTEXT_ID, NAMESPACE, unicodeBoundaryEmail, unicodeBoundarySecret);
+
+    assertThat(
+            AccountControlUiAuthenticationGrpcCodec.parseRequest(
+                AccountControlUiAuthenticationGrpcCodec.toRequest(boundary)))
+        .isEqualTo(boundary);
+
+    var wire = AccountControlUiAuthenticationGrpcCodec.toRequest(request());
+    assertRejected(wire.toBuilder().setEmail(0, "a".repeat(253) + "@x").build());
+    assertRejected(wire.toBuilder().setEmail(0, "\u00e9".repeat(252) + "@x").build());
+    assertRejected(wire.toBuilder().setSecret(0, "s".repeat(1025)).build());
+  }
+
+  @Test
   void mapsSuccessAndDenialWhileNeverEchoingPrimarySecret() {
     Request request = request();
     Authenticated authenticated = new Authenticated(ACCOUNT_ID, TOKEN, 1_900_000_000L);

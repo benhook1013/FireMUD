@@ -75,6 +75,9 @@ public final class AccountControlUiAuthenticationClient
       if (unavailable.getStatus().getCode() == Status.Code.ALREADY_EXISTS) {
         throw new AuthenticationConflictException();
       }
+      if (unavailable.getStatus().getCode() == Status.Code.INVALID_ARGUMENT) {
+        throw new AuthenticationInvalidRequestException();
+      }
       throw new AuthenticationUnavailableException();
     } catch (IllegalArgumentException malformed) {
       throw new IllegalStateException("Account authentication response was invalid");
@@ -146,6 +149,13 @@ public final class AccountControlUiAuthenticationClient
   public static final class AuthenticationConflictException extends RuntimeException {
     public AuthenticationConflictException() {
       super("Account authentication request conflicts");
+    }
+  }
+
+  /** Safe invalid-request signal that carries no upstream gRPC details or cause. */
+  public static final class AuthenticationInvalidRequestException extends RuntimeException {
+    public AuthenticationInvalidRequestException() {
+      super("Account authentication request is invalid");
     }
   }
 }

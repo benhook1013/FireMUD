@@ -136,6 +136,7 @@ describe('account control-ui login transport', () => {
     }
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(error).toBeInstanceOf(AccountControlUiApiError);
+    expect(error).toMatchObject({ status: 0 });
     expect((error as Error).message).not.toContain('primary-secret');
   });
 
@@ -184,7 +185,7 @@ describe('account control-ui login transport', () => {
   });
 
   it('rejects oversized response bodies', async () => {
-    const oversized = 'x'.repeat(40 * 1024);
+    const oversized = (await successfulLogin().text()) + ' '.repeat(40 * 1024);
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValue(new Response(oversized, { status: 200 }));

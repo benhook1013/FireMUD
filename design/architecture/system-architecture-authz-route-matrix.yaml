@@ -1771,10 +1771,14 @@ routes:
     scope: account
     classification: internal_workload
     route_status: target_not_currently_routable
+    auth_path: exact_mtls_workload
+    issued_token_state: none
     accepted_token_profiles: []
     token_type: none
     token_issuer: none
     token_audience: none
+    issued_token_profile: control-ui
+    issued_token_audience: control-ui
     method_policy: exact_declared_route
     allowed_callers:
       any_of: [spring-cloud-gateway]

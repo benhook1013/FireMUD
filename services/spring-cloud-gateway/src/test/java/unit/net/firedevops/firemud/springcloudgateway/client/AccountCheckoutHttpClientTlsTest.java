@@ -10,12 +10,16 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 import net.firedevops.firemud.springcloudgateway.config.AccountCheckoutReceivingProperties;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -262,6 +266,97 @@ class AccountCheckoutHttpClientTlsTest {
     assertThat(response).isNotNull();
     assertThat(response.status()).isEqualTo(HttpStatus.BAD_GATEWAY);
     assertThat(requests).hasValue(1);
+  }
+
+  @ParameterizedTest
+  @MethodSource("contractedErrors")
+  void preservesOnlyContractedOwnerErrorCodesWithoutRetry(
+      HttpMethod method, String suffix, int status, String code) throws Exception {
+    var captured = new AtomicReference<CapturedRequest>();
+    String body = "{ \"code\": \"" + code + "\" }";
+    AtomicInteger requests = startServer(status, body.getBytes(StandardCharsets.UTF_8), captured);
+    client = newClient(pki.caCertificate(), server.port());
+    HttpHeaders headers = authorizationHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    var result =
+        client
+            .forward(
+                method,
+                SUBSCRIPTION_PATH + suffix,
+                headers,
+                HttpMethod.GET.equals(method) ? new byte[0] : "{}".getBytes(StandardCharsets.UTF_8))
+            .block(Duration.ofSeconds(8));
+    assertThat(result).isNotNull();
+    assertThat(result.status().value()).isEqualTo(status);
+    assertThat(result.contentType()).isEqualTo(MediaType.APPLICATION_JSON_VALUE);
+    assertThat(new String(result.body(), StandardCharsets.UTF_8))
+        .isEqualTo("{\"code\":\"" + code + "\"}");
+    assertThat(requests).hasValue(1);
+  }
+
+  private static Stream<Arguments> contractedErrors() {
+    return Stream.of(
+        Arguments.of(HttpMethod.POST, "/reauthenticate", 400, "FIRST_INVOICE_INVALID_REQUEST"),
+        Arguments.of(HttpMethod.GET, "", 401, "AUTH_SESSION_REVOKED"),
+        Arguments.of(HttpMethod.POST, "/confirm", 409, "FIRST_INVOICE_EVIDENCE_REFUSED"),
+        Arguments.of(HttpMethod.POST, "/confirm", 502, "FIRST_INVOICE_PROVIDER_UNCERTAIN"),
+        Arguments.of(HttpMethod.POST, "/renew", 502, "FIRST_INVOICE_PROVIDER_UNCERTAIN"),
+        Arguments.of(HttpMethod.GET, "", 503, "AUTH_UNAVAILABLE"));
+  }
+
+  @Test
+  void preservesReconcilingWebhook503WithoutForwardingPrivateOutcomeOrRetrying() throws Exception {
+    var captured = new AtomicReference<CapturedRequest>();
+    AtomicInteger requests =
+        startServer(
+            503,
+            "{\"state\":\"RECONCILING\",\"private\":\"never-forward\"}"
+                .getBytes(StandardCharsets.UTF_8),
+            captured);
+    client = newClient(pki.caCertificate(), server.port());
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("Stripe-Signature", "t=123,v1=signature");
+    var result =
+        client
+            .forward(HttpMethod.POST, WEBHOOK_PATH, headers, "{}".getBytes(StandardCharsets.UTF_8))
+            .block(Duration.ofSeconds(8));
+    assertThat(result).isNotNull();
+    assertThat(result.status()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    assertThat(result.body()).isEmpty();
+    assertThat(requests).hasValue(1);
+  }
+
+  @ParameterizedTest
+  @MethodSource("untrustedErrors")
+  void stripsUncontractedOrMalformedErrorBodies(int upstreamStatus, String body, int publicStatus)
+      throws Exception {
+    var captured = new AtomicReference<CapturedRequest>();
+    AtomicInteger requests =
+        startServer(upstreamStatus, body.getBytes(StandardCharsets.UTF_8), captured);
+    client = newClient(pki.caCertificate(), server.port());
+    var result =
+        client
+            .forward(HttpMethod.GET, SUBSCRIPTION_PATH, authorizationHeaders(), new byte[0])
+            .block(Duration.ofSeconds(8));
+    assertThat(result).isNotNull();
+    assertThat(result.status().value()).isEqualTo(publicStatus);
+    assertThat(result.body()).isEmpty();
+    assertThat(requests).hasValue(1);
+  }
+
+  private static Stream<Arguments> untrustedErrors() {
+    return Stream.of(
+        Arguments.of(503, "{broken", 503),
+        Arguments.of(503, "{\"code\":\"AUTH_UNAVAILABLE\",\"secret\":\"private\"}", 503),
+        Arguments.of(503, "{\"code\":\"arbitrary-data\"}", 503),
+        Arguments.of(409, "{\"code\":\"AUTH_UNAVAILABLE\"}", 409),
+        Arguments.of(503, "{\"code\":\"AUTH_UNAVAILABLE\",\"code\":\"AUTH_UNAVAILABLE\"}", 503),
+        Arguments.of(503, "{\"code\":\"AUTH_UNAVAILABLE\"} {}", 503),
+        Arguments.of(503, "{\"code\":42}", 503),
+        Arguments.of(503, "{\"code\":\"AUTH_UNAVAILABLE\"}" + " ".repeat(2048), 503),
+        Arguments.of(502, "{\"code\":\"FIRST_INVOICE_PROVIDER_UNCERTAIN\"}", 502),
+        Arguments.of(500, "{\"code\":\"AUTH_UNAVAILABLE\"}", 502));
   }
 
   private AtomicInteger startServer(

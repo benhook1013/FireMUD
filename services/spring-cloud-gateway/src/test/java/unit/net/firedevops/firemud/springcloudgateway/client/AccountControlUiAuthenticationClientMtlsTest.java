@@ -127,6 +127,26 @@ class AccountControlUiAuthenticationClientMtlsTest {
   }
 
   @Test
+  void mapsAuthenticatedInvalidArgumentWithoutForwardingGrpcErrorDetails() throws Exception {
+    var observed = new AtomicReference<Request>();
+    var peer = new AtomicReference<GrpcPeerIdentity>();
+    AtomicInteger handlers =
+        startServer("account-server", observed, peer, Status.Code.INVALID_ARGUMENT);
+    client = newClient(server.getPort());
+    client.init();
+
+    assertThatThrownBy(() -> client.login(request()))
+        .isInstanceOf(
+            AccountControlUiAuthenticationClient.AuthenticationInvalidRequestException.class)
+        .hasMessage("Account authentication request is invalid")
+        .hasNoCause();
+
+    assertThat(handlers).hasValue(1);
+    assertThat(observed.get()).isEqualTo(request());
+    assertThat(peer.get().uri()).isEqualTo(GATEWAY_URI);
+  }
+
+  @Test
   void mapsRetainedRequestInputConflictWithoutForwardingGrpcErrorDetails() throws Exception {
     var observed = new AtomicReference<Request>();
     var peer = new AtomicReference<GrpcPeerIdentity>();
@@ -148,7 +168,7 @@ class AccountControlUiAuthenticationClientMtlsTest {
       AtomicReference<Request> observed,
       AtomicReference<GrpcPeerIdentity> peer)
       throws Exception {
-    return startServer(serverIdentityAlias, observed, peer, false);
+    return startServer(serverIdentityAlias, observed, peer, (Status.Code) null);
   }
 
   private AtomicInteger startServer(
@@ -156,6 +176,16 @@ class AccountControlUiAuthenticationClientMtlsTest {
       AtomicReference<Request> observed,
       AtomicReference<GrpcPeerIdentity> peer,
       boolean conflict)
+      throws Exception {
+    return startServer(
+        serverIdentityAlias, observed, peer, conflict ? Status.Code.ALREADY_EXISTS : null);
+  }
+
+  private AtomicInteger startServer(
+      String serverIdentityAlias,
+      AtomicReference<Request> observed,
+      AtomicReference<GrpcPeerIdentity> peer,
+      Status.Code failureCode)
       throws Exception {
     var serverIdentity = pki.identity(serverIdentityAlias);
     AtomicInteger handlers = new AtomicInteger();
@@ -171,10 +201,10 @@ class AccountControlUiAuthenticationClientMtlsTest {
                 peer.set(GrpcPeerIdentity.current());
                 Request request = AccountControlUiAuthenticationGrpcCodec.parseRequest(wireRequest);
                 observed.set(request);
-                if (conflict) {
+                if (failureCode != null) {
                   responseObserver.onError(
-                      Status.ALREADY_EXISTS
-                          .withDescription("retained request input changed")
+                      Status.fromCode(failureCode)
+                          .withDescription("controlled upstream detail")
                           .asRuntimeException());
                   return;
                 }

@@ -329,8 +329,13 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
     try {
       await sessionStore.signIn(api, credentials);
     } catch (error) {
-      if (error instanceof AccountControlUiApiError && error.status === 503) {
-        setMessage('Account sign-in is temporarily unavailable. Try again.');
+      if (
+        error instanceof AccountControlUiApiError &&
+        [0, 429, 503].includes(error.status)
+      ) {
+        setMessage(
+          'Account sign-in is temporarily unavailable. Try again later.'
+        );
       } else if (
         error instanceof ControlUiSessionError &&
         error.code === 'SESSION_REPLACED'

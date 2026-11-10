@@ -2,8 +2,13 @@ package net.firedevops.firemud.springcloudgateway.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
@@ -18,8 +23,11 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.cloud.gateway.filter.ratelimit.RateLimiter;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.server.reactive.SslInfo;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilter;
@@ -98,6 +106,40 @@ class AccountCheckoutReceivingConfigurationTest {
   }
 
   @Test
+  void authenticatedAccountInvalidArgumentMapsToSafeBadRequest() {
+    var authenticationClient = mock(AccountControlUiAuthenticationClient.class);
+    var checkoutClient = mock(AccountCheckoutHttpClient.class);
+    var controller =
+        new AccountCheckoutGatewayController(
+            authenticationClient, checkoutClient, receivingProperties());
+    when(authenticationClient.login(any()))
+        .thenThrow(
+            new AccountControlUiAuthenticationClient.AuthenticationInvalidRequestException());
+    String secret = "controlled-primary-secret";
+    String body =
+        "{\"requestId\":\"927fb6a8-3975-4cba-8145-c2a8f4a9b0d1\","
+            + "\"callerContextId\":\"af64ad5f-e9ee-48a1-9b5d-6fb28845ff71\","
+            + "\"email\":\"owner@example.test\",\"secret\":\""
+            + secret
+            + "\"}";
+    var request =
+        MockServerHttpRequest.post(URI.create("https://localhost/api/account/auth/login"))
+            .sslInfo(mock(SslInfo.class))
+            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .body(body);
+
+    var response = controller.login(MockServerWebExchange.from(request)).block();
+
+    assertThat(response).isNotNull();
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+    assertThat(new String(response.getBody(), StandardCharsets.UTF_8))
+        .contains("\"status\":\"ERROR\"")
+        .doesNotContain(secret);
+    verify(authenticationClient).login(any());
+  }
+
+  @Test
   void receivingRateLimitRunsOnlyOnSelectedHandlersAndFailsClosedWhenDenied() {
     AtomicReference<String> resolvedKey = new AtomicReference<>();
     AtomicReference<String> routeId = new AtomicReference<>();
@@ -157,6 +199,13 @@ class AccountCheckoutReceivingConfigurationTest {
 
     assertThat(login.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     assertThat(login.getResponse().getHeaders().getCacheControl()).contains("no-store");
+  }
+
+  private static AccountCheckoutReceivingProperties receivingProperties() {
+    var properties = new AccountCheckoutReceivingProperties();
+    properties.setEnabled(true);
+    properties.setWorkloadNamespace("checkout-test");
+    return properties;
   }
 
   private static void addProperties(
