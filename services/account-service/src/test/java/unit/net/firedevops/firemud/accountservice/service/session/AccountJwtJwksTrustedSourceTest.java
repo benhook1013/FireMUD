@@ -16,6 +16,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -512,14 +513,79 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
-  void deniesInitialPrepublicationWhenConfigMapResourceVersionIsStale() {
+  void versionOnlyInitialReadbackRemainsUnavailableWithoutInstallingASourcePin() {
     Fixture fixture = new Fixture();
     when(fixture.configMapClient.observe())
         .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "43", fixture.snapshot.data()));
 
     assertThatThrownBy(fixture.source::sourceIdentity)
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Account trusted public JWKS source was rejected");
+        .isInstanceOf(SourceUnavailableException.class)
+        .hasNoCause();
+  }
+
+  @Test
+  void versionOnlyDriftReturnsNoBytesUntilALaterExactOwnerOperation() {
+    Fixture fixture = new Fixture();
+    SourceIdentity originalPin = fixture.source.sourceIdentity();
+    Map<String, String> metadataOnlyData = new LinkedHashMap<>(fixture.snapshot.data());
+    metadataOnlyData.put("operator.note", "changed without changing Account-owned bytes");
+    when(fixture.configMapClient.observe())
+        .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "43", metadataOnlyData));
+    var guard = mock(AccountPublicJwksReadWorkloadGuard.class);
+    when(guard.requireCaller())
+        .thenReturn(mock(AccountPublicJwksReadWorkloadGuard.ProtectedCaller.class));
+    var owner = new AccountPublicJwksReadService(fixture.source, guard);
+    for (int attempt = 0; attempt < 3; attempt++) {
+      assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
+          .isInstanceOf(SourceUnavailableException.class)
+          .hasNoCause();
+      assertThat(fixture.source.sourceIdentity()).isEqualTo(originalPin);
+    }
+    assertThat(fixture.publication.receipt().orElseThrow().observedResourceVersion())
+        .isEqualTo("42");
+    // Recovery advances through a different authorized operation and receipt. It neither rolls
+    // Kubernetes RV backward nor replaces the original operation's immutable receipt.
+    fixture.useCommittedState("44", "45");
+    var recovered =
+        AccountPublicJwksReadCodec.snapshot(owner.read(AccountPublicJwksReadCodec.request()));
+    assertThat(recovered.sourceIdentity()).isEqualTo(originalPin);
+    assertThat(recovered.jwksBytes())
+        .containsExactly(JWKS_1_AND_2.getBytes(StandardCharsets.UTF_8));
+    assertThat(fixture.nextPublication.receipt().orElseThrow().observedResourceVersion())
+        .isEqualTo("45");
+    assertThat(fixture.publication.receipt().orElseThrow().observedResourceVersion())
+        .isEqualTo("42");
+    verify(fixture.configMapClient, never()).publish(any(), anyMap());
+  }
+
+  @Test
+  void versionOnlyOutageClassificationNeverHidesUidOrOwnedByteTamper() {
+    Fixture original = new Fixture();
+    Map<String, String> changedJwks = new LinkedHashMap<>(original.snapshot.data());
+    changedJwks.put(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY, JWKS_1_AND_2);
+    Map<String, String> changedMarker = new LinkedHashMap<>(original.snapshot.data());
+    changedMarker.put(
+        AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
+        original.initialMarker + " ");
+    for (ConfigMapSnapshot tamper :
+        List.of(
+            new ConfigMapSnapshot(
+                "44444444-4444-4444-8444-444444444444", "43", original.snapshot.data()),
+            new ConfigMapSnapshot(CONFIG_MAP_UID, "43", changedJwks),
+            new ConfigMapSnapshot(CONFIG_MAP_UID, "43", changedMarker))) {
+      Fixture fixture = new Fixture();
+      fixture.source.sourceIdentity();
+      when(fixture.configMapClient.observe()).thenReturn(tamper);
+      var guard = mock(AccountPublicJwksReadWorkloadGuard.class);
+      when(guard.requireCaller())
+          .thenReturn(mock(AccountPublicJwksReadWorkloadGuard.ProtectedCaller.class));
+      var owner = new AccountPublicJwksReadService(fixture.source, guard);
+      assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
+          .isExactlyInstanceOf(
+              net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException
+                  .class)
+          .hasNoCause();
+    }
   }
 
   private static Binding binding(String clusterUid, String namespaceUid) {
@@ -694,6 +760,10 @@ class AccountJwtJwksTrustedSourceTest {
     }
 
     private void useCommittedState() {
+      useCommittedState("42", "43");
+    }
+
+    private void useCommittedState(String activeResourceVersion, String nextResourceVersion) {
       ActiveSigner active = new ActiveSigner("1", "key_1");
       DesiredState committedState =
           new DesiredState(
@@ -720,10 +790,11 @@ class AccountJwtJwksTrustedSourceTest {
       when(promotion.publicConfigMapUid()).thenReturn(CONFIG_MAP_UID);
       when(promotion.expectedPublicJwksJson()).thenReturn(JWKS_1);
       when(promotion.expectedActiveMarkerJson()).thenReturn(activeMarker);
-      when(promotion.activeJwksObservedResourceVersion()).thenReturn(Optional.of("42"));
+      when(promotion.activeJwksObservedResourceVersion())
+          .thenReturn(Optional.of(activeResourceVersion));
       when(promotion.activeJwksPublicDataDigest()).thenReturn(Optional.of(activeDigest));
       when(receipt.configMapUid()).thenReturn(CONFIG_MAP_UID);
-      when(receipt.observedResourceVersion()).thenReturn("42");
+      when(receipt.observedResourceVersion()).thenReturn(activeResourceVersion);
       when(receipt.publicDataDigest()).thenReturn(activeDigest);
       when(desiredStateRepository.readEnrollmentState(eq(accountBinding)))
           .thenReturn(Optional.of(committedState));
@@ -749,14 +820,21 @@ class AccountJwtJwksTrustedSourceTest {
       String nextMarker =
           marker(NEXT_OPERATION_ID, "2", "key_2", fingerprint(JWK_2), Optional.of(active));
       nextPublication =
-          publication(JWKS_1_AND_2, nextMarker, "42", "43", "2", "key_2", Optional.of(active));
+          publication(
+              JWKS_1_AND_2,
+              nextMarker,
+              activeResourceVersion,
+              nextResourceVersion,
+              "2",
+              "key_2",
+              Optional.of(active));
       when(publicationRepository.readCurrentPublication(eq(accountBinding), eq(trustFence)))
           .thenReturn(Optional.of(nextPublication));
       when(configMapClient.observe())
           .thenReturn(
               new ConfigMapSnapshot(
                   CONFIG_MAP_UID,
-                  "43",
+                  nextResourceVersion,
                   Map.of(
                       AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
                       JWKS_1_AND_2,
