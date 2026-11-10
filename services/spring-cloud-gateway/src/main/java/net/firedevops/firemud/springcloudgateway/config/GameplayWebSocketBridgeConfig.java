@@ -12,10 +12,14 @@ import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObse
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Condition;
+import org.springframework.context.annotation.ConditionContext;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.type.AnnotatedTypeMetadata;
+import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
@@ -26,6 +30,8 @@ import reactor.netty.http.client.HttpClient;
 
 @Configuration
 public class GameplayWebSocketBridgeConfig {
+  private static final String AUTHENTICATED_UPSTREAM_URL_PROPERTY =
+      "firemud.gateway.gameplay.bridge.authenticated-upstream-url";
 
   @Bean
   @Primary
@@ -53,9 +59,7 @@ public class GameplayWebSocketBridgeConfig {
   }
 
   @Bean(initMethod = "initialize", destroyMethod = "close")
-  @ConditionalOnProperty(
-      prefix = "firemud.gateway.gameplay.bridge",
-      name = "authenticated-upstream-url")
+  @Conditional(AuthenticatedUpstreamConfigured.class)
   AuthenticatedGameplayWebSocketClient authenticatedGameplayWebSocketClient(
       @Value("${firemud.grpc.workload-namespace:}") String namespace,
       @Value("${firemud.gateway.gameplay.bridge.authenticated-upstream-url}") String upstream,
@@ -94,5 +98,13 @@ public class GameplayWebSocketBridgeConfig {
   @ConditionalOnMissingBean(WebSocketHandlerAdapter.class)
   WebSocketHandlerAdapter gameplayWebSocketHandlerAdapter() {
     return new WebSocketHandlerAdapter();
+  }
+
+  static final class AuthenticatedUpstreamConfigured implements Condition {
+    @Override
+    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+      String upstream = context.getEnvironment().getProperty(AUTHENTICATED_UPSTREAM_URL_PROPERTY);
+      return StringUtils.hasText(upstream) && !"false".equalsIgnoreCase(upstream.trim());
+    }
   }
 }

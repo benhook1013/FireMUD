@@ -118,17 +118,17 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
             .equals(downstream.getHandshakeInfo().getHeaders().getFirst(CONNECTION_MODE_HEADER))
         && origin == null
         && authenticatedClient != null) {
-      activeBridges.remove(state);
-      return downstream.close(new CloseStatus(1008, "authenticated_tcp_origin_required"));
+      return closeDownstream(state, gameplayWebSocketObservability.authenticatedTcpOriginRequired())
+          .doFinally(signal -> activeBridges.remove(state));
     }
     if (origin != null && authenticatedClient == null) {
-      activeBridges.remove(state);
       // This configuration cannot change during the handler's lifetime; do not log every retry.
       if (missingAuthenticatedClientWarningLogged.compareAndSet(false, true)) {
         LOG.warn(
             "Verified TCP Proxy gameplay origin rejected: no authenticated gameplay upstream client is configured; set firemud.gateway.gameplay.bridge.authenticated-upstream-url (logged once per handler)");
       }
-      return downstream.close(BACKEND_UNAVAILABLE);
+      return closeDownstream(state, gameplayWebSocketObservability.classify(BACKEND_UNAVAILABLE))
+          .doFinally(signal -> activeBridges.remove(state));
     }
     HttpHeaders upstreamHeaders = buildUpstreamHeaders(downstream);
     Function<WebSocketHandler, Mono<Void>> upstreamConnector;
