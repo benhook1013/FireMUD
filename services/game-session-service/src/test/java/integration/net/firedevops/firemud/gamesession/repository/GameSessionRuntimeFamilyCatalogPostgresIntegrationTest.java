@@ -1378,6 +1378,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   @Test
   void genuineV1063ToV1064CompletionRepairRetainsEpochSevenAndSnapshotsBeforeSealingEpochEight() {
     try (Fixture f = fixture("1063")) {
+      f.populatePredecessor();
+      assertThat(f.count("game_instances")).isGreaterThan(0L);
+      assertThat(f.count("gameplay_command")).isGreaterThan(0L);
       var original = f.owner().capture(request());
       assertThat(original.catalog().catalogEpoch()).isEqualTo(7);
       Map<String, String> before = f.rows(f.tables());
@@ -1400,6 +1403,20 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       + " s ORDER BY read_request_id")
               .getValues(0, String.class);
       var history = f.historyRows(false);
+      String decisionGuardBefore =
+          f.dsl
+              .fetchSingle(
+                  "SELECT pg_get_functiondef((quote_ident(?)||"
+                      + "'.require_running_runtime_for_lease_bound_binding_decision()')::regprocedure)",
+                  f.schema)
+              .get(0, String.class);
+      String oldComparison = "completion.completed_running_row_version = runtime.row_version";
+      String newComparison = "completion.completed_running_row_version <= runtime.row_version";
+      assertThat(
+              (decisionGuardBefore.length()
+                      - decisionGuardBefore.replace(oldComparison, "").length())
+                  / oldComparison.length())
+          .isEqualTo(1);
       var routines = f.routines();
       routines.remove("gs_runtime_family_catalog_installed()");
       routines.remove("gs_runtime_family_catalog_bytes(p_epoch bigint)");
@@ -1447,16 +1464,15 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                           + " WHERE catalog_epoch=8")
                   .get(0, Boolean.class))
           .isTrue();
-      String decisionGuard =
+      String decisionGuardAfter =
           f.dsl
               .fetchSingle(
                   "SELECT pg_get_functiondef((quote_ident(?)||"
                       + "'.require_running_runtime_for_lease_bound_binding_decision()')::regprocedure)",
                   f.schema)
               .get(0, String.class);
-      assertThat(decisionGuard)
-          .contains("completion.completed_running_row_version <= runtime.row_version")
-          .doesNotContain("completion.completed_running_row_version = runtime.row_version");
+      assertThat(decisionGuardAfter)
+          .isEqualTo(decisionGuardBefore.replace(oldComparison, newComparison));
       var installed =
           f.dsl.fetchSingle(
               "SELECT type,script,success FROM " + f.history + " WHERE version='1064'");
