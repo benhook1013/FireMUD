@@ -2661,6 +2661,34 @@ class PreviewArtifactGatewayContractTest(unittest.TestCase):
                 [self._gateway_document()], "pr-42"
             )
 
+    def test_gateway_rejects_unsafe_gameplay_mount(self):
+        for option, value in (("readOnly", False), ("subPath", "tls.key")):
+            with self.subTest(option=option):
+                document = self._gateway_document()
+                mounts = document["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+                gameplay_mount = next(
+                    mount for mount in mounts if mount["name"] == "gameplay-client-tls"
+                )
+                gameplay_mount[option] = value
+                with (
+                    patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}),
+                    self.assertRaisesRegex(ValueError, "unsafe gameplay-client-tls mount"),
+                ):
+                    self.validator.validate_service_consumers([document], "pr-42")
+
+    def test_gateway_rejects_extra_gameplay_client_tls_item(self):
+        document = self._gateway_document()
+        volumes = document["spec"]["template"]["spec"]["volumes"]
+        gameplay_volume = next(
+            volume for volume in volumes if volume["name"] == "gameplay-client-tls"
+        )
+        gameplay_volume["secret"]["items"].append({"key": "ca.crt", "path": "ca.crt"})
+        with (
+            patch.object(self.validator, "SERVICE_IMAGES", {"spring-cloud-gateway"}),
+            self.assertRaisesRegex(ValueError, "unsafe grpc-tls projection"),
+        ):
+            self.validator.validate_service_consumers([document], "pr-42")
+
     def test_gateway_rejects_redirect_and_jvm_environment_injection(self):
         for injected in (
             {
