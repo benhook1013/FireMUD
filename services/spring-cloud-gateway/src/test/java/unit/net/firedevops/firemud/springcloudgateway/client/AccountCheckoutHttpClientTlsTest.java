@@ -89,6 +89,79 @@ class AccountCheckoutHttpClientTlsTest {
   }
 
   @Test
+  void refusesMissingOrInvalidOwnerBearerAsUnauthorizedWithoutContactingAccount() throws Exception {
+    var captured = new AtomicReference<CapturedRequest>();
+    AtomicInteger requests = startServer(200, JSON_RESPONSE, captured);
+    client = newClient(pki.caCertificate(), server.port());
+    for (String authorization :
+        new String[] {
+          null,
+          "",
+          "Basic caller",
+          "Bearer ",
+          "Bearer " + "x".repeat(16_400),
+          "Bearer caller\r\ninjected"
+        }) {
+      HttpHeaders headers = new HttpHeaders();
+      if (authorization != null) headers.set(HttpHeaders.AUTHORIZATION, authorization);
+      var response =
+          client
+              .forward(HttpMethod.GET, SUBSCRIPTION_PATH, headers, new byte[0])
+              .block(Duration.ofSeconds(8));
+      assertThat(response).isNotNull();
+      assertThat(response.status()).isEqualTo(HttpStatus.UNAUTHORIZED);
+      assertThat(response.body()).isEmpty();
+    }
+    HttpHeaders duplicateAuthorization = authorizationHeaders();
+    duplicateAuthorization.add(HttpHeaders.AUTHORIZATION, "Bearer second-caller");
+    var duplicateResponse =
+        client
+            .forward(HttpMethod.GET, SUBSCRIPTION_PATH, duplicateAuthorization, new byte[0])
+            .block(Duration.ofSeconds(8));
+    assertThat(duplicateResponse).isNotNull();
+    assertThat(duplicateResponse.status()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    assertThat(duplicateResponse.body()).isEmpty();
+    assertThat(requests).hasValue(0);
+    assertThat(captured.get()).isNull();
+  }
+
+  @Test
+  void keepsMalformedBodyAndWebhookSignatureAsBadRequestWithoutContactingAccount()
+      throws Exception {
+    var captured = new AtomicReference<CapturedRequest>();
+    AtomicInteger requests = startServer(200, JSON_RESPONSE, captured);
+    client = newClient(pki.caCertificate(), server.port());
+    var bodyResponse =
+        client
+            .forward(HttpMethod.GET, SUBSCRIPTION_PATH, authorizationHeaders(), new byte[] {1})
+            .block(Duration.ofSeconds(8));
+    assertThat(bodyResponse).isNotNull();
+    assertThat(bodyResponse.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+    assertThat(bodyResponse.body()).isEmpty();
+
+    HttpHeaders webhookHeaders = new HttpHeaders();
+    webhookHeaders.setContentType(MediaType.APPLICATION_JSON);
+    byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
+    var missingSignature =
+        client
+            .forward(HttpMethod.POST, WEBHOOK_PATH, webhookHeaders, payload)
+            .block(Duration.ofSeconds(8));
+    assertThat(missingSignature).isNotNull();
+    assertThat(missingSignature.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+    assertThat(missingSignature.body()).isEmpty();
+    webhookHeaders.set("Stripe-Signature", "signature\r\ninjected");
+    var malformedSignature =
+        client
+            .forward(HttpMethod.POST, WEBHOOK_PATH, webhookHeaders, payload)
+            .block(Duration.ofSeconds(8));
+    assertThat(malformedSignature).isNotNull();
+    assertThat(malformedSignature.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+    assertThat(malformedSignature.body()).isEmpty();
+    assertThat(requests).hasValue(0);
+    assertThat(captured.get()).isNull();
+  }
+
+  @Test
   void preservesWebhookBytesAndForwardsOnlyContentTypeAndStripeSignature() throws Exception {
     var captured = new AtomicReference<CapturedRequest>();
     AtomicInteger requests = startServer(202, JSON_RESPONSE, captured);

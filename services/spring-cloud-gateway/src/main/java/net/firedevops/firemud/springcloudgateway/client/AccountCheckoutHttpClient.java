@@ -121,8 +121,10 @@ public final class AccountCheckoutHttpClient {
     }
     String authorization = webhook ? null : oneHeader(inboundHeaders, HttpHeaders.AUTHORIZATION);
     String stripeSignature = webhook ? oneHeader(inboundHeaders, "Stripe-Signature") : null;
-    if ((!webhook && !validAuthorization(authorization))
-        || (webhook && !validStripeSignature(stripeSignature))) {
+    if (!webhook && !validAuthorization(authorization)) {
+      return Mono.just(ForwardedResponse.unauthorized());
+    }
+    if (webhook && !validStripeSignature(stripeSignature)) {
       return Mono.just(ForwardedResponse.badRequest());
     }
 
@@ -235,6 +237,11 @@ public final class AccountCheckoutHttpClient {
     @Override
     public String toString() {
       return "CheckoutUpstreamResponse[status=" + status.value() + ", body=redacted]";
+    }
+
+    private static ForwardedResponse unauthorized() {
+      return new ForwardedResponse(
+          HttpStatus.UNAUTHORIZED, MediaType.APPLICATION_JSON_VALUE, new byte[0]);
     }
 
     private static ForwardedResponse badRequest() {
