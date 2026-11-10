@@ -192,6 +192,57 @@ class GameplayWebSocketBridgeHandlerTest {
     verify(downstream).close(new CloseStatus(1013, "backend_unavailable"));
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void downstreamClosureDuringReconnectBackoffSkipsNextUpstreamExecution(
+      boolean failAfterTransportConnect) {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    WebSocketSession upstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    Sinks.Empty<Void> downstreamClosed = Sinks.empty();
+
+    when(downstream.getId()).thenReturn("reconnect-backoff-downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    when(handshake.getHeaders()).thenReturn(new HttpHeaders());
+    when(downstream.send(any())).thenReturn(Mono.empty());
+    when(downstream.receive())
+        .thenReturn(downstreamClosed.asMono().thenMany(Flux.<WebSocketMessage>empty()));
+    when(upstream.send(any())).thenReturn(Mono.never());
+    when(upstream.receive()).thenReturn(Flux.empty());
+    when(upstream.closeStatus()).thenReturn(Mono.empty());
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenAnswer(
+            invocation -> {
+              if (!failAfterTransportConnect) {
+                return Mono.error(new IllegalStateException("connection failed"));
+              }
+              WebSocketHandler upstreamHandler = invocation.getArgument(2);
+              return upstreamHandler.handle(upstream);
+            });
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 1, 1_000L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+
+    StepVerifier.withVirtualTime(() -> handler.handle(downstream))
+        .then(
+            () -> {
+              verify(client)
+                  .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+              downstreamClosed.tryEmitEmpty();
+            })
+        .thenAwait(Duration.ofSeconds(2))
+        .expectComplete()
+        .verify(Duration.ofSeconds(5));
+
+    verify(client).execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+  }
+
   @Test
   void verifiedTcpOriginSelectsAuthenticatedClientAndRelaysOnlyVerifiedOrigin() {
     ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
