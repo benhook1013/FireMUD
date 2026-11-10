@@ -157,6 +157,42 @@ class GameplayWebSocketBridgeHandlerTest {
   }
 
   @Test
+  void ordinaryUpstreamRetryKeepsItsClientWhenUrisMatchAuthenticatedUpstream() {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    AuthenticatedGameplayWebSocketClient authenticated =
+        mock(AuthenticatedGameplayWebSocketClient.class);
+    URI upstream = URI.create("wss://game-session-service:8444/ws/game/tcp");
+    when(authenticated.upstream()).thenReturn(upstream);
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenReturn(Mono.error(new IllegalStateException("connection failed")));
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    when(downstream.getId()).thenReturn("ordinary-retry-downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    when(handshake.getHeaders()).thenReturn(new HttpHeaders());
+    Sinks.Empty<Void> closed = Sinks.empty();
+    when(downstream.send(any())).thenReturn(Mono.empty());
+    when(downstream.receive()).thenReturn(closed.asMono().thenMany(Flux.empty()));
+    when(downstream.close(any(CloseStatus.class)))
+        .thenReturn(Mono.fromRunnable(closed::tryEmitEmpty));
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(upstream.toString(), 1, 0L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            GameplayWebSocketObservability.disabled(),
+            authenticated);
+
+    StepVerifier.create(handler.handle(downstream)).expectComplete().verify(Duration.ofSeconds(5));
+
+    verify(client, times(2))
+        .execute(eq(upstream), any(HttpHeaders.class), any(WebSocketHandler.class));
+    verify(authenticated, never()).execute(any(), any());
+    verify(downstream).close(new CloseStatus(1013, "backend_unavailable"));
+  }
+
+  @Test
   void verifiedTcpOriginSelectsAuthenticatedClientAndRelaysOnlyVerifiedOrigin() {
     ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
     AuthenticatedGameplayWebSocketClient authenticated =

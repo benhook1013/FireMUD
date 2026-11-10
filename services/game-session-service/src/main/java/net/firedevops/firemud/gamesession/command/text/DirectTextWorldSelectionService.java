@@ -120,7 +120,12 @@ public final class DirectTextWorldSelectionService {
     return Optional.of(new Snapshot(choices, original.fingerprint(), createdAt, expiresAt));
   }
 
-  /** Resolves only the retained vector, then revalidates the complete selected owner record. */
+  /**
+   * Resolves only the retained vector, then revalidates the complete selected owner record.
+   *
+   * @throws UnknownWorldSelectorException when a nonblank selector does not uniquely match a choice
+   *     in a live menu owned by this service
+   */
   public Optional<CanonicalPlayableTarget> resolve(SelectionSnapshot retained, String selector) {
     if (retained == null
         || retained.owner != this
@@ -132,7 +137,7 @@ public final class DirectTextWorldSelectionService {
     Snapshot snapshot = retained.snapshot;
     Optional<Choice> selected = select(snapshot.choices(), selector);
     if (selected.isEmpty()) {
-      return Optional.empty();
+      throw new UnknownWorldSelectorException();
     }
     CanonicalPlayableTarget expected = selected.orElseThrow().target();
     CanonicalPlayableTarget current;
@@ -276,6 +281,15 @@ public final class DirectTextWorldSelectionService {
 
     private String selector() {
       return target.tenantSlug() + "/" + target.worldSlug();
+    }
+  }
+
+  /** A nonblank selector did not uniquely select a choice in this exact live menu. */
+  public static final class UnknownWorldSelectorException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public UnknownWorldSelectorException() {
+      super("Unknown or ambiguous world selector");
     }
   }
 

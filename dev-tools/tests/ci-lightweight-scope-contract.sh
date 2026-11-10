@@ -659,7 +659,7 @@ require_equal(
 require_equal(
     runtime_jar_step,
     ("run",),
-    "./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
+    "bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
     "ci workflow",
 )
 
@@ -1001,6 +1001,7 @@ async function runFor(embedded, options = {}) {
     },
   };
   const writes = [];
+  const snapshotWaits = [];
   const env = {
     CI_RUN_ID: String(runId),
     CI_RUN_ATTEMPT: String(runAttempt),
@@ -1022,12 +1023,13 @@ async function runFor(embedded, options = {}) {
       env,
       module: options.module || embedded.module,
       fileSystem,
+      wait: async milliseconds => { snapshotWaits.push([milliseconds, artifactRequestCount]); },
     });
     assert.equal(writes.length, 1);
     assert.equal(writes[0][0], env.CI_PROVENANCE_PATH);
-    return { ok: true, calls, writes, provenance: JSON.parse(writes[0][1]) };
+    return { ok: true, calls, writes, snapshotWaits, provenance: JSON.parse(writes[0][1]) };
   } catch (error) {
-    return { ok: false, calls, writes, error: error.message };
+    return { ok: false, calls, writes, snapshotWaits, error: error.message };
   }
 }
 
@@ -1054,6 +1056,7 @@ async function runFor(embedded, options = {}) {
         "artifacts", "artifacts", "artifacts", "artifacts",
       ];
       assert.deepEqual(result.calls.map(([kind]) => kind), expectedKinds);
+      assert.deepEqual(result.snapshotWaits, [[1000, 2]]);
       assert.deepEqual(
         result.calls.filter(([kind]) => kind === "jobs").map(([, request]) => request.page),
         Array.from({ length: attempts }, () => [1, 2]).flat(),
@@ -1148,6 +1151,7 @@ async function runFor(embedded, options = {}) {
       incompleteArtifacts.calls.map(([kind]) => kind),
       ["run", "jobs", "jobs", ...Array(8).fill("artifacts")],
     );
+    assert.deepEqual(incompleteArtifacts.snapshotWaits, [[1000, 2], [1000, 4], [1000, 6]]);
     assert.equal(incompleteArtifacts.writes.length, 0);
 
     const uploadedArtifact = {
@@ -1219,6 +1223,7 @@ async function runFor(embedded, options = {}) {
       [1, 2, 1, 2, 1, 2],
     );
     assert.equal(changesBetweenSnapshots.provenance.artifacts.items[0].size_in_bytes, 2048);
+    assert.deepEqual(changesBetweenSnapshots.snapshotWaits, [[1000, 2], [1000, 4]]);
 
     const changedIdentityRows = artifactRows.map(artifact => ({ ...artifact }));
     changedIdentityRows[0] = { ...changedIdentityRows[0], id: 9000 };
