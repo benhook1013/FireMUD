@@ -23,11 +23,23 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
   private final String expectedPeer;
   private final String expectedClient;
   private final URI upstream;
+  private final Object publicationLock = new Object();
+  private final Runnable beforePublish;
   private volatile ReactorNettyWebSocketClient client;
   private TlsCertificateWatcher watcher;
+  private boolean closed;
 
   public AuthenticatedGameplayWebSocketClient(
       CommonGrpcClientProperties properties, String namespace, String upstreamUrl) {
+    this(properties, namespace, upstreamUrl, () -> {});
+  }
+
+  AuthenticatedGameplayWebSocketClient(
+      CommonGrpcClientProperties properties,
+      String namespace,
+      String upstreamUrl,
+      Runnable beforePublish) {
+    this.beforePublish = beforePublish;
     tls = properties.copy();
     FileBackedGrpcMtlsPolicy.require(
         tls,
@@ -50,7 +62,8 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
 
   public void initialize() throws IOException {
     reload();
-    watcher =
+    if (isClosed()) return;
+    TlsCertificateWatcher newWatcher =
         TlsCertificateWatcher.createAndStart(
             List.of(
                 Path.of(tls.getCertChain()),
@@ -64,9 +77,16 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
                     "Authenticated gameplay TLS reload failed", failure);
               }
             });
+    boolean discardWatcher;
+    synchronized (publicationLock) {
+      discardWatcher = closed;
+      if (!discardWatcher) watcher = newWatcher;
+    }
+    if (discardWatcher) newWatcher.close();
   }
 
-  private void reload() throws IOException {
+  void reload() throws IOException {
+    if (isClosed()) return;
     try (var input = java.nio.file.Files.newInputStream(Path.of(tls.getCertChain()))) {
       var certificate =
           (java.security.cert.X509Certificate)
@@ -107,7 +127,17 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
                           .isEmpty())
                     throw new IllegalStateException("Authenticated Game Session peer required");
                 });
-    client = new ReactorNettyWebSocketClient(http);
+    ReactorNettyWebSocketClient newClient = new ReactorNettyWebSocketClient(http);
+    beforePublish.run();
+    synchronized (publicationLock) {
+      if (!closed) client = newClient;
+    }
+  }
+
+  private boolean isClosed() {
+    synchronized (publicationLock) {
+      return closed;
+    }
   }
 
   public Mono<Void> execute(HttpHeaders headers, WebSocketHandler handler) {
@@ -128,7 +158,14 @@ public final class AuthenticatedGameplayWebSocketClient implements AutoCloseable
 
   @Override
   public void close() throws IOException {
-    if (watcher != null) watcher.close();
-    client = null;
+    TlsCertificateWatcher currentWatcher;
+    synchronized (publicationLock) {
+      if (closed) return;
+      closed = true;
+      client = null;
+      currentWatcher = watcher;
+      watcher = null;
+    }
+    if (currentWatcher != null) currentWatcher.close();
   }
 }

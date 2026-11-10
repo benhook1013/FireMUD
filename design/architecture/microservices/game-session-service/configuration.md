@@ -14,6 +14,8 @@ Game Session follows the configuration scheme from [Environment Variables & Secr
 
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`. The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT`.
 
+The authenticated TCP gameplay receiver uses a separate internal TLS listener, disabled by default and distinct from the configured ordinary HTTP port. [Security Architecture](../../system-architecture-security.md#authenticated-tcp-gateway-to-game-session-receiving) owns the mTLS trust and custody contract. The [environment and secrets catalog](../../infrastructure/environment-and-secrets-catalog.md#authenticated-tcp-gameplay-bridge) records the deployed bindings.
+
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `GAME_TICK_DURATION_MS` | Tick cadence (`tick_interval_ms`): target interval between ticks for a region | `1000` |
@@ -25,6 +27,8 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for World Management Service | `world-management-service:6565` |
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED` | Enables the separate mTLS listener for authenticated TCP gameplay receiving. | `false` (hosted Helm: `true`) |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT` | Port for the separate listener; must differ from the ordinary HTTP port. | `8444` (hosted Helm: `8444`) |
 
 ## FireMUD Settings Domains
 
@@ -102,5 +106,7 @@ This Redis source opt-in supplies neither a steady-state asymmetric verifier nor
 ### Steady-state Account public-JWKS
 
 `firemud.game-session.account-public-jwks.enabled=true` explicitly composes the private Account read client, protected public projection source, `AccountPublicJwksCache` and `AccountAsymmetricJwtVerifier`. It is disabled by default and independent of the initial-context Redis configuration. `maximum-cache-age-millis` under that prefix is explicit and bounded to 2,000 through 300,000 milliseconds. A lifecycle-owned fixed-delay task refreshes at half that age and stops with the context; outages never renew the cached snapshot's age. Detected invalid source or key evidence refuses previously cached keys until explicit requalification. A terminal scheduled refresh refusal logs `SOURCE_REJECTED` once at ERROR for that cache lifecycle; temporary unavailability escaping the finite fresh-cache allowance logs `SOURCE_UNAVAILABLE` at WARN and remains retryable. Neither diagnostic includes source evidence or exception details.
+
+Enabling this consumer couples Game Session startup to Account availability: both initial source qualification and the initial cache refresh must succeed before the context starts. Each successful source load, including every scheduled refresh, performs two sequential Account reads around protected projection checks. Each Account read checks current owner/publication state and performs at least one Kubernetes principal review, two namespace reads and a ConfigMap read. Size refresh intervals and deployment rollout concurrency for that Account and Kubernetes API load. Cache refreshes share one in-flight source load without holding the cache monitor during I/O; still-fresh known-key lookups and hard-cutover invalidation remain available while it runs, and stale lookups wait for that load rather than using expired keys.
 
 The client requires existing non-plaintext workload certificate/key/CA settings, a valid `firemud.grpc.workload-namespace`, and the Account endpoint from ordinary service discovery. The protected public projection remains fixed at `/var/run/secrets/firemud/jwks/jwks.json`, with the [infrastructure public projection modes and delivery rules](../../infrastructure/environment-and-secrets-overview.md#authentication--jwt). Reads use a finite deadline and response-message limit, attach no bearer token, and verify the exact Account workload URI. Missing or contradictory custody fails closed; the mounted path is not provenance by itself. The [API consequence](./api-contracts.md#steady-state-account-public-jwks-provenance) and [implementation tracker](../../../project-management/implementation-tracking/player-access-and-session.md#initial-private-gameplay-login-issuance-source-intake) distinguish source composition from deployed trust, external maintenance qualification and gameplay activation. No deployment enables this feature in this slice.

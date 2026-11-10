@@ -30,6 +30,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
@@ -776,9 +777,7 @@ public class ServedEnvironmentProbe {
     byte[] nonceBytes = new byte[16];
     WEBSOCKET_NONCE_SOURCE.nextBytes(nonceBytes);
     String nonce = Base64.getEncoder().encodeToString(nonceBytes);
-    byte[] connectionIdBytes = new byte[16];
-    WEBSOCKET_NONCE_SOURCE.nextBytes(connectionIdBytes);
-    String connectionId = Base64.getUrlEncoder().withoutPadding().encodeToString(connectionIdBytes);
+    String connectionId = UUID.randomUUID().toString();
     String expectedAccept = websocketAccept(nonce);
     OutputStream output = socket.getOutputStream();
     output.write(

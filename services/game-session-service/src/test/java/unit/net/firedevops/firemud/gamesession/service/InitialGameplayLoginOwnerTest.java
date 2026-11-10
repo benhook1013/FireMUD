@@ -146,7 +146,7 @@ class InitialGameplayLoginOwnerTest {
               return "non-admitting";
             });
     assertThat(value).isEqualTo("non-admitting");
-    verify(success.result()).close();
+    assertThat(success.result().compactJwtBytes()).isNotEmpty();
     verify(success.fixture().cleanup, never()).abandonAndRetire(any());
     org.mockito.Mockito.clearInvocations(success.result());
     outcome.close();
