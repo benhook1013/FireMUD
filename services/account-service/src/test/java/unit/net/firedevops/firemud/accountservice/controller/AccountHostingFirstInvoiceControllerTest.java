@@ -8,9 +8,16 @@ import static org.mockito.Mockito.when;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
+import java.util.stream.Stream;
 import net.firedevops.firemud.accountservice.service.session.AccountHostingFirstInvoicePaymentService;
+import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 class AccountHostingFirstInvoiceControllerTest {
   @Test
@@ -26,6 +33,81 @@ class AccountHostingFirstInvoiceControllerTest {
     assertThatThrownBy(() -> controller.read(transport, "Bearer ", UUID.randomUUID()))
         .isInstanceOf(ResponseStatusException.class);
     verifyNoInteractions(service);
+  }
+
+  @ParameterizedTest
+  @MethodSource("ownerFailures")
+  void exactControllerExceptionMappingPreservesStatusAndNoStore(
+      RuntimeException failure, int expectedStatus, String expectedCode) throws Exception {
+    var service = mock(AccountHostingFirstInvoicePaymentService.class);
+    UUID subscription = UUID.randomUUID();
+    when(service.describeOwner("controlled-bearer", subscription)).thenThrow(failure);
+    var mvc = registeredController(service);
+
+    mvc.perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                    "/billing/hosting/subscriptions/" + subscription + "/first-invoice")
+                .secure(true)
+                .header("Authorization", "Bearer controlled-bearer"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status()
+                .is(expectedStatus))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .string("Cache-Control", "no-store"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code")
+                .value(expectedCode));
+  }
+
+  static Stream<Arguments> ownerFailures() {
+    return Stream.of(
+        Arguments.of(
+            new AccountAsymmetricJwtVerifier.VerificationException(),
+            401,
+            "FIRST_INVOICE_AUTHENTICATION_REQUIRED"),
+        Arguments.of(
+            new IllegalArgumentException("private request detail"),
+            400,
+            "FIRST_INVOICE_INVALID_REQUEST"),
+        Arguments.of(
+            new IllegalStateException("private evidence detail"),
+            409,
+            "FIRST_INVOICE_EVIDENCE_REFUSED"));
+  }
+
+  @Test
+  void typedSourceUnavailableRemainsAvailableToTheOwningAvailabilityHandler() throws Exception {
+    var service = mock(AccountHostingFirstInvoicePaymentService.class);
+    UUID subscription = UUID.randomUUID();
+    when(service.describeOwner("controlled-bearer", subscription))
+        .thenThrow(new AccountAsymmetricJwtVerifier.VerificationUnavailableException());
+    var mvc = registeredController(service);
+
+    assertThatThrownBy(
+            () ->
+                mvc.perform(
+                    org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                            "/billing/hosting/subscriptions/" + subscription + "/first-invoice")
+                        .secure(true)
+                        .header("Authorization", "Bearer controlled-bearer")))
+        .isInstanceOf(jakarta.servlet.ServletException.class)
+        .hasCauseInstanceOf(AccountAsymmetricJwtVerifier.VerificationUnavailableException.class);
+  }
+
+  private static org.springframework.test.web.servlet.MockMvc registeredController(
+      AccountHostingFirstInvoicePaymentService service) {
+    // Register only this prepared controller in the test; production activation remains held.
+    return MockMvcBuilders.standaloneSetup(new AccountHostingFirstInvoiceController(service))
+        .setCustomHandlerMapping(
+            () ->
+                new RequestMappingHandlerMapping() {
+                  @Override
+                  protected boolean isHandler(Class<?> beanType) {
+                    return AccountHostingFirstInvoiceController.class.equals(beanType);
+                  }
+                })
+        .build();
   }
 
   @Test

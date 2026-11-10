@@ -352,10 +352,20 @@ export default function HostingFirstInvoiceCheckout({
                 )}
                 {readOnlyRecovery ? (
                   <Alert severity="warning">
-                    Account retained an earlier confirmation. Only status
-                    recovery is automatic. Explicit fresh authorization can
-                    resume this same invoice, but cannot resend an uncertain
-                    payment command.
+                    {invoice.confirmationRequestId ? (
+                      <>
+                        Account retained an earlier confirmation. Only status
+                        recovery is automatic. Explicit fresh authorization can
+                        resume this same invoice, but cannot resend an uncertain
+                        payment command.
+                      </>
+                    ) : (
+                      <>
+                        Your earlier confirmation is unresolved. Check Account
+                        status for this same payment. Do not start another
+                        payment. Authorization cannot safely be renewed yet.
+                      </>
+                    )}
                   </Alert>
                 ) : (
                   <>

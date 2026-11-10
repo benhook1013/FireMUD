@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.service.session.AccountHostingFirstInvoicePaymentService;
+import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -104,6 +105,13 @@ public final class AccountHostingFirstInvoiceController {
   public AccountHostingFirstInvoicePaymentService.Completion signedCompletion(
       String payload, String signature) throws SignatureVerificationException, StripeException {
     return payments.completeSigned(payload, signature);
+  }
+
+  @ExceptionHandler(AccountAsymmetricJwtVerifier.VerificationException.class)
+  public ResponseEntity<ErrorResponse> authenticationRefused() {
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+        .cacheControl(CacheControl.noStore())
+        .body(new ErrorResponse("FIRST_INVOICE_AUTHENTICATION_REQUIRED"));
   }
 
   @ExceptionHandler(StripeException.class)
