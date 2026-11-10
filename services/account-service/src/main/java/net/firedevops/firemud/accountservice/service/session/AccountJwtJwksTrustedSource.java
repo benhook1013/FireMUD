@@ -709,7 +709,6 @@ public final class AccountJwtJwksTrustedSource
     String jwks = live.data().get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY);
     String marker = live.data().get(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY);
     if (!projection.configMapUid().equals(live.uid())
-        || !projection.resourceVersion().equals(live.resourceVersion())
         || !projection.jwksJson().equals(jwks)
         || !projection.markerJson().equals(marker)
         || marker == null
@@ -717,6 +716,11 @@ public final class AccountJwtJwksTrustedSource
         || !AccountJwtJwksPublicationRepository.publicDataDigest(jwks, marker)
             .equals(projection.publicDataDigest())) {
       throw rejected();
+    }
+    if (!projection.resourceVersion().equals(live.resourceVersion())) {
+      // Exact owned bytes and UID do not authorize serving a different, unreceipted version.
+      // Preserve bounded outage handling until a later exact owner-receipted publication.
+      throw unavailable();
     }
   }
 
