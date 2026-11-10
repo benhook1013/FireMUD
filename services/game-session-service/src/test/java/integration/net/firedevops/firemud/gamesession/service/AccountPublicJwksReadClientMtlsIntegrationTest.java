@@ -48,6 +48,7 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksS
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 import net.firedevops.firemud.gamesession.service.AccountPublicJwksReadClient;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.BasicConstraints;
@@ -81,6 +82,8 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
   private static List<Identity> invalidAccounts;
   private Server server;
   private final AtomicReference<Status> upstreamFailure = new AtomicReference<>();
+  private final AtomicReference<GetCurrentAccountPublicJwksResponse> upstreamReply =
+      new AtomicReference<>();
   private final AtomicReference<String> clientUri = new AtomicReference<>();
   private final AtomicReference<String> authorization = new AtomicReference<>();
   private final AtomicReference<GetCurrentAccountPublicJwksRequest> request =
@@ -122,9 +125,12 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
   @Test
   void actualClientReadsOnlyExactAuthenticatedAccountWithNoBearer() throws Exception {
     start(accountIdentity, response(), false, false);
-    PublicJwksSnapshot result = client().readCurrent();
+    ReadResult result = client().readCurrent();
     assertThat(result.sourceIdentity()).isEqualTo(snapshot().sourceIdentity());
     assertThat(result.jwksBytes()).containsExactly(PUBLIC_BYTES);
+    assertThat(result.preparedDeny()).isFalse();
+    assertThat(result.committedRecoveryEligible()).isFalse();
+    assertThat(request.get().getSchemaVersion()).isEqualTo(2);
     assertThat(clientUri.get()).isEqualTo(SESSION_URI);
     assertThat(authorization.get()).isNull();
     assertThat(request.get()).isEqualTo(AccountPublicJwksReadCodec.request());
@@ -136,9 +142,53 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
   @Test
   void rejectsWrongNamespaceWrongWorkloadAbsentAndMultipleUriSans() throws Exception {
     for (Identity invalid : invalidAccounts) {
-      start(invalid, response(), false, false);
-      assertThatThrownBy(() -> client().readCurrent()).isInstanceOf(InvalidJwksException.class);
-      stopServer();
+      for (GetCurrentAccountPublicJwksResponse reply : List.of(response(), denyResponse())) {
+        start(invalid, reply, false, false);
+        assertThatThrownBy(() -> client().readCurrent()).isInstanceOf(InvalidJwksException.class);
+        stopServer();
+      }
+    }
+  }
+
+  @Test
+  void exactAuthenticatedAccountCanReturnPreparedDenyThenExplicitEligibleRecovery()
+      throws Exception {
+    start(accountIdentity, denyResponse(), false, false);
+    var reader = client();
+    ReadResult denied = reader.readCurrent();
+    assertThat(denied.sourceIdentity()).isEqualTo(snapshot().sourceIdentity());
+    assertThat(denied.preparedDeny()).isTrue();
+    assertThat(denied.committedRecoveryEligible()).isFalse();
+    assertThat(denied.jwksBytes()).isNullOrEmpty();
+    upstreamReply.set(response());
+    assertThat(reader.readCurrent().committedRecoveryEligible()).isFalse();
+    upstreamReply.set(
+        AccountPublicJwksReadCodec.response(
+            new ReadResult(snapshot().sourceIdentity(), PUBLIC_BYTES, false, true)));
+    ReadResult recovered = reader.readCurrent();
+    assertThat(recovered.preparedDeny()).isFalse();
+    assertThat(recovered.committedRecoveryEligible()).isTrue();
+    assertThat(recovered.sourceIdentity()).isEqualTo(denied.sourceIdentity());
+    assertThat(recovered.jwksBytes()).containsExactly(PUBLIC_BYTES);
+    assertThat(authorization.get()).isNull();
+  }
+
+  @Test
+  void malformedDispositionAndRecoveryEligibilityAreTerminalFromExactAccount() throws Exception {
+    start(accountIdentity, response(), false, false);
+    var reader = client();
+    for (GetCurrentAccountPublicJwksResponse invalid :
+        List.of(
+            response().toBuilder().setSchemaVersion(1).build(),
+            response().toBuilder().clearDisposition().build(),
+            response().toBuilder().setDispositionValue(99).build(),
+            response().toBuilder().clearCommittedRecoveryEligible().build(),
+            denyResponse().toBuilder().setPublicJwks(ByteString.copyFrom(PUBLIC_BYTES)).build(),
+            denyResponse().toBuilder().setCommittedRecoveryEligible(false).build(),
+            denyResponse().toBuilder().setCommittedRecoveryEligible(true).build(),
+            denyResponse().toBuilder().clearSourceIdentity().build())) {
+      upstreamReply.set(invalid);
+      assertThatThrownBy(reader::readCurrent).isInstanceOf(InvalidJwksException.class);
     }
   }
 
@@ -209,6 +259,7 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
       boolean unavailable)
       throws Exception {
     upstreamFailure.set(unavailable ? Status.UNAVAILABLE : null);
+    upstreamReply.set(reply);
     // This fixture mimics only the private Account read, and enforces the caller's exact URI.
     var producer =
         new AccountPublicJwksReadServiceGrpc.AccountPublicJwksReadServiceImplBase() {
@@ -227,7 +278,7 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
             Status failure = upstreamFailure.get();
             if (failure != null) observer.onError(failure.asRuntimeException());
             else if (!neverReply) {
-              observer.onNext(reply);
+              observer.onNext(upstreamReply.get());
               observer.onCompleted();
             }
           }
@@ -286,6 +337,11 @@ class AccountPublicJwksReadClientMtlsIntegrationTest {
 
   private static GetCurrentAccountPublicJwksResponse response() {
     return AccountPublicJwksReadCodec.response(snapshot());
+  }
+
+  private static GetCurrentAccountPublicJwksResponse denyResponse() {
+    return AccountPublicJwksReadCodec.response(
+        new ReadResult(snapshot().sourceIdentity(), new byte[0], true, false));
   }
 
   private static Path pem(String name, String type, byte[] bytes) throws Exception {

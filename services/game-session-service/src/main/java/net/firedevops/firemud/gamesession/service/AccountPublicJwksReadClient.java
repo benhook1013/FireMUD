@@ -22,9 +22,9 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException;
-import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Same-namespace mTLS current-public-state read, with no bearer or readiness-plan dependency. */
@@ -55,7 +55,7 @@ public final class AccountPublicJwksReadClient {
     this.accountUri = "spiffe://firemud/ns/" + namespace + "/sa/account-service";
   }
 
-  public PublicJwksSnapshot readCurrent() {
+  public ReadResult readCurrent() {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new SourceUnavailableException();
     }
@@ -73,7 +73,7 @@ public final class AccountPublicJwksReadClient {
               .withMaxInboundMessageSize(AccountPublicJwksReadCodec.MAX_RESPONSE_BYTES)
               .withDeadlineAfter(DEADLINE_SECONDS, TimeUnit.SECONDS)
               .getCurrentPublicJwks(AccountPublicJwksReadCodec.request());
-      return AccountPublicJwksReadCodec.snapshot(response);
+      return AccountPublicJwksReadCodec.result(response);
     } catch (StatusRuntimeException failure) {
       Status.Code code = failure.getStatus().getCode();
       if (!hasTlsFailure(failure)
