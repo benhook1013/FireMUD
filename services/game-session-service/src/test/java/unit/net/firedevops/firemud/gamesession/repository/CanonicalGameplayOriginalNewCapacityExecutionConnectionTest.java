@@ -148,6 +148,24 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     verifyNoInteractions(dsl, tags);
   }
 
+  @Test
+  void failedConnectionAttemptDoesNotRetainAConnectorSlot() {
+    RedisClient redis = mock();
+    StatefulRedisConnection<byte[], byte[]> connection = mock();
+    when(redis.connect(ByteArrayCodec.INSTANCE))
+        .thenThrow(new IllegalStateException("Controlled connect failure"))
+        .thenReturn(connection);
+    when(connection.isOpen()).thenReturn(true);
+    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
+    when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+    var owner = owner(mock(), redis, mock());
+
+    assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+    assertThat(owner.connectForRead()).isSameAs(connection);
+    connection.closeAsync();
+    verify(redis, org.mockito.Mockito.times(2)).connect(ByteArrayCodec.INSTANCE);
+  }
+
   private static CanonicalGameplayOriginalNewCapacityExecutionOwner owner(
       DSLContext dsl, RedisClient redis, CanonicalGameplayTenantGameplayTagRepository tags) {
     return new CanonicalGameplayOriginalNewCapacityExecutionOwner(

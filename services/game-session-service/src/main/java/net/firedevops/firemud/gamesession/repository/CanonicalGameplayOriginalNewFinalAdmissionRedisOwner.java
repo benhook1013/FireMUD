@@ -123,12 +123,30 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
   private final RedisScriptCatalog catalog;
   private final Clock clock;
   private final CanonicalGameplayTenantGameplayTagRepository tenantTags;
+  private final java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>>
+      scopedConnection;
+  private final java.util.function.LongSupplier remainingCommandMillis;
 
   CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
       io.lettuce.core.RedisClient redisClient,
       RedisScriptCatalog catalog,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tenantTags) {
+    this(redisClient, catalog, clock, tenantTags, null, null);
+  }
+
+  CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+      io.lettuce.core.RedisClient redisClient,
+      RedisScriptCatalog catalog,
+      Clock clock,
+      CanonicalGameplayTenantGameplayTagRepository tenantTags,
+      java.util.function.Supplier<StatefulRedisConnection<byte[], byte[]>> scopedConnection,
+      java.util.function.LongSupplier remainingCommandMillis) {
+    if ((scopedConnection == null) != (remainingCommandMillis == null))
+      throw new IllegalArgumentException(
+          "Scoped connection and command budget must be supplied together");
+    this.scopedConnection = scopedConnection;
+    this.remainingCommandMillis = remainingCommandMillis;
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Redis client is required");
     this.catalog = Objects.requireNonNull(catalog, "Manual Redis script catalog is required");
     this.clock = Objects.requireNonNull(clock, "Clock is required");
@@ -291,6 +309,15 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {
+    return closeCapacityExecutionOnce(
+        execution, candidate, assignment, Math.addExact(clock.millis(), COMMAND_TIMEOUT_MILLIS));
+  }
+
+  long closeCapacityExecutionOnce(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
     String accountKey =
@@ -315,7 +342,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
           1,
           ascii("{}"),
           ascii("{}"),
-          Math.addExact(clock.millis(), 5000),
+          absoluteDeadlineMillis,
           ascii("closure"),
           execution,
           "CLOSE");
@@ -664,39 +691,80 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       String action) {
     requireNoAmbientTransaction();
-    try (StatefulRedisConnection<byte[], byte[]> connection =
-        redisClient.connect(ByteArrayCodec.INSTANCE)) {
+    StatefulRedisConnection<byte[], byte[]> connection = null;
+    try {
+      commandWaitMillis();
+      connection =
+          scopedConnection == null
+              ? redisClient.connect(ByteArrayCodec.INSTANCE)
+              : scopedConnection.get();
       RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-      requirePrincipal(await(commands.aclWhoami()));
-      String sha = await(commands.scriptLoad(script));
+      requirePrincipal(awaitCommand(commands::aclWhoami));
+      String sha = awaitCommand(() -> commands.scriptLoad(script));
       if (!digest("SHA-1", script).equals(sha)) throw unavailable();
       Long result =
-          await(
-              commands.evalsha(
-                  sha,
-                  ScriptOutputType.INTEGER,
-                  keyBytes(keys),
-                  ascii(assignment.tenantId().toString()),
-                  ascii(assignment.accountId().toString()),
-                  ascii(assignment.playableStateNamespaceId().toString()),
-                  ascii(candidate.bindingIdentity().characterId().toString()),
-                  ascii(assignment.gameInstanceId().toString()),
-                  ascii(assignment.sessionId()),
-                  ascii(candidate.transition().bindingGeneration().toString()),
-                  ascii(assignment.tenantGameplayTag()),
-                  candidateBytes,
-                  characterBytes,
-                  templateBytes,
-                  ascii(Long.toString(durationMillis)),
-                  accountJson,
-                  issuerJson,
-                  ascii(Long.toString(absoluteDeadlineMillis)),
-                  issuerPayload,
-                  execution.canonicalBytes(),
-                  ascii(action),
-                  ascii(execution.digest())));
+          awaitCommand(
+              () ->
+                  commands.evalsha(
+                      sha,
+                      ScriptOutputType.INTEGER,
+                      keyBytes(keys),
+                      ascii(assignment.tenantId().toString()),
+                      ascii(assignment.accountId().toString()),
+                      ascii(assignment.playableStateNamespaceId().toString()),
+                      ascii(candidate.bindingIdentity().characterId().toString()),
+                      ascii(assignment.gameInstanceId().toString()),
+                      ascii(assignment.sessionId()),
+                      ascii(candidate.transition().bindingGeneration().toString()),
+                      ascii(assignment.tenantGameplayTag()),
+                      candidateBytes,
+                      characterBytes,
+                      templateBytes,
+                      ascii(Long.toString(durationMillis)),
+                      accountJson,
+                      issuerJson,
+                      ascii(Long.toString(absoluteDeadlineMillis)),
+                      issuerPayload,
+                      execution.canonicalBytes(),
+                      ascii(action),
+                      ascii(execution.digest())));
       return result;
     } catch (RuntimeException failure) {
+      throw unavailable();
+    } finally {
+      if (connection != null) {
+        try {
+          if (scopedConnection == null) connection.close();
+          else connection.closeAsync();
+        } catch (RuntimeException cleanupFailure) {
+          throw unavailable();
+        }
+      }
+    }
+  }
+
+  private long commandWaitMillis() {
+    long remaining =
+        remainingCommandMillis == null
+            ? COMMAND_TIMEOUT_MILLIS
+            : remainingCommandMillis.getAsLong();
+    if (remaining <= 0) throw unavailable();
+    return Math.min(COMMAND_TIMEOUT_MILLIS, remaining);
+  }
+
+  private <T> T awaitCommand(java.util.function.Supplier<RedisFuture<T>> command) {
+    long beforeSubmission = commandWaitMillis();
+    RedisFuture<T> future = command.get();
+    if (future == null) throw unavailable();
+    try {
+      T result = future.get(Math.min(beforeSubmission, commandWaitMillis()), TimeUnit.MILLISECONDS);
+      commandWaitMillis();
+      return result;
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw unavailable();
+    } catch (ExecutionException | TimeoutException failure) {
+      // A submitted write is indeterminate. Neither a timeout nor cleanup permits a retry.
       throw unavailable();
     }
   }

@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.lettuce.core.AclSetuserArgs;
@@ -205,6 +207,61 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     assertThat(admin.get(ascii(installation.sessionKey())))
         .containsExactly(source.candidate().canonicalBytes());
     assertThat(sqlImage()).isEqualTo(rows);
+  }
+
+  @Test
+  void failedInstallConnectRetainsDispatchAndNeverPermitsReinstallationOrNegativeProof()
+      throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    RedisClient failedClient = mock(RedisClient.class);
+    when(failedClient.connect(ByteArrayCodec.INSTANCE))
+        .thenThrow(new IllegalStateException("Controlled connection failure"));
+    var failedOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            fixture.dsl(), failedClient, catalog, CLOCK, tags);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    String key =
+        "session:game:capacity-execution:{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + controlledCapacity.request().admissionAttemptId();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(controlledCapacity)) {
+      var account = controlledAccountOpen();
+      var issuer = issuerOpen();
+      assertThatThrownBy(
+              () ->
+                  failedOwner.authorize(
+                      source, template, account, issuer, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class);
+      verify(failedClient, times(1)).connect(ByteArrayCodec.INSTANCE);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                      controlledCapacity.digest())
+                  .get(0, String.class))
+          .isEqualTo("INSTALL_DISPATCHED");
+      String retained = sqlImage();
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .authorize(source, template, account, issuer, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .closeOriginalAttempt(
+                          controlledCapacity.request(), controlledCapacity.reservation()))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(admin.type(ascii(key))).isEqualTo("none");
+      assertThat(sqlImage()).isEqualTo(retained);
+    }
   }
 
   @Test
@@ -1288,6 +1345,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   private void bridge() {
+    bridge(true);
+  }
+
+  private void bridge(boolean authorizeCapacity) {
     var region =
         CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
             fixture.dsl(),
@@ -1322,6 +1383,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               controlled.candidateDigest(),
               selectedOwner,
               controlled.selectedOwnerFence());
+      if (!authorizeCapacity) return;
       try (var credential =
               new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
           var raw = credential.template();

@@ -25,6 +25,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
@@ -365,6 +366,79 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .isInstanceOf(IllegalStateException.class);
     verify(provider).release(connection);
     assertNoOwnedConnections(captured.get());
+  }
+
+  @Test
+  void absoluteDeadlineStaysFrozenAcrossSqlWorkAndWallClockPassage() throws Exception {
+    Clock clock = mock();
+    AtomicLong now = new AtomicLong(1_800_000_000_000L);
+    when(clock.millis()).thenAnswer(ignored -> now.get());
+    long originalDeadline = now.get() + 4000;
+    ConnectionProvider provider = mock();
+    PreparedStatement statement = mock();
+    when(provider.acquire()).thenReturn(preparedConnection(statement));
+    when(statement.execute())
+        .thenAnswer(
+            ignored -> {
+              now.addAndGet(1000);
+              return true;
+            });
+    DSLContext dsl = source(provider);
+
+    long retainedDeadline =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+            clock,
+            originalDeadline,
+            budget -> {
+              assertThat(budget.absoluteDeadlineMillis()).isEqualTo(originalDeadline);
+              execute(budget.sql(dsl));
+              assertThat(budget.remainingMillis()).isBetween(1L, 4000L);
+              return budget.absoluteDeadlineMillis();
+            });
+
+    assertThat(retainedDeadline).isEqualTo(originalDeadline);
+    assertThat(now).hasValue(originalDeadline - 3000);
+    verify(statement).execute();
+  }
+
+  @Test
+  void defaultFiveSecondAbsoluteDeadlineDoesNotRenewAfterClockPassage() {
+    Clock clock = mock();
+    AtomicLong now = new AtomicLong(1_800_000_000_000L);
+    when(clock.millis()).thenAnswer(ignored -> now.get());
+    long initial = now.get();
+
+    long retainedDeadline =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+            clock,
+            Long.MAX_VALUE,
+            budget -> {
+              long deadline = budget.absoluteDeadlineMillis();
+              now.addAndGet(1000);
+              assertThat(budget.absoluteDeadlineMillis()).isEqualTo(deadline);
+              return deadline;
+            });
+
+    assertThat(retainedDeadline).isBetween(initial + 1, initial + 5000);
+  }
+
+  @Test
+  void incomingGrpcDeadlineCapsTheFrozenAbsoluteDeadline() throws Exception {
+    Clock clock =
+        Clock.fixed(java.time.Instant.ofEpochMilli(1_800_000_000_000L), java.time.ZoneOffset.UTC);
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    try {
+      long retainedDeadline =
+          Context.current()
+              .withDeadlineAfter(2, TimeUnit.SECONDS, scheduler)
+              .call(
+                  () ->
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                          clock, clock.millis() + 4000, budget -> budget.absoluteDeadlineMillis()));
+      assertThat(retainedDeadline).isBetween(clock.millis() + 1, clock.millis() + 2000);
+    } finally {
+      scheduler.shutdownNow();
+    }
   }
 
   private static void assertNoOwnedConnections(
