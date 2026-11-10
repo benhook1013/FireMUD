@@ -2,11 +2,13 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { setTimeout: sleep } = require("node:timers/promises");
 
 const SUPPORTED_MODULES = new Set(["account-service", "game-session-service", "world-management-service"]);
 const CANONICAL_RUN_NAME = "CI — Validation";
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const ARTIFACT_SNAPSHOT_ATTEMPTS = 4;
+const ARTIFACT_SNAPSHOT_DELAY_MS = 1000;
 
 async function captureSlowServiceProvenance({
   github,
@@ -14,6 +16,7 @@ async function captureSlowServiceProvenance({
   env = process.env,
   module,
   fileSystem = fs,
+  wait = sleep,
 }) {
   if (!SUPPORTED_MODULES.has(module)) {
     throw new Error(`Unsupported slow-service provenance module: ${module}`);
@@ -194,6 +197,7 @@ async function captureSlowServiceProvenance({
   async function listStableArtifactSnapshot() {
     let previousFingerprint;
     for (let attempt = 1; attempt <= ARTIFACT_SNAPSHOT_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) await wait(ARTIFACT_SNAPSHOT_DELAY_MS);
       const snapshot = await listArtifactSnapshot();
       if (snapshot === null) {
         previousFingerprint = undefined;

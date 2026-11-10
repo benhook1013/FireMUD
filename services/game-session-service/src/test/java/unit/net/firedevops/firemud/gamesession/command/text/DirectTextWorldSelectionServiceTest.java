@@ -82,7 +82,12 @@ class DirectTextWorldSelectionServiceTest {
     assertThat(foreignOwner.encodeSnapshot(menu)).isEmpty();
     assertThat(source.encodeSnapshot(null)).isEmpty();
     assertThat(source.restoreSnapshot(original)).isEmpty();
-    assertThat(source.resolve(menu, "1")).isEmpty();
+    if (expired) {
+      assertThatThrownBy(() -> source.resolve(menu, "1"))
+          .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
+    } else {
+      assertThat(source.resolve(menu, "1")).isEmpty();
+    }
     assertThat(reads.get()).isEqualTo(2);
     verifyNoInteractions(reader);
   }
@@ -120,7 +125,8 @@ class DirectTextWorldSelectionServiceTest {
     clearInvocations(reader);
     clock.now = NOW.plusSeconds(300);
     assertThat(replacement.restoreSnapshot(stored)).isEmpty();
-    assertThat(replacement.resolve(restored, "1")).isEmpty();
+    assertThatThrownBy(() -> replacement.resolve(restored, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     verifyNoInteractions(reader);
   }
 
@@ -388,9 +394,14 @@ class DirectTextWorldSelectionServiceTest {
 
     assertThat(service.resolve(menu, "STUDIO/FOREST")).contains(first);
     assertThat(service.resolve(menu, "studio/other-world")).contains(sameFriendlyTenant);
-    assertThat(service.resolve(menu, "studio")).isEmpty();
-    assertThat(service.resolve(menu, "forest")).isEmpty();
-    assertThat(service.resolve(menu, "other-world")).isEmpty();
+    clearInvocations(reader);
+    assertThatThrownBy(() -> service.resolve(menu, "studio"))
+        .isInstanceOf(DirectTextWorldSelectionService.UnknownWorldSelectorException.class);
+    assertThatThrownBy(() -> service.resolve(menu, "forest"))
+        .isInstanceOf(DirectTextWorldSelectionService.UnknownWorldSelectorException.class);
+    assertThatThrownBy(() -> service.resolve(menu, "other-world"))
+        .isInstanceOf(DirectTextWorldSelectionService.UnknownWorldSelectorException.class);
+    verifyNoInteractions(reader);
 
     var single = service(List.of(world(first)), List.of(first));
     assertThat(single.resolve(single.browse().orElseThrow(), "STUDIO")).contains(first);
@@ -426,7 +437,12 @@ class DirectTextWorldSelectionServiceTest {
     clearInvocations(reader);
     int before = catalogReads.get();
 
-    assertThat(service.resolve(menu, selector)).isEmpty();
+    if (selector.isBlank()) {
+      assertThat(service.resolve(menu, selector)).isEmpty();
+    } else {
+      assertThatThrownBy(() -> service.resolve(menu, selector))
+          .isInstanceOf(DirectTextWorldSelectionService.UnknownWorldSelectorException.class);
+    }
     assertThat(service.resolve(menu, null)).isEmpty();
     assertThat(service.resolve(null, "1")).isEmpty();
     assertThat(catalogReads.get()).isEqualTo(before);
@@ -447,7 +463,8 @@ class DirectTextWorldSelectionServiceTest {
     assertThat(service.resolve(menu, "forest")).containsSame(tenantNamedLikeFirstWorld);
     assertThat(service.resolve(menu, "studio/forest")).containsSame(first);
     assertThat(service.resolve(menu, "forest/other-world")).containsSame(tenantNamedLikeFirstWorld);
-    assertThat(service.resolve(menu, "other-world")).isEmpty();
+    assertThatThrownBy(() -> service.resolve(menu, "other-world"))
+        .isInstanceOf(DirectTextWorldSelectionService.UnknownWorldSelectorException.class);
   }
 
   @Test
@@ -468,8 +485,10 @@ class DirectTextWorldSelectionServiceTest {
     assertThat(service.resolve(refreshed, "1")).containsSame(revised);
     clock.now = NOW.plusSeconds(300);
     clearInvocations(reader);
-    assertThat(service.resolve(oldMenu, "1")).isEmpty();
-    assertThat(service.resolve(refreshed, "1")).isEmpty();
+    assertThatThrownBy(() -> service.resolve(oldMenu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
+    assertThatThrownBy(() -> service.resolve(refreshed, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     verifyNoInteractions(reader);
   }
 
@@ -544,10 +563,31 @@ class DirectTextWorldSelectionServiceTest {
     int before = catalogReads.get();
     clock.now = NOW.plusSeconds(300);
 
-    assertThat(service.resolve(menu, "1")).isEmpty();
+    assertThatThrownBy(() -> service.resolve(menu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     clock.now = NOW.plusSeconds(301);
-    assertThat(service.resolve(menu, "studio/forest")).isEmpty();
+    assertThatThrownBy(() -> service.resolve(menu, "studio/forest"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     assertThat(catalogReads.get()).isEqualTo(before);
+    verifyNoInteractions(reader);
+  }
+
+  @Test
+  void expiryOutcomeRequiresTheExactOwnerAndDoesNotClassifyFutureMenusAsExpired() {
+    var first = target("");
+    var catalog = GameplayWorldCatalog.forWorldViews(List.of(world(first)));
+    var service = service(catalog, List.of(first));
+    var menu = service.browse().orElseThrow();
+    var foreignOwner = service(catalog, List.of(first));
+    clearInvocations(reader);
+
+    clock.now = menu.expiresAt();
+    assertThatThrownBy(() -> service.resolve(menu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
+    assertThat(foreignOwner.resolve(menu, "1")).isEmpty();
+
+    clock.now = NOW.minusNanos(1);
+    assertThat(service.resolve(menu, "1")).isEmpty();
     verifyNoInteractions(reader);
   }
 
@@ -572,9 +612,9 @@ class DirectTextWorldSelectionServiceTest {
             });
     assertThat(service.resolve(menu, "1")).isEmpty();
 
-    clock.now = NOW;
     when(reader.readCurrentTarget(first)).thenReturn(first);
     onCatalogRead.set(() -> clock.now = NOW.plusSeconds(300));
+    clock.now = NOW;
     assertThat(service.resolve(menu, "1")).isEmpty();
   }
 
@@ -769,7 +809,8 @@ class DirectTextWorldSelectionServiceTest {
       when(authority.listPointers()).thenReturn(pointers);
       var menu = service.browse().orElseThrow();
       assertThat(menu.selectors()).isEmpty();
-      assertThat(service.resolve(menu, "studio/forest")).isEmpty();
+      assertThatThrownBy(() -> service.resolve(menu, "studio/forest"))
+          .isInstanceOf(DirectTextWorldSelectionService.UnknownWorldSelectorException.class);
     }
   }
 
