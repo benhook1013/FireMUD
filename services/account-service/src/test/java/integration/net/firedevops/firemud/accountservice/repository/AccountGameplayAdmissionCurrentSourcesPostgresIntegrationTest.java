@@ -2052,6 +2052,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private final AccountTenantEntitlementOutboxRepository tenantEntitlementOutbox;
     private final AccountTenantAuthorityEventRepository tenantAuthorityEvents;
     private final AccountDemoTenantEntitlementRepository demoEntitlements;
+    private final AccountConnectScopeRepository connectScopes;
     private final AccountJoinOperationRepository joinOperations;
     private final AccountCanonicalFirstJoinTerminalCoordinator joinTerminal;
     private final AccountGameplayAdmissionLeaseRepository leases;
@@ -2110,7 +2111,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       var retainedAssociations = mock(ApprovedLegacyTenantAssociationRepository.class);
       var retainedResolver =
           new AccountTenantIdentityResolver(retainedAssociations, TEST_NAMESPACE);
-      var connectScopes = new AccountConnectScopeRepository(dsl, retainedResolver, freshTenants);
+      this.connectScopes = new AccountConnectScopeRepository(dsl, retainedResolver, freshTenants);
       this.joinOperations = new AccountJoinOperationRepository(dsl, connectScopes);
       var membershipEvents =
           new AccountMembershipAuthorityEventProducer(
@@ -2320,7 +2321,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           accounts,
           snapshots,
           issuance,
-          new AccountConnectScopeRepository(dsl),
+          connectScopes,
           manager,
           Clock.systemUTC(),
           TEST_NAMESPACE);
