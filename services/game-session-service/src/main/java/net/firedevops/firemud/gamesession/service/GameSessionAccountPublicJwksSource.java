@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceCustodyRejectedException;
@@ -100,10 +101,21 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
     return snapshot;
   }
 
-  private static void requireBytes(PublicJwksSnapshot snapshot, byte[] expected) {
+  private void requireBytes(PublicJwksSnapshot snapshot, byte[] expected) {
     byte[] actual = snapshot.jwksBytes();
     try {
-      if (actual == null || !Arrays.equals(actual, expected)) throw new InvalidJwksException();
+      if (actual == null) throw new InvalidJwksException();
+      if (!Arrays.equals(actual, expected)) {
+        if (pinned != null
+            && lastAcceptedBytes != null
+            && Arrays.equals(lastAcceptedBytes, expected)) {
+          AccountPublicJwksCache.validatePublicJwks(actual);
+          // Account may publish before this already qualified mount converges. The unavailable
+          // catch rechecks local custody and requires the unchanged last accepted bytes.
+          throw new SourceUnavailableException();
+        }
+        throw new InvalidJwksException();
+      }
     } finally {
       if (actual != null) Arrays.fill(actual, (byte) 0);
     }
