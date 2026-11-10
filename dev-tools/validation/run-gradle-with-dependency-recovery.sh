@@ -464,12 +464,155 @@ retry_delay_seconds() {
   printf '%s\n' "$delay"
 }
 
+# Recover only a wrapper download failure before any Gradle task starts. The
+# official API is another transport for the same pinned release bytes, never a
+# version fallback or permission to retry compilation/tests.
+recover_wrapper_distribution() {
+  local root_dir
+  root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  grep -Eq '^Downloading https://services[.]gradle[.]org/distributions/gradle-[0-9]+[.][0-9]+[.][0-9]+-bin[.]zip$' "$NORMAL_LOG" || return 1
+  python3 - "$root_dir" "$NORMAL_LOG" "${GRADLE_ARGS[@]}" <<'PY_DISTRIBUTION'
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+root, log = Path(sys.argv[1]), Path(sys.argv[2])
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
+
+def recover():
+    # A different CLI cache selection or custom layout is not this recovery path.
+    if any(arg == "-g" or arg.startswith("-g") or arg.startswith("--gradle-user-home") for arg in sys.argv[3:]):
+        return False
+    if log.stat().st_size > 1048576:
+        return False
+    text = log.read_text(errors="replace")
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    if re.search(r"^> Task |BUILD FAILED|Compilation failed|There were failing tests|\berror:", text, re.MULTILINE):
+        return False
+    props = {}
+    properties = root / "gradle/wrapper/gradle-wrapper.properties"
+    if properties.stat().st_size > 65536:
+        return False
+    for line in properties.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, value = line.split("=", 1)
+        if key in props:
+            return False
+        props[key] = value.replace("\\:", ":")
+    url = props.get("distributionUrl", "")
+    match = re.fullmatch(r"https://services\.gradle\.org/distributions/gradle-([0-9]+\.[0-9]+\.[0-9]+)-bin\.zip", url)
+    checksum = props.get("distributionSha256Sum", "")
+    if not match or not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        return False
+    if any(props.get(key) != value for key, value in {
+        "distributionBase": "GRADLE_USER_HOME", "distributionPath": "wrapper/dists",
+        "zipStoreBase": "GRADLE_USER_HOME", "zipStorePath": "wrapper/dists",
+    }.items()):
+        return False
+    failure = re.compile(r'(?:Exception in thread "main" )?java\.io\.IOException: Server returned HTTP response code: (?:429|500|502|503|504) for URL: ' + re.escape(url))
+    if not any(failure.fullmatch(line) for line in text.splitlines()):
+        return False
+    # Refuse mixed top-level failures and downloads for a different distribution.
+    for line in text.splitlines():
+        if line.startswith("Downloading ") and line != f"Downloading {url}":
+            return False
+        if re.match(r'(?:Exception in thread "[^"]+" )?(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*(?:Exception|Error):', line) and not failure.fullmatch(line):
+            return False
+    version = match[1]
+    name = f"gradle-{version}-bin.zip"
+    cache_root = Path(os.environ.get("GRADLE_USER_HOME") or Path.home() / ".gradle")
+    # Match Gradle PathAssembler's URL-derived cache key; SHA-256 verifies bytes.
+    number = int.from_bytes(hashlib.md5(url.encode()).digest(), "big")
+    cache_key = ""
+    while number:
+        number, remainder = divmod(number, 36)
+        cache_key = "0123456789abcdefghijklmnopqrstuvwxyz"[remainder] + cache_key
+    target = cache_root / "wrapper/dists" / name.removesuffix(".zip") / cache_key / name
+    if target.is_symlink():
+        return False
+    if target.exists():
+        return digest(target) == checksum
+    with tempfile.TemporaryDirectory(prefix="distribution-", dir=log.parent) as temporary:
+        metadata, archive = Path(temporary) / "release.json", Path(temporary) / name
+        common = ["curl", "-fsSL", "--retry", "2", "--retry-delay", "2", "--connect-timeout", "10"]
+        subprocess.run(common + ["--max-time", "20", "--retry-max-time", "25", "--max-filesize", "2097152",
+            "-H", "Accept: application/vnd.github+json", "-o", str(metadata),
+            f"https://api.github.com/repos/gradle/gradle-distributions/releases/tags/v{version}"],
+            check=True, timeout=30)
+        release = json.loads(metadata.read_text())
+        if not isinstance(release, dict) or not isinstance(release.get("assets"), list):
+            return False
+        if any(not isinstance(asset, dict) for asset in release["assets"]):
+            return False
+        assets = [asset for asset in release["assets"] if asset.get("name") == name]
+        if release.get("tag_name") != f"v{version}" or release.get("draft") or release.get("prerelease") or len(assets) != 1:
+            return False
+        asset = assets[0]
+        asset_id, size = asset.get("id"), asset.get("size")
+        if type(asset_id) is not int or asset_id <= 0 or type(size) is not int or not 0 < size <= 536870912:
+            return False
+        if asset.get("digest") != f"sha256:{checksum}":
+            return False
+        subprocess.run(common + ["--max-time", "60", "--retry-max-time", "70", "--max-filesize", str(size),
+            "-H", "Accept: application/octet-stream", "-o", str(archive),
+            f"https://api.github.com/repos/gradle/gradle-distributions/releases/assets/{asset_id}"],
+            check=True, timeout=80)
+        if archive.stat().st_size != size or digest(archive) != checksum:
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Publish a complete verified archive atomically without replacing an
+        # existing archive. The ordinary wrapper still verifies and extracts it.
+        with tempfile.NamedTemporaryFile(prefix="verified-", dir=target.parent, delete=False) as output:
+            candidate = Path(output.name)
+            try:
+                with archive.open("rb") as source:
+                    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                        output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+                try:
+                    os.link(candidate, target)
+                except FileExistsError:
+                    if target.is_symlink() or digest(target) != checksum:
+                        return False
+            finally:
+                candidate.unlink(missing_ok=True)
+        print(f"Verified pinned Gradle {version} distribution via official release asset API; SHA256={checksum}.")
+        return True
+
+try:
+    recovered = recover()
+except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as failure:
+    print(f"Pinned Gradle distribution transport recovery unavailable ({type(failure).__name__}); preserving original build failure.", file=sys.stderr)
+    recovered = False
+sys.exit(0 if recovered else 1)
+PY_DISTRIBUTION
+}
+
 run_gradle_check false "$NORMAL_LOG"
 if [[ "$GRADLE_EXIT" -eq 0 ]]; then
   exit 0
 fi
 
 if [[ "$GRADLE_EXIT" -ne 1 ]]; then
+  exit "$GRADLE_EXIT"
+fi
+
+if recover_wrapper_distribution; then
+  echo "Recovered the pinned wrapper distribution before task execution; retrying the original Gradle command once."
+  run_gradle_check false "$REFRESH_LOG"
   exit "$GRADLE_EXIT"
 fi
 

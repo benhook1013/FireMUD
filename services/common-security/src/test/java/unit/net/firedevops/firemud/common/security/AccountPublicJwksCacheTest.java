@@ -11,6 +11,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Base64;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -28,6 +31,212 @@ class AccountPublicJwksCacheTest {
           "binding-7",
           "https://kubernetes.example:6443",
           "a".repeat(64));
+
+  @Test
+  void blockedProactiveLoadAllowsFreshBoundReadsAndImmediateInvalidation() throws Exception {
+    KeyPair key = rsa3072();
+    String first = jwks(jwk("known", (RSAPublicKey) key.getPublic()));
+    String second = first + "\n";
+    var source = new BlockingSource(snapshot(first), () -> snapshot(second));
+    var cache = cache(new MutableClock(INITIAL), source);
+    cache.refresh();
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var refresh = executor.submit(cache::refresh);
+      try {
+        assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
+        var readAndInvalidate =
+            executor.submit(
+                () -> {
+                  assertThat(cache.keyFor("known", PIN, sha256(first))).isEqualTo(key.getPublic());
+                  assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(second)))
+                      .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+                  cache.invalidateKid("known");
+                  assertThatThrownBy(() -> cache.keyFor("known"))
+                      .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+                  return null;
+                });
+        readAndInvalidate.get(5, TimeUnit.SECONDS);
+      } finally {
+        source.release.countDown();
+      }
+      refresh.get(5, TimeUnit.SECONDS);
+    }
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+    assertThat(source.loads).hasValue(2);
+  }
+
+  @Test
+  void proactiveUnknownAndStaleRequestsShareOneFlightInEitherOrder() throws Exception {
+    KeyPair key = rsa3072();
+    String first = jwks(jwk("known", (RSAPublicKey) key.getPublic()));
+    String second =
+        jwks(
+            jwk("known", (RSAPublicKey) key.getPublic())
+                + ","
+                + jwk("rotated", (RSAPublicKey) key.getPublic()));
+    for (boolean demandFirst : new boolean[] {false, true}) {
+      var source = new BlockingSource(snapshot(first), () -> snapshot(second));
+      MutableClock clock = new MutableClock(INITIAL);
+      var cache = cache(clock, source);
+      cache.refresh();
+      try (var executor = Executors.newFixedThreadPool(3)) {
+        var firstRequest =
+            executor.submit(
+                () -> {
+                  if (demandFirst) {
+                    assertThat(cache.keyFor("rotated", PIN, sha256(second)))
+                        .isEqualTo(key.getPublic());
+                  } else {
+                    cache.refresh();
+                  }
+                  return null;
+                });
+        try {
+          assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
+          AtomicReference<Thread> proactiveThread = new AtomicReference<>();
+          var proactive =
+              executor.submit(
+                  () -> {
+                    proactiveThread.set(Thread.currentThread());
+                    cache.refresh();
+                  });
+          awaitWaiting(proactiveThread);
+          clock.advance(Duration.ofSeconds(11));
+          AtomicReference<Thread> staleThread = new AtomicReference<>();
+          var stale =
+              executor.submit(
+                  () -> {
+                    staleThread.set(Thread.currentThread());
+                    return cache.keyFor("known", PIN, sha256(second));
+                  });
+          awaitWaiting(staleThread);
+          assertThat(source.loads).hasValue(2);
+          source.release.countDown();
+          firstRequest.get(5, TimeUnit.SECONDS);
+          proactive.get(5, TimeUnit.SECONDS);
+          assertThat(stale.get(5, TimeUnit.SECONDS)).isEqualTo(key.getPublic());
+        } finally {
+          source.release.countDown();
+        }
+      }
+      assertThat(source.loads).hasValue(2);
+      assertThatThrownBy(() -> cache.keyFor("known", PIN, sha256(first)))
+          .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      assertThat(cache.keyFor("rotated", PIN, sha256(second))).isEqualTo(key.getPublic());
+    }
+  }
+
+  @Test
+  void proactiveJoinPermanentlyRejectsInvalidDemandFlight() throws Exception {
+    KeyPair key = rsa3072();
+    var first = snapshot(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    var source = new BlockingSource(first, () -> snapshot("{\"keys\":[]}"));
+    var cache = cache(new MutableClock(INITIAL), source);
+    cache.refresh();
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var demand =
+          executor.submit(
+              () ->
+                  assertThatThrownBy(() -> cache.keyFor("unknown"))
+                      .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class));
+      try {
+        assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
+        AtomicReference<Thread> proactiveThread = new AtomicReference<>();
+        var proactive =
+            executor.submit(
+                () -> {
+                  proactiveThread.set(Thread.currentThread());
+                  assertThatThrownBy(cache::refresh)
+                      .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+                });
+        awaitWaiting(proactiveThread);
+        source.release.countDown();
+        demand.get(5, TimeUnit.SECONDS);
+        proactive.get(5, TimeUnit.SECONDS);
+      } finally {
+        source.release.countDown();
+      }
+    }
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThat(source.loads).hasValue(2);
+  }
+
+  @Test
+  void blockedRefreshOutageCannotUseSnapshotThatExpiredDuringLoad() throws Exception {
+    KeyPair key = rsa3072();
+    var first = snapshot(jwks(jwk("known", (RSAPublicKey) key.getPublic())));
+    var source =
+        new BlockingSource(
+            first,
+            () -> {
+              throw new AccountPublicJwksCache.SourceUnavailableException();
+            });
+    MutableClock clock = new MutableClock(INITIAL);
+    var cache = cache(clock, source);
+    cache.refresh();
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var refresh =
+          executor.submit(
+              () ->
+                  assertThatThrownBy(cache::refresh)
+                      .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class));
+      try {
+        assertThat(source.entered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+        clock.advance(Duration.ofSeconds(11));
+      } finally {
+        source.release.countDown();
+      }
+      refresh.get(5, TimeUnit.SECONDS);
+    }
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+  }
+
+  private static void awaitWaiting(AtomicReference<Thread> thread) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while ((thread.get() == null || thread.get().getState() != Thread.State.WAITING)
+        && System.nanoTime() < deadline) {
+      Thread.sleep(1);
+    }
+    assertThat(thread.get()).isNotNull();
+    assertThat(thread.get().getState()).isEqualTo(Thread.State.WAITING);
+  }
+
+  private static final class BlockingSource
+      implements AccountPublicJwksCache.TrustedPublicJwksSource {
+    private final AccountPublicJwksCache.PublicJwksSnapshot initial;
+    private final AccountPublicJwksCache.TrustedPublicJwksSource next;
+    private final CountDownLatch entered = new CountDownLatch(1);
+    private final CountDownLatch release = new CountDownLatch(1);
+    private final AtomicInteger loads = new AtomicInteger();
+
+    private BlockingSource(
+        AccountPublicJwksCache.PublicJwksSnapshot initial,
+        AccountPublicJwksCache.TrustedPublicJwksSource next) {
+      this.initial = initial;
+      this.next = next;
+    }
+
+    @Override
+    public AccountPublicJwksCache.PublicJwksSnapshot load() {
+      if (loads.incrementAndGet() == 1) return initial;
+      entered.countDown();
+      try {
+        if (!release.await(30, TimeUnit.SECONDS)) {
+          throw new AssertionError("source release timed out");
+        }
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError(interrupted);
+      }
+      return next.load();
+    }
+  }
 
   @Test
   void unknownKidCustodyRejectionImmediatelyLatchesKnownKeysAndLaterRefresh() throws Exception {
@@ -718,7 +927,7 @@ class AccountPublicJwksCacheTest {
   }
 
   private static final class MutableClock extends Clock {
-    private Instant current;
+    private volatile Instant current;
 
     private MutableClock(Instant current) {
       this.current = current;

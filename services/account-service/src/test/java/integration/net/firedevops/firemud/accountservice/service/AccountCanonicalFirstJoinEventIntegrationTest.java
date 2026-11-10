@@ -1442,6 +1442,8 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                 .isEqualTo(accountBefore.account().checkpoint().sequence() + 1L);
             var tenantSource = tenantAuthorityEvents.readCurrentByTenant(tenantUuid);
             var prior = pairs.readForUpdate(account.getAccountUuid(), tenantUuid).orElseThrow();
+            long nextMembershipVersion = member.getMembershipVersion() + 1L;
+            long nextEventSequence = prior.eventSequence() + 1L;
             var previousEvent =
                 outbox.findEvent(membershipStream(), prior.eventSequence()).orElseThrow();
             var json = tools.jackson.databind.json.JsonMapper.builder().build();
@@ -1452,10 +1454,12 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
             event.remove("eventDigest");
             event.put("eventId", UUID.randomUUID().toString());
             event.put("requestId", inactiveRequest);
-            event.put("outboxSequence", "2");
+            event.put("outboxSequence", Long.toString(nextEventSequence));
             event.put("membershipLifecycleState", lifecycle);
             event.put("roles", currentRoles);
-            event.put("membershipVersion", Map.of(tenantUuid.toString(), "3"));
+            event.put(
+                "membershipVersion",
+                Map.of(tenantUuid.toString(), Long.toString(nextMembershipVersion)));
             event.put("membershipAuthorityGeneration", Long.toString(next.generation()));
             Map<String, Object> tuple = new java.util.LinkedHashMap<>();
             tuple.put("issuerAuthGeneration", Long.toString(authority.issuer().generation()));
@@ -1498,30 +1502,44 @@ class AccountCanonicalFirstJoinEventIntegrationTest {
                     membershipStream(),
                     inactiveRequest,
                     sequence -> {
-                      if (sequence != 2L)
+                      if (sequence != nextEventSequence)
                         throw new IllegalStateException("Controlled inactive sequence changed");
                       return new AccountAuthorityOutboxRepository.EventEvidence(
                           sealed.eventId(), sealed.eventDigest(), sealed.canonicalJsonUtf8());
                     });
-            dsl.execute(
-                "UPDATE account_tenant_membership SET lifecycle_state = ?, gameplay_admission_allowed = FALSE, "
-                    + "membership_version = 3, membership_authority_generation = 2 WHERE id = ?",
-                lifecycle,
-                member.getId());
+            assertThat(
+                    dsl.execute(
+                        "UPDATE account_tenant_membership SET lifecycle_state = ?, gameplay_admission_allowed = FALSE, "
+                            + "membership_version = ?, membership_authority_generation = ? WHERE id = ?",
+                        lifecycle,
+                        nextMembershipVersion,
+                        next.generation(),
+                        member.getId()))
+                .isEqualTo(1);
             var inactive =
                 memberships
                     .findCanonicalMembershipForUpdate(account.getAccountUuid(), tenantUuid)
                     .orElseThrow();
             roles.replaceCanonical(
-                inactive, account.getAccountUuid(), tenantUuid, provenance, 3L, currentRoles);
-            dsl.execute(
-                "UPDATE account_membership_pair_authority SET membership_version = 3, membership_authority_generation = 2, "
-                    + "last_event_sequence = 2, last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE "
-                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
-                appended.eventId(),
-                appended.eventDigest(),
+                inactive,
                 account.getAccountUuid(),
-                tenantUuid);
+                tenantUuid,
+                provenance,
+                nextMembershipVersion,
+                currentRoles);
+            assertThat(
+                    dsl.execute(
+                        "UPDATE account_membership_pair_authority SET membership_version = ?, membership_authority_generation = ?, "
+                            + "last_event_sequence = ?, last_event_id = ?, last_event_digest = ?, last_transition_invalidated = TRUE "
+                            + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                        nextMembershipVersion,
+                        next.generation(),
+                        appended.outboxSequence(),
+                        appended.eventId(),
+                        appended.eventDigest(),
+                        account.getAccountUuid(),
+                        tenantUuid))
+                .isEqualTo(1);
             return null;
           });
     }

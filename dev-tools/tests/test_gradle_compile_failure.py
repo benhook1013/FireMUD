@@ -218,7 +218,9 @@ class CaptureTests(unittest.TestCase):
     def test_stall_sanitizer_rejects_names_secrets_and_diagnostic_prose(self):
         raw = (b'"SECRET-password" #17 tid=0xabc nid=0xdef waiting\n'
                b'   java.lang.Thread.State: WAITING (parking)\n'
-               b'        at java.base@25/java.lang.Object.wait0(Native Method)\n'
+               b'        at java.lang.Object.wait0(java.base@25/Native Method)\n'
+               b'        at jdk.internal.misc.Unsafe.park(java.base@25.0.5+8/Native Method)\n'
+               b'\"SECRET-decimal-thread\" #18 tid=0x123 nid=345 waiting\n'
                b'        at org.example.Work.run(Work.java:42)\n'
                b'        - locked <0xabc> (a java.lang.Object)\n'
                b'JAVA_TOOL_OPTIONS=SECRET\njdbc:postgresql://SECRET\n'
@@ -226,6 +228,9 @@ class CaptureTests(unittest.TestCase):
         output = CAPTURE.sanitized_threads(raw)
         self.assertNotIn('SECRET', output)
         self.assertIn('#17 tid=0xabc nid=0xdef', output)
+        self.assertIn('#18 tid=0x123 nid=345', output)
+        self.assertIn('Object.wait0(java.base@25/Native Method)', output)
+        self.assertIn('Unsafe.park(java.base@25.0.5+8/Native Method)', output)
         self.assertIn('WAITING', output)
         self.assertIn('Work.run(Work.java:42)', output)
         self.assertIn('locked <0xabc>', output)

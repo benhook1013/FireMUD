@@ -201,7 +201,8 @@ class DirectTextWorldMenuRedisStoreTest {
     clearInvocations(commands, connection, routes);
 
     assertThat(localStore.reassert(transport, menu)).isFalse();
-    assertThat(localSelection.resolve(menu, "1")).isEmpty();
+    assertThatThrownBy(() -> localSelection.resolve(menu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     assertThat(stored.get()).isEqualTo(original);
     verifyNoInteractions(commands, connection, routes);
   }
