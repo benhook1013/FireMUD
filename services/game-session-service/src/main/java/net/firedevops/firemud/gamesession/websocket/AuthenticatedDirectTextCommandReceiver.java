@@ -5,6 +5,8 @@ import java.util.Map;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.ExpiredWorldSelectionException;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -35,13 +37,25 @@ public final class AuthenticatedDirectTextCommandReceiver {
   }
 
   public TextCommandInterpretationResult receive(WebSocketSession socket, TextCommand command) {
-    var connection = sessions.require(socket);
     try {
+      var connection = sessions.require(socket);
       return switch (command.type()) {
         case LOGIN -> {
-          var credentials = command.credentialsPayload().orElseThrow();
+          var credentials = command.credentialsPayload().orElse(null);
+          if (command.args().size() != 2
+              || credentials == null
+              || credentials.loginName() == null
+              || credentials.loginName().isBlank()
+              || credentials.password() == null
+              || credentials.password().isEmpty())
+            yield failure("INVALID_ARGUMENT", "Usage: LOGIN <email> <password>");
+          String email;
+          try {
+            email = EmailCanonicalization.normalize(credentials.loginName());
+          } catch (IllegalArgumentException invalidEmail) {
+            yield failure("INVALID_ARGUMENT", "Usage: LOGIN <email> <password>");
+          }
           var owner = required(logins);
-          String email = EmailCanonicalization.normalize(credentials.loginName());
           connection.login(owner, email, credentials.password().toCharArray());
           yield connection.withLogin((original, result) -> success("Logged in as " + email));
         }
@@ -49,46 +63,65 @@ public final class AuthenticatedDirectTextCommandReceiver {
           connection.menu = required(selections).browse().orElseThrow();
           yield success(String.join("\n", connection.menu.selectors()));
         }
-        case REALMS ->
-            connection.withLogin(
-                (original, result) -> {
-                  if (command.args().size() != 1 || connection.menu == null)
-                    throw new IllegalArgumentException();
-                  connection.selectedScope =
-                      required(lobbies)
-                          .realms(
-                              original,
-                              result,
-                              connection,
-                              connection.menu,
-                              command.args().getFirst());
-                  return success(connection.selectedScope.publicTarget().realmDisplayName());
-                });
-        case JOIN ->
-            connection.withLogin(
-                (original, result) -> {
-                  if (connection.menu == null || connection.selectedScope == null)
-                    throw new IllegalArgumentException();
-                  var request = command.joinRequestPayload().orElseThrow();
-                  var selected =
-                      required(selections)
-                          .resolve(connection.menu, request.worldSelector())
-                          .orElseThrow();
-                  if (!selected.equals(connection.selectedScope.publicTarget()))
-                    throw new IllegalArgumentException();
-                  var observation = required(lobbies).join(original, result, connection);
-                  if (observation.status()
-                          != DirectTextAuthenticatedLobbyOwner.Status
-                              .COMPLETED_CURRENT_NON_ADMITTING
-                      || observation.currentReply().isEmpty()) throw new IllegalStateException();
-                  return success("Joined public production realm");
-                });
+        case REALMS -> {
+          var request = command.realmBrowsePayload().orElse(null);
+          if (command.args().size() != 1
+              || request == null
+              || request.worldSelector() == null
+              || request.worldSelector().isBlank())
+            yield failure("INVALID_ARGUMENT", "Usage: REALMS <world>");
+          yield connection.withLogin(
+              (original, result) -> {
+                if (connection.menu == null)
+                  return failure("INVALID_ARGUMENT", "Run WORLDS before REALMS <world>");
+                connection.selectedScope =
+                    required(lobbies)
+                        .realms(
+                            original, result, connection, connection.menu, request.worldSelector());
+                return success(connection.selectedScope.publicTarget().realmDisplayName());
+              });
+        }
+        case JOIN -> {
+          var request = command.joinRequestPayload().orElse(null);
+          if (command.args().size() != 1
+              || request == null
+              || request.worldSelector() == null
+              || request.worldSelector().isBlank())
+            yield failure("INVALID_ARGUMENT", "Usage: JOIN <world>");
+          yield connection.withLogin(
+              (original, result) -> {
+                if (connection.menu == null || connection.selectedScope == null)
+                  return failure(
+                      "INVALID_ARGUMENT", "Run WORLDS and REALMS <world> before JOIN <world>");
+                var selected =
+                    required(selections)
+                        .resolve(connection.menu, request.worldSelector())
+                        .orElseThrow();
+                if (!selected.equals(connection.selectedScope.publicTarget()))
+                  return failure(
+                      "INVALID_ARGUMENT", "Use REALMS <world> before JOIN of a different world");
+                var observation = required(lobbies).join(original, result, connection);
+                if (observation.status()
+                        != DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING
+                    || observation.currentReply().isEmpty()) throw new IllegalStateException();
+                return success("Joined public production realm");
+              });
+        }
         // LOGIN and JOIN are not admission. Until the canonical binding owner is qualified, the
         // retired numeric entitlement route must never be selected by this protected receiver.
         case PLAY -> failure("ADMISSION_UNAVAILABLE", "Canonical gameplay admission unavailable");
         case LOGOUT -> success("Logged out");
         default -> failure("FEATURE_UNAVAILABLE", "Command unavailable");
       };
+    } catch (AuthenticatedDirectTextSessions.LoginRequiredException missingLogin) {
+      return failure("LOGIN_REQUIRED", "Use LOGIN <email> <password> before REALMS or JOIN");
+    } catch (ExpiredWorldSelectionException expiredSelection) {
+      return failure(
+          "INVALID_ARGUMENT", "World menu expired. Run WORLDS and choose a listed selector again.");
+    } catch (UnknownWorldSelectorException unknownSelector) {
+      return failure(
+          "INVALID_ARGUMENT",
+          "Unknown or ambiguous world selector. Run WORLDS and choose a listed selector.");
     } catch (AuthenticatedDirectTextSessions.LoginRejectedException rejected) {
       return switch (rejected.code()) {
         case AuthenticationErrorCodes.INVALID_CREDENTIALS ->
