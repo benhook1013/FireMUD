@@ -179,6 +179,53 @@ class AuthenticatedDirectTextSessionsTest {
   }
 
   @Test
+  void selectionFailuresPropagateThroughCustodyWithoutDiscardingExactLogin() throws Exception {
+    var socket = socket();
+    sessions.open(socket);
+    var fixture = fixture();
+    var connection = sessions.require(socket);
+    connection.login(fixture.owner(), "player@example.test", "secret".toCharArray());
+
+    var unknown = new DirectTextWorldSelectionService.UnknownWorldSelectorException();
+    assertThatThrownBy(
+            () ->
+                connection.<Boolean>withLogin(
+                    (original, result) ->
+                        connection.withCurrent(
+                            original,
+                            result,
+                            transport -> {
+                              throw unknown;
+                            })))
+        .isSameAs(unknown);
+
+    var expired = new DirectTextWorldSelectionService.ExpiredWorldSelectionException();
+    assertThatThrownBy(
+            () ->
+                connection.<Boolean>withLogin(
+                    (original, result) ->
+                        connection.withCurrent(
+                            original,
+                            result,
+                            transport -> {
+                              throw expired;
+                            })))
+        .isSameAs(expired);
+
+    assertThat(
+            connection.<Boolean>withLogin(
+                (original, result) -> {
+                  assertThat(result).isSameAs(fixture.result());
+                  return connection.withCurrent(
+                      original, result, transport -> transport.transportSessionId().equals("42"));
+                }))
+        .isTrue();
+
+    sessions.close(socket, CloseStatus.NORMAL);
+    verify(fixture.cleanup()).abandonAndRetire(fixture.original());
+  }
+
+  @Test
   void disconnectRevokesBeforeDrainingAndCleansOnlyAfterBorrowReturns() throws Exception {
     var socket = socket();
     sessions.open(socket);

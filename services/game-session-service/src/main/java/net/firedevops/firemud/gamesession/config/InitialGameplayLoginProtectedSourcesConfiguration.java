@@ -58,14 +58,18 @@ public class InitialGameplayLoginProtectedSourcesConfiguration {
       @Value(
               "${firemud.game-session.initial-gameplay-login.protected-sources.coordination.acknowledgement-timeout-millis:0}")
           int timeoutMillis) {
+    final Profile selectedProfile;
     try {
-      return new InitialGameplayLoginRedisBinding(
-          protectedBindingId,
-          connections::openPinnedConnection,
-          new AcknowledgementPolicy(Profile.valueOf(profile), localAof, replicaAof, timeoutMillis));
-    } catch (RuntimeException failure) {
-      throw unavailable();
+      selectedProfile = Profile.valueOf(profile == null ? "" : profile);
+    } catch (IllegalArgumentException invalid) {
+      // Enum parsing can include a delivered value. Keep only the fixed failure category.
+      throw new IllegalArgumentException("Protected Coordination profile is invalid");
     }
+    // These owner validators already expose fixed, cause-free identity and ACK diagnostics.
+    return new InitialGameplayLoginRedisBinding(
+        protectedBindingId,
+        connections::openPinnedConnection,
+        new AcknowledgementPolicy(selectedProfile, localAof, replicaAof, timeoutMillis));
   }
 
   static RedisURI requiredCoordinationUri(String configuredUri, int timeoutMillis) {

@@ -199,14 +199,35 @@ class AccountGameplayLoginSourceConfigurationTest {
       redisFactory.when(() -> RedisClient.create(any(RedisURI.class))).thenReturn(client);
       enabledContext()
           .withPropertyValues("firemud.account.gameplay-login.request-digest-keyring-path=")
-          .run(context -> assertThat(context).hasFailed());
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                    .hasRootCauseMessage("Protected Account gameplay LOGIN configuration required");
+                verify(client, never()).connect(ByteArrayCodec.INSTANCE);
+              });
       enabledContext()
           .withPropertyValues("firemud.account.response-envelope.keyring-path=")
-          .run(context -> assertThat(context).hasFailed());
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                    .hasRootCauseMessage("Protected Account gameplay LOGIN configuration required");
+                verify(client, never()).connect(ByteArrayCodec.INSTANCE);
+              });
       enabledContext()
           .withPropertyValues(
               "firemud.account.gameplay-login.registry-cleanup-margin-millis=300001")
-          .run(context -> assertThat(context).hasFailed());
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                    .hasRootCauseMessage("Registry cleanup margin is outside its finite bound");
+                verify(client, never()).connect(ByteArrayCodec.INSTANCE);
+              });
       assertThat(apiConstruction.constructed()).isNotEmpty();
       verify(client, never()).connect(ByteArrayCodec.INSTANCE);
     }
