@@ -48,11 +48,17 @@ public final class AccountPublicJwksReadGrpcService
           Status.UNAVAILABLE
               .withDescription("Current Account public JWKS unavailable")
               .asRuntimeException());
-    } catch (RuntimeException rejected) {
-      // All custody/provenance failures are hard denials, not the cache's temporary-outage case.
+    } catch (AccountPublicJwksCache.InvalidJwksException rejected) {
+      // Typed custody/provenance and producer-frame failures remain hard denials.
       observer.onError(
           Status.FAILED_PRECONDITION
               .withDescription("Current Account public JWKS rejected")
+              .asRuntimeException());
+    } catch (RuntimeException unavailable) {
+      // An unclassified handler fault supplies no evidence of custody rejection.
+      observer.onError(
+          Status.UNAVAILABLE
+              .withDescription("Current Account public JWKS unavailable")
               .asRuntimeException());
     }
   }

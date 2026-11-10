@@ -25,6 +25,18 @@ public final class AccountPublicJwksReadService {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new AccountPublicJwksCache.SourceUnavailableException();
     }
+    try {
+      return currentResponse(caller);
+    } catch (RuntimeException failure) {
+      if (AccountJwtJwksTrustedSource.isSourceRejected(failure)) {
+        throw new AccountPublicJwksCache.InvalidJwksException();
+      }
+      throw failure;
+    }
+  }
+
+  private GetCurrentAccountPublicJwksResponse currentResponse(
+      AccountPublicJwksReadWorkloadGuard.ProtectedCaller caller) {
     var identity = source.sourceIdentity();
     caller.requireSource(identity);
     var snapshot = source.load();
@@ -36,6 +48,11 @@ public final class AccountPublicJwksReadService {
     if (!caller.equals(guard.requireCaller())) {
       throw new AccountPublicJwksCache.InvalidJwksException();
     }
-    return AccountPublicJwksReadCodec.response(snapshot);
+    try {
+      return AccountPublicJwksReadCodec.response(snapshot);
+    } catch (AccountPublicJwksReadCodec.InvalidFrameException producerRejected) {
+      // The caller's request already passed validation; this is our publication's failure.
+      throw new AccountPublicJwksCache.InvalidJwksException();
+    }
   }
 }
