@@ -61,10 +61,15 @@ import org.apache.tomcat.util.net.SSLHostConfigCertificate;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.AnnotationConfigUtils;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.server.reactive.ReactorHttpHandlerAdapter;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.context.support.GenericWebApplicationContext;
@@ -77,6 +82,7 @@ import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import reactor.core.publisher.Flux;
 import reactor.netty.DisposableServer;
 import reactor.netty.http.server.HttpServer;
 import tools.jackson.databind.JsonNode;
@@ -335,6 +341,11 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         }
         assertThat(receiving.request("GET", path, bearer, null).statusCode()).isEqualTo(401);
         assertThat(hosting.firstInvoiceConfirmations()).isOne();
+        org.mockito.Mockito.verify(receiving.rateLimitRedis, org.mockito.Mockito.atLeastOnce())
+            .execute(
+                org.mockito.ArgumentMatchers.same(receiving.rateLimitScript),
+                org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.eq(List.of("20", "40", "", "1")));
       }
     }
   }
@@ -347,6 +358,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
     private DisposableServer gatewayHttps;
     private HttpClient browser;
     private URI origin;
+    private ReactiveStringRedisTemplate rateLimitRedis;
+    private RedisScript<List<Long>> rateLimitScript;
 
     RegisteredChain(
         Path directory,
@@ -562,30 +575,26 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         gateway.registerBean(
             org.springframework.cloud.gateway.config.GatewayProperties.class,
             () -> gatewayProperties);
+        rateLimitScript = canonicalRateLimitScript();
+        rateLimitRedis = org.mockito.Mockito.mock(ReactiveStringRedisTemplate.class);
+        when(rateLimitRedis.execute(
+                org.mockito.ArgumentMatchers.same(rateLimitScript),
+                org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.eq(List.of("20", "40", "", "1"))))
+            .thenReturn(Flux.just(List.of(1L, 39L)));
+        gateway.registerBean(ReactiveStringRedisTemplate.class, () -> rateLimitRedis);
         gateway.registerBean(
-            org.springframework.data.redis.core.ReactiveStringRedisTemplate.class,
-            () ->
-                org.mockito.Mockito.mock(
-                    org.springframework.data.redis.core.ReactiveStringRedisTemplate.class));
+            RedisRateLimiter.REDIS_SCRIPT_NAME, RedisScript.class, () -> rateLimitScript);
         gateway.register(
             GatewayWebFlux.class,
             net.firedevops.firemud.springcloudgateway.config.AccountCheckoutReceivingConfiguration
                 .class);
-        // Gateway's external rate-limit decision is a stipulated upstream input in this composed
-        // proof; the same real selected factory and exact-path filter remain registered.
-        try (var rateLimiter =
-            mockConstruction(
-                org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter.class,
-                (mock, ignored) ->
-                    when(mock.isAllowed(
-                            org.mockito.ArgumentMatchers.anyString(),
-                            org.mockito.ArgumentMatchers.anyString()))
-                        .thenReturn(
-                            reactor.core.publisher.Mono.just(
-                                new org.springframework.cloud.gateway.filter.ratelimit.RateLimiter
-                                    .Response(true, Map.of()))))) {
-          gateway.refresh();
-        }
+        // This non-Boot fixture supplies the same script resource/name as
+        // GatewayRedisAutoConfiguration.
+        // Only Redis execution is stipulated; the real configured adapter and exact-path filter
+        // run.
+        gateway.refresh();
+        assertThat(gateway.getBean(RedisRateLimiter.REDIS_SCRIPT_NAME)).isSameAs(rateLimitScript);
         var httpHandler =
             new ReactorHttpHandlerAdapter(
                 WebHttpHandlerBuilder.applicationContext(gateway).build());
@@ -614,6 +623,14 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         }
         throw failure;
       }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static RedisScript<List<Long>> canonicalRateLimitScript() {
+      var script = new DefaultRedisScript<List<Long>>();
+      script.setLocation(new ClassPathResource("META-INF/scripts/request_rate_limiter.lua"));
+      script.setResultType((Class) List.class);
+      return script;
     }
 
     HttpResponse<String> request(String method, String path, String bearer, Object body)
