@@ -77,6 +77,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final RuntimeIdentity runtimeIdentity;
   private final TextCommandParser parser;
   private final TextCommandMetadataResolver textCommandMetadataResolver;
+  private AuthenticatedDirectTextSessions authenticatedSessions;
+  private AuthenticatedDirectTextCommandReceiver authenticatedReceiver;
+
+  @Autowired
+  void authenticatedDirectTextReceiving(
+      AuthenticatedDirectTextSessions sessions, AuthenticatedDirectTextCommandReceiver receiver) {
+    authenticatedSessions = sessions;
+    authenticatedReceiver = receiver;
+  }
 
   public GameSessionWebSocketHandler(
       TextCommandInterpreter interpreter,
@@ -155,6 +164,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {
+    if (authenticatedDirectText(session)) {
+      authenticatedSessions.open(session);
+      return;
+    }
     try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       logger.debug(
           "WebSocket session {} established with sessionId={} tenantId={}",
@@ -175,6 +188,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   @Override
   public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+    if (authenticatedDirectText(session)) {
+      authenticatedSessions.close(session, status);
+      return;
+    }
     parseNumericSessionId(resolveTransportSessionId(session))
         .ifPresent(
             sessionId -> {
@@ -191,6 +208,27 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   protected void handleTextMessage(WebSocketSession session, TextMessage message)
       throws IOException {
+    if (authenticatedDirectText(session)) {
+      TextCommand command = parser.parse(message.getPayload());
+      if (command.type() == TextCommandType.NOOP) return;
+      var interpretation = authenticatedReceiver.receive(session, command);
+      try {
+        sendProtocolMessage(
+            session,
+            outputProjector.projectCommandResponse(
+                session,
+                command,
+                interpretation,
+                interpretation.outputs(),
+                resolveLocaleTag(session),
+                settingsResolver.presentation(null),
+                null));
+      } finally {
+        if (command.type() == TextCommandType.LOGOUT)
+          authenticatedSessions.close(session, new CloseStatus(1000, "logout"));
+      }
+      return;
+    }
     // Check ownership before logging-context projection can read or normalize incumbent state.
     if ("first_party_web".equals(resolveConnectionMode(session))
         && !ownsActiveTransport(resolveTransportSessionId(session), session)) {
@@ -258,6 +296,18 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           "Unable to read retained session context while handling WebSocket message", unavailable);
       closeBackendUnavailable(session);
     }
+  }
+
+  @Override
+  public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
+    if (authenticatedDirectText(session))
+      authenticatedSessions.close(session, new CloseStatus(1011, "internal_error"));
+    super.handleTransportError(session, exception);
+  }
+
+  private boolean authenticatedDirectText(WebSocketSession session) {
+    return session.getAttributes().get(AuthenticatedDirectTextIngress.ATTRIBUTE)
+        instanceof AuthenticatedDirectTextIngress;
   }
 
   private boolean parseSoloTick(WebSocketSession session) {

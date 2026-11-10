@@ -2,10 +2,13 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { setTimeout: sleep } = require("node:timers/promises");
 
-const SUPPORTED_MODULES = new Set(["account-service", "game-session-service"]);
+const SUPPORTED_MODULES = new Set(["account-service", "game-session-service", "world-management-service"]);
 const CANONICAL_RUN_NAME = "CI — Validation";
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
+const ARTIFACT_SNAPSHOT_ATTEMPTS = 4;
+const ARTIFACT_SNAPSHOT_DELAY_MS = 1000;
 
 async function captureSlowServiceProvenance({
   github,
@@ -13,6 +16,7 @@ async function captureSlowServiceProvenance({
   env = process.env,
   module,
   fileSystem = fs,
+  wait = sleep,
 }) {
   if (!SUPPORTED_MODULES.has(module)) {
     throw new Error(`Unsupported slow-service provenance module: ${module}`);
@@ -129,6 +133,88 @@ async function captureSlowServiceProvenance({
     throw new Error(`Exceeded the ${description} pagination bound.`);
   }
 
+  function artifactMetadata(artifact) {
+    return {
+      id: artifact.id,
+      name: artifact.name,
+      expired: artifact.expired,
+      size_in_bytes: artifact.size_in_bytes,
+      created_at: artifact.created_at,
+      workflow_run: artifact.workflow_run,
+    };
+  }
+
+  function canonicalJson(value) {
+    if (Array.isArray(value)) {
+      return `[${value.map(canonicalJson).join(",")}]`;
+    }
+    if (value !== null && typeof value === "object") {
+      return `{${Object.keys(value).sort().map(key =>
+        `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+      ).join(",")}}`;
+    }
+    return JSON.stringify(value);
+  }
+
+  async function listArtifactSnapshot() {
+    const items = [];
+    const artifactIds = new Set();
+    let totalCount;
+    for (let page = 1; page <= 100; page += 1) {
+      const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+        ...context.repo,
+        run_id: runId,
+        page,
+        per_page: 100,
+      });
+      const count = data?.total_count;
+      const rows = data?.artifacts;
+      if (
+        !Number.isSafeInteger(count) ||
+        count < 0 ||
+        !Array.isArray(rows)
+      ) {
+        throw new Error("Invalid workflow artifact pagination metadata.");
+      }
+      if (totalCount !== undefined && totalCount !== count) return null;
+      if (items.length > count) return null;
+      totalCount = count;
+      const expected = Math.min(100, count - items.length);
+      if (rows.length !== expected) return null;
+      for (const artifact of rows) {
+        if (!Number.isSafeInteger(artifact?.id) || artifact.id <= 0) {
+          throw new Error("Invalid workflow artifact identity.");
+        }
+        if (artifactIds.has(artifact.id)) return null;
+        artifactIds.add(artifact.id);
+      }
+      items.push(...rows);
+      if (items.length === totalCount) return { total_count: totalCount, items };
+    }
+    throw new Error("Exceeded the workflow artifact pagination bound.");
+  }
+
+  async function listStableArtifactSnapshot() {
+    let previousFingerprint;
+    for (let attempt = 1; attempt <= ARTIFACT_SNAPSHOT_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) await wait(ARTIFACT_SNAPSHOT_DELAY_MS);
+      const snapshot = await listArtifactSnapshot();
+      if (snapshot === null) {
+        previousFingerprint = undefined;
+        continue;
+      }
+      const fingerprint = canonicalJson({
+        total_count: snapshot.total_count,
+        items: snapshot.items.map(artifactMetadata),
+      });
+      if (previousFingerprint === fingerprint) return snapshot;
+      previousFingerprint = fingerprint;
+    }
+    throw new Error(
+      `Could not obtain two consecutive identical complete workflow artifact snapshots within ${ARTIFACT_SNAPSHOT_ATTEMPTS} listings.`,
+    );
+  }
+
   const attempts = [];
   for (let attempt = 1; attempt <= runAttempt; attempt += 1) {
     const params = { run_id: runId, attempt_number: attempt };
@@ -155,12 +241,7 @@ async function captureSlowServiceProvenance({
     });
   }
 
-  const artifactSnapshot = await listCompletePages(
-    request => github.rest.actions.listWorkflowRunArtifacts(request),
-    { run_id: runId },
-    "artifacts",
-    "workflow artifact",
-  );
+  const artifactSnapshot = await listStableArtifactSnapshot();
   const artifacts = artifactSnapshot.items;
   const provenancePath = env.CI_PROVENANCE_PATH;
   fileSystem.mkdirSync(path.dirname(provenancePath), { recursive: true });
@@ -185,14 +266,7 @@ async function captureSlowServiceProvenance({
       attempts,
       artifacts: {
         total_count: artifactSnapshot.total_count,
-        items: artifacts.map(artifact => ({
-          id: artifact.id,
-          name: artifact.name,
-          expired: artifact.expired,
-          size_in_bytes: artifact.size_in_bytes,
-          created_at: artifact.created_at,
-          workflow_run: artifact.workflow_run,
-        })),
+        items: artifacts.map(artifactMetadata),
       },
     }),
   );

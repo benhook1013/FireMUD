@@ -26,6 +26,7 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
@@ -302,8 +303,7 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
         logoutOperations,
         securityOperations,
         resetSourceChanges,
-        null, // audit outbox
-        null, // connect scopes
+        null, // account audit outbox
         null, // join operations
         null, // email login challenges
         null, // realm grants
@@ -312,13 +312,12 @@ class AccountSecuritySourceOwnerGuardPostgresIntegrationTest {
         null, // profiles
         null, // profile mapper
         null, // payment transactions
-        null, // subscriptions
+        // retained subscription evidence
+        org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
         null, // external account identities
         tokens,
         null, // email verification tokens
         null, // notifications
-        null,
-        null,
         null,
         null,
         null,

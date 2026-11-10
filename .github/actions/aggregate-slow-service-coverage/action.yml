@@ -1,0 +1,103 @@
+name: Aggregate slow-service coverage
+description: Verify partition provenance and merge complete measured service coverage.
+inputs:
+  module:
+    description: Exact supported slow-service module.
+    required: true
+  module-label:
+    description: Human-readable service label.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: 🐍 Set Up Python
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: none
+
+    - name: Capture ${{ inputs.module-label }} partition job and artifact provenance
+      id: provenance
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      env:
+        CI_RUN_ID: ${{ github.run_id }}
+        CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+        CI_EVENT_NAME: ${{ github.event_name }}
+        CI_REF_NAME: ${{ github.ref_name }}
+        CI_SOURCE_SHA: ${{ github.sha }}
+        CI_NATIVE_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        CI_PROVENANCE_PATH: services/${{ inputs.module }}/build/slow-service-ci-partition-provenance.json
+        CI_MODULE: ${{ inputs.module }}
+      with:
+        script: |
+          const captureSlowServiceProvenance = require(
+            require("node:path").join(process.env.GITHUB_WORKSPACE,
+              ".github/scripts/capture-slow-service-provenance.cjs"),
+          );
+          await captureSlowServiceProvenance({
+            github,
+            context,
+            env: process.env,
+            module: process.env.CI_MODULE,
+          });
+
+    - name: Select ${{ inputs.module-label }} artifacts from latest effective job outcomes
+      id: selection
+      env:
+        PROVENANCE_PATH: services/${{ inputs.module }}/build/slow-service-ci-partition-provenance.json
+        SELECTION_PATH: services/${{ inputs.module }}/build/slow-service-ci-partition-selection.json
+      shell: bash
+      run: |
+        python3 dev-tools/validation/slow_service_ci_test_partition.py select-artifacts \
+          --module ${{ inputs.module }} \
+          --run-id "$GITHUB_RUN_ID" \
+          --source-revision "$GITHUB_SHA" \
+          --run-attempt "$GITHUB_RUN_ATTEMPT" \
+          --provenance-json "$PROVENANCE_PATH" \
+          --selection-json "$SELECTION_PATH" \
+          --github-output "$GITHUB_OUTPUT"
+
+    - name: Download all effective ${{ inputs.module-label }} partition artifacts
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      continue-on-error: true
+      with:
+        artifact-ids: ${{ steps.selection.outputs.artifact_ids }}
+        path: services/${{ inputs.module }}/build/slow-service-ci-partition-inputs
+        merge-multiple: false
+
+    - name: Verify complete ${{ inputs.module-label }} partition and report union
+      shell: bash
+      run: |
+        python3 dev-tools/validation/slow_service_ci_test_partition.py verify-aggregate \
+          --module ${{ inputs.module }} \
+          --input-dir services/${{ inputs.module }}/build/slow-service-ci-partition-inputs \
+          --verified-classes-dir services/${{ inputs.module }}/build/slow-service-ci-verified-classes \
+          --selection-json services/${{ inputs.module }}/build/slow-service-ci-partition-selection.json \
+          --run-id "$GITHUB_RUN_ID" \
+          --source-revision "$GITHUB_SHA" \
+          --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+    - name: ⚙️ Set Up Java for ${{ inputs.module-label }} Coverage Aggregation
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      with:
+        distribution: 'temurin'
+        java-version: 25
+
+    - name: ⚙️ Set Up Gradle for ${{ inputs.module-label }} Coverage Aggregation
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6
+      with:
+        build-scan-publish: true
+        build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+        build-scan-terms-of-use-agree: 'yes'
+        cache-read-only: false
+
+    - name: Merge complete ${{ inputs.module-label }} JaCoCo coverage
+      shell: bash
+      run: bash ./dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ inputs.module }}:jacocoTestReport -PfullCheck -PslowServiceCiCoverageAggregate=${{ inputs.module }} -PslowServiceCiCoverageClassesDirectory=build/slow-service-ci-verified-classes
+
+    - name: 📤 Upload Complete ${{ inputs.module-label }} Coverage Report
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: jacoco-${{ inputs.module }}-complete-report-${{ github.sha }}-attempt-${{ github.run_attempt }}
+        path: services/${{ inputs.module }}/build/reports/jacoco/test/
+        if-no-files-found: error
+        retention-days: 14

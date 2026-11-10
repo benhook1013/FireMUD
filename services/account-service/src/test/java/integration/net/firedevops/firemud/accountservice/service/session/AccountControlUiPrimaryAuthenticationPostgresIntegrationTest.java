@@ -31,6 +31,7 @@ import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOper
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -440,8 +441,7 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             logoutAllOperations,
             securityStateOperations,
             resetSourceChanges,
-            null, // Audit outbox is not used by credential/reset owner tests.
-            null, // Connect scopes are not used by credential/reset owner tests.
+            null, // Account audit outbox is not used by credential/reset owner tests.
             null, // JOIN operations are not used by credential/reset owner tests.
             challenges,
             null, // Realm grants are not used by primary authentication.
@@ -450,7 +450,8 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             null, // Profiles are not used by primary authentication.
             null, // Profile mapper is not used by primary authentication.
             null, // Payment transactions are not used by primary authentication.
-            null, // Subscriptions are not used by primary authentication.
+            // Retained evidence is not read by primary authentication.
+            org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
             null, // External identities are not used by primary authentication.
             resetTokens,
             null, // Email verification tokens are not used by primary authentication.
@@ -459,8 +460,6 @@ class AccountControlUiPrimaryAuthenticationPostgresIntegrationTest {
             null, // Mail properties are not used by primary authentication.
             null, // Token properties are not used by primary authentication.
             null, // JWT auth properties are not used by primary authentication.
-            null, // Game Session client is not used by primary authentication.
-            null, // Entity Management client is not used by primary authentication.
             null, // JWT utility is not used by primary authentication.
             null, // Session service is not used by primary authentication.
             manager);

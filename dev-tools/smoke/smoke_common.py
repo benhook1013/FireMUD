@@ -16,6 +16,18 @@ class ProbeOperationalFailure(RuntimeError):
     """An expected transport, upstream, or protocol failure from a live probe."""
 
 
+class ExplicitProtocolFailure(ProbeOperationalFailure):
+    """A protocol rejection, preserving exact response evidence without parsing logs."""
+
+    def __init__(self, response):
+        super().__init__(f"Command failed explicitly: {response}")
+        self.response = response
+
+
+class PlayEntitlementUnavailable(ProbeOperationalFailure):
+    """Direct backend PLAY rejected after a successful LOGIN; never runtime success."""
+
+
 class ProbeCommandTimeout(ProbeOperationalFailure):
     """The bounded command-response deadline expired without its expected output."""
 
@@ -301,6 +313,15 @@ def run_transport_session(
             if time.time() >= deadline:
                 raise
             continue
+        except PlayEntitlementUnavailable:
+            # The temporary CI classification also requires a clean transport close.
+            try:
+                session.close()
+            except Exception as close_exc:
+                raise ProbeOperationalFailure(
+                    f"Failed to close {session_label} after known PLAY refusal: {close_exc}"
+                ) from close_exc
+            raise
         except retriable_exceptions as exc:
             try:
                 session.close()
@@ -448,7 +469,7 @@ def raise_for_explicit_failure(
     diagnostic_response = (sanitize_response(response) if sanitize_response else response).strip()
     if retry_upstream_failure and failure_line.startswith(retryable_upstream_prefixes):
         raise TransientUpstreamSmokeFailure(f"Command failed explicitly: {diagnostic_response}")
-    raise ProbeOperationalFailure(f"Command failed explicitly: {diagnostic_response}")
+    raise ExplicitProtocolFailure(diagnostic_response)
 
 
 def wait_for_incremental_response(
@@ -860,19 +881,30 @@ def send_websocket_command_and_expect(
     ws.settimeout(remaining_timeout)
     ws.send(line)
     remaining_timeout = max(0, command_deadline - time.time())
-    response = wait_for_incremental_response(
-        lambda: recv_optional_websocket_chunk(ws, f"{label} response chunk", deadline=command_deadline),
-        responses,
-        start_index,
-        expected_substrings,
-        remaining_timeout,
-        lambda parts: "\n".join(chunk for chunk in parts if chunk),
-        lambda: drain_available_websocket(ws, responses, deadline=command_deadline),
-        retry_upstream_failure=(retry_upstream_failure and label in RETRYABLE_STARTUP_COMMAND_LABELS),
-        sanitize_response=lambda value: redact_login_credential(value, line),
-        deadline=command_deadline,
-        retryable_upstream_prefixes=retryable_upstream_prefixes,
-    )
+    try:
+        response = wait_for_incremental_response(
+            lambda: recv_optional_websocket_chunk(ws, f"{label} response chunk", deadline=command_deadline),
+            responses,
+            start_index,
+            expected_substrings,
+            remaining_timeout,
+            lambda parts: "\n".join(chunk for chunk in parts if chunk),
+            lambda: drain_available_websocket(ws, responses, deadline=command_deadline),
+            retry_upstream_failure=(retry_upstream_failure and label in RETRYABLE_STARTUP_COMMAND_LABELS),
+            sanitize_response=lambda value: redact_login_credential(value, line),
+            deadline=command_deadline,
+            retryable_upstream_prefixes=retryable_upstream_prefixes,
+        )
+    except ExplicitProtocolFailure as exc:
+        if (label == "PLAY" and line.startswith("PLAY ")
+                and exc.response in {
+                    "ERROR ENTITLEMENT_UNAVAILABLE",
+                    "ERROR ENTITLEMENT_UNAVAILABLE Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.",
+                }
+                and step_results and step_results[-1]["label"] == "LOGIN"
+                and step_results[-1]["response"].startswith("OK LOGIN")):
+            raise PlayEntitlementUnavailable(exc.response) from exc
+        raise
     diagnostic_response = redact_login_credential(response, line)
     print(f"=== {label} response ===")
     print(diagnostic_response.strip() or "<empty>")

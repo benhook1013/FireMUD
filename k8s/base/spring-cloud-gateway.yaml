@@ -25,6 +25,16 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH
+              value: /gameplay-client-tls/tls.crt
+            - name: FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH
+              value: /gameplay-client-tls/tls.key
+            - name: FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH
+              value: /gameplay-client-trust/ca.crt
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
               value: /tls/client.crt
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
@@ -52,6 +62,12 @@ spec:
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: gameplay-client-tls
+              mountPath: /gameplay-client-tls
+              readOnly: true
+            - name: gameplay-client-trust
+              mountPath: /gameplay-client-trust
               readOnly: true
             - name: gateway-ws-server-tls
               mountPath: /gateway-ws-server-tls
@@ -96,7 +112,7 @@ spec:
             failureThreshold: 30
             periodSeconds: 10
         - name: fluent-bit
-          image: fluent/fluent-bit:5.1.5@sha256:2740f387f6e68fab66d28e4fa6a853387b9cab6ffb4cb78958f69bba4eb0e7b4
+          image: fluent/fluent-bit:5.2.0@sha256:a48190bf67679495a332fd61025421a46e7e4d168380185a8e16da2e9acc3126
           imagePullPolicy: Always
           args: ["-c", "/fluent-bit/etc/fluent-bit.conf"]
           env:
@@ -126,6 +142,20 @@ spec:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-tls
+        - name: gameplay-client-tls
+          secret:
+            secretName: firemud-grpc-spring-cloud-gateway
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: gameplay-client-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
         - name: gateway-ws-server-tls
           secret:
             secretName: production-gateway-internal-ws

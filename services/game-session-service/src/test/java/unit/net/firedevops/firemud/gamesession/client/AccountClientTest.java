@@ -66,10 +66,10 @@ class AccountClientTest {
             .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
             .build();
     when(fixture.initialStub().issueDirectTextConnectScope(any())).thenReturn(expected);
-    // Session/request are bounded opaque text, not numeric IDs. Preserve their exact bytes.
+    // The numeric transport session retains its exact bytes, including leading zeros.
     var context =
         directTextContext().toBuilder()
-            .setSessionId(" transport-session ")
+            .setSessionId("00042")
             .setRequestId(" scope-request ")
             .build();
     var target = directTextTarget();
@@ -82,13 +82,13 @@ class AccountClientTest {
         .isEqualTo(
             IssueDirectTextConnectScopeRequest.newBuilder()
                 .setPlayerContext(context)
-                .setTenantId("22")
+                .setTenantId("22222222-2222-4222-8222-222222222222")
                 .setWorldSlug("demo-world")
                 .setRealmSlug("production")
                 .setRealmId(target.realmId())
                 .setPlayableStateNamespaceId(target.playableStateNamespaceId())
                 .setPlayableStateScope("SHARED")
-                .setGameInstanceId("9")
+                .setGameInstanceId("44444444-4444-4444-8444-444444444444")
                 .setCatalogRevision(7L)
                 .setPointerVersion(4L)
                 .build());
@@ -169,6 +169,30 @@ class AccountClientTest {
     org.mockito.Mockito.verifyNoInteractions(stub);
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "abc",
+        "-1",
+        " 42",
+        "+1",
+        "0",
+        "000",
+        "000000000000000000000000000000001",
+        "9223372036854775808"
+      })
+  void directTextMethodsRejectMalformedNumericSessionIdsBeforeDispatch(String sessionId)
+      throws Exception {
+    var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    var client = newClient(stub);
+    var context = directTextContext().toBuilder().setSessionId(sessionId).build();
+
+    assertThat(client.issueDirectTextConnectScope(context, directTextTarget()).getError().getCode())
+        .isEqualTo("INVALID_ARGUMENT");
+    assertThat(join(client, context).getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    org.mockito.Mockito.verifyNoInteractions(stub);
+  }
+
   @Test
   void scopeIssuanceRejectsEachIndependentContextTargetMismatch() throws Exception {
     var stub = mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
@@ -176,13 +200,15 @@ class AccountClientTest {
     var context = directTextContext();
     for (var mismatched :
         List.of(
-            context.toBuilder().setTenantId("23").build(),
+            context.toBuilder().setTenantId("33333333-3333-4333-8333-333333333333").build(),
             context.toBuilder().setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce902").build(),
             context.toBuilder()
                 .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328f")
                 .build(),
             context.toBuilder().setPlayableStateScope("ISOLATED").build(),
-            context.toBuilder().setGameInstanceId("10").build())) {
+            context.toBuilder()
+                .setGameInstanceId("55555555-5555-4555-8555-555555555555")
+                .build())) {
       assertThat(
               client
                   .issueDirectTextConnectScope(mismatched, directTextTarget())
@@ -197,7 +223,15 @@ class AccountClientTest {
   void directTextTargetRejectsMalformedRoutingEvidenceWithoutNormalizing() {
     var target = directTextTarget();
     String[][] malformed = {
-      {"0", "world", "realm", target.realmId(), target.playableStateNamespaceId(), "SHARED", "9"},
+      {
+        "0",
+        "world",
+        "realm",
+        target.realmId(),
+        target.playableStateNamespaceId(),
+        "SHARED",
+        "44444444-4444-4444-8444-444444444444"
+      },
       {
         "tenant",
         "world",
@@ -205,31 +239,71 @@ class AccountClientTest {
         target.realmId(),
         target.playableStateNamespaceId(),
         "SHARED",
-        "9"
+        "44444444-4444-4444-8444-444444444444"
       },
-      {"22", " ", "realm", target.realmId(), target.playableStateNamespaceId(), "SHARED", "9"},
       {
-        "22",
+        "22222222-2222-4222-8222-222222222222",
+        " ",
+        "realm",
+        target.realmId(),
+        target.playableStateNamespaceId(),
+        "SHARED",
+        "44444444-4444-4444-8444-444444444444"
+      },
+      {
+        "22222222-2222-4222-8222-222222222222",
         "w".repeat(129),
         "realm",
         target.realmId(),
         target.playableStateNamespaceId(),
         "SHARED",
-        "9"
+        "44444444-4444-4444-8444-444444444444"
       },
       {
-        "22",
+        "22222222-2222-4222-8222-222222222222",
         "world",
         "r".repeat(129),
         target.realmId(),
         target.playableStateNamespaceId(),
         "SHARED",
-        "9"
+        "44444444-4444-4444-8444-444444444444"
       },
-      {"22", "world", "realm", "realm", target.playableStateNamespaceId(), "SHARED", "9"},
-      {"22", "world", "realm", target.realmId(), "namespace", "SHARED", "9"},
-      {"22", "world", "realm", target.realmId(), target.playableStateNamespaceId(), "shared", "9"},
-      {"22", "world", "realm", target.realmId(), target.playableStateNamespaceId(), "SHARED", "0"}
+      {
+        "22222222-2222-4222-8222-222222222222",
+        "world",
+        "realm",
+        "realm",
+        target.playableStateNamespaceId(),
+        "SHARED",
+        "44444444-4444-4444-8444-444444444444"
+      },
+      {
+        "22222222-2222-4222-8222-222222222222",
+        "world",
+        "realm",
+        target.realmId(),
+        "namespace",
+        "SHARED",
+        "44444444-4444-4444-8444-444444444444"
+      },
+      {
+        "22222222-2222-4222-8222-222222222222",
+        "world",
+        "realm",
+        target.realmId(),
+        target.playableStateNamespaceId(),
+        "shared",
+        "44444444-4444-4444-8444-444444444444"
+      },
+      {
+        "22222222-2222-4222-8222-222222222222",
+        "world",
+        "realm",
+        target.realmId(),
+        target.playableStateNamespaceId(),
+        "SHARED",
+        "0"
+      }
     };
     for (var fields : malformed) {
       assertThatThrownBy(
@@ -242,26 +316,26 @@ class AccountClientTest {
     assertThatThrownBy(
             () ->
                 new DirectTextConnectScopeTarget(
-                    "22",
+                    "22222222-2222-4222-8222-222222222222",
                     "world",
                     "realm",
                     target.realmId(),
                     target.playableStateNamespaceId(),
                     "SHARED",
-                    "9",
+                    "44444444-4444-4444-8444-444444444444",
                     0L,
                     4L))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(
             () ->
                 new DirectTextConnectScopeTarget(
-                    "22",
+                    "22222222-2222-4222-8222-222222222222",
                     "world",
                     "realm",
                     target.realmId(),
                     target.playableStateNamespaceId(),
                     "SHARED",
-                    "9",
+                    "44444444-4444-4444-8444-444444444444",
                     7L,
                     -1L))
         .isInstanceOf(IllegalArgumentException.class);
@@ -370,6 +444,37 @@ class AccountClientTest {
   }
 
   @Test
+  void joinPreservesAlreadyActiveNonAdmittingReceipt() throws Exception {
+    var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    var expected =
+        joinSuccess("ALREADY_ACTIVE", true).toBuilder().setGameplayAdmissionAllowed(false).build();
+    when(fixture.initialStub().joinPublicProductionMembership(any())).thenReturn(expected);
+
+    assertThat(join(fixture.client(), directTextContext())).isSameAs(expected);
+    assertThat(expected.getReplayed()).isTrue();
+    verify(fixture.initialStub()).joinPublicProductionMembership(any());
+    verify(fixture.retryStub(), never()).joinPublicProductionMembership(any());
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void joinPreservesJoinedNonAdmittingReplayReceipt() throws Exception {
+    var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    var expected =
+        joinSuccess("JOINED", true).toBuilder().setGameplayAdmissionAllowed(false).build();
+    when(fixture.initialStub().joinPublicProductionMembership(any())).thenReturn(expected);
+
+    var result = join(fixture.client(), directTextContext());
+
+    assertThat(result).isSameAs(expected);
+    assertThat(result.getGameplayAdmissionAllowed()).isFalse();
+    assertThat(result.getReplayed()).isTrue();
+    verify(fixture.initialStub()).joinPublicProductionMembership(any());
+    verify(fixture.retryStub(), never()).joinPublicProductionMembership(any());
+  }
+
+  @Test
   void joinPreservesTypedNonSuccessWithOrWithoutErrorWithoutRetry() throws Exception {
     var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
     var normal =
@@ -377,7 +482,7 @@ class AccountClientTest {
             .setSuccess(false)
             .setOutcomeCode("PUBLIC_PRODUCTION_ADMISSION_DENIED")
             .setAccountId(ACCOUNT_UUID)
-            .setTenantId("22")
+            .setTenantId("22222222-2222-4222-8222-222222222222")
             .setMembershipId("0")
             .build();
     for (var expected :
@@ -399,13 +504,14 @@ class AccountClientTest {
   }
 
   @Test
-  void joinAcceptsBoundedOpaqueIdentityWithoutTrimmingOrRegeneration() throws Exception {
+  void joinPreservesBoundedNumericTransportIdentityWithoutTrimmingOrRegeneration()
+      throws Exception {
     var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
     var requestId = " " + "r".repeat(126) + " ";
     var scopeId = " " + "s".repeat(2046) + " ";
     var context =
         directTextContext().toBuilder()
-            .setSessionId("s".repeat(128))
+            .setSessionId("0".repeat(30) + "42")
             .setRequestId(requestId)
             .build();
     var expected = joinSuccess("JOINED", false);
@@ -447,7 +553,15 @@ class AccountClientTest {
       assertThat(join(fixture.client(), directTextContext()).getError().getCode())
           .isEqualTo("AUTH_UNAVAILABLE");
     }
-    for (String tenant : List.of("", "tenant", "0", "23", " 22", "022")) {
+    for (String tenant :
+        List.of(
+            "",
+            "tenant",
+            "22",
+            "00000000-0000-0000-0000-000000000000",
+            "22222222-2222-4222-8222-22222222222A",
+            " " + directTextTarget().tenantId(),
+            "33333333-3333-4333-8333-333333333333")) {
       when(fixture.initialStub().joinPublicProductionMembership(any()))
           .thenReturn(success.toBuilder().setTenantId(tenant).build());
       assertThat(join(fixture.client(), directTextContext()).getError().getCode())
@@ -464,7 +578,8 @@ class AccountClientTest {
     var fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
     when(fixture.initialStub().joinPublicProductionMembership(any()))
         .thenThrow(Status.fromCode(Status.Code.valueOf(status)).asRuntimeException());
-    var expected = joinSuccess("JOINED", true);
+    var expected =
+        joinSuccess("JOINED", true).toBuilder().setGameplayAdmissionAllowed(false).build();
     when(fixture.retryStub().joinPublicProductionMembership(any())).thenReturn(expected);
 
     assertThat(join(fixture.client(), directTextContext())).isSameAs(expected);
@@ -525,7 +640,10 @@ class AccountClientTest {
     when(fixture.initialStub().joinPublicProductionMembership(any()))
         .thenThrow(Status.UNAVAILABLE.asRuntimeException());
     when(fixture.retryStub().joinPublicProductionMembership(any()))
-        .thenReturn(joinSuccess("JOINED", true).toBuilder().setTenantId("23").build());
+        .thenReturn(
+            joinSuccess("JOINED", true).toBuilder()
+                .setTenantId("33333333-3333-4333-8333-333333333333")
+                .build());
 
     assertThat(join(fixture.client(), directTextContext()).getError().getCode())
         .isEqualTo("AUTH_UNAVAILABLE");
@@ -662,13 +780,13 @@ class AccountClientTest {
 
   private static DirectTextConnectScopeTarget directTextTarget() {
     return new DirectTextConnectScopeTarget(
-        "22",
+        "22222222-2222-4222-8222-222222222222",
         "demo-world",
         "production",
         "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
         "42d234a2-7487-4dda-a7e5-a3831214328e",
         "SHARED",
-        "9",
+        "44444444-4444-4444-8444-444444444444",
         7L,
         4L);
   }
@@ -677,7 +795,7 @@ class AccountClientTest {
     var target = directTextTarget();
     return PlayerExecutionContext.newBuilder()
         .setAccountId(ACCOUNT_UUID)
-        .setSessionId("transport-session")
+        .setSessionId("00042")
         .setTenantId(target.tenantId())
         .setRealmId(target.realmId())
         .setPlayableStateNamespaceId(target.playableStateNamespaceId())
@@ -693,11 +811,12 @@ class AccountClientTest {
         .setSuccess(true)
         .setOutcomeCode(outcome)
         .setAccountId(ACCOUNT_UUID)
-        .setTenantId("22")
+        .setTenantId("22222222-2222-4222-8222-222222222222")
         .setMembershipId("81")
         .setMembershipVersion(12L)
         .setMembershipAuthorityGeneration(3L)
         .setReplayed(replayed)
+        .setGameplayAdmissionAllowed(true)
         .build();
   }
 

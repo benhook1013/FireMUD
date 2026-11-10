@@ -35,6 +35,7 @@ SMOKE_CONFIG_ENV_UNSETS=(
   -u SMOKE_USERNAME
   -u SMOKE_PASSWORD
   -u PLAYER_EXPERIENCE_WORLD
+  -u PLAYER_EXPERIENCE_TENANT_SLUG
   -u SMOKE_TIMEOUT_SECONDS
   -u SMOKE_STARTUP_WAIT_SECONDS
   -u PLAYER_EXPERIENCE_AUTH_API_BASE
@@ -49,6 +50,7 @@ env "${SMOKE_CONFIG_ENV_UNSETS[@]}" \
   PLAYER_EXPERIENCE_QUERYABILITY_FRESHNESS_BUDGET_SECONDS=7200 \
   python3 - "$ROOT_DIR" <<'PY'
 import importlib.util
+import io
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -81,6 +83,141 @@ assert env_config.queryability_freshness_budget_seconds == 7200
 assert env_config.telnet_transport is None
 assert env_config.telnet_server_hostname is None
 assert env_config.telnet_ca_file is None
+
+# A live WebSocket mirror or authorized canary must have tenant scope before
+# readiness, account, bootstrap, or transport requests begin.
+try:
+    runner_module.validate_live_websocket_tenant_selector(
+        env_config, {"websocket"}, simulate=False
+    )
+except runner_module.ProbeOperationalFailure as exc:
+    assert "PLAYER_EXPERIENCE_TENANT_SLUG" in str(exc)
+else:
+    raise AssertionError("live WebSocket evidence accepted a missing tenant selector")
+runner_module.validate_live_websocket_tenant_selector(
+    env_config, {"websocket"}, simulate=True
+)
+runner_module.validate_live_websocket_tenant_selector(
+    env_config, {"telnet"}, simulate=False
+)
+omitted_websocket = runner_module.SmokeConfig.from_env(
+    "contract-test", "websocket", None, prometheus_mirrors="omitted",
+    player_flow_canary="omitted",
+)
+runner_module.validate_live_websocket_tenant_selector(
+    omitted_websocket, {"websocket"}, simulate=False
+)
+authorized_canary = runner_module.SmokeConfig.from_env(
+    "contract-test", "websocket", None, prometheus_mirrors="omitted",
+    player_flow_canary="advertised",
+)
+authorized_canary.username = "non-default@example.com"
+authorized_canary.password = "non-default-password"
+authorized_canary.player_flow_canary_identity = {
+    "authority": "account-service",
+    "classification": "synthetic",
+    "analyticsSloExclusion": True,
+    "credentials": {"nonDefault": True, "productionSafe": True},
+    "transportCharacters": {
+        "websocket": {"restricted": True, "isolated": True}
+    },
+    "evidenceRef": "account://contract-test/synthetic-canary",
+}
+authorized_canary._validated_player_flow_canary_paths = frozenset({"websocket"})
+with patch.object(runner_module, "AUTHORITATIVE_CANARY_IDENTITY_VERIFIER_AVAILABLE", True):
+    try:
+        runner_module.validate_live_websocket_tenant_selector(
+            authorized_canary, {"websocket"}, simulate=False
+        )
+    except runner_module.ProbeOperationalFailure as exc:
+        assert "PLAYER_EXPERIENCE_TENANT_SLUG" in str(exc)
+    else:
+        raise AssertionError("authorized live WebSocket canary accepted missing tenant selector")
+
+# The CLI fails during configuration preflight, before any live readiness or
+# account/auth request can be attempted.
+with patch.object(runner_module.sys, "argv", [
+    str(root / "run-player-experience-smoke.py"),
+    "--external-authority-evidence", "/tmp/contract-authority.json",
+    "--player-flow-canary", "omitted",
+    "--queryability-profile", "staging",
+    "--queryability-freshness-budget-seconds", "7200",
+    "--evidence-out", "/tmp/contract-evidence.json",
+]):
+    with patch.object(
+        runner_module, "resolve_external_authority",
+        return_value={"profile": "independent-omitted", "exposedPublicPlayerPaths": ["websocket"]},
+    ), patch.object(runner_module, "wait_for_account_schema") as wait_schema, patch.object(
+        runner_module, "wait_for_http_readiness"
+    ) as wait_http, patch.object(runner_module, "verify_smoke_account") as verify_account, patch.object(
+        runner_module, "http_request_json"
+    ) as auth_request, patch.object(
+        runner_module, "http_request_json_with_headers"
+    ) as auth_request_with_headers, patch.object(
+        runner_module, "execute_smoke"
+    ) as execute:
+        stderr = io.StringIO()
+        try:
+            with patch("sys.stderr", stderr):
+                runner_module.main()
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("live CLI did not reject a missing WebSocket tenant selector")
+        assert "PLAYER_EXPERIENCE_TENANT_SLUG" in stderr.getvalue()
+        wait_schema.assert_not_called()
+        wait_http.assert_not_called()
+        verify_account.assert_not_called()
+        auth_request.assert_not_called()
+        auth_request_with_headers.assert_not_called()
+        execute.assert_not_called()
+
+# Browser world selection remains qualified even when another tenant reuses its slug.
+assert env_config.tenant_slug is None
+with patch.object(runner_module, "http_request_json") as request:
+    try:
+        runner_module.resolve_connect_scope_id(env_config, "bootstrap")
+    except runner_module.ProbeOperationalFailure as exc:
+        assert "PLAYER_EXPERIENCE_TENANT_SLUG" in str(exc)
+    else:
+        raise AssertionError("Bare browser world selector was accepted")
+    request.assert_not_called()
+with patch.dict("os.environ", {"PLAYER_EXPERIENCE_TENANT_SLUG": "  tenant-b \t"}):
+    qualified = runner_module.SmokeConfig.from_env("contract-test", "websocket", None)
+assert qualified.tenant_slug == "tenant-b"
+with patch.object(runner_module, "http_request_json", return_value={"data": [
+    {"worldSlug": qualified.world, "tenantSlug": qualified.tenant_slug}
+]}) as request:
+    runner_module.require_visible_world(qualified, "bootstrap")
+    request.assert_called_once()
+with patch.object(runner_module, "http_request_json", return_value={"data": [
+    {"worldSlug": qualified.world, "tenantSlug": "tenant-a"}
+]}) as request:
+    try:
+        runner_module.require_visible_world(qualified, "bootstrap")
+    except runner_module.ProbeOperationalFailure as exc:
+        assert qualified.world in str(exc)
+        assert qualified.tenant_slug in str(exc)
+    else:
+        raise AssertionError("Another tenant's world satisfied discovery")
+with patch.object(runner_module, "http_request_json", return_value={"data": [
+    {"realmSlug": qualified.realm_slug, "connectScopeId": "qualified-scope"}
+]}) as request:
+    assert runner_module.resolve_connect_scope_id(qualified, "bootstrap") == "qualified-scope"
+    assert request.call_args.args[0].endswith("/realms?tenantSlug=tenant-b")
+with patch.dict("os.environ", {"PLAYER_EXPERIENCE_TENANT_SLUG": " \t "}):
+    whitespace_only = runner_module.SmokeConfig.from_env(
+        "contract-test", "websocket", None
+    )
+assert whitespace_only.tenant_slug is None
+with patch.object(runner_module, "http_request_json") as request:
+    try:
+        runner_module.resolve_connect_scope_id(whitespace_only, "bootstrap")
+    except runner_module.ProbeOperationalFailure as exc:
+        assert "PLAYER_EXPERIENCE_TENANT_SLUG" in str(exc)
+    else:
+        raise AssertionError("Whitespace-only tenant selector was accepted")
+    request.assert_not_called()
 
 runner_module.validate_telnet_transport_config(
     env_config, {"websocket"}, simulate=False

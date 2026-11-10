@@ -157,13 +157,17 @@ jobs:
               "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
               "world-management-service", "hosted-environment-identity-controller", "load-testing",
             ]);
-            const placeholders = new Set([
-              "Build and Test ($" + "{{ matrix.module }})",
-              "Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})",
+            const placeholders = new Map([
+              ["Build and Test ($" + "{{ matrix.module }})", "legacy"],
+              ["Build and Test ($" + "{{ matrix.module }} / $" + "{{ matrix.partition }})", "other"],
+              ["Build and Test (account-service / $" + "{{ matrix.partition }})", "account-service"],
+              ["Build and Test (game-session-service / $" + "{{ matrix.partition }})", "game-session-service"],
+              ["Build and Test (world-management-service / $" + "{{ matrix.partition }})", "world-management-service"],
             ]);
             const aggregateNames = new Map([
               ["account-service", "Account Coverage Aggregate"],
               ["game-session-service", "Game Session Coverage Aggregate"],
+              ["world-management-service", "World Coverage Aggregate"],
             ]);
             const aggregates = new Map();
             for (const [module, name] of aggregateNames) {
@@ -180,12 +184,12 @@ jobs:
               const match = /^Build and Test \(([a-z0-9-]+)(?: \/ (full|[1-4]))?\)$/.exec(job.name || "");
               if (match && modules.has(match[1])) {
                 const [, module, partition] = match;
-                if (partition && (slowServices.has(module) ? !["1", "2", "3", "4"].includes(partition) : partition !== "full")) {
+                if (partition && (slowServices.has(module) ? !(module === "world-management-service" ? ["1", "2", "full"] : ["1", "2", "3", "4"]).includes(partition) : partition !== "full")) {
                   throw new Error("Invalid module partition: " + job.name);
                 }
                 matrix.push({ job, module, partition: partition || null });
               } else if (placeholders.has(job.name) && job.conclusion === "skipped") {
-                matrix.push({ job, placeholder: true });
+                matrix.push({ job, placeholder: placeholders.get(job.name) });
               } else {
                 throw new Error("Unknown Validation source job: " + job.name);
               }
@@ -208,8 +212,8 @@ jobs:
               // new jobs must not turn a truncated four-way matrix into an apparent old pair.
               let expectedPartitions = "1,2";
               let invalidPlanMarkers = false;
-              if (slowServices.has(module) && serviceMatrix.some(entry => entry.partition !== null)) {
-                const moduleLabel = module === "account-service" ? "Account" : "Game Session";
+              if (slowServices.has(module) && serviceMatrix.some(entry => entry.partition !== null && entry.partition !== "full")) {
+                const moduleLabel = module === "account-service" ? "Account" : module === "world-management-service" ? "World" : "Game Session";
                 const markerPrefix = `Declare ${moduleLabel} CI partition count:`;
                 const markers = serviceMatrix.map(entry => {
                   const steps = entry.job.steps;
@@ -217,20 +221,26 @@ jobs:
                       steps.some(step => typeof step?.name !== "string")) return null;
                   return steps.filter(step => step.name.startsWith(markerPrefix));
                 });
-                const fourWay = markers.some(entries => entries?.length > 0);
-                if (fourWay) {
-                  expectedPartitions = "1,2,3,4";
+                if (module === "world-management-service") {
                   invalidPlanMarkers = markers.some(entries => entries?.length !== 1 ||
-                    entries[0].name !== `${markerPrefix} 4`);
+                    entries[0].name !== `${markerPrefix} 2`);
                 } else {
-                  invalidPlanMarkers = markers.some(entries => entries === null);
+                  const fourWay = markers.some(entries => entries?.length > 0);
+                  if (fourWay) {
+                    expectedPartitions = "1,2,3,4";
+                    invalidPlanMarkers = markers.some(entries => entries?.length !== 1 ||
+                      entries[0].name !== `${markerPrefix} 4`);
+                  } else {
+                    invalidPlanMarkers = markers.some(entries => entries === null);
+                  }
                 }
               }
               const partitioned = !invalidPlanMarkers &&
                 serviceMatrix.length === expectedPartitions.split(",").length &&
                 serviceMatrix.every(entry => entry.partition !== null) &&
                 serviceMatrix.map(entry => entry.partition).sort().join(",") === expectedPartitions;
-              const legacy = serviceMatrix.length === 1 && serviceMatrix[0].partition === null;
+              const legacy = serviceMatrix.length === 1 && (serviceMatrix[0].partition === null ||
+                (module === "world-management-service" && serviceMatrix[0].partition === "full"));
               if (serviceMatrix.length > 0 && !partitioned && !legacy) invalidSlowServiceMatrix = true;
               if (partitioned && (
                 !aggregate ||
@@ -244,8 +254,14 @@ jobs:
                 invalidSlowServiceMatrix = true;
               }
             }
+            const invalidPlaceholder = matrix.some(entry => entry.placeholder && (
+              entry.job.steps?.some(step => step.conclusion !== "skipped") ||
+              (entry.placeholder === "legacy" ? matrix.length !== 1 :
+                matrix.some(candidate => candidate.module &&
+                  (entry.placeholder === "other" ? !slowServices.has(candidate.module) : candidate.module === entry.placeholder)))
+            ));
             if (!matrix.length || new Set(matrix.map(entry => entry.job.name)).size !== matrix.length ||
-                (matrix.some(entry => entry.placeholder) && matrix.length !== 1) ||
+                invalidPlaceholder ||
                 duplicateUnpartitionedModule || invalidSlowServiceMatrix) {
               throw new Error("Missing or ambiguous module matrix");
             }
@@ -260,7 +276,7 @@ jobs:
             for (const [module, aggregate] of aggregates) {
               const label = module === "account-service"
                 ? "Account coverage aggregation"
-                : "Game Session coverage aggregation";
+                : module === "world-management-service" ? "World coverage aggregation" : "Game Session coverage aggregation";
               validationChecks.push([label, aggregate.conclusion]);
             }
             if (validationChecks.some(([, result]) => result === "neutral")) throw new Error("Unexpected neutral Validation job");

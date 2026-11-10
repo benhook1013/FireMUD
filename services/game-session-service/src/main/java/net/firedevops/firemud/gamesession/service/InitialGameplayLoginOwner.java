@@ -1,8 +1,11 @@
 package net.firedevops.firemud.gamesession.service;
 
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.InitialGameplayLoginTokenWitness;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayLoginAccountClient;
@@ -232,6 +235,8 @@ public final class InitialGameplayLoginOwner {
     private CanonicalGameplayLoginResult transferredResult;
     private final Object lifecycleMutex = new Object();
     private boolean resultTransferred;
+    private final Set<Thread> borrowers = new HashSet<>();
+    private Thread drainingThread;
     private boolean closed;
     private Optional<InitialGameplayLoginCleanupOwner.CleanupObservation> custodyLossCleanup =
         Optional.empty();
@@ -293,43 +298,135 @@ public final class InitialGameplayLoginOwner {
       return cleanupStatus;
     }
 
-    /** Transfers the verified private result exactly once to its receiving caller. */
-    public Optional<CanonicalGameplayLoginResult> takePrivateResult() {
+    /**
+     * Borrows the identical installed result while this outcome retains ownership. Transfer,
+     * closure and retirement first block new borrows and drain existing callbacks. Neither owner
+     * nor result monitors cover callback work or cleanup I/O. Reentrant borrowing and lifecycle
+     * mutation are refused. This process-local guard supplies no transport or admission authority.
+     */
+    public <T> T withOwnedPrivateResult(Function<CanonicalGameplayLoginResult, T> action) {
+      Objects.requireNonNull(action, "Private result action required");
+      Thread borrower = Thread.currentThread();
+      CanonicalGameplayLoginResult result;
       synchronized (lifecycleMutex) {
-        if (closed) throw new IllegalStateException("Initial LOGIN outcome is closed");
-        if (status != Status.INSTALLED_NON_ADMITTING) return Optional.empty();
-        if (resultTransferred)
-          throw new IllegalStateException("Initial LOGIN result was transferred");
-        resultTransferred = true;
-        CanonicalGameplayLoginResult result = privateResult;
-        privateResult = null;
-        transferredResult = result;
-        return Optional.of(result);
+        if (closed
+            || drainingThread != null
+            || resultTransferred
+            || privateResult == null
+            || !borrowers.add(borrower)) {
+          throw new IllegalStateException("Owned initial LOGIN result is unavailable");
+        }
+        result = privateResult;
+      }
+      try {
+        return result.withLivePrivateResult(action);
+      } finally {
+        synchronized (lifecycleMutex) {
+          borrowers.remove(borrower);
+          lifecycleMutex.notifyAll();
+        }
+      }
+    }
+
+    private void beginDrain() {
+      CanonicalGameplayLoginResult retained;
+      synchronized (lifecycleMutex) {
+        if (borrowers.contains(Thread.currentThread())
+            || drainingThread == Thread.currentThread()) {
+          throw new IllegalStateException("Initial LOGIN result is borrowed");
+        }
+        retained = privateResult != null ? privateResult : transferredResult;
+      }
+      // A direct result callback must not wait behind a drain that is itself waiting for its pin.
+      // Check before any mutation, outside the Outcome monitor, including transferred custody.
+      if (retained != null) retained.requireNotBorrowedByCurrentThread();
+      boolean interrupted = false;
+      synchronized (lifecycleMutex) {
+        while (drainingThread != null) {
+          try {
+            lifecycleMutex.wait();
+          } catch (InterruptedException interruption) {
+            interrupted = true;
+          }
+        }
+        drainingThread = Thread.currentThread();
+        while (!borrowers.isEmpty()) {
+          try {
+            lifecycleMutex.wait();
+          } catch (InterruptedException interruption) {
+            interrupted = true;
+          }
+        }
+      }
+      if (interrupted) Thread.currentThread().interrupt();
+    }
+
+    private void endDrain() {
+      synchronized (lifecycleMutex) {
+        drainingThread = null;
+        lifecycleMutex.notifyAll();
+      }
+    }
+
+    /** Transfers the verified private result exactly once after draining owned borrows. */
+    public Optional<CanonicalGameplayLoginResult> takePrivateResult() {
+      beginDrain();
+      try {
+        synchronized (lifecycleMutex) {
+          if (closed) throw new IllegalStateException("Initial LOGIN outcome is closed");
+          if (status != Status.INSTALLED_NON_ADMITTING) return Optional.empty();
+          if (resultTransferred)
+            throw new IllegalStateException("Initial LOGIN result was transferred");
+          resultTransferred = true;
+          CanonicalGameplayLoginResult result = privateResult;
+          privateResult = null;
+          transferredResult = result;
+          return Optional.of(result);
+        }
+      } finally {
+        endDrain();
       }
     }
 
     /**
-     * Called only when the original pre-admission LOGIN custody is actually lost. This is not a
-     * retained-edge rebind or post-admission disconnect signal. It wipes this owner's retained
-     * result, then asks the existing owner to clean the exact original coordinates.
+     * Called only at actual original pre-admission custody loss, including after transfer or a HELD
+     * cleanup observation. It drains owned callbacks, erases the exact result and retries cleanup
+     * against the exact original coordinates. It is not a rebind or reset authority.
      */
     public InitialGameplayLoginCleanupOwner.CleanupObservation abandonOriginalAfterCustodyLoss() {
-      synchronized (lifecycleMutex) {
+      beginDrain();
+      try {
         if (status != Status.INSTALLED_NON_ADMITTING) {
           throw new IllegalStateException("Only an installed original LOGIN can be abandoned");
         }
-        if (privateResult != null) {
-          privateResult.close();
-          privateResult = null;
-        }
-        if (transferredResult != null) {
-          transferredResult.close();
-          transferredResult = null;
-        }
-        closed = true;
-        custodyLossCleanup = Optional.of(attemptOriginalCleanup());
-        return custodyLossCleanup.orElseThrow();
+        eraseRetainedResults(true);
+        return recordOriginalCleanup();
+      } finally {
+        endDrain();
       }
+    }
+
+    private void eraseRetainedResults(boolean includeTransferred) {
+      CanonicalGameplayLoginResult retained;
+      synchronized (lifecycleMutex) {
+        closed = true;
+        retained =
+            privateResult != null ? privateResult : includeTransferred ? transferredResult : null;
+      }
+      // Draining excludes new callbacks; result.close also drains direct result borrowers.
+      if (retained != null) retained.close();
+      synchronized (lifecycleMutex) {
+        privateResult = null;
+        if (includeTransferred) transferredResult = null;
+      }
+    }
+
+    private InitialGameplayLoginCleanupOwner.CleanupObservation recordOriginalCleanup() {
+      var observation = attemptOriginalCleanup();
+      synchronized (lifecycleMutex) {
+        custodyLossCleanup = Optional.of(observation);
+      }
+      return observation;
     }
 
     public Optional<InitialGameplayLoginCleanupOwner.CleanupObservation> custodyLossCleanup() {
@@ -339,21 +436,22 @@ public final class InitialGameplayLoginOwner {
     }
 
     /**
-     * Wipes and cleans an untransferred installed result because abandoning this owner before
-     * transfer loses the original private custody. After transfer, cleanup belongs to the caller
-     * and requires its explicit pre-admission custody-loss callback.
+     * Closing untransferred custody drains and wipes its result, then attempts exact-original
+     * cleanup. Transfer leaves cleanup to the explicit custody-loss callback. A held observation
+     * remains retryable through that callback; cleanup never runs under a lifecycle monitor.
      */
     @Override
     public void close() {
-      synchronized (lifecycleMutex) {
-        if (!closed) {
-          closed = true;
-          if (privateResult != null) {
-            privateResult.close();
-            privateResult = null;
-            custodyLossCleanup = Optional.of(attemptOriginalCleanup());
-          }
+      beginDrain();
+      try {
+        boolean retained;
+        synchronized (lifecycleMutex) {
+          retained = privateResult != null;
         }
+        eraseRetainedResults(false);
+        if (retained) recordOriginalCleanup();
+      } finally {
+        endDrain();
       }
     }
 

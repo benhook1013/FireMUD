@@ -78,6 +78,72 @@ import org.springframework.mock.env.MockEnvironment;
 import org.springframework.transaction.CannotCreateTransactionException;
 
 class AccountGrpcServiceTest {
+  @Test
+  void canonicalGameplayEnvelopeNeverFallsBackToLegacyCredentialAuthentication() {
+    var accounts = Mockito.mock(AccountService.class);
+    var service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accounts, null, WORKLOAD_NAMESPACE);
+    var failure = new AtomicReference<Throwable>();
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.authenticate(
+                AuthenticateRequest.newBuilder()
+                    .setEmail("player@example.test")
+                    .setPassword("transient-secret")
+                    .setRequestId(UUID.randomUUID().toString())
+                    .build(),
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(AuthenticateResponse value) {
+                    throw new AssertionError("No canonical owner");
+                  }
+
+                  @Override
+                  public void onError(Throwable error) {
+                    failure.set(error);
+                  }
+
+                  @Override
+                  public void onCompleted() {
+                    throw new AssertionError("No canonical owner");
+                  }
+                }));
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(failure.get()).getCode());
+    Mockito.verifyNoInteractions(accounts);
+  }
+
+  @Test
+  void canonicalAuthenticateAndExactRetirementShareSingleRegisteredAccountService() {
+    var accounts = Mockito.mock(AccountService.class);
+    var receiver =
+        Mockito.mock(
+            net.firedevops.firemud.accountservice.service.session
+                .AccountGameplayAuthenticateReceiver.class);
+    var provider =
+        Mockito
+            .<org.springframework.beans.factory.ObjectProvider<
+                    net.firedevops.firemud.accountservice.service.session
+                        .AccountGameplayAuthenticateReceiver>>
+                mock();
+    Mockito.when(provider.getIfAvailable()).thenReturn(receiver);
+    var service =
+        new AccountGrpcService(Mockito.mock(PingService.class), accounts, null, WORKLOAD_NAMESPACE);
+    service.canonicalGameplayReceiver(provider);
+    var request =
+        AuthenticateRequest.newBuilder().setRequestId(UUID.randomUUID().toString()).build();
+    StreamObserver<AuthenticateResponse> auth = Mockito.mock();
+    withPeer(GAME_SESSION_PEER, () -> service.authenticate(request, auth));
+    Mockito.verify(receiver).authenticate(request, auth);
+    var retirement =
+        net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.newBuilder().build();
+    StreamObserver<net.firedevops.firemud.account.v1.RetireInitialGameplayLoginResponse> cleanup =
+        Mockito.mock();
+    service.retireInitialGameplayLogin(retirement, cleanup);
+    Mockito.verify(receiver).retireInitialGameplayLogin(retirement, cleanup);
+    Mockito.verifyNoInteractions(accounts);
+  }
+
   private static final String WORKLOAD_NAMESPACE = "test";
   private static final String ACCOUNT_UUID = "4cae05e8-7a6b-4b14-9d44-665e3eec450b";
   private static final String ACCOUNT_UUID_READBACK_FAILURE =
@@ -86,6 +152,10 @@ class AccountGrpcServiceTest {
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   private static final String OTHER_REALM_ID = "57c58f36-c5ea-4aa8-8ef7-91a45e407f01";
   private static final String PLAYABLE_STATE_NAMESPACE_ID = "c6ed6a44-c7e7-4f18-81fc-078a74e67c07";
+  private static final UUID DIRECT_TENANT = UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID DIRECT_INSTANCE =
+      UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final String DIRECT_SESSION = "00042";
   private static final GrpcPeerIdentity GAME_SESSION_PEER =
       new GrpcPeerIdentity(
           "spiffe://firemud/ns/test/sa/game-session-service",
@@ -105,12 +175,12 @@ class AccountGrpcServiceTest {
   private static PlayerExecutionContext validPlayerContext() {
     return PlayerExecutionContext.newBuilder()
         .setAccountId(ACCOUNT_UUID)
-        .setTenantId("20")
+        .setTenantId(DIRECT_TENANT.toString())
         .setRealmId(REALM_ID)
         .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
-        .setPlayableStateScope("realm:30")
-        .setGameInstanceId("40")
-        .setSessionId("session-1")
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId(DIRECT_INSTANCE.toString())
+        .setSessionId(DIRECT_SESSION)
         .setRequestId("request-1")
         .build();
   }
@@ -118,13 +188,13 @@ class AccountGrpcServiceTest {
   private static IssueDirectTextConnectScopeRequest validScopeRequest() {
     return IssueDirectTextConnectScopeRequest.newBuilder()
         .setPlayerContext(validPlayerContext())
-        .setTenantId("20")
+        .setTenantId(DIRECT_TENANT.toString())
         .setRealmId(REALM_ID)
         .setWorldSlug("world")
         .setRealmSlug("public")
         .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
-        .setPlayableStateScope("realm:30")
-        .setGameInstanceId("40")
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId(DIRECT_INSTANCE.toString())
         .setCatalogRevision(5)
         .setPointerVersion(8)
         .build();
@@ -228,29 +298,29 @@ class AccountGrpcServiceTest {
         () -> service.issueDirectTextConnectScope(validScopeRequest(), observer));
 
     assertTrue(observer.completed());
-    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never()).resolveAccountStorageId(Mockito.any());
     assertEquals("scope-1", observer.response().getConnectScopeId());
     assertEquals("2026-09-24T12:00:00Z", observer.response().getConnectScopeExpiresAt());
     assertEquals("2026-09-24T11:59:30Z", observer.response().getEvaluatedAt());
     Mockito.verify(accountService)
         .issueDirectTextConnectScope(
             new DirectTextCallerContext(
-                10L,
-                20L,
+                UUID.fromString(ACCOUNT_UUID),
+                DIRECT_TENANT,
                 UUID.fromString(REALM_ID),
-                PLAYABLE_STATE_NAMESPACE_ID,
-                "realm:30",
-                40L,
-                "session-1",
+                UUID.fromString(PLAYABLE_STATE_NAMESPACE_ID),
+                "SHARED",
+                DIRECT_INSTANCE,
+                DIRECT_SESSION,
                 "request-1"),
             new DirectTextJoinTarget(
-                20L,
+                DIRECT_TENANT,
                 UUID.fromString(REALM_ID),
                 "world",
                 "public",
-                PLAYABLE_STATE_NAMESPACE_ID,
-                "realm:30",
-                40L,
+                UUID.fromString(PLAYABLE_STATE_NAMESPACE_ID),
+                "SHARED",
+                DIRECT_INSTANCE,
                 5L,
                 8L));
   }
@@ -320,8 +390,17 @@ class AccountGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", invalid.response().getError().getCode());
   }
 
-  @Test
-  void joinPublicProductionMembershipPreservesStoredFailureOutcome() {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "CONNECT_SCOPE_MISMATCH",
+        "CONNECT_SCOPE_INVALID",
+        "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+        "TENANT_BILLING_BLOCKED",
+        "IDEMPOTENCY_CONFLICT",
+        "ENTITLEMENT_UNAVAILABLE"
+      })
+  void joinPublicProductionMembershipPreservesStoredFailureOutcome(String outcome) {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
@@ -332,7 +411,7 @@ class AccountGrpcServiceTest {
                 Mockito.any(JoinPublicProductionRequest.class)))
         .thenReturn(
             new JoinPublicProductionResult(
-                false, "ENTITLEMENT_UNAVAILABLE", ACCOUNT_UUID, 20L, 0L, 0L, 0L, true));
+                false, outcome, ACCOUNT_UUID, DIRECT_TENANT, 0L, 0L, 0L, false, true));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
@@ -343,24 +422,54 @@ class AccountGrpcServiceTest {
 
     assertTrue(observer.completed());
     assertFalse(observer.response().getSuccess());
-    assertEquals("ENTITLEMENT_UNAVAILABLE", observer.response().getOutcomeCode());
+    assertEquals(outcome, observer.response().getOutcomeCode());
     assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
-    assertEquals("20", observer.response().getTenantId());
+    assertEquals(DIRECT_TENANT.toString(), observer.response().getTenantId());
     assertEquals("0", observer.response().getMembershipId());
     assertTrue(observer.response().getReplayed());
     assertFalse(observer.response().hasError());
     Mockito.verify(accountService)
         .joinPublicProductionFromGameSession(
             new DirectTextCallerContext(
-                10L,
-                20L,
+                UUID.fromString(ACCOUNT_UUID),
+                DIRECT_TENANT,
                 UUID.fromString(REALM_ID),
-                PLAYABLE_STATE_NAMESPACE_ID,
-                "realm:30",
-                40L,
-                "session-1",
+                UUID.fromString(PLAYABLE_STATE_NAMESPACE_ID),
+                "SHARED",
+                DIRECT_INSTANCE,
+                DIRECT_SESSION,
                 "request-1"),
             new JoinPublicProductionRequest("scope-1", "request-1"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void successfulJoinProjectsTheActualMembershipAdmissionFlag(boolean admitting) {
+    AccountService owner = Mockito.mock(AccountService.class);
+    Mockito.when(owner.joinPublicProductionFromGameSession(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            new JoinPublicProductionResult(
+                true,
+                admitting ? "JOINED" : "ALREADY_ACTIVE",
+                ACCOUNT_UUID,
+                DIRECT_TENANT,
+                7L,
+                3L,
+                2L,
+                admitting,
+                false));
+    var service =
+        new AccountGrpcService(Mockito.mock(PingService.class), owner, null, WORKLOAD_NAMESPACE);
+    var observer = new RecordingObserver<JoinPublicProductionMembershipResponse>();
+    withPeer(
+        GAME_SESSION_PEER,
+        () -> service.joinPublicProductionMembership(validJoinRequest(), observer));
+    assertTrue(observer.response().getSuccess());
+    assertEquals(admitting, observer.response().getGameplayAdmissionAllowed());
+    assertEquals(DIRECT_TENANT.toString(), observer.response().getTenantId());
+    assertEquals(3L, observer.response().getMembershipVersion());
+    assertEquals(2L, observer.response().getMembershipAuthorityGeneration());
+    assertFalse(observer.response().hasError());
   }
 
   @Test
@@ -568,6 +677,60 @@ class AccountGrpcServiceTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
+        "tenantId",
+        "realmId",
+        "worldSlug",
+        "realmSlug",
+        "playableStateNamespaceId",
+        "playableStateScope",
+        "gameInstanceId"
+      })
+  void directTextScopeRejectsMissingTargetFieldsEvenWhenCallerMatches(String field) {
+    AccountService owner = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(Mockito.mock(PingService.class), owner, null, WORKLOAD_NAMESPACE);
+    var target = validScopeRequest().toBuilder();
+    var caller = validPlayerContext().toBuilder();
+    switch (field) {
+      case "tenantId" -> {
+        target.clearTenantId();
+        caller.clearTenantId();
+      }
+      case "realmId" -> {
+        target.clearRealmId();
+        caller.clearRealmId();
+      }
+      case "worldSlug" -> target.clearWorldSlug();
+      case "realmSlug" -> target.clearRealmSlug();
+      case "playableStateNamespaceId" -> {
+        target.clearPlayableStateNamespaceId();
+        caller.clearPlayableStateNamespaceId();
+      }
+      case "playableStateScope" -> {
+        target.clearPlayableStateScope();
+        caller.clearPlayableStateScope();
+      }
+      case "gameInstanceId" -> {
+        target.clearGameInstanceId();
+        caller.clearGameInstanceId();
+      }
+      default -> throw new IllegalArgumentException("Unknown target field: " + field);
+    }
+    RecordingObserver<IssueDirectTextConnectScopeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () ->
+            service.issueDirectTextConnectScope(target.setPlayerContext(caller).build(), observer));
+
+    assertTrue(observer.completed());
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(owner);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
         "shared-live",
         "C6ED6A44-C7E7-4F18-81FC-078A74E67C07",
         "c6ed6a44c7e74f1881fc078a74e67c07"
@@ -646,10 +809,13 @@ class AccountGrpcServiceTest {
                 false,
                 "ENTITLEMENT_UNAVAILABLE",
                 changedAccount ? OTHER_ACCOUNT_UUID : ACCOUNT_UUID,
-                changedAccount ? 20L : 21L,
+                changedAccount
+                    ? DIRECT_TENANT
+                    : UUID.fromString("33333333-3333-4333-8333-333333333333"),
                 0L,
                 0L,
                 0L,
+                false,
                 true));
     AccountGrpcService service =
         new AccountGrpcService(Mockito.mock(PingService.class), owner, null, WORKLOAD_NAMESPACE);

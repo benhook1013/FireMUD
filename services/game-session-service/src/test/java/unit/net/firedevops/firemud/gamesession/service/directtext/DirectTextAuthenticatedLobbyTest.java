@@ -135,6 +135,31 @@ class DirectTextAuthenticatedLobbyTest {
         .isEqualTo(response);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"JOINED", "ALREADY_ACTIVE"})
+  void nonAdmittingMembershipIsRetainedAsAnExactNonAdmissionReceipt(String outcome) {
+    var f = new Fixture();
+    var response =
+        positive().toBuilder()
+            .setOutcomeCode(outcome)
+            .setGameplayAdmissionAllowed(false)
+            .setMembershipVersion(8L)
+            .setMembershipAuthorityGeneration(4L)
+            .setReplayed(true)
+            .build();
+
+    assertThat(DirectTextAuthenticatedLobbyJoin.decodeReply(f.scope, response.toByteArray()))
+        .isEqualTo(response);
+    assertThat(response.getGameplayAdmissionAllowed()).isFalse();
+    assertThat(response.getMembershipVersion()).isEqualTo(8L);
+    assertThat(response.getMembershipAuthorityGeneration()).isEqualTo(4L);
+    var completed =
+        new DirectTextAuthenticatedLobbyJoin(
+            f.scope, f.frozen.request(), State.COMPLETED, Optional.of(response));
+    assertThat(completed.reply()).contains(response);
+    assertThat(completed.reply().orElseThrow().getGameplayAdmissionAllowed()).isFalse();
+  }
+
   @Test
   void frozenRequestKeepsTransportCorrelationSeparateFromProxyOriginalContextAndJoinIds() {
     var f = new Fixture();
@@ -638,10 +663,11 @@ class DirectTextAuthenticatedLobbyTest {
         .setSuccess(true)
         .setOutcomeCode("JOINED")
         .setAccountId(ACCOUNT.toString())
-        .setTenantId("101")
+        .setTenantId("22222222-2222-4222-8222-222222222222")
         .setMembershipId("90")
         .setMembershipVersion(3)
         .setMembershipAuthorityGeneration(1)
+        .setGameplayAdmissionAllowed(true)
         .build();
   }
 
@@ -649,7 +675,7 @@ class DirectTextAuthenticatedLobbyTest {
     return new CanonicalPlayableTarget(
         "gameplay",
         "studio",
-        UUID.randomUUID(),
+        UUID.fromString("22222222-2222-4222-8222-222222222222"),
         "forest",
         display,
         UUID.randomUUID(),

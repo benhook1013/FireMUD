@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.Map;
@@ -14,6 +15,20 @@ import net.firedevops.firemud.hostedidentity.security.EnvironmentIdentityPlanner
 import org.junit.jupiter.api.Test;
 
 class CertificateResourceFactoryTest {
+  @Test
+  void onlyGatewayWorkloadIdentityRoleIsClientOnly() {
+    var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
+
+    assertFalse(
+        HostedIdentityContract.grpcWorkloadIdentityServesTls(
+            HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE));
+    for (String role : plan.grpcWorkloadIdentityCertificateNames().keySet()) {
+      if (!HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE.equals(role)) {
+        assertTrue(HostedIdentityContract.grpcWorkloadIdentityServesTls(role), role);
+      }
+    }
+  }
+
   @Test
   void ingressCertificateUsesPublicServerMaterialContract() {
     var plan = new EnvironmentIdentityPlanner(new HostedIdentityProperties()).plan("pr-42");
@@ -217,6 +232,29 @@ class CertificateResourceFactoryTest {
   }
 
   @Test
+  void gatewayClientHasOnlyClientAuthAndItsExactNamespaceUri() {
+    var properties = new HostedIdentityProperties();
+    for (String environment : java.util.List.of("pr-42", "dev-demo")) {
+      var plan = new EnvironmentIdentityPlanner(properties).plan(environment);
+      var certificate =
+          new CertificateResourceFactory().grpcGatewayClient(plan, properties.getGrpcRenewBefore());
+      var certificateSpec = spec(certificate);
+      assertEquals(plan.grpcGatewayClientCertificateName(), certificate.getMetadata().getName());
+      assertEquals(plan.grpcGatewayClientSourceSecretName(), certificateSpec.get("secretName"));
+      assertEquals("firemud-ca-issuer", issuerName(certificateSpec));
+      assertEquals(
+          java.util.List.of(
+              "spiffe://firemud/ns/" + plan.runtimeNamespace() + "/sa/spring-cloud-gateway"),
+          certificateSpec.get("uris"));
+      assertEquals(null, certificateSpec.get("dnsNames"));
+      assertEquals(
+          java.util.List.of("digital signature", "key encipherment", "client auth"),
+          certificateSpec.get("usages"));
+      assertSecretTemplate(certificateSpec, plan, HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE);
+    }
+  }
+
+  @Test
   void certificateFactoryPublicSurfaceContainsOnlyMaterialFactories() {
     var declaredMethods =
         java.util.Arrays.stream(CertificateResourceFactory.class.getDeclaredMethods())
@@ -227,7 +265,7 @@ class CertificateResourceFactoryTest {
             .filter(method -> java.lang.reflect.Modifier.isPublic(method.getModifiers()))
             .toList();
 
-    assertEquals(8, publicMethods.size());
+    assertEquals(9, publicMethods.size());
     assertEquals(
         java.util.Set.of(
             "ingress",
@@ -237,7 +275,8 @@ class CertificateResourceFactoryTest {
             "grpcPublication",
             "grpcAccount",
             "grpcGameSession",
-            "grpcSocialGroups"),
+            "grpcSocialGroups",
+            "grpcGatewayClient"),
         publicMethods.stream()
             .map(java.lang.reflect.Method::getName)
             .collect(java.util.stream.Collectors.toUnmodifiableSet()));
@@ -250,6 +289,7 @@ class CertificateResourceFactoryTest {
 
     assertInvalidRenewalWindow(() -> factory.gatewayInternalWs(plan, null));
     assertInvalidRenewalWindow(() -> factory.tcpProxyBridge(plan, null));
+    assertInvalidRenewalWindow(() -> factory.grpcGatewayClient(plan, null));
     assertInvalidRenewalWindow(() -> factory.grpcPublication(plan, "game-design-service", null));
 
     for (Duration invalidRenewBefore :

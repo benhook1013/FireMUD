@@ -182,15 +182,20 @@ components:
           type: boolean
     BootstrapWorldDto:
       type: object
+      description: Tenant-qualified world selector; worldSlug is not globally unique.
+      required: [tenantSlug, worldSlug, displayName]
       properties:
+        tenantSlug:
+          type: string
         worldSlug:
           type: string
         displayName:
           type: string
     BootstrapRealmDto:
       type: object
+      description: Public realm selector evidence; the retained scope does not grant entry or character access.
       required:
-        [worldSlug, realmSlug, realmId, catalogRevision, playableStateNamespaceId, playableStateScope]
+        [worldSlug, realmSlug, realmId, tenantId, gameInstanceId, catalogRevision, playableStateNamespaceId, playableStateScope]
       properties:
         worldSlug:
           type: string
@@ -202,9 +207,11 @@ components:
         displayName:
           type: string
         tenantId:
-          type: integer
+          type: string
+          format: uuid
         gameInstanceId:
-          type: integer
+          type: string
+          format: uuid
         pointerVersion:
           type: integer
         catalogRevision:
@@ -217,8 +224,6 @@ components:
         playableStateScope:
           type: string
           enum: [PLAYABLE_STATE_SCOPE_SHARED, PLAYABLE_STATE_SCOPE_ISOLATED]
-        requiresCharacterSelection:
-          type: boolean
         stateScope:
           type: string
           enum: [SHARED, ISOLATED]
@@ -233,13 +238,27 @@ components:
           description: Opaque signed scope with canonical UUID Account identity; obtain fresh scope through discovery rather than interpreting its payload.
     BootstrapCharacterDto:
       type: object
+      description: Persisted, non-admitting actor discovery for the current public SHARED PRESEEDED_ONLY target.
+      required: [characterId, characterName, level, stateScope, characterCreationPolicy]
       properties:
         characterId:
           type: string
+          format: uuid
         characterName:
           type: string
+          minLength: 1
+          maxLength: 100
         level:
           type: integer
+          format: int32
+          minimum: 0
+          description: Actual persisted Entity level from the same eligible actor row.
+        stateScope:
+          type: string
+          enum: [SHARED]
+        characterCreationPolicy:
+          type: string
+          enum: [PRESEEDED_ONLY]
     ResultStatus:
       type: string
       enum: [SUCCESS, ERROR]
@@ -421,7 +440,7 @@ paths:
           $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/bootstrap/worlds/{worldSlug}/realms:
     get:
-      summary: List caller-visible realms for a selected world
+      summary: List caller-visible realms for a tenant-qualified world
       operationId: listBootstrapRealms
       security:
         - bearerAuth: []
@@ -429,6 +448,12 @@ paths:
         - in: path
           name: worldSlug
           required: true
+          schema:
+            type: string
+        - in: query
+          name: tenantSlug
+          required: true
+          description: Tenant selector from the selected BootstrapWorldDto; required because worldSlug is tenant-scoped.
           schema:
             type: string
       responses:

@@ -300,6 +300,16 @@ else
   run_held_admission_qualification "${COMPOSE_FILES[@]}"
   # This is the existing isolated backend positive proof. Public successful
   # admission remains a separate runtime obligation.
-  bash "$WS_SMOKE_SCRIPT"
+  # Keep the real failure. Only classify after the held-admission proof above.
+  ws_status=0
+  bash "$WS_SMOKE_SCRIPT" || ws_status=$?
+  if [[ "$ws_status" -eq 86 ]]; then
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+      echo "known_play_failure=direct-backend-play-entitlement-unavailable-after-login" >> "$GITHUB_OUTPUT"
+    fi
+    exit "$ws_status"
+  elif [[ "$ws_status" -ne 0 ]]; then
+    exit "$ws_status"
+  fi
   echo "Held-admission smoke qualification passed; public successful admission remains unproved."
 fi

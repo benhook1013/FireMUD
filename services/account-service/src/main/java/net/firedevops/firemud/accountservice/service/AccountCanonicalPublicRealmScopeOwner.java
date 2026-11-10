@@ -16,6 +16,8 @@ import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDe
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
@@ -51,7 +53,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * current identity, provenance, membership and billing heads; the final transaction retains and
  * exactly reads back the V2 scope. Every repository must use the supplied transaction manager.
  *
- * <p>Membership-independent public visibility is preserved when enrollment is closed. Returned
+ * <p>Browser credentials use their persisted Account/session-registry verifier. Direct text uses
+ * the exact same-namespace Game Session peer and canonical caller correlation, with its own
+ * invocation deadline; it never fabricates a bootstrap credential or registry success.
+ * Membership-independent public visibility is preserved when enrollment is closed. Returned
  * membership/entitlement facts are observations for later selection, never permission to JOIN,
  * create a character or admit gameplay. This owner neither enrolls membership nor claims a World
  * hold, private/ISOLATED support, a registered facade, or qualified credential custody.
@@ -112,35 +117,153 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     transaction.setReadOnly(false);
   }
 
-  /** Selects only the canonical tenant/world pair; a bare global world slug is not authority. */
+  /** Selects the canonical tenant/world pair through the same complete-source pipeline. */
   public List<RealmScope> listRealmScopes(
       String bootstrapToken, String tenantSlug, String worldSlug) {
+    return listRealmScopes(bootstrapToken, tenantSlug, worldSlug, true);
+  }
+
+  private List<RealmScope> listRealmScopes(
+      String bootstrapToken, String tenantSlug, String worldSlug, boolean tenantQualified) {
     requireSourceContext();
     Caller original = verifyCaller(bootstrapToken);
-    if (!RealmEntryPolicy.isCanonicalSlug(tenantSlug)
+    return listRealmScopes(
+        original, tenantSlug, worldSlug, tenantQualified, () -> verifyCaller(bootstrapToken), null);
+  }
+
+  /** Existing direct-text selection, authenticated independently of the browser registry. */
+  public RealmScope issueDirectTextScope(
+      DirectTextCallerContext caller, DirectTextJoinTarget target) {
+    requireSourceContext();
+    requireDirectPeer();
+    if (caller == null
+        || target == null
+        || !Objects.equals(caller.tenantId(), target.tenantId())
+        || !Objects.equals(caller.realmId(), target.realmId())
+        || !Objects.equals(caller.playableStateNamespaceId(), target.playableStateNamespaceId())
+        || !Objects.equals(caller.gameInstanceId(), target.gameInstanceId())
+        || !Objects.equals(caller.playableStateScope(), target.playableStateScope())
+        || caller.sessionId() == null
+        || caller.requestId() == null
+        || caller.sessionId().isBlank()
+        || caller.requestId().isBlank()
+        || caller.sessionId().length() > 32
+        || caller.requestId().length() > 128) {
+      throw new AuthenticationException(
+          "CONNECT_CONTEXT_INVALID", "Direct caller correlation is invalid");
+    }
+    try {
+      if (!caller.sessionId().matches("[0-9]+")) {
+        throw new NumberFormatException("Invalid transport session");
+      }
+      if (Long.parseLong(caller.sessionId()) <= 0) {
+        throw new NumberFormatException("Invalid transport session");
+      }
+    } catch (NumberFormatException failure) {
+      throw new AuthenticationException(
+          "CONNECT_CONTEXT_INVALID", "Direct caller session is invalid", failure);
+    }
+    // These times describe this Account producer invocation, not a fabricated bootstrap lifetime.
+    Instant issuedAt = now();
+    Instant deadline = issuedAt.plusMillis(scopeLifetimeMillis);
+    java.util.function.Supplier<Caller> authenticate =
+        () -> verifyDirectCaller(caller, issuedAt, deadline);
+    Caller original = authenticate.get();
+    List<RealmScope> selected =
+        listRealmScopes(original, null, target.worldSlug(), false, authenticate, target);
+    if (selected.size() != 1) throw pointerUnavailable(null);
+    return selected.getFirst();
+  }
+
+  private Caller verifyDirectCaller(
+      DirectTextCallerContext context, Instant issuedAt, Instant deadline) {
+    requireDirectPeer();
+    if (context.accountId() == null
+        || new UUID(0L, 0L).equals(context.accountId())
+        || now().isBefore(issuedAt)
+        || !now().isBefore(deadline)) {
+      throw new AuthenticationException(
+          "CONNECT_CONTEXT_INVALID", "Direct caller expired or malformed");
+    }
+    return inTransaction(
+        () -> {
+          requireDirectPeer();
+          Account account =
+              accounts
+                  .findByAccountUuidForUpdate(context.accountId())
+                  .orElseThrow(
+                      () ->
+                          new AuthenticationException(
+                              "CONNECT_CONTEXT_INVALID", "Direct caller Account is unknown"));
+          if (account.getId() == null
+              || account.getId() <= 0L
+              || !context.accountId().equals(account.getAccountUuid())
+              || !Objects.equals(account.getId(), account.getAccountUuidSourceNumericId())
+              || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
+              || account.getLifecycleState() != AccountLifecycleState.ACTIVE) {
+            throw authUnavailable("Direct Account owner is unavailable or ineligible", null);
+          }
+          return new Caller(account.getId(), account.getAccountUuid(), issuedAt, deadline);
+        });
+  }
+
+  private void requireDirectPeer() {
+    var peer = net.firedevops.firemud.common.grpc.GrpcPeerIdentity.current();
+    if (peer == null || !peer.isService("game-session-service") || !peer.isInNamespace(namespace)) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Exact Game Session workload is required");
+    }
+  }
+
+  private List<RealmScope> listRealmScopes(
+      Caller original,
+      String tenantSlug,
+      String worldSlug,
+      boolean tenantQualified,
+      java.util.function.Supplier<Caller> authenticate,
+      DirectTextJoinTarget directTarget) {
+    if ((tenantQualified && !RealmEntryPolicy.isCanonicalSlug(tenantSlug))
         || !RealmEntryPolicy.isCanonicalSlug(worldSlug)) {
       throw pointerUnavailable(null);
     }
-    Optional<Target> selected = select(readTargets(), tenantSlug, worldSlug);
+    Optional<Target> selected =
+        selectForCaller(readTargets(), tenantSlug, worldSlug, tenantQualified, directTarget);
     if (selected.isEmpty()) {
-      if (select(readTargets(), tenantSlug, worldSlug).isPresent()) {
+      if (selectForCaller(readTargets(), tenantSlug, worldSlug, tenantQualified, directTarget)
+          .isPresent()) {
         throw pointerUnavailable(null);
       }
-      requireSameCaller(original, verifyCaller(bootstrapToken));
+      requireSameCaller(original, authenticate.get());
       return List.of();
     }
     Target target = selected.orElseThrow();
+    if (directTarget != null
+        && (!directTarget.tenantId().equals(target.canonicalTenantId())
+            || !directTarget.realmId().equals(target.realmId())
+            || !directTarget.realmSlug().equals(target.realmSlug())
+            || !directTarget.playableStateNamespaceId().equals(target.playableStateNamespaceId())
+            || !directTarget.playableStateScope().equals(target.playableStateScope())
+            || !directTarget.gameInstanceId().equals(target.canonicalGameInstanceId())
+            || directTarget.catalogRevision() != target.catalogRevision()
+            || directTarget.pointerVersion() != target.pointerVersion())) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", "Direct target changed");
+    }
     Evaluation entitlement = evaluate(target);
     if (!entitlement.gameplayAvailable()) {
-      requireSameTarget(target, select(readTargets(), tenantSlug, worldSlug));
-      requireSameCaller(original, verifyCaller(bootstrapToken));
+      requireSameTarget(
+          target,
+          selectForCaller(readTargets(), tenantSlug, worldSlug, tenantQualified, directTarget));
+      requireSameCaller(original, authenticate.get());
       requireFresh(entitlement);
+      if (directTarget != null) throw entitlementUnavailable(null);
       return List.of();
     }
 
     Prepared prepared = inTransaction(() -> readSources(original, target, entitlement));
-    requireSameTarget(target, select(readTargets(), tenantSlug, worldSlug));
-    requireSameCaller(original, verifyCaller(bootstrapToken));
+    requireSameTarget(
+        target,
+        selectForCaller(readTargets(), tenantSlug, worldSlug, tenantQualified, directTarget));
+    requireSameCaller(original, authenticate.get());
     requireFresh(entitlement);
     RealmScope retained =
         inTransaction(
@@ -172,7 +295,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
                       TenantProvenanceKind.FRESH_GAME_DESIGN,
                       current.tenant().operationId(),
                       current.tenant().evidenceDigest());
-              scopes.insertCanonical(original.caller().accountId(), scope, provenance);
+              scopes.insertCanonical(original.accountId(), scope, provenance);
               if (!scope.equals(scopes.findCanonical(scope.connectScopeId()).orElse(null))) {
                 throw authUnavailable("Canonical scope readback differs", null);
               }
@@ -186,7 +309,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
               return new RealmScope(target, scope, current.membership(), entitlement);
             });
     // No value escapes a failed commit or a caller/source observation that expired during commit.
-    requireSameCaller(original, verifyCaller(bootstrapToken));
+    requireSameCaller(original, authenticate.get());
     requireFresh(entitlement);
     if (!now().isBefore(Instant.parse(retained.scope().connectScopeExpiresAt()))) {
       throw authUnavailable("Canonical scope expired before publication", null);
@@ -217,7 +340,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
         throw new AuthenticationException(
             "CONNECT_CONTEXT_INVALID", "Invalid bootstrap credential");
       }
-      return new Caller(caller, issuedAt, expiresAt);
+      return new Caller(caller.accountId(), caller.accountUuid(), issuedAt, expiresAt);
     } catch (AuthenticationException failure) {
       throw failure;
     } catch (JwtException | IllegalArgumentException failure) {
@@ -247,12 +370,14 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     }
   }
 
-  private Optional<Target> select(List<Target> complete, String tenantSlug, String worldSlug) {
+  private Optional<Target> select(
+      List<Target> complete, String tenantSlug, String worldSlug, boolean tenantQualified) {
     List<Target> matches =
         complete.stream()
             .filter(
                 target ->
-                    tenantSlug.equals(target.tenantSlug()) && worldSlug.equals(target.worldSlug()))
+                    worldSlug.equals(target.worldSlug())
+                        && (!tenantQualified || tenantSlug.equals(target.tenantSlug())))
             .toList();
     if (matches.size() > 1) throw pointerUnavailable(null);
     for (Target target : matches) {
@@ -263,6 +388,21 @@ public final class AccountCanonicalPublicRealmScopeOwner {
       }
     }
     return matches.stream().findFirst();
+  }
+
+  private Optional<Target> selectForCaller(
+      List<Target> complete,
+      String tenantSlug,
+      String worldSlug,
+      boolean tenantQualified,
+      DirectTextJoinTarget directTarget) {
+    List<Target> selectedTenant =
+        directTarget == null
+            ? complete
+            : complete.stream()
+                .filter(target -> directTarget.tenantId().equals(target.canonicalTenantId()))
+                .toList();
+    return select(selectedTenant, tenantSlug, worldSlug, tenantQualified);
   }
 
   private Evaluation evaluate(Target target) {
@@ -286,10 +426,10 @@ public final class AccountCanonicalPublicRealmScopeOwner {
   private Prepared readSources(Caller caller, Target target, Evaluation entitlement) {
     Account account =
         accounts
-            .findByAccountUuidForUpdate(caller.caller().accountUuid())
+            .findByAccountUuidForUpdate(caller.accountUuid())
             .orElseThrow(() -> authUnavailable("Account owner is unavailable", null));
-    if (!Objects.equals(account.getId(), caller.caller().accountId())
-        || !caller.caller().accountUuid().equals(account.getAccountUuid())
+    if (!Objects.equals(account.getId(), caller.accountId())
+        || !caller.accountUuid().equals(account.getAccountUuid())
         || !Objects.equals(account.getId(), account.getAccountUuidSourceNumericId())
         || !AccountIdentityProvenance.isAccepted(account.getAccountUuidProvenance())
         || account.getLifecycleState() != AccountLifecycleState.ACTIVE) {
@@ -317,8 +457,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
       throw entitlementUnavailable(failure);
     }
     Optional<AccountTenantMembership> member =
-        memberships.findFreshMembershipForUpdate(
-            caller.caller().accountUuid(), target.canonicalTenantId());
+        memberships.findFreshMembershipForUpdate(caller.accountUuid(), target.canonicalTenantId());
     Optional<ExistingMembership> current =
         member.map(
             value -> {
@@ -356,7 +495,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
       Caller caller, Target target, Instant evaluatedAt, Instant expiresAt) {
     Map<String, Object> claims = new LinkedHashMap<>();
     claims.put("aud", "bootstrap-connect-scope");
-    claims.put("accountId", caller.caller().accountUuid().toString());
+    claims.put("accountId", caller.accountUuid().toString());
     claims.put("targetClass", "PUBLIC_PRODUCTION");
     claims.put("scopeDigestVersion", 2L);
     claims.put("tenantId", target.canonicalTenantId().toString());
@@ -375,12 +514,12 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     // Preserve the owner-selected absolute expiry even if signing starts after a scheduling pause.
     final String token;
     try {
-      token = jwt.generateToken(caller.caller().accountUuid().toString(), expiresAt, claims);
+      token = jwt.generateToken(caller.accountUuid().toString(), expiresAt, claims);
     } catch (IllegalArgumentException expired) {
       throw authUnavailable("Scope signing clock is outside its validity", expired);
     }
     Claims signed = jwt.parseToken(token).getPayload();
-    if (!caller.caller().accountUuid().toString().equals(signed.getSubject())
+    if (!caller.accountUuid().toString().equals(signed.getSubject())
         || signed.getExpiration() == null
         || !expiresAt.equals(signed.getExpiration().toInstant())
         || signed.getIssuedAt() == null
@@ -401,7 +540,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
     }
     return new CanonicalJoinScopeV2(
         token,
-        caller.caller().accountUuid(),
+        caller.accountUuid(),
         target.canonicalTenantId(),
         target.realmId(),
         target.tenantSlug(),
@@ -420,7 +559,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
       Caller caller, CanonicalJoinScopeV2 scope, VerifiedTenantProvenance provenance) {
     return new CanonicalConnectScopeEvidence(
         AccountJoinDigest.tokenHash(scope.connectScopeId()),
-        caller.caller().accountId(),
+        caller.accountId(),
         "PUBLIC_PRODUCTION",
         scope.accountId(),
         scope.tenantId(),
@@ -470,8 +609,8 @@ public final class AccountCanonicalPublicRealmScopeOwner {
   }
 
   private static void requireSameCaller(Caller original, Caller current) {
-    if (original.caller().accountId() != current.caller().accountId()
-        || !original.caller().accountUuid().equals(current.caller().accountUuid())
+    if (original.accountId() != current.accountId()
+        || !original.accountUuid().equals(current.accountUuid())
         || !original.issuedAt().equals(current.issuedAt())
         || !original.expiresAt().equals(current.expiresAt())) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap caller changed");
@@ -519,7 +658,7 @@ public final class AccountCanonicalPublicRealmScopeOwner {
         cause);
   }
 
-  private record Caller(VerifiedCaller caller, Instant issuedAt, Instant expiresAt) {}
+  private record Caller(long accountId, UUID accountUuid, Instant issuedAt, Instant expiresAt) {}
 
   private record Prepared(
       FreshTenantCreationEvidence tenant, MembershipFacts membership, SourceSelection head) {}

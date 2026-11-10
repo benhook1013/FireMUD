@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -131,6 +132,150 @@ class GameSessionWebSocketHandlerTest {
         runtimeIdentity,
         parser,
         textCommandMetadataResolver);
+  }
+
+  @Test
+  void authenticatedLogoutClosesCustodyAfterResponseDelivery() throws Exception {
+    var authenticatedSessions = authenticatedLogoutReceiving();
+
+    handler.handleMessage(session, new TextMessage("LOGOUT"));
+
+    InOrder order = Mockito.inOrder(session, authenticatedSessions);
+    order.verify(session).sendMessage(argThat(message -> "OK LOGOUT".equals(message.getPayload())));
+    order.verify(authenticatedSessions).close(session, new CloseStatus(1000, "logout"));
+    Mockito.verifyNoInteractions(interpreter);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"8, fr-CA", "8,", ", fr-CA", ","})
+  void authenticatedResponseUsesOnlyHandshakeLocaleWithoutReadingRetainedContext(
+      String tenantId, String localeTag) throws Exception {
+    var authenticatedSessions = Mockito.mock(AuthenticatedDirectTextSessions.class);
+    var receiver = Mockito.mock(AuthenticatedDirectTextCommandReceiver.class);
+    handler.authenticatedDirectTextReceiving(authenticatedSessions, receiver);
+    var attributes = new java.util.HashMap<String, Object>();
+    attributes.put(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41");
+    attributes.put(
+        AuthenticatedDirectTextIngress.ATTRIBUTE,
+        Mockito.mock(AuthenticatedDirectTextIngress.class));
+    if (tenantId != null)
+      attributes.put(GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR, tenantId);
+    if (localeTag != null)
+      attributes.put(GameSessionWebSocketHandshakeInterceptor.LOCALE_ATTR, localeTag);
+    when(session.getAttributes()).thenReturn(attributes);
+    var unavailable = new SessionContextUnavailableException("retained context unavailable", null);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(Mockito.anyString()))
+        .thenThrow(unavailable);
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(
+            Mockito.anyLong(), Mockito.anyLong()))
+        .thenThrow(unavailable);
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("player@example.test", "transient-secret"),
+            "LOGIN player@example.test transient-secret");
+    var interpretation =
+        new TextCommandInterpretationResult(
+            CommandEnqueueResult.failure("INVALID_CREDENTIALS", "Invalid credentials"),
+            List.of(PlayerOutput.error("INVALID_CREDENTIALS", "Invalid credentials")));
+    var presentation = new PresentationProperties();
+    when(settingsResolver.presentation(null)).thenReturn(presentation);
+    when(parser.parse(command.rawLine())).thenReturn(command);
+    when(receiver.receive(session, command)).thenReturn(interpretation);
+    when(outputProjector.projectCommandResponse(
+            session,
+            command,
+            interpretation,
+            interpretation.outputs(),
+            localeTag,
+            presentation,
+            null))
+        .thenReturn("ERROR INVALID_CREDENTIALS Invalid credentials");
+
+    handler.handleMessage(session, new TextMessage(command.rawLine()));
+
+    verify(receiver).receive(session, command);
+    verify(outputProjector)
+        .projectCommandResponse(
+            session,
+            command,
+            interpretation,
+            interpretation.outputs(),
+            localeTag,
+            presentation,
+            null);
+    verify(session)
+        .sendMessage(
+            argThat(
+                message ->
+                    "ERROR INVALID_CREDENTIALS Invalid credentials".equals(message.getPayload())));
+    verify(session, never()).close(any());
+    Mockito.verifyNoInteractions(
+        interpreter, sessionAuthenticationService, sessionContextService, authenticatedSessions);
+  }
+
+  @Test
+  void authenticatedLogoutClosesCustodyWhenResponseSendFails() throws Exception {
+    var authenticatedSessions = authenticatedLogoutReceiving();
+    var failure = new IOException("response-send failed");
+    Mockito.doThrow(failure).when(session).sendMessage(any());
+
+    assertThatThrownBy(() -> handler.handleMessage(session, new TextMessage("LOGOUT")))
+        .isSameAs(failure);
+
+    InOrder order = Mockito.inOrder(session, authenticatedSessions);
+    order.verify(session).sendMessage(argThat(message -> "OK LOGOUT".equals(message.getPayload())));
+    order.verify(authenticatedSessions).close(session, new CloseStatus(1000, "logout"));
+    Mockito.verifyNoInteractions(interpreter);
+  }
+
+  @Test
+  void authenticatedTransportErrorUsesInternalErrorInsteadOfRestart() throws Exception {
+    var authenticatedSessions = authenticatedLogoutReceiving();
+
+    handler.handleTransportError(session, new IOException("transport failed"));
+
+    verify(authenticatedSessions).close(session, new CloseStatus(1011, "internal_error"));
+    Mockito.verifyNoInteractions(interpreter, sessionAuthenticationService);
+  }
+
+  @Test
+  void authenticatedConnectionClosedPreservesObservedStatus() {
+    var authenticatedSessions = authenticatedLogoutReceiving();
+    var status = new CloseStatus(1001, "idle_timeout");
+
+    handler.afterConnectionClosed(session, status);
+
+    verify(authenticatedSessions).close(session, status);
+    Mockito.verifyNoInteractions(interpreter, sessionAuthenticationService);
+  }
+
+  private AuthenticatedDirectTextSessions authenticatedLogoutReceiving() {
+    var authenticatedSessions = Mockito.mock(AuthenticatedDirectTextSessions.class);
+    var receiver = Mockito.mock(AuthenticatedDirectTextCommandReceiver.class);
+    handler.authenticatedDirectTextReceiving(authenticatedSessions, receiver);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                AuthenticatedDirectTextIngress.ATTRIBUTE,
+                Mockito.mock(AuthenticatedDirectTextIngress.class)));
+    TextCommand command = new TextCommand(TextCommandType.LOGOUT, List.of(), "LOGOUT");
+    var interpretation = new TextCommandInterpretationResult(CommandEnqueueResult.success());
+    when(parser.parse("LOGOUT")).thenReturn(command);
+    when(receiver.receive(session, command)).thenReturn(interpretation);
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.empty());
+    when(outputProjector.projectCommandResponse(
+            eq(session),
+            eq(command),
+            eq(interpretation),
+            eq(List.of()),
+            Mockito.nullable(String.class),
+            any(PresentationProperties.class),
+            Mockito.isNull()))
+        .thenReturn("OK LOGOUT");
+    return authenticatedSessions;
   }
 
   @Test

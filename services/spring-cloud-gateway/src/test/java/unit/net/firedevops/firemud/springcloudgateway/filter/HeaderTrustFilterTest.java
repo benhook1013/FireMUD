@@ -301,7 +301,7 @@ class HeaderTrustFilterTest {
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
             .header("X-Proxy-Client-IP", "203.0.113.99")
-            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "7")
             .header("X-Game-Instance-Id", "spoofed-game-instance")
@@ -321,7 +321,7 @@ class HeaderTrustFilterTest {
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP"))
         .isEqualTo("203.0.113.99");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Connection-Id"))
-        .isEqualTo("conn-123");
+        .isEqualTo("9fb38c88-2f1d-42aa-8e0b-7eb69caf8814");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
         .isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("7");
@@ -364,7 +364,7 @@ class HeaderTrustFilterTest {
             .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
             .sslInfo(authenticatedPeer)
             .header("X-Proxy-Client-IP", "203.0.113.99")
-            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
             .build();
 
     ServerWebExchange promoted =
@@ -372,7 +372,23 @@ class HeaderTrustFilterTest {
     assertThat(promoted.getRequest().getHeaders().getFirst("X-Client-IP"))
         .isEqualTo("203.0.113.99");
     assertThat(promoted.getRequest().getHeaders().getFirst("X-Proxy-Connection-Id"))
-        .isEqualTo("conn-123");
+        .isEqualTo("9fb38c88-2f1d-42aa-8e0b-7eb69caf8814");
+    var socket =
+        org.mockito.Mockito.mock(org.springframework.web.reactive.socket.WebSocketSession.class);
+    org.mockito.Mockito.when(socket.getAttributes()).thenReturn(new java.util.HashMap<>());
+    var origin = new java.util.concurrent.atomic.AtomicReference<VerifiedTcpProxyOrigin>();
+    VerifiedTcpProxyOrigin.bind(
+            promoted,
+            upgraded -> {
+              origin.set(VerifiedTcpProxyOrigin.from(upgraded));
+              return Mono.empty();
+            })
+        .handle(socket)
+        .block();
+    assertThat(origin.get()).isNotNull();
+    assertThat(origin.get().clientAddress()).isEqualTo("203.0.113.99");
+    assertThat(origin.get().proxyConnectionId().toString())
+        .isEqualTo("9fb38c88-2f1d-42aa-8e0b-7eb69caf8814");
 
     MockServerHttpRequest untrustedListenerRequest =
         MockServerHttpRequest.get("/ws/game/test")
@@ -380,7 +396,7 @@ class HeaderTrustFilterTest {
             .remoteAddress(new InetSocketAddress("192.0.2.1", 50001))
             .sslInfo(authenticatedPeer)
             .header("X-Proxy-Client-IP", "203.0.113.99")
-            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
             .build();
     MockServerWebExchange untrustedListenerExchange =
         MockServerWebExchange.from(untrustedListenerRequest);
@@ -409,12 +425,48 @@ class HeaderTrustFilterTest {
               .localAddress(new InetSocketAddress("127.0.0.1", 8443))
               .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
               .sslInfo(authenticatedPeer)
-              .header("X-Proxy-Connection-Id", "conn-123");
+              .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814");
       if (clientIp != null) {
         requestBuilder.header("X-Proxy-Client-IP", clientIp);
       }
       MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
       assertForbiddenWithoutDelegation(filter, exchange, "clientIp=" + clientIp);
+    }
+  }
+
+  @Test
+  void rejectsNonCanonicalProxyConnectionIdsOnAuthenticatedListener() throws Exception {
+    GatewayHeaderTrustProperties headerProperties = new GatewayHeaderTrustProperties();
+    GatewayTcpProxyListenerProperties listenerProperties = certificateListenerProperties();
+    TcpProxyTrustPolicy policy =
+        new TcpProxyTrustPolicy(
+            listenerProperties,
+            headerProperties,
+            8080,
+            TCP_PROXY_CERTIFICATE_CLOCK,
+            Set.of("test"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(headerProperties, policy);
+    SslInfo authenticatedPeer = authenticatedTcpProxyPeer();
+
+    for (String connectionId :
+        new String[] {
+          null,
+          "opaque",
+          "9FB38C88-2F1D-42AA-8E0B-7EB69CAF8814",
+          "9fb38c88-2f1d-12aa-8e0b-7eb69caf8814",
+          "9fb38c88-2f1d-42aa-ce0b-7eb69caf8814"
+        }) {
+      MockServerHttpRequest.BaseBuilder<?> requestBuilder =
+          MockServerHttpRequest.get("/ws/game/test")
+              .localAddress(new InetSocketAddress("127.0.0.1", 8443))
+              .remoteAddress(new InetSocketAddress("127.0.0.1", 50000))
+              .sslInfo(authenticatedPeer)
+              .header("X-Proxy-Client-IP", "203.0.113.99");
+      if (connectionId != null) {
+        requestBuilder.header("X-Proxy-Connection-Id", connectionId);
+      }
+      MockServerWebExchange exchange = MockServerWebExchange.from(requestBuilder.build());
+      assertForbiddenWithoutDelegation(filter, exchange, "connectionId=" + connectionId);
     }
   }
 
@@ -429,7 +481,7 @@ class HeaderTrustFilterTest {
       MockServerHttpRequest.BaseBuilder<?> requestBuilder =
           MockServerHttpRequest.get("/ws/game/test")
               .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
-              .header("X-Proxy-Connection-Id", "conn-123")
+              .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
               .header("X-Proxy-Game-Instance-Id", "42")
               .header("X-Proxy-Tenant-Id", "7");
       if (clientIp != null) {
@@ -466,7 +518,7 @@ class HeaderTrustFilterTest {
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
             .header("X-Proxy-Client-IP", "203.0.113.99")
-            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "7")
             .build();
@@ -488,7 +540,7 @@ class HeaderTrustFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
-            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
             .header("X-Proxy-Game-Instance-Id", "42")
             .header("X-Proxy-Tenant-Id", "bad-id")
             .build();
@@ -510,7 +562,7 @@ class HeaderTrustFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
-            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
             .header("X-Proxy-Game-Instance-Id", "0")
             .header("X-Proxy-Tenant-Id", "1")
             .build();
@@ -532,7 +584,7 @@ class HeaderTrustFilterTest {
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
             .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
-            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Connection-Id", "9fb38c88-2f1d-42aa-8e0b-7eb69caf8814")
             .header("X-Proxy-Tenant-Id", "1")
             .build();
 

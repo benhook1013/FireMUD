@@ -2,7 +2,9 @@ package net.firedevops.firemud.springcloudgateway.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -11,18 +13,27 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
+import net.firedevops.firemud.springcloudgateway.filter.VerifiedTcpProxyOrigin;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.reactivestreams.Publisher;
 import org.reactivestreams.Subscription;
 import org.slf4j.MDC;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.HandshakeInfo;
@@ -110,6 +121,282 @@ class GameplayWebSocketBridgeHandlerTest {
     assertThat(upstreamHeaders.get().getFirst("X-Firemud-Transport-Session-Id"))
         .matches("\\d+")
         .isNotEqualTo("9001");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ws", "wss"})
+  void ordinaryUpstreamKeepsItsClientWhenAuthenticatedUpstreamIsConfigured(String scheme) {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    AuthenticatedGameplayWebSocketClient authenticated =
+        mock(AuthenticatedGameplayWebSocketClient.class);
+    URI ordinaryUpstream = URI.create(scheme + "://game-session-service:8080/ws/game");
+    when(authenticated.upstream())
+        .thenReturn(URI.create("wss://game-session-service:8444/ws/game/tcp"));
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    when(downstream.getId()).thenReturn("ordinary-downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    when(handshake.getHeaders()).thenReturn(new HttpHeaders());
+    when(downstream.send(any())).thenReturn(Mono.never());
+    when(downstream.receive()).thenReturn(Flux.never());
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenReturn(Mono.never());
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(ordinaryUpstream.toString(), 1, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            GameplayWebSocketObservability.disabled(),
+            authenticated);
+
+    StepVerifier.create(handler.handle(downstream)).expectSubscription().thenCancel().verify();
+
+    verify(client)
+        .execute(eq(ordinaryUpstream), any(HttpHeaders.class), any(WebSocketHandler.class));
+    verify(authenticated, never()).execute(any(), any());
+  }
+
+  @Test
+  void ordinaryUpstreamRetryKeepsItsClientWhenUrisMatchAuthenticatedUpstream() {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    AuthenticatedGameplayWebSocketClient authenticated =
+        mock(AuthenticatedGameplayWebSocketClient.class);
+    URI upstream = URI.create("wss://game-session-service:8444/ws/game/tcp");
+    when(authenticated.upstream()).thenReturn(upstream);
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenReturn(Mono.error(new IllegalStateException("connection failed")));
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    when(downstream.getId()).thenReturn("ordinary-retry-downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    when(handshake.getHeaders()).thenReturn(new HttpHeaders());
+    Sinks.Empty<Void> closed = Sinks.empty();
+    when(downstream.send(any())).thenReturn(Mono.empty());
+    when(downstream.receive()).thenReturn(closed.asMono().thenMany(Flux.empty()));
+    when(downstream.close(any(CloseStatus.class)))
+        .thenReturn(Mono.fromRunnable(closed::tryEmitEmpty));
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(upstream.toString(), 1, 0L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            GameplayWebSocketObservability.disabled(),
+            authenticated);
+
+    StepVerifier.create(handler.handle(downstream)).expectComplete().verify(Duration.ofSeconds(5));
+
+    verify(client, times(2))
+        .execute(eq(upstream), any(HttpHeaders.class), any(WebSocketHandler.class));
+    verify(authenticated, never()).execute(any(), any());
+    verify(downstream).close(new CloseStatus(1013, "backend_unavailable"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void downstreamClosureDuringReconnectBackoffSkipsNextUpstreamExecution(
+      boolean failAfterTransportConnect) {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    WebSocketSession upstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    Sinks.Empty<Void> downstreamClosed = Sinks.empty();
+
+    when(downstream.getId()).thenReturn("reconnect-backoff-downstream");
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    when(handshake.getHeaders()).thenReturn(new HttpHeaders());
+    when(downstream.send(any())).thenReturn(Mono.empty());
+    when(downstream.receive())
+        .thenReturn(downstreamClosed.asMono().thenMany(Flux.<WebSocketMessage>empty()));
+    when(upstream.send(any())).thenReturn(Mono.never());
+    when(upstream.receive()).thenReturn(Flux.empty());
+    when(upstream.closeStatus()).thenReturn(Mono.empty());
+    when(client.execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class)))
+        .thenAnswer(
+            invocation -> {
+              if (!failAfterTransportConnect) {
+                return Mono.error(new IllegalStateException("connection failed"));
+              }
+              WebSocketHandler upstreamHandler = invocation.getArgument(2);
+              return upstreamHandler.handle(upstream);
+            });
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 1, 1_000L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+
+    StepVerifier.withVirtualTime(() -> handler.handle(downstream))
+        .then(
+            () -> {
+              verify(client)
+                  .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+              downstreamClosed.tryEmitEmpty();
+            })
+        .thenAwait(Duration.ofSeconds(2))
+        .expectComplete()
+        .verify(Duration.ofSeconds(5));
+
+    verify(client).execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+  }
+
+  @Test
+  void verifiedTcpOriginSelectsAuthenticatedClientAndRelaysOnlyVerifiedOrigin() {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    AuthenticatedGameplayWebSocketClient authenticated =
+        mock(AuthenticatedGameplayWebSocketClient.class);
+    when(authenticated.upstream())
+        .thenReturn(URI.create("wss://game-session-service:8444/ws/game/tcp"));
+    when(authenticated.execute(any(), any())).thenReturn(Mono.never());
+    VerifiedTcpProxyOrigin origin = mock(VerifiedTcpProxyOrigin.class);
+    UUID connectionId = UUID.fromString("9fb38c88-2f1d-42aa-8e0b-7eb69caf8814");
+    when(origin.clientAddress()).thenReturn("203.0.113.99");
+    when(origin.proxyConnectionId()).thenReturn(connectionId);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    when(downstream.getId()).thenReturn("tcp-downstream");
+    when(downstream.getAttributes())
+        .thenReturn(Map.of(VerifiedTcpProxyOrigin.class.getName(), origin));
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("X-Client-IP", "unverified");
+    headers.set("X-Proxy-Connection-Id", "unverified");
+    headers.set("X-Firemud-Transport-Session-Id", "9001");
+    when(handshake.getHeaders()).thenReturn(headers);
+    when(downstream.send(any())).thenReturn(Mono.never());
+    when(downstream.receive()).thenReturn(Flux.never());
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "wss://game-session-service:8080/ws/game", 1, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            GameplayWebSocketObservability.disabled(),
+            authenticated);
+
+    StepVerifier.create(handler.handle(downstream)).expectSubscription().thenCancel().verify();
+
+    ArgumentCaptor<HttpHeaders> forwarded = ArgumentCaptor.forClass(HttpHeaders.class);
+    verify(authenticated).execute(forwarded.capture(), any());
+    verify(client, never())
+        .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+    assertThat(forwarded.getValue().getFirst("X-Client-IP")).isEqualTo("203.0.113.99");
+    assertThat(forwarded.getValue().getFirst("X-Proxy-Connection-Id"))
+        .isEqualTo(connectionId.toString());
+    assertThat(forwarded.getValue().getFirst("X-Firemud-Connection-Mode"))
+        .isEqualTo("trusted_tcp_proxy");
+    assertThat(forwarded.getValue().getFirst("X-Firemud-Transport-Session-Id")).isNull();
+  }
+
+  @Test
+  @ExtendWith(OutputCaptureExtension.class)
+  void missingAuthenticatedClientWarnsOnceWithoutConnectionDetailsAndKeepsFailClosed(
+      CapturedOutput output) {
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 1, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+    VerifiedTcpProxyOrigin origin = mock(VerifiedTcpProxyOrigin.class);
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
+    headers.set("X-Firemud-Transport-Session-Id", "private-transport-session");
+    headers.set("X-Firemud-Connect-Context", "private-connect-context");
+    headers.set(HttpHeaders.AUTHORIZATION, "Bearer private-credential");
+    headers.set(HttpHeaders.COOKIE, "private-cookie");
+
+    for (int attempt = 0; attempt < 10; attempt++) {
+      WebSocketSession downstream = mock(WebSocketSession.class);
+      HandshakeInfo handshake = mock(HandshakeInfo.class);
+      when(downstream.getId()).thenReturn("private-downstream-session");
+      when(downstream.getAttributes())
+          .thenReturn(Map.of(VerifiedTcpProxyOrigin.class.getName(), origin));
+      when(downstream.getHandshakeInfo()).thenReturn(handshake);
+      when(handshake.getHeaders()).thenReturn(headers);
+      when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.empty());
+
+      StepVerifier.create(handler.handle(downstream)).verifyComplete();
+
+      verify(downstream).close(new CloseStatus(1013, "backend_unavailable"));
+      verify(downstream, never()).send(any());
+      verify(downstream, never()).receive();
+    }
+
+    verify(client, never())
+        .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+    assertThat(output.getAll())
+        .containsOnlyOnce("no authenticated gameplay upstream client is configured")
+        .contains("firemud.gateway.gameplay.bridge.authenticated-upstream-url")
+        .doesNotContain(
+            "private-transport-session",
+            "private-connect-context",
+            "private-credential",
+            "private-cookie",
+            "private-downstream-session");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectedTcpOriginCloseIsBoundedAndRecorded(boolean verifiedOrigin) {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ReactorNettyWebSocketClient client = mock(ReactorNettyWebSocketClient.class);
+    AuthenticatedGameplayWebSocketClient authenticated =
+        mock(AuthenticatedGameplayWebSocketClient.class);
+    WebSocketSession downstream = mock(WebSocketSession.class);
+    HandshakeInfo handshake = mock(HandshakeInfo.class);
+    HttpHeaders headers = new HttpHeaders();
+    headers.set("X-Firemud-Connection-Mode", "trusted_tcp_proxy");
+    Map<String, Object> attributes =
+        verifiedOrigin
+            ? Map.of(VerifiedTcpProxyOrigin.class.getName(), mock(VerifiedTcpProxyOrigin.class))
+            : Map.of();
+    when(downstream.getId()).thenReturn("tcp-downstream");
+    when(downstream.getAttributes()).thenReturn(attributes);
+    when(downstream.getHandshakeInfo()).thenReturn(handshake);
+    when(handshake.getHeaders()).thenReturn(headers);
+    when(downstream.close(any(CloseStatus.class))).thenReturn(Mono.never());
+
+    GameplayWebSocketBridgeHandler handler =
+        new GameplayWebSocketBridgeHandler(
+            client,
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 1, 50L, 128),
+            new RuntimeIdentity(
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            new GameplayWebSocketObservability(meterRegistry),
+            verifiedOrigin ? null : authenticated);
+
+    StepVerifier.withVirtualTime(() -> handler.handle(downstream))
+        .thenAwait(Duration.ofSeconds(2))
+        .expectError(TimeoutException.class)
+        .verify(Duration.ofSeconds(5));
+
+    CloseStatus expected =
+        verifiedOrigin
+            ? new CloseStatus(1013, "backend_unavailable")
+            : new CloseStatus(1008, "authenticated_tcp_origin_required");
+    verify(downstream).close(expected);
+    verify(client, never())
+        .execute(any(URI.class), any(HttpHeaders.class), any(WebSocketHandler.class));
+    verify(authenticated, never()).execute(any(), any());
+    assertThat(
+            meterRegistry
+                .get("gateway.websocket.closes")
+                .tags(
+                    "reason", verifiedOrigin ? "backend_unavailable" : "policy_violation",
+                    "subreason", "none",
+                    "bridge_shutdown_class", "unattributed_failure")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test

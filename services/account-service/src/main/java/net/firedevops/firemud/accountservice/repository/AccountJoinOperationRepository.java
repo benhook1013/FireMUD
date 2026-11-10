@@ -9,6 +9,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
@@ -30,6 +31,17 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class AccountJoinOperationRepository {
+  private static final Set<String> DEFINITIVE_FAILURES =
+      Set.of(
+          "CONNECT_SCOPE_INVALID",
+          "CONNECT_SCOPE_MISMATCH",
+          "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+          "TENANT_BILLING_BLOCKED",
+          "IDEMPOTENCY_CONFLICT",
+          "MEMBERSHIP_RECONCILIATION_REQUIRED",
+          "REALM_UNAVAILABLE");
+  private static final Set<String> RETRYABLE_FAILURES =
+      Set.of("AUTH_UNAVAILABLE", "ENTITLEMENT_UNAVAILABLE", "ADMISSION_POINTER_UNAVAILABLE");
   private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final String CANONICAL_SELECT_COLUMNS =
       "SELECT request_id, account_id, tenant_id, verified_caller_binding, scope_token_hash, "
@@ -252,8 +264,30 @@ public class AccountJoinOperationRepository {
 
     if (operation.requestDigest() != null) {
       requireCanonicalPolicyMatch(operation, requestDigest, allowPublicJoin, entitlementVersion);
-      return operation;
+      if (!"PENDING".equals(operation.status())
+          || ("AVAILABLE".equals(operation.lastAttemptAuthorityAvailability())
+              && operation.lastAttemptFailureCode() == null)) return operation;
+      int recovered =
+          dsl.execute(
+              "UPDATE account_join_operations SET last_attempt_authority_availability = 'AVAILABLE', "
+                  + "last_attempt_failure_code = NULL, updated_at = CURRENT_TIMESTAMP "
+                  + "WHERE request_id = ? AND operation_representation_version = 2 AND status = 'PENDING'",
+              requestId);
+      if (recovered != 1)
+        throw new CanonicalJoinOperationConflictException(
+            "Canonical JOIN attempt recovery changed");
+      CanonicalJoinOperationEvidence readback =
+          readCanonicalEvidenceByRequestId(requestId, false).orElseThrow();
+      requireCanonicalIntentMatch(readback, requestId, callerBinding, intentDigest, scopeEvidence);
+      requireCanonicalPolicyMatch(readback, requestDigest, allowPublicJoin, entitlementVersion);
+      if (!"AVAILABLE".equals(readback.lastAttemptAuthorityAvailability())
+          || readback.lastAttemptFailureCode() != null)
+        throw new IllegalStateException("Canonical JOIN recovered attempt readback differs");
+      return readback;
     }
+    if (!"PENDING".equals(operation.status()))
+      throw new CanonicalJoinOperationConflictException(
+          "Terminal canonical JOIN cannot acquire policy evidence");
 
     int updated =
         dsl.execute(
@@ -282,17 +316,34 @@ public class AccountJoinOperationRepository {
     return committed;
   }
 
-  /** Records unavailable policy without creating a policy result, entitlement version or digest. */
+  /** Records policy unavailability without downgrading an already-bound available policy. */
   @Transactional(propagation = Propagation.MANDATORY)
   public CanonicalJoinOperationEvidence recordCanonicalPolicyUnavailable(
       String requestId, CanonicalJoinScopeV2 scope, String callerBinding, String failureCode) {
+    return recordCanonicalAttemptFailure(
+        requestId, scope, callerBinding, "UNAVAILABLE", failureCode);
+  }
+
+  /**
+   * Records only a retryable PENDING attempt. Bound policy bytes are immutable; an unbound intent
+   * retains no policy/version/digest. This journal method supplies no source authentication.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CanonicalJoinOperationEvidence recordCanonicalAttemptFailure(
+      String requestId,
+      CanonicalJoinScopeV2 scope,
+      String callerBinding,
+      String authorityAvailability,
+      String failureCode) {
     requireWritableOwnerTransaction();
     requireCanonicalOperationInput(requestId, callerBinding);
     Objects.requireNonNull(scope, "Canonical JOIN scope is required");
-    if (failureCode == null || failureCode.isBlank() || failureCode.length() > 64) {
+    if (!("UNAVAILABLE".equals(authorityAvailability)
+            || "NOT_EVALUATED".equals(authorityAvailability))
+        || failureCode == null
+        || !RETRYABLE_FAILURES.contains(failureCode))
       throw new IllegalArgumentException(
-          "JOIN attempt failure code must contain 1 to 64 characters");
-    }
+          "Canonical JOIN retryable attempt classification is invalid");
     CanonicalConnectScopeEvidence scopeEvidence = requireIncomingScope(scope);
     String intentDigest = AccountJoinDigest.intentV2(requestId, scope, callerBinding);
     CanonicalJoinOperationEvidence operation =
@@ -301,42 +352,91 @@ public class AccountJoinOperationRepository {
                 () ->
                     new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
-    if (operation.requestDigest() != null) {
+    if (!"PENDING".equals(operation.status()))
       throw new CanonicalJoinOperationConflictException(
-          "Available canonical JOIN policy evidence cannot be downgraded");
-    }
-
+          "Terminal canonical JOIN cannot record another attempt");
     int updated =
         dsl.execute(
-            "UPDATE account_join_operations SET entitlement_authority_availability = 'UNAVAILABLE', "
-                + "last_attempt_authority_availability = 'UNAVAILABLE', "
-                + "last_attempt_failure_code = ?, updated_at = CURRENT_TIMESTAMP "
-                + "WHERE request_id = ? AND operation_representation_version = 2 "
-                + "AND status = 'PENDING' AND request_digest IS NULL",
+            "UPDATE account_join_operations SET entitlement_authority_availability = "
+                + "CASE WHEN request_digest IS NULL THEN ? ELSE entitlement_authority_availability END, "
+                + "last_attempt_authority_availability = ?, last_attempt_failure_code = ?, "
+                + "updated_at = CURRENT_TIMESTAMP WHERE request_id = ? "
+                + "AND operation_representation_version = 2 AND status = 'PENDING'",
+            authorityAvailability,
+            authorityAvailability,
             failureCode,
             requestId);
-    if (updated != 1) {
-      throw new CanonicalJoinOperationConflictException(
-          "Canonical JOIN operation changed while recording policy unavailability");
-    }
+    if (updated != 1)
+      throw new CanonicalJoinOperationConflictException("Canonical JOIN attempt changed");
+    CanonicalJoinOperationEvidence readback =
+        readCanonicalEvidenceByRequestId(requestId, false).orElseThrow();
+    requireCanonicalIntentMatch(readback, requestId, callerBinding, intentDigest, scopeEvidence);
+    if (!Objects.equals(operation.requestDigest(), readback.requestDigest())
+        || !Objects.equals(operation.requestDigestVersion(), readback.requestDigestVersion())
+        || !Objects.equals(operation.entitlementVersion(), readback.entitlementVersion())
+        || !Objects.equals(operation.allowPublicJoin(), readback.allowPublicJoin())
+        || !authorityAvailability.equals(readback.lastAttemptAuthorityAvailability())
+        || !failureCode.equals(readback.lastAttemptFailureCode())
+        || (operation.requestDigest() != null
+            && !operation
+                .entitlementAuthorityAvailability()
+                .equals(readback.entitlementAuthorityAvailability())))
+      throw new IllegalStateException(
+          "Canonical JOIN attempt readback changed policy or diagnostics");
+    return readback;
+  }
 
-    CanonicalJoinOperationEvidence committed =
-        readCanonicalEvidenceByRequestId(requestId, false)
+  /**
+   * Persists or exactly replays a definitive, noncommitting failure with the original scope/intent
+   * and optional original policy. Replay performs no UPDATE. Caller/target/current-authority checks
+   * belong to the public adapter, not this persistence receipt.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CanonicalJoinOperationEvidence finishCanonicalFailure(
+      String requestId, CanonicalJoinScopeV2 scope, String callerBinding, String outcome) {
+    requireWritableOwnerTransaction();
+    requireCanonicalOperationInput(requestId, callerBinding);
+    Objects.requireNonNull(scope, "Canonical JOIN scope is required");
+    if (outcome == null || !DEFINITIVE_FAILURES.contains(outcome))
+      throw new IllegalArgumentException(
+          "Canonical JOIN definitive failure classification is invalid");
+    CanonicalConnectScopeEvidence scopeEvidence = requireIncomingScope(scope);
+    String intentDigest = AccountJoinDigest.intentV2(requestId, scope, callerBinding);
+    CanonicalJoinOperationEvidence operation =
+        lockCanonicalEvidenceByRequestId(requestId)
             .orElseThrow(
                 () ->
-                    new IllegalStateException(
-                        "Canonical JOIN unavailable-attempt readback is absent"));
-    requireCanonicalIntentMatch(committed, requestId, callerBinding, intentDigest, scopeEvidence);
-    if (!"UNAVAILABLE".equals(committed.entitlementAuthorityAvailability())
-        || committed.entitlementVersion() != null
-        || committed.allowPublicJoin() != null
-        || committed.requestDigestVersion() != null
-        || committed.requestDigest() != null
-        || !failureCode.equals(committed.lastAttemptFailureCode())) {
-      throw new IllegalStateException(
-          "Canonical JOIN unavailable attempt readback contains policy evidence");
-    }
-    return committed;
+                    new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+    requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
+    if ("FAILED".equals(operation.status()) && outcome.equals(operation.outcome()))
+      return operation;
+    if (!"PENDING".equals(operation.status()))
+      throw new CanonicalJoinOperationConflictException(
+          "Canonical JOIN terminal outcome conflicts");
+    int updated =
+        dsl.execute(
+            "UPDATE account_join_operations SET status = 'FAILED', outcome = ?, "
+                + "entitlement_authority_availability = CASE WHEN request_digest IS NULL "
+                + "THEN 'NOT_EVALUATED' ELSE entitlement_authority_availability END, "
+                + "last_attempt_authority_availability = CASE WHEN request_digest IS NULL "
+                + "THEN 'NOT_EVALUATED' ELSE 'AVAILABLE' END, last_attempt_failure_code = NULL, "
+                + "updated_at = CURRENT_TIMESTAMP WHERE request_id = ? "
+                + "AND operation_representation_version = 2 AND status = 'PENDING'",
+            outcome,
+            requestId);
+    if (updated != 1)
+      throw new CanonicalJoinOperationConflictException("Canonical JOIN failure changed");
+    CanonicalJoinOperationEvidence readback =
+        readCanonicalEvidenceByRequestId(requestId, false).orElseThrow();
+    requireCanonicalIntentMatch(readback, requestId, callerBinding, intentDigest, scopeEvidence);
+    if (!"FAILED".equals(readback.status())
+        || !outcome.equals(readback.outcome())
+        || !Objects.equals(operation.requestDigest(), readback.requestDigest())
+        || !Objects.equals(operation.requestDigestVersion(), readback.requestDigestVersion())
+        || !Objects.equals(operation.entitlementVersion(), readback.entitlementVersion())
+        || !Objects.equals(operation.allowPublicJoin(), readback.allowPublicJoin()))
+      throw new IllegalStateException("Canonical JOIN failed receipt readback differs");
+    return readback;
   }
 
   /**
@@ -350,29 +450,57 @@ public class AccountJoinOperationRepository {
       CanonicalJoinScopeV2 scope,
       String callerBinding,
       CanonicalJoinTerminalProof proof) {
+    if (proof.eventSequence() != 1L
+        || proof.membershipVersion() != 2L
+        || proof.membershipAuthorityGeneration() != 1L
+        || proof.auditEventId() == null) {
+      throw new IllegalArgumentException("Exact first-JOIN terminal proof required");
+    }
+    return commitCanonicalJoin(requestId, scope, callerBinding, "JOINED", proof);
+  }
+
+  /** Persists the exact current ACTIVE snapshot or the same-transaction restore terminal. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CanonicalJoinOperationEvidence commitCanonicalJoin(
+      String requestId,
+      CanonicalJoinScopeV2 scope,
+      String callerBinding,
+      String outcome,
+      CanonicalJoinTerminalProof proof) {
     requireWritableOwnerTransaction();
+    if (outcome == null || !Set.of("JOINED", "ALREADY_ACTIVE").contains(outcome)) {
+      throw new CanonicalJoinOperationConflictException("Canonical JOIN outcome/proof conflict");
+    }
     requireCanonicalOperationInput(requestId, callerBinding);
     Objects.requireNonNull(scope, "Canonical JOIN scope is required");
     Objects.requireNonNull(proof, "Canonical first-JOIN terminal proof is required");
     CanonicalConnectScopeEvidence scopeEvidence = requireIncomingScope(scope);
     String intentDigest = AccountJoinDigest.intentV2(requestId, scope, callerBinding);
-    String requestDigest =
-        AccountJoinDigest.requestV2(
-            scope,
-            callerBinding,
-            EntitlementAvailabilityV2.AVAILABLE,
-            true,
-            proof.entitlementVersion());
     CanonicalJoinOperationEvidence operation =
         lockCanonicalEvidenceByRequestId(requestId)
             .orElseThrow(
                 () ->
                     new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+    boolean publicJoin = Boolean.TRUE.equals(operation.allowPublicJoin());
+    if ("JOINED".equals(outcome) && !publicJoin) {
+      throw new CanonicalJoinOperationConflictException(
+          "Transition JOIN requires positive public policy");
+    }
+    String requestDigest =
+        AccountJoinDigest.requestV2(
+            scope,
+            callerBinding,
+            EntitlementAvailabilityV2.AVAILABLE,
+            publicJoin,
+            proof.entitlementVersion());
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
-    requireCanonicalPolicyMatch(operation, requestDigest, true, proof.entitlementVersion());
+    requireCanonicalPolicyMatch(operation, requestDigest, publicJoin, proof.entitlementVersion());
     requireTerminalProofScope(proof, requestId, scope, operation);
+    if ("JOINED".equals(outcome) != (proof.auditEventId() != null)) {
+      throw new CanonicalJoinOperationConflictException("Canonical JOIN outcome/proof conflict");
+    }
     if ("COMMITTED".equals(operation.status())) {
-      if (!"JOINED".equals(operation.outcome())
+      if (!outcome.equals(operation.outcome())
           || !Objects.equals(operation.terminalProof(), proof)) {
         throw new CanonicalJoinOperationConflictException(
             "Canonical JOIN request ID conflicts with its committed receipt");
@@ -386,27 +514,31 @@ public class AccountJoinOperationRepository {
 
     int updated =
         dsl.execute(
-            "UPDATE account_join_operations SET status = 'COMMITTED', outcome = 'JOINED', "
-                + "membership_id = ?, outcome_membership_version = 2, "
-                + "outcome_membership_authority_generation = 1, "
+            "UPDATE account_join_operations SET status = 'COMMITTED', outcome = ?, "
+                + "membership_id = ?, outcome_membership_version = ?, "
+                + "outcome_membership_authority_generation = ?, "
                 + "membership_authority_outbox_stream_key = ?, "
                 + "membership_authority_outbox_sequence = ?, "
                 + "membership_authority_event_id = ?, membership_authority_event_digest = ?, "
                 + "join_audit_event_id = ?, join_audit_payload_digest = ?, "
                 + "join_audit_occurred_at = ?, last_attempt_failure_code = NULL, "
+                + "last_attempt_authority_availability = 'AVAILABLE', "
                 + "updated_at = CURRENT_TIMESTAMP "
                 + "WHERE request_id = ? AND operation_representation_version = 2 "
                 + "AND account_uuid = ? AND tenant_uuid = ? "
                 + "AND verified_caller_binding = ? AND intent_digest = ? "
                 + "AND request_digest = ? AND status = 'PENDING'",
+            outcome,
             proof.membershipId(),
+            proof.membershipVersion(),
+            proof.membershipAuthorityGeneration(),
             proof.eventStreamKey(),
             proof.eventSequence(),
             proof.eventId(),
             proof.eventDigest(),
             proof.auditEventId(),
             proof.auditPayloadDigest(),
-            toLocalDateTime(proof.auditOccurredAt()),
+            proof.auditOccurredAt() == null ? null : toLocalDateTime(proof.auditOccurredAt()),
             requestId,
             scope.accountId(),
             scope.tenantId(),
@@ -423,9 +555,9 @@ public class AccountJoinOperationRepository {
             .orElseThrow(
                 () -> new IllegalStateException("Canonical JOIN receipt readback is absent"));
     requireCanonicalIntentMatch(committed, requestId, callerBinding, intentDigest, scopeEvidence);
-    requireCanonicalPolicyMatch(committed, requestDigest, true, proof.entitlementVersion());
+    requireCanonicalPolicyMatch(committed, requestDigest, publicJoin, proof.entitlementVersion());
     if (!"COMMITTED".equals(committed.status())
-        || !"JOINED".equals(committed.outcome())
+        || !outcome.equals(committed.outcome())
         || !Objects.equals(committed.terminalProof(), proof)) {
       throw new IllegalStateException("Canonical JOIN receipt readback differs from its proof");
     }
@@ -649,6 +781,20 @@ public class AccountJoinOperationRepository {
     Long membershipAuthorityGeneration =
         row.get("outcome_membership_authority_generation", Long.class);
     CanonicalJoinTerminalProof terminalProof = null;
+    if (!"COMMITTED".equals(status)) {
+      for (String column :
+          Set.of(
+              "membership_authority_outbox_stream_key",
+              "membership_authority_outbox_sequence",
+              "membership_authority_event_id",
+              "membership_authority_event_digest",
+              "join_audit_event_id",
+              "join_audit_payload_digest",
+              "join_audit_occurred_at")) {
+        if (row.get(column) != null)
+          throw new IllegalStateException("Noncommitting canonical JOIN carries success proof");
+      }
+    }
     if ("COMMITTED".equals(status)) {
       terminalProof =
           new CanonicalJoinTerminalProof(
@@ -656,9 +802,12 @@ public class AccountJoinOperationRepository {
               required(row, "membership_authority_outbox_sequence", Long.class),
               required(row, "membership_authority_event_id", String.class),
               required(row, "membership_authority_event_digest", String.class),
-              required(row, "join_audit_event_id", UUID.class),
-              required(row, "join_audit_payload_digest", String.class),
-              toInstant(required(row, "join_audit_occurred_at", java.time.LocalDateTime.class)),
+              row.get("join_audit_event_id", UUID.class),
+              row.get("join_audit_payload_digest", String.class),
+              row.get("join_audit_occurred_at") == null
+                  ? null
+                  : toInstant(
+                      required(row, "join_audit_occurred_at", java.time.LocalDateTime.class)),
               required(row, "entitlement_version", Long.class),
               required(row, "membership_id", Long.class),
               required(row, "outcome_membership_version", Long.class),
@@ -703,8 +852,7 @@ public class AccountJoinOperationRepository {
             ("account-join-audit/v1:" + requestId)
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
     if (!expectedStreamKey.equals(proof.eventStreamKey())
-        || proof.eventSequence() != 1L
-        || !expectedAuditEventId.equals(proof.auditEventId())
+        || (proof.auditEventId() != null && !expectedAuditEventId.equals(proof.auditEventId()))
         || !Objects.equals(operation.entitlementVersion(), proof.entitlementVersion())) {
       throw new CanonicalJoinOperationConflictException(
           "Canonical JOIN terminal proof differs from its exact request and owner scope");
@@ -879,7 +1027,7 @@ public class AccountJoinOperationRepository {
           || intentDigest == null
           || entitlementAuthorityAvailability == null
           || lastAttemptAuthorityAvailability == null
-          || (!"PENDING".equals(status) && !"COMMITTED".equals(status))
+          || (!"PENDING".equals(status) && !"COMMITTED".equals(status) && !"FAILED".equals(status))
           || callerBoundAuthorityInvalidated
           || scopeEvidence == null
           || scopeEvidence.privateAccountId() != privateAccountId
@@ -887,22 +1035,28 @@ public class AccountJoinOperationRepository {
           || !connectScopeDigest.equals(scopeEvidence.scopeDigest())) {
         throw new IllegalArgumentException("Canonical JOIN operation evidence is incomplete");
       }
-      if ("PENDING".equals(status)
-          ? outcome != null
+      if (!"COMMITTED".equals(status)
+          ? ("PENDING".equals(status)
+                  ? outcome != null
+                  : outcome == null || !DEFINITIVE_FAILURES.contains(outcome))
               || membershipId != null
               || membershipVersion != null
               || membershipAuthorityGeneration != null
               || terminalProof != null
-          : !"JOINED".equals(outcome)
+          : outcome == null
+              || !Set.of("JOINED", "ALREADY_ACTIVE").contains(outcome)
               || membershipId == null
               || membershipId <= 0L
-              || !Long.valueOf(2L).equals(membershipVersion)
-              || !Long.valueOf(1L).equals(membershipAuthorityGeneration)
+              || membershipVersion == null
+              || membershipVersion <= 0L
+              || membershipAuthorityGeneration == null
+              || membershipAuthorityGeneration <= 0L
               || terminalProof == null
               || membershipId.longValue() != terminalProof.membershipId()
               || membershipVersion.longValue() != terminalProof.membershipVersion()
               || membershipAuthorityGeneration.longValue()
-                  != terminalProof.membershipAuthorityGeneration()) {
+                  != terminalProof.membershipAuthorityGeneration()
+              || ("JOINED".equals(outcome) != (terminalProof.auditEventId() != null))) {
         throw new IllegalArgumentException("Canonical JOIN terminal evidence is inconsistent");
       }
       requireSha256(scopeTokenHash, "Canonical JOIN scope token hash");
@@ -913,9 +1067,7 @@ public class AccountJoinOperationRepository {
             || entitlementVersion == null
             || entitlementVersion <= 0L
             || !Integer.valueOf(2).equals(requestDigestVersion)
-            || requestDigest == null
-            || lastAttemptFailureCode != null
-            || !"AVAILABLE".equals(lastAttemptAuthorityAvailability)) {
+            || requestDigest == null) {
           throw new IllegalArgumentException(
               "Canonical JOIN available policy evidence is incomplete");
         }
@@ -925,19 +1077,26 @@ public class AccountJoinOperationRepository {
           && allowPublicJoin == null
           && entitlementVersion == null
           && requestDigestVersion == null
-          && requestDigest == null
-          && (("UNAVAILABLE".equals(entitlementAuthorityAvailability)
-                  && "UNAVAILABLE".equals(lastAttemptAuthorityAvailability)
-                  && lastAttemptFailureCode != null
-                  && !lastAttemptFailureCode.isBlank())
-              || ("NOT_EVALUATED".equals(entitlementAuthorityAvailability)
-                  && "NOT_EVALUATED".equals(lastAttemptAuthorityAvailability)
-                  && lastAttemptFailureCode == null))) {
-        // No policy outcome has been fabricated for this PENDING intent.
+          && requestDigest == null) {
+        if (!entitlementAuthorityAvailability.equals(lastAttemptAuthorityAvailability))
+          throw new IllegalArgumentException("Unbound canonical JOIN attempt availability differs");
       } else {
         throw new IllegalArgumentException(
             "Canonical JOIN policy-attempt evidence is inconsistent");
       }
+      boolean retryableAttempt =
+          "PENDING".equals(status)
+              && ("UNAVAILABLE".equals(lastAttemptAuthorityAvailability)
+                  || "NOT_EVALUATED".equals(lastAttemptAuthorityAvailability))
+              && lastAttemptFailureCode != null
+              && RETRYABLE_FAILURES.contains(lastAttemptFailureCode);
+      boolean cleanAttempt =
+          lastAttemptFailureCode == null
+              && (requestDigest == null
+                  ? "NOT_EVALUATED".equals(lastAttemptAuthorityAvailability)
+                  : "AVAILABLE".equals(lastAttemptAuthorityAvailability));
+      if (!retryableAttempt && !cleanAttempt)
+        throw new IllegalArgumentException("Canonical JOIN attempt diagnostics are inconsistent");
     }
   }
 
@@ -957,17 +1116,18 @@ public class AccountJoinOperationRepository {
       if (eventStreamKey == null
           || eventId == null
           || eventId.isBlank()
-          || eventSequence != 1L
-          || auditEventId == null
-          || auditOccurredAt == null
+          || eventSequence <= 0L
+          || ((auditEventId == null) != (auditOccurredAt == null))
+          || ((auditEventId == null) != (auditPayloadDigest == null))
           || entitlementVersion <= 0L
           || membershipId <= 0L
-          || membershipVersion != 2L
-          || membershipAuthorityGeneration != 1L) {
+          || membershipVersion <= 0L
+          || membershipAuthorityGeneration <= 0L) {
         throw new IllegalArgumentException("Canonical first-JOIN terminal proof is incomplete");
       }
       requireSha256(eventDigest, "Canonical membership event digest");
-      requireSha256(auditPayloadDigest, "Canonical JOIN audit payload digest");
+      if (auditPayloadDigest != null)
+        requireSha256(auditPayloadDigest, "Canonical JOIN audit payload digest");
     }
   }
 

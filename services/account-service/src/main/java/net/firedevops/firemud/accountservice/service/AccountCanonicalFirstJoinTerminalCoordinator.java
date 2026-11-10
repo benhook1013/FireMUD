@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
@@ -21,6 +22,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxReposi
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReadFence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
@@ -43,8 +46,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Composes the existing canonical JOIN operation, first membership, authority event/pair, and
- * Account-local tenant audit receipt in one caller-owned transaction.
+ * Composes canonical JOIN membership, authority event/pair, and Account-local terminal receipts in
+ * one caller-owned transaction. The exact first-JOIN primitive remains separately guarded; the
+ * existing-membership entry point retains ACTIVE snapshots or restores INACTIVE membership.
  *
  * <p>This is an owner-local persistence primitive, not a caller authenticator, target-currentness
  * check, public JOIN entry point, cross-service commit gate, or Logging receiver receipt.
@@ -97,6 +101,257 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
   @Transactional(propagation = Propagation.MANDATORY)
   public CanonicalJoinTerminalProof commitCanonicalFirstJoin(
       CanonicalJoinScopeV2 scope, String requestId, String verifiedCallerBinding) {
+    return commitCanonicalFirstJoin(scope, requestId, verifiedCallerBinding, null, null, null);
+  }
+
+  /**
+   * Owner-local paid first JOIN, using the actual fence prepared in an earlier source transaction
+   * and sealed SDK observation obtained outside SQL. The final paid reread, membership/roles,
+   * authority event/pair, audit and terminal receipt share this caller-owned transaction.
+   * Exceptions must escape that transaction so every staged write rolls back. This supplies neither
+   * caller authentication nor a World hold; default Spring composition and the explicit demo path
+   * are unchanged.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CanonicalJoinTerminalProof commitPaidCanonicalFirstJoin(
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String verifiedCallerBinding,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      ReadFence fence,
+      StripeHostingSubscriptionObserver.Result observed) {
+    Objects.requireNonNull(hosting, "Actual paid hosting source required");
+    Objects.requireNonNull(fence, "Original paid read fence required");
+    Objects.requireNonNull(observed, "Original sealed SDK result required");
+    return commitCanonicalFirstJoin(
+        scope, requestId, verifiedCallerBinding, hosting, fence, observed);
+  }
+
+  /**
+   * Applies the accepted existing-membership JOIN lifecycle without reusing the first-row writer.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CanonicalJoinOperationEvidence commitCanonicalJoin(
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String callerBinding,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      ReadFence fence,
+      StripeHostingSubscriptionObserver.Result observed) {
+    requireWritableOwnerTransaction();
+    Objects.requireNonNull(scope, "canonical JOIN scope is required");
+    requireBoundedText(requestId, "canonical JOIN request ID");
+    requireBoundedText(callerBinding, "verified caller binding");
+    Account account = accountRepository.findByAccountUuid(scope.accountId()).orElseThrow();
+    requireAccountIdentity(account, scope.accountId());
+    joinOperationRepository.lockAccount(account.getId());
+    CanonicalJoinOperationEvidence operation =
+        joinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId).orElseThrow();
+    requireExactOperation(operation, account.getId(), scope, requestId, callerBinding);
+    // Definitive FAILED receipts are replayed by the adapter before policy evaluation.
+    if ("COMMITTED".equals(operation.status())) {
+      return operation;
+    }
+    if (!"PENDING".equals(operation.status())) {
+      throw new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts");
+    }
+    AccountTenantMembership membership =
+        membershipRepository
+            .findFreshMembershipForUpdate(scope.accountId(), scope.tenantId())
+            .orElse(null);
+    if (membership == null) {
+      if (hosting == null) commitCanonicalFirstJoin(scope, requestId, callerBinding);
+      else commitPaidCanonicalFirstJoin(scope, requestId, callerBinding, hosting, fence, observed);
+      return joinOperationRepository
+          .findCanonicalEvidenceForUpdateByRequestId(requestId)
+          .orElseThrow();
+    }
+    eventProducer.requireCurrentCanonicalJoinPolicy(
+        scope,
+        operation,
+        !"ACTIVE".equals(membership.getLifecycleState()),
+        hosting,
+        fence,
+        observed);
+    VerifiedTenantProvenance provenance = operation.scopeEvidence().tenantProvenance();
+    RoleSnapshot roles =
+        roleSnapshotRepository
+            .findForCanonicalUpdate(
+                scope.accountId(),
+                scope.tenantId(),
+                provenance,
+                membership.getId(),
+                membership.getMembershipVersion())
+            .orElseThrow();
+    PairAuthority previous =
+        pairAuthorityRepository.readForUpdate(scope.accountId(), scope.tenantId()).orElseThrow();
+    String outcome;
+    Checkpoint checkpoint;
+    if ("ACTIVE".equals(membership.getLifecycleState())) {
+      outcome = "ALREADY_ACTIVE";
+      checkpoint =
+          authorityOutboxRepository
+              .readCheckpoint(
+                  MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+                      + "membership/"
+                      + scope.accountId()
+                      + "/"
+                      + scope.tenantId())
+              .orElseThrow();
+    } else if ("INACTIVE".equals(membership.getLifecycleState())) {
+      if (!Boolean.TRUE.equals(operation.allowPublicJoin())) {
+        throw new IllegalStateException("Restore requires current positive public JOIN policy");
+      }
+      membership =
+          membershipRepository.restoreFreshMembershipForJoin(
+              scope.accountId(), scope.tenantId(), membership);
+      // Public enrollment grants only player authority, never retained elevated tenant roles.
+      List<String> restoredRoles = List.of("player");
+      roles =
+          roleSnapshotRepository.replaceCanonical(
+              membership,
+              scope.accountId(),
+              scope.tenantId(),
+              provenance,
+              membership.getMembershipVersion(),
+              restoredRoles);
+      checkpoint =
+          eventProducer.publishCanonicalRestoredMembershipChange(
+              scope, requestId, callerBinding, previous, hosting, fence, observed);
+      outcome = "JOINED";
+    } else {
+      throw new IllegalStateException("Membership lifecycle does not allow JOIN");
+    }
+    FirstJoinEvidence current = readCurrentJoinEvidence(scope, membership, roles, checkpoint);
+    if ("ALREADY_ACTIVE".equals(outcome) && requestId.equals(current.event().requestId())) {
+      throw new IllegalStateException("Pending JOIN cannot adopt its precommitted transition");
+    }
+    if ("JOINED".equals(outcome) && !requestId.equals(current.event().requestId())) {
+      throw new IllegalStateException("Transition JOIN event does not belong to this request");
+    }
+    final CanonicalJoinTerminalProof proof;
+    if ("ALREADY_ACTIVE".equals(outcome)) {
+      proof =
+          new CanonicalJoinTerminalProof(
+              checkpoint.outboxStreamKey(),
+              checkpoint.outboxSequence(),
+              checkpoint.sourceEventId(),
+              checkpoint.sourceEventDigest(),
+              null,
+              null,
+              null,
+              operation.entitlementVersion(),
+              membership.getId(),
+              membership.getMembershipVersion(),
+              membership.getMembershipAuthorityGeneration());
+    } else {
+      String payload =
+          canonicalCurrentAuditPayload(scope, requestId, operation, current, checkpoint);
+      UUID auditId = auditEventIdFor(requestId);
+      AccountAuditEnvelope appended =
+          auditOutboxRepository.appendCanonicalTenant(
+              auditId, scope.tenantId().toString(), JOINED_EVENT_TYPE, payload);
+      AccountAuditEnvelope audit =
+          auditOutboxRepository.findExactCanonicalTenantEnvelopeForUpdate(appended).orElseThrow();
+      requireExactAudit(audit, scope, auditId, payload, operation.terminalProof());
+      proof = proof(operation, current, audit);
+    }
+    return joinOperationRepository.commitCanonicalJoin(
+        requestId, scope, callerBinding, outcome, proof);
+  }
+
+  private FirstJoinEvidence readCurrentJoinEvidence(
+      CanonicalJoinScopeV2 scope,
+      AccountTenantMembership membership,
+      RoleSnapshot roles,
+      Checkpoint checkpoint) {
+    PairAuthority pair =
+        pairAuthorityRepository.readForUpdate(scope.accountId(), scope.tenantId()).orElseThrow();
+    String stream =
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+            + "membership/"
+            + scope.accountId()
+            + "/"
+            + scope.tenantId();
+    if (!stream.equals(checkpoint.outboxStreamKey())
+        || !pair.membershipExists()
+        || !scope.accountId().equals(pair.accountUuid())
+        || !scope.tenantId().equals(pair.tenantUuid())
+        || pair.membershipVersion() != membership.getMembershipVersion()
+        || pair.membershipAuthorityGeneration() != membership.getMembershipAuthorityGeneration()
+        || pair.eventSequence() != checkpoint.outboxSequence()
+        || !pair.eventId().equals(checkpoint.sourceEventId())
+        || !pair.eventDigest().equals(checkpoint.sourceEventDigest())
+        || roles.snapshotVersion() != membership.getMembershipVersion()
+        || roles.membershipId() != membership.getId()
+        || !scope.accountId().equals(roles.accountUuid())
+        || !scope.tenantId().equals(roles.tenantUuid())
+        || !pair.provenance().equals(roles.tenantProvenance())
+        || !"ACTIVE".equals(membership.getLifecycleState())) {
+      throw new IllegalStateException("Canonical JOIN current membership/pair/roles differ");
+    }
+    Event event =
+        authorityOutboxRepository.findEvent(stream, checkpoint.outboxSequence()).orElseThrow();
+    MembershipEvent decoded =
+        MembershipAuthorityEventV1Codec.verify(new String(event.payload(), StandardCharsets.UTF_8));
+    if (!Arrays.equals(event.payload(), decoded.canonicalJsonUtf8())
+        || !checkpoint.sourceEventId().equals(event.eventId())
+        || !checkpoint.sourceEventDigest().equals(event.eventDigest())
+        || !event.eventId().equals(decoded.eventId())
+        || !event.eventDigest().equals(decoded.eventDigest())
+        || !scope.accountId().toString().equals(decoded.accountId())
+        || !scope.tenantId().toString().equals(decoded.tenantId())
+        || !Map.of(scope.tenantId().toString(), Long.toString(membership.getMembershipVersion()))
+            .equals(decoded.membershipVersion())
+        || !Long.toString(membership.getMembershipAuthorityGeneration())
+            .equals(decoded.membershipAuthorityGeneration())
+        || !roles.roles().equals(decoded.roles())
+        || !"ACTIVE".equals(decoded.membershipLifecycleState())
+        || decoded.gameplayAdmissionAllowed() != membership.isGameplayAdmissionAllowed()) {
+      throw new IllegalStateException("Canonical JOIN current event contradicts owner snapshot");
+    }
+    return new FirstJoinEvidence(membership, event);
+  }
+
+  private static String canonicalCurrentAuditPayload(
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      CanonicalJoinOperationEvidence operation,
+      FirstJoinEvidence current,
+      Checkpoint checkpoint) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("accountId", scope.accountId().toString());
+    payload.put("tenantId", scope.tenantId().toString());
+    payload.put("requestId", requestId);
+    payload.put("worldSlug", scope.worldSlug());
+    payload.put("realmSlug", scope.realmSlug());
+    payload.put("membershipVersion", current.membership().getMembershipVersion());
+    payload.put(
+        "membershipAuthorityGeneration", current.membership().getMembershipAuthorityGeneration());
+    payload.put("membershipEventStreamKey", checkpoint.outboxStreamKey());
+    payload.put("membershipEventSequence", checkpoint.outboxSequence());
+    payload.put("membershipEventId", checkpoint.sourceEventId());
+    payload.put("membershipEventDigest", checkpoint.sourceEventDigest());
+    payload.put("joinIntentDigest", operation.intentDigest());
+    payload.put("joinRequestDigest", operation.requestDigest());
+    payload.put("allowPublicJoin", true);
+    payload.put("entitlementVersion", operation.entitlementVersion());
+    try {
+      return new String(
+          Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(payload)),
+          StandardCharsets.UTF_8);
+    } catch (IOException failure) {
+      throw new IllegalStateException("Canonical JOIN audit cannot be encoded", failure);
+    }
+  }
+
+  private CanonicalJoinTerminalProof commitCanonicalFirstJoin(
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String verifiedCallerBinding,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      ReadFence fence,
+      StripeHostingSubscriptionObserver.Result observed) {
     requireWritableOwnerTransaction();
     Objects.requireNonNull(scope, "canonical JOIN scope is required");
     requireBoundedText(requestId, "canonical JOIN request ID");
@@ -117,6 +372,10 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
                 () ->
                     new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts"));
     requireExactOperation(operation, account.getId(), scope, requestId, verifiedCallerBinding);
+    if (!Boolean.TRUE.equals(operation.allowPublicJoin())) {
+      throw new CanonicalJoinOperationConflictException(
+          "First JOIN requires available public policy");
+    }
 
     final Checkpoint checkpoint;
     if ("PENDING".equals(operation.status())) {
@@ -139,8 +398,11 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
       requireExactRoleSnapshot(staged, provenance, scope, stagedRoles);
 
       checkpoint =
-          eventProducer.publishCanonicalFirstJoinMembershipChange(
-              scope, requestId, verifiedCallerBinding);
+          hosting == null
+              ? eventProducer.publishCanonicalFirstJoinMembershipChange(
+                  scope, requestId, verifiedCallerBinding)
+              : eventProducer.publishPaidCanonicalFirstJoinMembershipChange(
+                  scope, requestId, verifiedCallerBinding, hosting, fence, observed);
     } else if ("COMMITTED".equals(operation.status())
         && "JOINED".equals(operation.outcome())
         && operation.terminalProof() != null) {
@@ -332,7 +594,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
       throw new CanonicalJoinOperationConflictException("Canonical JOIN intent conflicts");
     }
     if (!"AVAILABLE".equals(operation.entitlementAuthorityAvailability())
-        || !Boolean.TRUE.equals(operation.allowPublicJoin())
+        || operation.allowPublicJoin() == null
         || operation.entitlementVersion() == null
         || operation.entitlementVersion() <= 0L
         || !Integer.valueOf(2).equals(operation.requestDigestVersion())
@@ -346,7 +608,7 @@ public class AccountCanonicalFirstJoinTerminalCoordinator {
             scope,
             callerBinding,
             AccountJoinDigest.EntitlementAvailabilityV2.AVAILABLE,
-            true,
+            operation.allowPublicJoin(),
             operation.entitlementVersion());
     if (!requestDigest.equals(operation.requestDigest())) {
       throw new CanonicalJoinOperationConflictException("Canonical JOIN policy conflicts");

@@ -1,7 +1,9 @@
 package integration.net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -14,9 +16,12 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
-import net.firedevops.firemud.accountservice.entity.Subscription;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
-import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -29,7 +34,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** Physical V31/V32 currentness proof, isolated from Account lifecycle/source writers. */
+/** Canonical hosting lifecycle/source currentness and separate realm-grant tombstone/CAS proof. */
 class AccountAuthorityCurrentnessIntegrationTest {
   private static final AccountPostgresIntegrationFixture postgres =
       new AccountPostgresIntegrationFixture();
@@ -59,39 +64,115 @@ class AccountAuthorityCurrentnessIntegrationTest {
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    Long accountId =
-        Objects.requireNonNull(
+    var fixture = CanonicalHostingSubscriptionTestFixture.create(dataSource);
+    var claim =
+        fixture
+            .service()
+            .claimProvisioning(fixture.creation().requestId(), 1, UUID.randomUUID())
+            .claim();
+    UUID initialRequest = UUID.randomUUID();
+    var initialCommit =
+        fixture
+            .service()
+            .reconcile(
+                initialRequest,
+                fixture.creation().requestId(),
+                claim.subscriptionRowVersion(),
+                fixture.providerId(),
+                claim.attemptId());
+    assertThat(initialCommit.outcome()).isEqualTo(Outcome.COMMITTED);
+    var initial = fixture.service().readCurrent(fixture.tenantId());
+    assertThat(initial.entitlementVersion()).isOne();
+    assertCanonicalCheckpoint(fixture, initial);
+    int initialReads = fixture.transport().reads();
+    assertThat(
+            fixture
+                .service()
+                .reconcile(
+                    initialRequest,
+                    fixture.creation().requestId(),
+                    claim.subscriptionRowVersion(),
+                    fixture.providerId(),
+                    claim.attemptId()))
+        .isEqualTo(initialCommit);
+    assertThat(fixture.transport().reads()).isEqualTo(initialReads);
+    var initialRetry = fixture.service().readCurrent(fixture.tenantId());
+    assertThat(initialRetry.receiptRequestId()).isEqualTo(initial.receiptRequestId());
+    assertThat(initialRetry.tenantAuthorityEvent().payload())
+        .isEqualTo(initial.tenantAuthorityEvent().payload());
+
+    fixture.clock().advance(Duration.ofSeconds(1));
+    fixture.providerStatus("canceled");
+    UUID changedRequest = UUID.randomUUID();
+    var changedCommit =
+        fixture
+            .service()
+            .reconcile(
+                changedRequest,
+                fixture.creation().requestId(),
+                initial.current().rowVersion(),
+                fixture.providerId(),
+                null);
+    assertThat(changedCommit.outcome()).isEqualTo(Outcome.COMMITTED);
+    var changed = fixture.service().readCurrent(fixture.tenantId());
+    assertThat(changed.rawProviderStatus()).isEqualTo("canceled");
+    assertThat(changed.entitlementVersion()).isGreaterThan(initial.entitlementVersion());
+    assertThat(changed.tenantBillingSequence()).isGreaterThan(initial.tenantBillingSequence());
+    assertThat(changed.tenantAuthorityEvent().tenantAuthorityGeneration())
+        .isGreaterThan(initial.tenantAuthorityEvent().tenantAuthorityGeneration());
+    assertThat(changed.tenantAuthorityEvent().outboxSequence())
+        .isGreaterThan(initial.tenantAuthorityEvent().outboxSequence());
+    assertThat(changed.tenantAuthorityEvent().eventId())
+        .isNotEqualTo(initial.tenantAuthorityEvent().eventId());
+    assertCanonicalCheckpoint(fixture, changed);
+
+    assertThatThrownBy(
+            () ->
+                jdbc.update(
+                    "UPDATE subscription SET status = 'active', row_version = row_version + 1 WHERE subscription_id = ?",
+                    fixture.creation().subscriptionId()))
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    int changedReads = fixture.transport().reads();
+    assertThat(
+            fixture
+                .service()
+                .reconcile(
+                    changedRequest,
+                    fixture.creation().requestId(),
+                    initial.current().rowVersion(),
+                    fixture.providerId(),
+                    null))
+        .isEqualTo(changedCommit);
+    assertThat(fixture.transport().reads()).isEqualTo(changedReads);
+    var changedRetry = fixture.service().readCurrent(fixture.tenantId());
+    assertThat(changedRetry.current()).isEqualTo(changed.current());
+    assertThat(changedRetry.receiptRequestId()).isEqualTo(changed.receiptRequestId());
+    assertThat(changedRetry.tenantAuthorityEvent().payload())
+        .isEqualTo(changed.tenantAuthorityEvent().payload());
+    assertCanonicalCheckpoint(fixture, changedRetry);
+    assertThat(
             jdbc.queryForObject(
-                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                "SELECT payload FROM account_authority_outbox_events WHERE outbox_stream_key = ? AND outbox_sequence = ?",
+                byte[].class,
+                initial.tenantAuthorityEvent().outboxStreamKey(),
+                initial.tenantAuthorityEvent().outboxSequence()))
+        .isEqualTo(initial.tenantAuthorityEvent().payload());
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_authority_outbox_events WHERE outbox_stream_key = ?",
                 Long.class,
-                "currentness-" + UUID.randomUUID(),
-                "currentness-" + UUID.randomUUID() + "@example.test",
-                "test-hash"));
+                changed.tenantAuthorityEvent().outboxStreamKey()))
+        .isEqualTo(2L);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ?",
+                Long.class,
+                fixture.tenantId()))
+        .isEqualTo(2L);
 
+    // Realm grants retain their separate authority and numeric legacy scope in this existing proof.
+    long accountId = fixture.accountId();
     long tenantId = 7_654_322L;
-    jdbc.update(
-        "INSERT INTO subscription (account_id, plan_id, status, tenant_id, entitlement_version) "
-            + "VALUES (?, 'test-plan', 'active', ?, 1)",
-        accountId,
-        tenantId);
-    SubscriptionRepository subscriptions = new SubscriptionRepository(dsl);
-    Subscription subscription = subscriptions.findByTenantId(tenantId).getFirst();
-    UUID initialTenantGeneration = subscription.getTenantAuthorityGeneration();
-    assertThat(initialTenantGeneration).isNotNull();
-    assertThat(subscription.getEntitlementVersion()).isEqualTo(1L);
-
-    subscription.setStatus("past_due");
-    subscriptions.save(subscription);
-    Subscription repositoryUpdated = subscriptions.findByTenantId(tenantId).getFirst();
-    assertThat(repositoryUpdated.getTenantAuthorityGeneration())
-        .isNotEqualTo(initialTenantGeneration);
-    assertThat(repositoryUpdated.getEntitlementVersion()).isEqualTo(2L);
-
-    jdbc.update("UPDATE subscription SET status = 'active' WHERE tenant_id = ?", tenantId);
-    Subscription directlyUpdated = subscriptions.findByTenantId(tenantId).getFirst();
-    assertThat(directlyUpdated.getTenantAuthorityGeneration())
-        .isNotEqualTo(repositoryUpdated.getTenantAuthorityGeneration());
-    assertThat(directlyUpdated.getEntitlementVersion()).isEqualTo(3L);
 
     Account account = new Account();
     account.setId(accountId);
@@ -139,6 +220,57 @@ class AccountAuthorityCurrentnessIntegrationTest {
             grants.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
                 accountId, tenantId, "world", "private"))
         .isFalse();
+  }
+
+  private static void assertCanonicalCheckpoint(
+      CanonicalHostingSubscriptionTestFixture.Fixture fixture,
+      AccountHostingSubscriptionCurrentReceipt receipt) {
+    var event = receipt.tenantAuthorityEvent();
+    assertThat(event.tenantId()).isEqualTo(fixture.tenantId());
+    assertThat(event.tenantBillingSequence()).isEqualTo(receipt.tenantBillingSequence());
+    assertThat(event.tenantBillingEventId()).isEqualTo(receipt.billingEventId());
+    assertThat(event.tenantBillingEventDigest()).isEqualTo(receipt.billingEventDigest());
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              var currentGeneration =
+                  new AccountAuthorityGenerationRepository(fixture.dsl())
+                      .read(AuthorityScope.tenant(fixture.tenantId()));
+              assertThat(currentGeneration.generation())
+                  .isEqualTo(event.tenantAuthorityGeneration());
+              assertThat(currentGeneration.sourceVersion())
+                  .isEqualTo(event.tenantAuthoritySourceVersion());
+              var checkpoint =
+                  new AccountAuthorityOutboxRepository(fixture.dsl())
+                      .readCheckpoint(event.outboxStreamKey())
+                      .orElseThrow();
+              assertThat(checkpoint.outboxSequence()).isEqualTo(event.outboxSequence());
+              assertThat(checkpoint.sourceEventId()).isEqualTo(event.eventId().toString());
+              assertThat(checkpoint.sourceEventDigest()).isEqualTo(event.eventDigest());
+              assertThat(
+                      fixture
+                          .jdbc()
+                          .queryForObject(
+                              "SELECT event_digest FROM account_tenant_entitlement_outbox_events WHERE tenant_uuid = ? AND tenant_billing_sequence = ? AND event_id = ?",
+                              String.class,
+                              fixture.tenantId(),
+                              receipt.tenantBillingSequence(),
+                              receipt.billingEventId()))
+                  .isEqualTo(receipt.billingEventDigest());
+              assertThat(
+                      fixture
+                          .jdbc()
+                          .queryForMap(
+                              "SELECT current_generation, tenant_billing_sequence, last_outbox_sequence, "
+                                  + "last_event_id, last_event_digest FROM account_tenant_authority_source_records WHERE tenant_uuid = ?",
+                              fixture.tenantId()))
+                  .containsEntry("current_generation", event.tenantAuthorityGeneration())
+                  .containsEntry("tenant_billing_sequence", receipt.tenantBillingSequence())
+                  .containsEntry("last_outbox_sequence", checkpoint.outboxSequence())
+                  .containsEntry("last_event_id", event.eventId().toString())
+                  .containsEntry("last_event_digest", event.eventDigest());
+            });
   }
 
   @Test

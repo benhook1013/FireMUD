@@ -176,7 +176,7 @@ jobs:
                 : "skipped (run_smoke_full=false)";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
+              if (value === "failure" || value.startsWith("failure (")) return "❌";
               if (value === "cancelled") return "⚪";
               if (value === "pending") return "⏳";
               if (value === "unavailable") return "⚠️";
@@ -313,6 +313,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           RUN_SMOKE_FULL: ${{ needs.changes.outputs.run_smoke_full }}
           SMOKE_GATE_RESULT: ${{ needs.smoke-gate.result }}
+          KNOWN_PLAY_EXCEPTION: ${{ needs.smoke-gate.outputs.known_play_exception }}
         with:
           script: |
             const rawChangesResult = process.env.CHANGES_RESULT || "";
@@ -325,14 +326,17 @@ jobs:
             const smokeGateStatus = ["success", "failure", "cancelled", "skipped"].includes(rawSmokeGateResult)
               ? rawSmokeGateResult
               : "unavailable";
-            const fullResult = !changesHealthy
+            const knownPlayException = process.env.KNOWN_PLAY_EXCEPTION === "true" && smokeGateStatus === "success";
+            const fullResult = knownPlayException
+              ? "failure (known PLAY exception accepted; no runtime qualification or publication)"
+              : !changesHealthy
               ? `not-evaluated (${changesStatus} changes detection)`
               : fullEnabled
                 ? smokeGateStatus
                 : "skipped (run_smoke_full=false)";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
-              if (value === "failure") return "❌";
+              if (value === "failure" || value.startsWith("failure (")) return "❌";
               if (value === "cancelled") return "⚪";
               if (value === "skipped") return "⏭️";
               if (value === "unavailable") return "⚠️";
@@ -343,6 +347,8 @@ jobs:
             let headline = "⏭️ Runtime smoke is not required";
             if (!changesHealthy) {
               headline = `${statusIcon(smokeGateStatus)} Smoke Gate completed with ${smokeGateStatus}; scope detection was ${changesStatus}`;
+            } else if (knownPlayException) {
+              headline = "⚠️ Known PLAY failed: ERROR ENTITLEMENT_UNAVAILABLE after LOGIN. Canonical PLAY transition exception accepted; no runtime qualification or publication.";
             } else if (fullEnabled) {
               headline = `${statusIcon(smokeGateStatus)} Full-stack smoke completed with Smoke Gate: ${smokeGateStatus}`;
             }
@@ -449,6 +455,8 @@ jobs:
             }
 
   smoke-gate:
+    outputs:
+      known_play_exception: ${{ steps.track-runtime-smoke.outputs.known_play_exception }}
     name: Smoke Gate
     runs-on: ubuntu-latest
     permissions:
@@ -536,6 +544,7 @@ jobs:
         run: echo "No runtime-stack smoke proof is required for this change."
 
       - name: Track full-stack smoke result from Build Runtime Images
+        id: track-runtime-smoke
         if: ${{ steps.smoke_gate_context.outputs.execute == 'true' && needs.changes.outputs.run_smoke_full == 'true' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
@@ -598,8 +607,29 @@ jobs:
               throw new Error(`${label} retry loop exited unexpectedly`);
             }
 
-            // One canonical producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "e939f7a6205e9626fdb6fbe1ab6b908bc8eb9f8912b919a1f5c5491ac6804936";
+            // Current producer definition; the contract test reports fingerprint upkeep.
+            const canonicalRuntimeWorkflowSha256 = "ea6ade0f69718573aeac4e4b5a1e9050e53e1e3cef3426b8791f182d8d49e112";
+            // Trusted refreshes can still execute the previous successful default-branch definition.
+            const canonicalPreviousTrustedRefreshRuntimeWorkflowSha256 = "520407ce97e1ffbe1db824264f0a64e95887f36df2dc07d5738bed4448759ae2";
+            // Retain the exact fail-red producer still executed by trusted base refreshes.
+            const canonicalLegacyRuntimeWorkflowSha256 = "db0acb4e51630b729eb92362ea3e748f3f96b06d8ef5ca466a718ded67725804";
+            // Include held-admission proof, authenticated cleanup, and their executed inputs.
+            const canonicalPlayClassifierSha256 = {
+              "dev-tools/verify-smoke-images.sh": "559e0713cc86ab533cc23214e56ece2e7cf4e069d1bb7541a1e09bff36ad4c67",
+              "dev-tools/smoke/smoke_common.py": "a1e36948b500ac796295560cb8c22321ebe47eab78be9e1f4d58837053547534",
+              "services/game-session-service/websocket-login-look-smoke.sh": "0a6fbc66f7bf16aaf065bf1228d5190be340ce25543112e39482b9325ad9a90b",
+              "dev-tools/smoke/demo-smoke-defaults.sh": "8c9aae1abf005b47af3f313e0d635a666c74776733bcf5278a2e11ac9c8a18fb",
+              "dev-tools/smoke/held-admission-qualification.sh": "b548a773f1786b72d40a3728052a336cb249257a3f40735f005b060812184ed3",
+              "dev-tools/smoke/held_admission_qualification.py": "2d118d7ba6a19dac7d8c717dbbbe25df6f04a3c186a3185135d1bdc5fc75b557",
+              "dev-tools/smoke/run-owned-compose.sh": "c2a0590c98d39a8c8ec22c20e692948136a5ec53ca2dfc0b29db7323a3e1b6be",
+              "dev-tools/certs/ensure-dev-certs.sh": "30f4ab5c9cb7af7f9d4a477ce923cfad19a319a85b6e05957f7d24eae9baddd2",
+              ".env.sample": "d19cecadde844c77b8e1d366b5a2ff8fae1a5c181fad450f3fc1c407be70752d",
+              "docker/docker-compose.yml": "f43581c67747dfb732742ecc1c4de631a71a2a41ae535663fb3872a90b68e2f1",
+              "docker/docker-compose.override.yml": "2e720be03f942fd4456d46cea5a127f16106a1056aec6ddaaf52b2bb31b51d75",
+              "docker/docker-compose.smoke-images.override.yml": "7717be8b49a1dc548a47fba852c181feeb4dbe9a21fc201a7f8e74b992801fd6",
+              "docker/docker-compose.pr-local-minio.override.yml": "d975ce211afcb73079a21c70fda358e3a8f3366b83fe0302907c9d7149ce965e",
+              "docker/docker-compose.grpc-mtls.override.yml": "dcee047f1492392035d57153ba8dfd6d38de33ca932d327f377440d5813577f0"
+            };
             const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
             const workflowPath = ".github/workflows/runtime-images.yml";
             const repositoryName = `${owner}/${repo}`;
@@ -696,6 +726,12 @@ jobs:
               }
             }
 
+            function isSuccessfulRuntimeWorkflowDefinition(definitionHash, sourceEvent) {
+              return definitionHash === canonicalRuntimeWorkflowSha256 ||
+                (sourceEvent === "repository_dispatch" &&
+                  definitionHash === canonicalPreviousTrustedRefreshRuntimeWorkflowSha256);
+            }
+
             async function verifyCanonicalSmokeProducer(run, candidate, identity) {
               if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
               const { data: source } = await withTransientGitHubRetry(
@@ -745,6 +781,9 @@ jobs:
                 job.head_sha !== source.head_sha || job.status !== "completed" || job.conclusion !== "success" ||
                 job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`
               ) return false;
+              const markers = (job.steps ?? []).filter((step) =>
+                step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
+              );
               // PR workflows execute their test merge definition; typed refreshes execute the
               // immutable default-branch revision recorded by their native run attempt.
               const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
@@ -756,14 +795,139 @@ jobs:
                   definition.encoding !== "base64" || typeof definition.content !== "string") return false;
               const bytes = Buffer.from(definition.content, "base64");
               if (definition.size !== bytes.length) return false;
-              if (require("node:crypto").createHash("sha256").update(bytes).digest("hex") !==
-                  canonicalRuntimeWorkflowSha256) return false;
+              const definitionHash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+              if (isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event)) {
+                if (markers.length !== 1 || markers[0].status !== "completed" ||
+                    markers[0].conclusion !== "skipped") return false;
+              } else if (definitionHash !== canonicalLegacyRuntimeWorkflowSha256) return false;
               const { data: latest } = await withTransientGitHubRetry(
                 "current runtime attempt lookup",
                 () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: source.id })
               );
               return latest.id === source.id && latest.run_attempt === source.run_attempt &&
                 latest.status === "completed" && latest.conclusion === "success";
+            }
+
+            // Canonical-transition diagnostic acceptance never becomes passing producer proof.
+            async function verifyKnownPlayFailure(run, candidate, identity) {
+              if (repositoryName !== "benhook1013/FireMUD" ||
+                  !["pull_request", "repository_dispatch"].includes(run.event)) return false;
+              if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
+              const { data: source } = await withTransientGitHubRetry(
+                "exact runtime workflow attempt lookup",
+                () => github.request("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}", {
+                  owner, repo, run_id: run.id, attempt_number: run.run_attempt,
+                })
+              );
+              const expectedTitle = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
+                `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
+              if (
+                source.id !== run.id || source.run_attempt !== run.run_attempt ||
+                source.status !== "completed" || !["success", "failure"].includes(source.conclusion) ||
+                source.path !== workflowPath || source.repository?.full_name !== repositoryName ||
+                !positiveInteger(source.workflow_id) || source.display_title !== expectedTitle ||
+                source.event !== run.event
+              ) return false;
+              const expectedHeadRepository = context.payload.pull_request.head.repo?.full_name;
+              if (typeof expectedHeadRepository !== "string" ||
+                  expectedHeadRepository !== repositoryName ||
+                  source.head_repository?.full_name !== expectedHeadRepository) return false;
+              if (source.event === "pull_request" && source.head_sha !== identity.headSha) return false;
+              if (source.event === "repository_dispatch" && (
+                source.head_branch !== context.payload.repository.default_branch ||
+                !/^[0-9a-f]{40}$/.test(source.head_sha ?? "")
+              )) return false;
+              const { data: workflow } = await withTransientGitHubRetry(
+                "runtime workflow identity lookup",
+                () => github.rest.actions.getWorkflow({ owner, repo, workflow_id: source.workflow_id })
+              );
+              if (workflow.id !== source.workflow_id || workflow.path !== workflowPath ||
+                  workflow.name !== "Build Runtime Images") return false;
+              const jobs = await withTransientGitHubRetry(
+                "exact runtime attempt jobs lookup",
+                () => github.paginate(
+                  "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                  { owner, repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100 }
+                )
+              );
+              const producers = jobs.filter((job) => job.name === canonicalSmokeJobName);
+              if (producers.length !== 1) return false;
+              const job = producers[0];
+              if (
+                !positiveInteger(job.id) || job.id !== candidate.id ||
+                job.run_id !== source.id || job.run_attempt !== source.run_attempt ||
+                job.head_sha !== source.head_sha || job.status !== "completed" || job.conclusion !== source.conclusion ||
+                job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`
+              ) return false;
+              const expectedSuccessfulSteps = [
+                "Run credential-free full-stack smoke",
+                "Require successful runtime smoke and authenticated cleanup",
+              ];
+              const markerName = "Known canonical transition PLAY failure with successful authenticated cleanup";
+              const steps = job.steps ?? [];
+              const exactlyOne = (name, conclusion) => steps.filter((step) =>
+                step.name === name && step.status === "completed" && step.conclusion === conclusion
+              ).length === 1;
+              if (!exactlyOne(markerName, "success") || !exactlyOne("Stop smoke stack", "success") ||
+                  !exactlyOne("Export fixed-tag preview image artifact", "skipped") ||
+                  !exactlyOne("Upload preview image artifact", "skipped") ||
+                  expectedSuccessfulSteps.some((name) => !exactlyOne(name, source.conclusion)) ||
+                  steps.some((step) => step.status !== "completed" ||
+                    !["success", "skipped", "failure"].includes(step.conclusion) ||
+                    (step.conclusion === "failure" && !(source.conclusion === "failure" && expectedSuccessfulSteps.includes(step.name)))) ||
+                  jobs.some((other) => other.id !== job.id &&
+                    (other.status !== "completed" || !["success", "skipped"].includes(other.conclusion)))) return false;
+              // Typed refresh workflow authority is its native default-branch revision;
+              // the executed classifier source still belongs to the verified PR merge.
+              const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
+              for (const path of [workflowPath, ...Object.keys(canonicalPlayClassifierSha256)]) {
+                const { data: definition } = await withTransientGitHubRetry(
+                  `immutable PLAY classifier definition lookup: ${path}`,
+                  () => github.rest.repos.getContent({
+                    owner, repo, path, ref: path === workflowPath ? workflowSha : identity.mergeSha,
+                  })
+                );
+                if (definition.type !== "file" || definition.path !== path ||
+                    definition.encoding !== "base64" || typeof definition.content !== "string") return false;
+                const bytes = Buffer.from(definition.content, "base64");
+                if (definition.size !== bytes.length) return false;
+                const definitionHash = require("node:crypto").createHash("sha256").update(bytes).digest("hex");
+                const expectedSha256 = path === workflowPath
+                  ? canonicalLegacyRuntimeWorkflowSha256 : canonicalPlayClassifierSha256[path];
+                const matches = path === workflowPath && source.conclusion === "success"
+                  ? isSuccessfulRuntimeWorkflowDefinition(definitionHash, source.event)
+                  : definitionHash === expectedSha256;
+                if (!matches) return false;
+              }
+              const { data: latest } = await withTransientGitHubRetry(
+                "current runtime attempt lookup",
+                () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: source.id })
+              );
+              if (latest.id !== source.id || latest.run_attempt !== source.run_attempt ||
+                  latest.status !== "completed" || latest.conclusion !== source.conclusion) return false;
+              // The fingerprinted marker attests the PR event label or the typed
+              // refresh's verified live PR label. Removal closes either exception.
+              const { data: currentPullRequest } = await withTransientGitHubRetry(
+                "current canonical transition label lookup",
+                () => github.rest.pulls.get({ owner, repo, pull_number: Number(prNumber) })
+              );
+              if (!(currentPullRequest.state === "open" &&
+                currentPullRequest.head?.repo?.full_name === repositoryName &&
+                currentPullRequest.base?.repo?.full_name === repositoryName &&
+                currentPullRequest.head?.sha === identity.headSha &&
+                currentPullRequest.base?.ref === identity.baseRef &&
+                Array.isArray(currentPullRequest.labels) &&
+                currentPullRequest.labels.some((label) => label?.name === "canonical-play-transition"))) return false;
+              if (source.event === "repository_dispatch") {
+                if (currentPullRequest.merge_commit_sha !== identity.mergeSha) return false;
+                const { data: currentBase } = await withTransientGitHubRetry(
+                  "current canonical transition base ref lookup",
+                  () => github.rest.git.getRef({ owner, repo, ref: `heads/${identity.baseRef}` })
+                );
+                if (currentBase.ref !== `refs/heads/${identity.baseRef}` ||
+                    currentBase.object?.sha !== identity.baseSha) return false;
+              }
+              return true;
             }
 
             // Commit objects are immutable; mutable PR/base reads stay fresh.
@@ -1067,6 +1231,37 @@ jobs:
                   if (await isCurrentPullRequestObsolete("Stopping obsolete failed smoke gate for")) {
                     return;
                   }
+                  if (matching.conclusion === "failure" && repositoryName === "benhook1013/FireMUD" &&
+                      ["pull_request", "repository_dispatch"].includes(matching.event)) {
+                    let knownPlayVerified = false;
+                    try {
+                      const jobs = await withTransientGitHubRetry("canonical transition PLAY failure jobs lookup", () =>
+                        github.paginate("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", {
+                          owner, repo, run_id: matching.id, attempt_number: matching.run_attempt, per_page: 100,
+                        })
+                      );
+                      const candidate = jobs.find((job) => job.name === canonicalSmokeJobName);
+                      knownPlayVerified = Boolean(candidate) &&
+                        await verifyKnownPlayFailure(matching, candidate, currentIdentity);
+                    } catch (error) {
+                      if (error instanceof TerminalGitHubRequestError) throw error;
+                      core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
+                    }
+                    if (knownPlayVerified) {
+                      const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception");
+                      if (freshIdentity?.obsolete) return;
+                      if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
+                        currentIdentity = freshIdentity;
+                        continue smokeGatePolling;
+                      }
+                      core.setOutput("known_play_exception", "true");
+                      core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
+                      await core.summary.addHeading("Canonical PLAY transition exception accepted")
+                        .addRaw("Known PLAY failed: ERROR ENTITLEMENT_UNAVAILABLE after LOGIN. Held-admission qualification and authenticated cleanup passed. No runtime qualification, image export, or publication.")
+                        .write();
+                      return;
+                    }
+                  }
                   core.setFailed(
                     `Runtime images run ${matching.id} did not complete successfully: run=${matching.conclusion}`
                   );
@@ -1179,6 +1374,45 @@ jobs:
                     : `after ${maxCompletedJobSnapshotRetries} retries`;
                   await failNonTerminalSnapshot(snapshotRetrySummary);
                   return;
+                }
+
+                // A continued probe has API conclusion=success even when its native
+                // outcome failed. The immutable marker distinguishes that exception.
+                if (fullSmokeJob?.name === canonicalSmokeJobName) {
+                  const markers = (fullSmokeJob.steps ?? []).filter((step) =>
+                    step.name === "Known canonical transition PLAY failure with successful authenticated cleanup"
+                  );
+                  if (markers.length === 1 && markers[0].status === "completed" &&
+                      markers[0].conclusion === "success") {
+                    let knownPlayVerified = false;
+                    try {
+                      knownPlayVerified = await verifyKnownPlayFailure(matching, fullSmokeJob, currentIdentity);
+                    } catch (error) {
+                      if (error instanceof TerminalGitHubRequestError) throw error;
+                      core.warning(`Canonical PLAY transition exception proof is unavailable: ${error?.message ?? String(error)}`);
+                    }
+                    if (!knownPlayVerified) {
+                      core.setFailed("Canonical PLAY transition exception could not be verified; runtime qualification remains blocked.");
+                      return;
+                    }
+                    const freshIdentity = await resolveCurrentIdentity("Stopping stale canonical transition PLAY exception");
+                    if (freshIdentity?.obsolete) return;
+                    if (!freshIdentity || identityKey(freshIdentity) !== identityKey(currentIdentity)) {
+                      currentIdentity = freshIdentity;
+                      continue smokeGatePolling;
+                    }
+                    core.setOutput("known_play_exception", "true");
+                    core.warning("Canonical PLAY transition exception accepted: LOGIN succeeded, direct backend PLAY failed ERROR ENTITLEMENT_UNAVAILABLE. No runtime qualification or image publication.");
+                    await core.summary.addHeading("Canonical PLAY transition exception accepted")
+                      .addRaw("Known PLAY failed: ERROR ENTITLEMENT_UNAVAILABLE after LOGIN. Held-admission qualification and authenticated cleanup passed. CI passed under exception; no runtime qualification, image export, or publication.")
+                      .write();
+                    return;
+                  }
+                  if (!canonicalProducerVerified && (markers.length !== 1 ||
+                      markers[0].status !== "completed" || markers[0].conclusion !== "skipped")) {
+                    core.setFailed("Runtime smoke proof is missing its unambiguous transition-exception disposition.");
+                    return;
+                  }
                 }
 
                 if (fullSmokeJob?.conclusion !== "success") {

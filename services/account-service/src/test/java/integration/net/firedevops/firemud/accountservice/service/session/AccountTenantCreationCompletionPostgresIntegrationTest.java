@@ -42,7 +42,6 @@ import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxReposi
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountInitialTenantBillingOwnerRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -55,6 +54,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBoo
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
@@ -1267,7 +1267,6 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             mock(AccountSecurityStateOperationRepository.class),
             mock(AccountPasswordResetDraftSourceChangeRepository.class),
             mock(AccountAuditOutboxRepository.class),
-            mock(AccountConnectScopeRepository.class),
             mock(AccountJoinOperationRepository.class),
             challenges,
             null,
@@ -1276,9 +1275,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             null,
             null,
             null,
-            null,
-            null,
-            null,
+            org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
             null,
             null,
             null,

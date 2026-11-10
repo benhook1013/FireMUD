@@ -303,6 +303,14 @@ def main() -> int:
     )
     establish_player_flow_canary_capability(config, initial_external_authority)
     try:
+        validate_live_websocket_tenant_selector(
+            config,
+            declared_exposed_paths(initial_external_authority),
+            simulate=args.simulate,
+        )
+    except ProbeOperationalFailure as exc:
+        parser.error(str(exc))
+    try:
         validate_telnet_transport_config(
             config,
             declared_exposed_paths(initial_external_authority),
@@ -403,6 +411,7 @@ class SmokeConfig:
         username: str,
         password: str,
         world: str,
+        tenant_slug: str | None,
         timeout_seconds: int,
         startup_wait_seconds: int,
         external_authority_evidence: Path | None,
@@ -439,6 +448,7 @@ class SmokeConfig:
         self.username = username
         self.password = password
         self.world = world
+        self.tenant_slug = tenant_slug
         self.timeout_seconds = timeout_seconds
         self.startup_wait_seconds = startup_wait_seconds
         self.external_authority_evidence = external_authority_evidence
@@ -503,6 +513,9 @@ class SmokeConfig:
             )
         if telnet_ca_file is None and os.environ.get("PLAYER_EXPERIENCE_TELNET_CA_FILE"):
             telnet_ca_file = Path(os.environ["PLAYER_EXPERIENCE_TELNET_CA_FILE"])
+        tenant_slug = os.environ.get("PLAYER_EXPERIENCE_TENANT_SLUG")
+        if tenant_slug is not None:
+            tenant_slug = tenant_slug.strip() or None
         return cls(
             source=source,
             canary_path=canary_path,
@@ -534,6 +547,7 @@ class SmokeConfig:
             username=os.environ.get("SMOKE_USERNAME", DEFAULT_SMOKE_USERNAME),
             password=os.environ.get("SMOKE_PASSWORD", DEFAULT_SMOKE_PASSWORD),
             world=os.environ.get("PLAYER_EXPERIENCE_WORLD", "demo"),
+            tenant_slug=tenant_slug,
             timeout_seconds=int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10")),
             startup_wait_seconds=int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90")),
             external_authority_evidence=external_authority_evidence,
@@ -2051,9 +2065,12 @@ def issue_player_bootstrap(config: SmokeConfig) -> dict[str, Any]:
 
 
 def resolve_connect_scope_id(config: SmokeConfig, bootstrap_token: str) -> str:
+    require_tenant_selector(config)
     response = http_request_json(
         public_auth_url(
-            config, f"/auth/bootstrap/worlds/{quote_path(config.world)}/realms"
+            config,
+            f"/auth/bootstrap/worlds/{quote_path(config.world)}/realms"
+            + "?" + urlencode({"tenantSlug": config.tenant_slug})
         ),
         config.timeout_seconds,
         headers={"Authorization": f"Bearer {bootstrap_token}"},
@@ -2066,17 +2083,39 @@ def resolve_connect_scope_id(config: SmokeConfig, bootstrap_token: str) -> str:
     )
 
 
+def require_tenant_selector(config: SmokeConfig) -> None:
+    if not config.tenant_slug or not config.tenant_slug.strip():
+        raise ProbeOperationalFailure(
+            "PLAYER_EXPERIENCE_TENANT_SLUG must select the world's tenant; world slugs are not global"
+        )
+
+
+def validate_live_websocket_tenant_selector(
+    config: SmokeConfig, exposed_paths: set[str], *, simulate: bool
+) -> None:
+    """Preflight tenant selection when a live WebSocket smoke will execute."""
+    if simulate or "websocket" not in exposed_paths:
+        return
+    if config.prometheus_mirrors == "published" or canary_producer_is_authorized(config):
+        require_tenant_selector(config)
+
+
 def require_visible_world(config: SmokeConfig, bootstrap_token: str) -> None:
+    require_tenant_selector(config)
     response = http_request_json(
         public_auth_url(config, "/auth/bootstrap/worlds"),
         config.timeout_seconds,
         headers={"Authorization": f"Bearer {bootstrap_token}"},
     )
     for world in response["data"]:
-        if world.get("worldSlug") == config.world:
+        if (
+            world.get("worldSlug") == config.world
+            and world.get("tenantSlug") == config.tenant_slug
+        ):
             return
     raise ProbeOperationalFailure(
-        f"World {config.world!r} was not visible during bootstrap discovery"
+        f"World {config.world!r} for tenant {config.tenant_slug!r} "
+        "was not visible during bootstrap discovery"
     )
 
 

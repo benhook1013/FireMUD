@@ -125,6 +125,18 @@ public class CertificateResourceFactory {
         renewBefore);
   }
 
+  /** Builds Gateway's client-only identity for its authenticated Game Session WebSocket hop. */
+  public GenericKubernetesResource grpcGatewayClient(
+      EnvironmentIdentityPlan plan, Duration renewBefore) {
+    return grpcWorkloadIdentity(
+        plan,
+        HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE,
+        HostedIdentityContract.GRPC_GATEWAY_WORKLOAD,
+        plan.grpcGatewayClientCertificateName(),
+        plan.grpcGatewayClientSourceSecretName(),
+        renewBefore);
+  }
+
   GenericKubernetesResource grpcWorkloadIdentity(
       EnvironmentIdentityPlan plan,
       String role,
@@ -140,7 +152,9 @@ public class CertificateResourceFactory {
         plan.grpcIssuer(),
         plan.grpcWorkloadIdentityDnsNames(workload),
         List.of(plan.grpcWorkloadIdentityUriSan(workload)),
-        List.of("digital signature", "key encipherment", "server auth", "client auth"),
+        HostedIdentityContract.grpcWorkloadIdentityServesTls(role)
+            ? List.of("digital signature", "key encipherment", "server auth", "client auth")
+            : List.of("digital signature", "key encipherment", "client auth"),
         HostedIdentityProperties.INTERNAL_CERTIFICATE_DURATION,
         renewBefore);
   }

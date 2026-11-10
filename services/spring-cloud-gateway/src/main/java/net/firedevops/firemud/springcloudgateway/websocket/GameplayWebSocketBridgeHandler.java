@@ -13,6 +13,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
@@ -59,26 +60,39 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           TRANSPORT_SESSION_HEADER);
 
   private final ReactorNettyWebSocketClient client;
+  private final AuthenticatedGameplayWebSocketClient authenticatedClient;
   private final GameplayWebSocketBridgeProperties properties;
   private final RuntimeIdentity runtimeIdentity;
   private final GameplayWebSocketObservability gameplayWebSocketObservability;
   private final Set<BridgeState> activeBridges = ConcurrentHashMap.newKeySet();
   private final AtomicBoolean shuttingDown = new AtomicBoolean();
+  private final AtomicBoolean missingAuthenticatedClientWarningLogged = new AtomicBoolean();
   private final Object lifecycleMonitor = new Object();
   private volatile Mono<Void> shutdownCompletion;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification = "Injected client, properties, and runtime identity remain internal.")
   public GameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient client,
       GameplayWebSocketBridgeProperties properties,
       RuntimeIdentity runtimeIdentity,
       GameplayWebSocketObservability gameplayWebSocketObservability) {
+    this(client, properties, runtimeIdentity, gameplayWebSocketObservability, null);
+  }
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "Injected clients, properties, runtime identity, and observability remain internal.")
+  public GameplayWebSocketBridgeHandler(
+      ReactorNettyWebSocketClient client,
+      GameplayWebSocketBridgeProperties properties,
+      RuntimeIdentity runtimeIdentity,
+      GameplayWebSocketObservability gameplayWebSocketObservability,
+      AuthenticatedGameplayWebSocketClient authenticatedClient) {
     this.client = client;
     this.properties = properties;
     this.runtimeIdentity = runtimeIdentity;
     this.gameplayWebSocketObservability = gameplayWebSocketObservability;
+    this.authenticatedClient = authenticatedClient;
   }
 
   GameplayWebSocketBridgeHandler(
@@ -98,8 +112,38 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
             .doFinally(signal -> activeBridges.remove(state));
       }
     }
+    var origin =
+        net.firedevops.firemud.springcloudgateway.filter.VerifiedTcpProxyOrigin.from(downstream);
+    if ("trusted_tcp_proxy"
+            .equals(downstream.getHandshakeInfo().getHeaders().getFirst(CONNECTION_MODE_HEADER))
+        && origin == null
+        && authenticatedClient != null) {
+      return closeDownstream(state, gameplayWebSocketObservability.authenticatedTcpOriginRequired())
+          .doFinally(signal -> activeBridges.remove(state));
+    }
+    if (origin != null && authenticatedClient == null) {
+      // This configuration cannot change during the handler's lifetime; do not log every retry.
+      if (missingAuthenticatedClientWarningLogged.compareAndSet(false, true)) {
+        LOG.warn(
+            "Verified TCP Proxy gameplay origin rejected: no authenticated gameplay upstream client is configured; set firemud.gateway.gameplay.bridge.authenticated-upstream-url (logged once per handler)");
+      }
+      return closeDownstream(state, gameplayWebSocketObservability.classify(BACKEND_UNAVAILABLE))
+          .doFinally(signal -> activeBridges.remove(state));
+    }
     HttpHeaders upstreamHeaders = buildUpstreamHeaders(downstream);
-    URI upstreamUri = URI.create(properties.upstreamUrl());
+    Function<WebSocketHandler, Mono<Void>> upstreamConnector;
+    if (origin == null) {
+      URI upstreamUri = URI.create(properties.upstreamUrl());
+      upstreamConnector =
+          upstreamHandler -> client.execute(upstreamUri, upstreamHeaders, upstreamHandler);
+    } else {
+      upstreamHeaders.remove(TRANSPORT_SESSION_HEADER);
+      upstreamHeaders.set("X-Client-IP", origin.clientAddress());
+      upstreamHeaders.set("X-Proxy-Connection-Id", origin.proxyConnectionId().toString());
+      upstreamHeaders.set(CONNECTION_MODE_HEADER, "trusted_tcp_proxy");
+      upstreamConnector =
+          upstreamHandler -> authenticatedClient.execute(upstreamHeaders, upstreamHandler);
+    }
 
     Mono<Void> downstreamSend =
         downstream.send(state.outboundToClient.asFlux().map(text -> downstream.textMessage(text)));
@@ -120,7 +164,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
                   state.outboundToClient.tryEmitComplete();
                 });
 
-    Mono<Void> upstreamLoop = connectWithRetry(downstream, upstreamUri, upstreamHeaders, state, 0);
+    Mono<Void> upstreamLoop = connectWithRetry(downstream, upstreamConnector, state, 0);
     return Mono.when(downstreamSend, downstreamReceive, upstreamLoop)
         .then()
         .doFinally(signal -> activeBridges.remove(state));
@@ -174,22 +218,19 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
 
   private Mono<Void> connectWithRetry(
       WebSocketSession downstream,
-      URI upstreamUri,
-      HttpHeaders upstreamHeaders,
+      Function<WebSocketHandler, Mono<Void>> upstreamConnector,
       BridgeState state,
       int attempt) {
     if (state.downstreamClosed.get()) {
       return Mono.empty();
     }
     Sinks.One<Void> connected = Sinks.one();
-    Mono<Void> sessionLifecycle =
-        client.execute(
-            upstreamUri,
-            upstreamHeaders,
-            upstream -> {
-              connected.tryEmitEmpty();
-              return bridgeUpstreamSession(downstream, upstream, state);
-            });
+    WebSocketHandler upstreamHandler =
+        upstream -> {
+          connected.tryEmitEmpty();
+          return bridgeUpstreamSession(downstream, upstream, state);
+        };
+    Mono<Void> sessionLifecycle = upstreamConnector.apply(upstreamHandler);
     return Mono.when(connected.asMono().timeout(UPSTREAM_CONNECT_TIMEOUT), sessionLifecycle)
         .onErrorResume(
             GameplayBridgeReconnectException.class,
@@ -214,9 +255,9 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
                     downstream.getId());
               }
               return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
-                  .then(
-                      connectWithRetry(
-                          downstream, upstreamUri, upstreamHeaders, state, attempt + 1));
+                  .flatMap(
+                      ignored ->
+                          connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
             })
         .onErrorResume(
             GameplayBridgeTerminalCloseException.class,
@@ -227,14 +268,12 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
               return closeDownstream(state, terminal.closeClassification());
             })
         .onErrorResume(
-            transportError ->
-                retryTransportFailure(downstream, upstreamUri, upstreamHeaders, state, attempt));
+            transportError -> retryTransportFailure(downstream, upstreamConnector, state, attempt));
   }
 
   private Mono<Void> retryTransportFailure(
       WebSocketSession downstream,
-      URI upstreamUri,
-      HttpHeaders upstreamHeaders,
+      Function<WebSocketHandler, Mono<Void>> upstreamConnector,
       BridgeState state,
       int attempt) {
     if (state.downstreamClosed.get()) {
@@ -256,7 +295,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           downstream.getId());
     }
     return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
-        .then(connectWithRetry(downstream, upstreamUri, upstreamHeaders, state, attempt + 1));
+        .flatMap(ignored -> connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
   }
 
   private Mono<Void> bridgeUpstreamSession(

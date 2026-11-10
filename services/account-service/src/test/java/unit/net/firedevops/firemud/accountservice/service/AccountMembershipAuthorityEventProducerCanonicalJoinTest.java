@@ -21,6 +21,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongFunction;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
@@ -45,6 +46,10 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEv
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository.SourceCheckpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecyclePolicy.Status;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReadFence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
@@ -54,6 +59,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCurrentRecord;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
@@ -93,8 +99,279 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,current", "true,current",
+    "false,baseline", "true,baseline",
+    "false,generation", "true,generation",
+    "false,source-version", "true,source-version",
+    "false,provenance", "true,provenance"
+  })
+  void alreadyActivePolicyRequiresTenantEventBoundToCurrentAuthorityAndOperation(
+      boolean paid, String evidence) {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    fixture.startWritableTransaction();
+    var event =
+        tenantAuthorityEvent(
+            TENANT_UUID,
+            "provenance".equals(evidence) ? UUID.randomUUID() : TENANT_OPERATION_ID,
+            "generation".equals(evidence) ? 3L : 2L,
+            "source-version".equals(evidence) ? 3L : 2L,
+            1L,
+            1L);
+    when(fixture.tenantAuthorityEvents.readCurrentByTenant(TENANT_UUID)).thenReturn(event);
+    // Both entitlement sources agree with the event, even when its authority or provenance is
+    // stale.
+    when(fixture.entitlements.readCurrent(TENANT_UUID))
+        .thenReturn(fixture.entitlementSnapshot(event));
+    if ("baseline".equals(evidence)) {
+      when(fixture.authority.readCompositeSnapshot(
+              "firemud-account-service", ACCOUNT_UUID, List.of(TENANT_UUID), List.of(TENANT_UUID)))
+          .thenReturn(fixture.authoritySnapshot(1L, 1L, 1L, 1L));
+    }
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    var receipt = paidReceipt(event, 5L, true);
+    when(hosting.readCurrent(fence, observed)).thenReturn(receipt);
+    Runnable validate =
+        () ->
+            fixture.producer.requireCurrentCanonicalJoinPolicy(
+                fixture.scope,
+                fixture.operation(CALLER_BINDING),
+                false,
+                paid ? hosting : null,
+                paid ? fence : null,
+                paid ? observed : null);
+
+    if ("current".equals(evidence)) {
+      validate.run();
+    } else {
+      assertThatThrownBy(validate::run)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("tenant authority evidence");
+    }
+    verifyNoInteractions(fixture.outbox);
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
   @Test
-  void appendsCanonicalEventReadbackAndFirstPairCasFromLockedOwnerEvidence() {
+  void restoreRequiresCanonicalScopeBeforeReadingOwnerState() {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    null, REQUEST_ID, CALLER_BINDING, fixture.absenceBaseline, null, null, null))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("canonical JOIN scope is required");
+
+    fixture.verifyNoOwnerInteractions();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"absent", "null-id", "zero-id", "wrong-uuid", "null-provenance", "source-id"})
+  void restoreRejectsContradictoryAccountIdentityBeforeLocking(String malformed) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    switch (malformed) {
+      case "null-id" -> fixture.account.setId(null);
+      case "zero-id" -> fixture.account.setId(0L);
+      case "wrong-uuid" -> fixture.account.setAccountUuid(UUID.randomUUID());
+      case "null-provenance" -> fixture.account.setAccountUuidProvenance(null);
+      case "source-id" -> fixture.account.setAccountUuidSourceNumericId(99L);
+      default -> {}
+    }
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_UUID))
+        .thenReturn("absent".equals(malformed) ? Optional.empty() : Optional.of(fixture.account));
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope,
+                    REQUEST_ID,
+                    CALLER_BINDING,
+                    fixture.absenceBaseline,
+                    null,
+                    null,
+                    null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "absent".equals(malformed)
+                ? "Canonical Account identity is absent"
+                : "Canonical Account owner identity is contradictory");
+
+    verifyNoInteractions(
+        fixture.joinOperations,
+        fixture.memberships,
+        fixture.roles,
+        fixture.pairs,
+        fixture.authority,
+        fixture.outbox,
+        fixture.sourceEvidence,
+        fixture.tenantAuthorityEvents,
+        fixture.entitlements);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "account-id", "membership-id", "legacy-tenant", "account-uuid", "tenant-uuid",
+        "provenance", "version", "unsorted", "duplicate", "missing-player"
+      })
+  void restoreRejectsUnboundOrNoncanonicalRoleSnapshotBeforeAuthorityReads(String malformed) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    fixture.membership.setMembershipVersion(4L);
+    fixture.membership.setMembershipAuthorityGeneration(2L);
+    var previous =
+        new PairAuthority(
+            ACCOUNT_UUID,
+            TENANT_UUID,
+            fixture.provenance,
+            true,
+            3L,
+            2L,
+            2L,
+            UUID.randomUUID().toString(),
+            DIGEST,
+            true);
+    when(fixture.accounts.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(fixture.account));
+    when(fixture.joinOperations.findCanonicalEvidenceForUpdateByRequestId(REQUEST_ID))
+        .thenReturn(Optional.of(fixture.operation(CALLER_BINDING)));
+    when(fixture.pairs.readForUpdate(ACCOUNT_UUID, TENANT_UUID)).thenReturn(Optional.of(previous));
+    when(fixture.memberships.findCanonicalMembershipForUpdate(ACCOUNT_UUID, TENANT_UUID))
+        .thenReturn(Optional.of(fixture.membership));
+    // Deliberately bypass the record's own construction checks to exercise the producer boundary.
+    var roles =
+        mock(
+            RoleSnapshot.class,
+            org.mockito.AdditionalAnswers.delegatesTo(
+                new RoleSnapshot(
+                    17L,
+                    null,
+                    73L,
+                    4L,
+                    List.of("player"),
+                    ACCOUNT_UUID,
+                    TENANT_UUID,
+                    fixture.provenance)));
+    switch (malformed) {
+      case "account-id" -> when(roles.accountId()).thenReturn(18L);
+      case "membership-id" -> when(roles.membershipId()).thenReturn(74L);
+      case "legacy-tenant" -> when(roles.tenantId()).thenReturn(9L);
+      case "account-uuid" -> when(roles.accountUuid()).thenReturn(UUID.randomUUID());
+      case "tenant-uuid" -> when(roles.tenantUuid()).thenReturn(UUID.randomUUID());
+      case "provenance" -> when(roles.tenantProvenance()).thenReturn(null);
+      case "version" -> when(roles.snapshotVersion()).thenReturn(3L);
+      case "unsorted" -> when(roles.roles()).thenReturn(List.of("player", "admin"));
+      case "duplicate" -> when(roles.roles()).thenReturn(List.of("player", "player"));
+      case "missing-player" -> when(roles.roles()).thenReturn(List.of("admin"));
+      default -> throw new AssertionError(malformed);
+    }
+    when(fixture.roles.findForCanonicalUpdate(
+            ACCOUNT_UUID, TENANT_UUID, fixture.provenance, 73L, 4L))
+        .thenReturn(Optional.of(roles));
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING, previous, null, null, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            List.of("unsorted", "duplicate").contains(malformed)
+                ? "Canonical JOIN role snapshot is not canonical"
+                : "Canonical JOIN role snapshot differs from its exact membership source or lacks player role");
+    verifyNoInteractions(
+        fixture.authority,
+        fixture.sourceEvidence,
+        fixture.tenantAuthorityEvents,
+        fixture.entitlements,
+        fixture.outbox);
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "request,null",
+    "request,empty",
+    "request,blank",
+    "request,oversized",
+    "caller,null",
+    "caller,empty",
+    "caller,blank",
+    "caller,oversized"
+  })
+  void restoreRequiresBoundedRequestSelectorsBeforeReadingOwnerState(
+      String selector, String malformed) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    String invalid =
+        switch (malformed) {
+          case "null" -> null;
+          case "empty" -> "";
+          case "blank" -> " ";
+          case "oversized" -> "x".repeat(129);
+          default -> throw new AssertionError(malformed);
+        };
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope,
+                    "request".equals(selector) ? invalid : REQUEST_ID,
+                    "caller".equals(selector) ? invalid : CALLER_BINDING,
+                    fixture.absenceBaseline,
+                    null,
+                    null,
+                    null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            ("request".equals(selector)
+                    ? "canonical JOIN request ID"
+                    : "verified JOIN caller binding")
+                + " must contain 1 to 128 characters");
+
+    fixture.verifyNoOwnerInteractions();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void paidRestoreRequiresOriginalFenceAndSealedResultBeforeReadingOwnerState(
+      boolean missingFence) {
+    Fixture fixture = new Fixture();
+    fixture.startWritableTransaction();
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = missingFence ? null : mock(ReadFence.class);
+    var observed =
+        missingFence ? mock(StripeHostingSubscriptionObserver.ObservedSubscription.class) : null;
+
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishCanonicalRestoredMembershipChange(
+                    fixture.scope,
+                    REQUEST_ID,
+                    CALLER_BINDING,
+                    fixture.absenceBaseline,
+                    hosting,
+                    fence,
+                    observed))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage(
+            missingFence
+                ? "Original paid read fence required"
+                : "Original sealed SDK result required");
+
+    fixture.verifyNoOwnerInteractions();
+    verifyNoInteractions(hosting);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void appendsCanonicalEventReadbackAndFirstPairCasFromLockedOwnerEvidence(boolean paid) {
     Fixture fixture = new Fixture();
     fixture.arrangePendingFirstJoin();
     DemoTenantEntitlementSnapshot currentEntitlement =
@@ -145,9 +422,17 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
             });
     fixture.startWritableTransaction();
 
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    var currentPaidReceipt = paidReceipt(fixture.currentTenantEvent(), 5, true);
+    when(hosting.readCurrent(fence, observed)).thenReturn(currentPaidReceipt);
     Checkpoint checkpoint =
-        fixture.producer.publishCanonicalFirstJoinMembershipChange(
-            fixture.scope, REQUEST_ID, CALLER_BINDING);
+        paid
+            ? fixture.producer.publishPaidCanonicalFirstJoinMembershipChange(
+                fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed)
+            : fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                fixture.scope, REQUEST_ID, CALLER_BINDING);
 
     MembershipEvent event =
         MembershipAuthorityEventV1Codec.verify(
@@ -168,7 +453,13 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
                 new MembershipAuthorityEventV1Codec.TenantBillingCutoff(
                     "2", "1", "account:auth-authority:v1:tenant/" + TENANT_UUID, "1")));
     verify(fixture.tenantAuthorityEvents).readCurrentByTenant(TENANT_UUID);
-    verify(fixture.entitlements).readCurrent(TENANT_UUID);
+    if (paid) {
+      verify(hosting).readCurrent(fence, observed);
+      verifyNoInteractions(fixture.entitlements);
+    } else {
+      verify(fixture.entitlements).readCurrent(TENANT_UUID);
+      verifyNoInteractions(hosting);
+    }
 
     var order = inOrder(fixture.accounts, fixture.joinOperations, fixture.memberships);
     order.verify(fixture.accounts).findByAccountUuid(ACCOUNT_UUID);
@@ -180,8 +471,9 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     verify(fixture.pairs).commitTransition(eq(fixture.absenceBaseline), any(PairTransition.class));
   }
 
-  @Test
-  void exactPositiveReplayReturnsTheExistingCheckpointWithoutAnotherAppendOrCas() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void exactPositiveReplayReturnsTheExistingCheckpointWithoutAnotherAppendOrCas(boolean paid) {
     Fixture fixture = new Fixture();
     fixture.arrangePendingFirstJoin();
     Event event = fixture.existingEvent();
@@ -210,9 +502,19 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
         .thenThrow(new IllegalStateException("current entitlement is no longer available"));
     fixture.startWritableTransaction();
 
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
     Checkpoint replay =
-        fixture.producer.publishCanonicalFirstJoinMembershipChange(
-            fixture.scope, REQUEST_ID, CALLER_BINDING);
+        paid
+            ? fixture.producer.publishPaidCanonicalFirstJoinMembershipChange(
+                fixture.scope,
+                REQUEST_ID,
+                CALLER_BINDING,
+                hosting,
+                mock(ReadFence.class),
+                mock(StripeHostingSubscriptionObserver.ObservedSubscription.class))
+            : fixture.producer.publishCanonicalFirstJoinMembershipChange(
+                fixture.scope, REQUEST_ID, CALLER_BINDING);
+    verifyNoInteractions(hosting);
 
     assertThat(replay).isEqualTo(checkpoint);
     verify(fixture.outbox, never())
@@ -667,6 +969,93 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
         fixture.tenantAuthorityEvents);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"version", "denied", "billing", "unavailable"})
+  void paidMismatchOrUnavailableSourceNeverPublishesOrFallsBack(String failure) {
+    Fixture fixture = new Fixture();
+    fixture.arrangePendingFirstJoin();
+    var hosting = mock(AccountHostingSubscriptionLifecycleRepository.class);
+    var fence = mock(ReadFence.class);
+    var observed = mock(StripeHostingSubscriptionObserver.ObservedSubscription.class);
+    var receipt =
+        paidReceipt(
+            fixture.currentTenantEvent(),
+            "version".equals(failure) ? 6 : 5,
+            !"denied".equals(failure));
+    if ("billing".equals(failure)) {
+      receipt =
+          new AccountHostingSubscriptionCurrentReceipt(
+              receipt.current(),
+              receipt.receiptRequestId(),
+              receipt.subscriptionStatus(),
+              true,
+              true,
+              true,
+              true,
+              5,
+              9,
+              receipt.billingEventId(),
+              receipt.billingEventDigest(),
+              receipt.tenantAuthorityEvent(),
+              "active",
+              receipt.currentPeriodStart(),
+              receipt.currentPeriodEnd(),
+              false,
+              null,
+              null,
+              receipt.evaluatedAt(),
+              receipt.validUntil());
+    }
+    if ("unavailable".equals(failure))
+      when(hosting.readCurrent(fence, observed))
+          .thenThrow(new IllegalStateException("controlled paid source unavailable"));
+    else when(hosting.readCurrent(fence, observed)).thenReturn(receipt);
+    fixture.startWritableTransaction();
+    assertThatThrownBy(
+            () ->
+                fixture.producer.publishPaidCanonicalFirstJoinMembershipChange(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING, hosting, fence, observed))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "unavailable".equals(failure)
+                ? "controlled paid source unavailable"
+                : "Canonical paid first JOIN requires exact current public-join entitlement evidence");
+    verify(hosting).readCurrent(fence, observed);
+    verifyNoInteractions(fixture.entitlements);
+    verify(fixture.outbox, never())
+        .append(eq(MEMBERSHIP_STREAM), eq(REQUEST_ID), any(LongFunction.class));
+    verify(fixture.pairs, never()).commitTransition(any(), any());
+  }
+
+  private static AccountHostingSubscriptionCurrentReceipt paidReceipt(
+      TenantAuthorityEventV1Codec.Event event, long version, boolean allowJoin) {
+    var current = mock(AccountSubscriptionCurrentRecord.class);
+    when(current.tenantId()).thenReturn(TENANT_UUID);
+    Instant now = Instant.parse("2026-11-02T00:00:00Z");
+    return new AccountHostingSubscriptionCurrentReceipt(
+        current,
+        UUID.randomUUID(),
+        Status.ACTIVE,
+        true,
+        allowJoin,
+        true,
+        true,
+        version,
+        event.tenantBillingSequence(),
+        event.tenantBillingEventId(),
+        event.tenantBillingEventDigest(),
+        event,
+        "active",
+        now.minusSeconds(100),
+        now.plusSeconds(1000),
+        false,
+        null,
+        null,
+        now,
+        now.plusSeconds(60));
+  }
+
   private void denyLaterTenantSource(TenantAuthorityEventV1Codec.Event event) {
     Fixture fixture = new Fixture();
     fixture.arrangePendingFirstJoin();
@@ -852,6 +1241,20 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
     private final PairAuthority absenceBaseline =
         new PairAuthority(
             ACCOUNT_UUID, TENANT_UUID, provenance, false, 1L, 1L, 0L, null, null, false);
+
+    private void verifyNoOwnerInteractions() {
+      verifyNoInteractions(
+          accounts,
+          joinOperations,
+          memberships,
+          roles,
+          pairs,
+          authority,
+          outbox,
+          sourceEvidence,
+          tenantAuthorityEvents,
+          entitlements);
+    }
 
     private void arrangePendingFirstJoin() {
       when(accounts.findByAccountUuid(ACCOUNT_UUID)).thenReturn(Optional.of(account));

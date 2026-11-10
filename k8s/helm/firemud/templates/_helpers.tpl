@@ -171,3 +171,12 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- include "firemud.grpcSecretName" .root -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "firemud.gatewayGameplayClientEnv" -}}
+- name: FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH
+  value: /gameplay-client-tls/tls.crt
+- name: FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH
+  value: /gameplay-client-tls/tls.key
+- name: FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH
+  value: /gameplay-client-trust/ca.crt
+{{- end -}}

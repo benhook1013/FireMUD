@@ -12,6 +12,7 @@ public final class GrpcKeepAlivePolicy {
 
   private GrpcKeepAlivePolicy() {}
 
+  /** Applies the shared ping interval, timeout, and idle-ping policy to a client builder. */
   public static void configureClient(ManagedChannelBuilder<?> builder) {
     builder
         .keepAliveTime(KEEP_ALIVE_INTERVAL_SECONDS, TimeUnit.SECONDS)
@@ -19,6 +20,7 @@ public final class GrpcKeepAlivePolicy {
         .keepAliveWithoutCalls(true);
   }
 
+  /** Applies server ping settings and admits the shared client's idle-ping interval. */
   public static void configureServer(NettyServerBuilder builder) {
     builder
         .keepAliveTime(KEEP_ALIVE_INTERVAL_SECONDS, TimeUnit.SECONDS)

@@ -1015,8 +1015,10 @@ require_contains(
     "design/architecture/system-architecture-cicd.md",
     [
         "builds pull-request images locally and runs the explicit held-admission qualification without a registry-write token",
-        "This proves direct backend `LOGIN` -> `PLAY` -> `LOOK` and Gateway/Telnet fail-closed behavior",
-        "it does not establish successful public admission",
+        "Successful smoke preserves direct backend `LOGIN` -> `PLAY` -> `LOOK` proof and verifies Gateway/Telnet fail closed; it does not establish successful public admission.",
+        "The diagnostic exception below provides no passing `PLAY` or `LOOK` proof.",
+        "image export and upload must be skipped",
+        "Trusted `main`/`develop` branch publication still requires real passing `LOGIN` → `PLAY` → `LOOK` smoke and cannot use this exception;",
         "publish-pr-runtime-images.yml",
         "pr-merge-<merge SHA>",
         "never checks out or executes PR source",

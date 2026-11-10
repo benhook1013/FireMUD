@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
@@ -169,6 +170,10 @@ public final class InitialGameplayLoginPhysicalCompositionFixture implements Aut
   }
 
   /** The actual owner outcome, retained for explicit pre-admission custody-loss cleanup. */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification =
+          "The fixture deliberately shares its identical live Outcome for exact-original cleanup; copying or reconstructing it would lose the owned lifecycle obligation.")
   public InitialGameplayLoginOwner.Outcome outcome() {
     return outcome;
   }

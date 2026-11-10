@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -24,21 +25,23 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.AccountUuidText;
-import net.firedevops.firemud.accountservice.client.EntityManagementClient;
-import net.firedevops.firemud.accountservice.client.GameSessionClient;
+import net.firedevops.firemud.accountservice.client.AccountBootstrapRosterReadClient;
+import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
+import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.config.AccountTokenProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
-import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
+import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -55,7 +58,6 @@ import net.firedevops.firemud.accountservice.dto.TenantDataExportDto;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
-import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
@@ -68,6 +70,7 @@ import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
+import net.firedevops.firemud.accountservice.entity.RetainedSubscriptionEvidence;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
@@ -79,26 +82,36 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository;
+import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ReadFence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinTerminalProof;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSecurityStateOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.EmailVerificationTokenRepository;
 import net.firedevops.firemud.accountservice.repository.ExternalAccountRepository;
 import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.repository.PaymentTransactionRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
-import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
+import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalConnectScopeReader;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
+import net.firedevops.firemud.accountservice.service.AccountCanonicalPublicRealmScopeOwner;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository.Intent;
+import net.firedevops.firemud.accountservice.service.AccountPublicBootstrapWorldsOwner;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
@@ -110,26 +123,28 @@ import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
+import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Target;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.databind.json.JsonMapper;
 
 @Service
 public class AccountServiceImpl implements AccountService {
@@ -149,9 +164,12 @@ public class AccountServiceImpl implements AccountService {
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
-  private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
 
   private String gameplayDecoyPasswordVerifier;
+  private volatile AccountPublicBootstrapWorldsOwner publicBootstrapWorldsOwner;
+  private volatile AccountCanonicalPublicRealmScopeOwner canonicalPublicRealmScopeOwner;
+  private volatile CanonicalScopeConsumers canonicalScopeConsumers;
+  private volatile AccountBootstrapRosterReadClient accountBootstrapRosterReadClient;
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
@@ -161,7 +179,6 @@ public class AccountServiceImpl implements AccountService {
   private final AccountAuthoritySourceEventReadback accountAuthoritySourceEventReadback;
   private final AccountPasswordResetDraftSourceChangeRepository passwordResetDraftSourceChanges;
   private final AccountAuditOutboxRepository accountAuditOutboxRepository;
-  private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
   private final AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository;
   private final AccountRealmAccessGrantRepository accountRealmAccessGrantRepository;
@@ -170,7 +187,7 @@ public class AccountServiceImpl implements AccountService {
   private final ProfileRepository profileRepository;
   private final ProfileMapper profileMapper;
   private final PaymentTransactionRepository paymentTransactionRepository;
-  private final SubscriptionRepository subscriptionRepository;
+  private final RetainedSubscriptionEvidenceRepository retainedSubscriptionEvidenceRepository;
   private final ExternalAccountRepository externalAccountRepository;
   private final PasswordResetTokenRepository passwordResetTokenRepository;
   private final EmailVerificationTokenRepository emailVerificationTokenRepository;
@@ -179,8 +196,6 @@ public class AccountServiceImpl implements AccountService {
   private final MailProperties mailProperties;
   private final AccountTokenProperties tokenProperties;
   private final JwtAuthProperties jwtAuthProperties;
-  private final GameSessionClient gameSessionClient;
-  private final EntityManagementClient entityManagementClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.accountservice.service.session.SessionService sessionService;
   private final TransactionTemplate joinTransactionTemplate;
@@ -199,7 +214,6 @@ public class AccountServiceImpl implements AccountService {
       AccountSecurityStateOperationRepository securityStateOperationRepository,
       AccountPasswordResetDraftSourceChangeRepository passwordResetDraftSourceChanges,
       AccountAuditOutboxRepository accountAuditOutboxRepository,
-      AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
       AccountEmailLoginChallengeRepository accountEmailLoginChallengeRepository,
       AccountRealmAccessGrantRepository accountRealmAccessGrantRepository,
@@ -208,7 +222,7 @@ public class AccountServiceImpl implements AccountService {
       ProfileRepository profileRepository,
       ProfileMapper profileMapper,
       PaymentTransactionRepository paymentTransactionRepository,
-      SubscriptionRepository subscriptionRepository,
+      RetainedSubscriptionEvidenceRepository retainedSubscriptionEvidenceRepository,
       ExternalAccountRepository externalAccountRepository,
       PasswordResetTokenRepository passwordResetTokenRepository,
       EmailVerificationTokenRepository emailVerificationTokenRepository,
@@ -217,8 +231,6 @@ public class AccountServiceImpl implements AccountService {
       MailProperties mailProperties,
       AccountTokenProperties tokenProperties,
       JwtAuthProperties jwtAuthProperties,
-      GameSessionClient gameSessionClient,
-      EntityManagementClient entityManagementClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
       PlatformTransactionManager transactionManager) {
@@ -235,7 +247,6 @@ public class AccountServiceImpl implements AccountService {
             securityStateOperationRepository);
     this.passwordResetDraftSourceChanges = passwordResetDraftSourceChanges;
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
-    this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
     this.accountEmailLoginChallengeRepository = accountEmailLoginChallengeRepository;
     this.accountRealmAccessGrantRepository = accountRealmAccessGrantRepository;
@@ -244,7 +255,7 @@ public class AccountServiceImpl implements AccountService {
     this.profileRepository = profileRepository;
     this.profileMapper = profileMapper;
     this.paymentTransactionRepository = paymentTransactionRepository;
-    this.subscriptionRepository = subscriptionRepository;
+    this.retainedSubscriptionEvidenceRepository = retainedSubscriptionEvidenceRepository;
     this.externalAccountRepository = externalAccountRepository;
     this.passwordResetTokenRepository = passwordResetTokenRepository;
     this.emailVerificationTokenRepository = emailVerificationTokenRepository;
@@ -253,8 +264,6 @@ public class AccountServiceImpl implements AccountService {
     this.mailProperties = mailProperties;
     this.tokenProperties = tokenProperties;
     this.jwtAuthProperties = jwtAuthProperties;
-    this.gameSessionClient = gameSessionClient;
-    this.entityManagementClient = entityManagementClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
     this.joinTransactionTemplate = new TransactionTemplate(transactionManager);
@@ -439,101 +448,571 @@ public class AccountServiceImpl implements AccountService {
         Instant.ofEpochMilli(expiresAt).toString());
   }
 
+  /**
+   * Explicit held composition only. The canonical source remains unregistered until its owning
+   * runtime boundary is qualified; absence never selects the retained numeric discovery path.
+   */
+  @Autowired(required = false)
+  public void setPublicBootstrapWorldsOwner(AccountPublicBootstrapWorldsOwner owner) {
+    this.publicBootstrapWorldsOwner = Objects.requireNonNull(owner);
+  }
+
+  // Bootstrap/JOIN orchestration deliberately has no transaction advice: NOT_SUPPORTED would
+  // still create empty synchronization. These entry points reject ambient SQL, while each
+  // canonical owner opens its own short transaction around owner-local state only.
   @Override
-  @Transactional(readOnly = true)
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
-    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
-    return gameSessionClient.listGameplayWorlds().stream()
-        .filter(
-            world ->
-                hasAdmissibleRealm(
-                    bootstrapContext, world.getWorldSlug(), discoveryEntitlementMemo))
-        .map(world -> new BootstrapWorldDto(world.getWorldSlug(), world.getDisplayName()))
-        .toList();
-  }
-
-  @Override
-  @Transactional(propagation = Propagation.NOT_SUPPORTED)
-  @Timed(value = "account.bootstrap_realms")
-  public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
-    BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
-    Instant evaluatedAt = Instant.now();
-    Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
-    final List<RuntimeRealmTarget> admissibleRealms;
-    try {
-      admissibleRealms =
-          listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug, discoveryEntitlementMemo);
-    } catch (AuthenticationException ex) {
-      throw ex;
-    } catch (RuntimeException ex) {
-      throw admissionPointerUnavailable(ex);
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Public bootstrap world discovery refuses ambient SQL");
     }
-    return admissibleRealms.stream()
-        .map(
-            discovered -> {
-              RuntimeRealmTarget current =
-                  requireRealmTarget(
-                      discovered.tenantId(), discovered.worldSlug(), discovered.realmSlug());
-              if (!sameRuntimeRealmAuthority(discovered, current)) {
-                throw admissionPointerUnavailable(
-                    new IllegalStateException(
-                        "Public realm authority changed during bootstrap discovery"));
+    AccountPublicBootstrapWorldsOwner owner = publicBootstrapWorldsOwner;
+    if (owner == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical public-world discovery source is unavailable");
+    }
+    return owner.listWorlds(bootstrapToken);
+  }
+
+  /**
+   * Explicit held composition; the owner retains the signed V2 selector before publication. Its
+   * direct-text entry point authenticates the existing Game Session caller separately.
+   */
+  @Autowired(required = false)
+  public void setCanonicalPublicRealmScopeOwner(AccountCanonicalPublicRealmScopeOwner owner) {
+    this.canonicalPublicRealmScopeOwner = Objects.requireNonNull(owner);
+  }
+
+  /** Explicit composition of the existing canonical consumers; this does not register an issuer. */
+  public void setCanonicalScopeConsumers(
+      AccountCanonicalConnectScopeReader reader,
+      CanonicalGameplayAdmissionDecisionReadClient targets,
+      AccountTenantAuthorityEventRepository tenantSources,
+      AccountDemoTenantEntitlementRepository demos,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      StripeHostingSubscriptionObserver observer,
+      AccountCanonicalFirstJoinTerminalCoordinator firstJoin,
+      String namespace,
+      Clock clock) {
+    if (!net.firedevops.firemud.common.grpc.GrpcPeerIdentity.isValidNamespace(namespace)) {
+      throw new IllegalArgumentException("Canonical Account workload namespace required");
+    }
+    canonicalScopeConsumers =
+        new CanonicalScopeConsumers(
+            Objects.requireNonNull(reader),
+            Objects.requireNonNull(targets),
+            Objects.requireNonNull(tenantSources),
+            Objects.requireNonNull(demos),
+            Objects.requireNonNull(hosting),
+            Objects.requireNonNull(observer),
+            Objects.requireNonNull(firstJoin),
+            namespace,
+            Objects.requireNonNull(clock));
+  }
+
+  private CanonicalScopeConsumers requireCanonicalScopeConsumers() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Canonical scope consumers refuse ambient Account SQL");
+    }
+    if (canonicalScopeConsumers == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical scope consumers are unavailable");
+    }
+    return canonicalScopeConsumers;
+  }
+
+  private Target readCanonicalScopeTarget(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    return readCanonicalScopePublishedTarget(consumers, scope).currentTarget();
+  }
+
+  private PublishedRealmEvidence readCanonicalScopePublishedTarget(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    try {
+      RetainedTargetSelector selector =
+          new RetainedTargetSelector(
+              UUID.randomUUID(),
+              scope.accountId(),
+              consumers.namespace(),
+              scope.tenantId(),
+              scope.tenantSlug(),
+              scope.worldSlug(),
+              scope.realmId(),
+              scope.realmSlug(),
+              scope.playableStateNamespaceId(),
+              scope.playableStateScope(),
+              scope.gameInstanceId(),
+              scope.catalogRevision(),
+              scope.pointerVersion());
+      var resolved =
+          Objects.requireNonNull(
+              consumers.targets().resolvePublishedRealmAdmissionTarget(selector));
+      // Only a locally verified target mismatch is definitive. Exceptions from either remote
+      // owner (including malformed evidence) remain unavailable rather than condemning the intent.
+      try {
+        net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec
+            .requireRetainedTargetMatches(selector, resolved.currentTarget());
+      } catch (IllegalArgumentException mismatch) {
+        throw new AuthenticationException(
+            "CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE, mismatch);
+      }
+      if (!selector.equals(resolved.selector()))
+        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+      var published =
+          Objects.requireNonNull(
+              consumers.targets().readPublishedRealmAdmissionOwner(resolved.strictSelector()));
+      if (!resolved.strictSelector().equals(published.selector())
+          || !resolved.currentTarget().equals(published.currentTarget())) {
+        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+      }
+      return published;
+    } catch (AuthenticationException failure) {
+      throw failure;
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Gameplay target authority is unavailable; retry the same request",
+          failure);
+    }
+  }
+
+  private Account lockCanonicalScopeAccount(CanonicalJoinScopeV2 scope) {
+    Account account =
+        accountRepository
+            .findByAccountUuidForUpdate(scope.accountId())
+            .orElseThrow(
+                () -> new AuthenticationException("AUTH_UNAVAILABLE", "Account is unavailable"));
+    requireAccountStorageId(account, scope.accountId());
+    requireAuthenticationEligible(account);
+    return account;
+  }
+
+  private CanonicalJoinPreparation prepareCanonicalJoin(
+      CanonicalScopeConsumers consumers,
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String callerBinding) {
+    // Retain the exact policy-independent intent before any fallible source/provider work.
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          lockCanonicalScopeAccount(scope);
+          accountJoinOperationRepository.insertCanonicalIntent(requestId, scope, callerBinding);
+        });
+    return Objects.requireNonNull(
+        joinTransactionTemplate.execute(
+            status -> {
+              lockCanonicalScopeAccount(scope);
+              CanonicalJoinOperationEvidence operation =
+                  accountJoinOperationRepository
+                      .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                      .orElseThrow();
+              if ("FAILED".equals(operation.status())) {
+                return new CanonicalJoinPreparation(operation, null, null, null);
               }
-              return current;
-            })
+              SourceSelection source =
+                  consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+              return switch (source.kind()) {
+                case PAID_HOSTING ->
+                    new CanonicalJoinPreparation(
+                        operation,
+                        source,
+                        null,
+                        consumers.hosting().prepareCurrentRead(scope.tenantId()));
+                case NON_PAID_DEMO ->
+                    new CanonicalJoinPreparation(
+                        operation, source, consumers.demos().readCurrent(scope.tenantId()), null);
+              };
+            }));
+  }
+
+  private CanonicalJoinResult commitCanonicalJoin(
+      CanonicalScopeConsumers consumers,
+      CanonicalJoinScopeV2 scope,
+      String requestId,
+      String callerBinding,
+      CanonicalJoinPreparation prepared,
+      StripeHostingSubscriptionObserver.Result observation) {
+    return Objects.requireNonNull(
+        joinTransactionTemplate.execute(
+            status -> {
+              lockCanonicalScopeAccount(scope);
+              requireCanonicalScopeFresh(consumers, scope);
+              CanonicalJoinOperationEvidence lockedOperation =
+                  accountJoinOperationRepository
+                      .findCanonicalEvidenceForUpdateByRequestId(requestId)
+                      .orElseThrow();
+              if ("FAILED".equals(lockedOperation.status())) {
+                // Preparation precedes provider/target reads. Another exact attempt may have
+                // finished meanwhile, including before any policy evidence could be bound.
+                var retained =
+                    accountJoinOperationRepository.finishCanonicalFailure(
+                        requestId, scope, callerBinding, lockedOperation.outcome());
+                return new CanonicalJoinResult(retained.outcome(), null, false, true);
+              }
+              SourceSelection current =
+                  consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+              if (current.kind() != prepared.source().kind()
+                  || !prepared.source().matches(current.checkpoint())) {
+                throw new AuthenticationException(
+                    "ENTITLEMENT_UNAVAILABLE", "Tenant source changed");
+              }
+              final boolean gameplayAvailable;
+              final boolean allowPublicJoin;
+              final long entitlementVersion;
+              if (prepared.fence() != null) {
+                AccountHostingSubscriptionCurrentReceipt receipt =
+                    consumers.hosting().readCurrent(prepared.fence(), observation);
+                gameplayAvailable = receipt.gameplayAvailable();
+                allowPublicJoin = receipt.allowPublicJoin();
+                entitlementVersion = receipt.entitlementVersion();
+              } else {
+                DemoTenantEntitlementSnapshot demo = consumers.demos().revalidate(prepared.demo());
+                gameplayAvailable = demo.gameplayAvailable();
+                allowPublicJoin = demo.allowPublicJoin();
+                entitlementVersion = demo.entitlementVersion();
+              }
+              CanonicalJoinOperationEvidence policyBoundOperation =
+                  accountJoinOperationRepository.bindCanonicalPolicyEvidence(
+                      requestId, scope, callerBinding, allowPublicJoin, entitlementVersion);
+              Optional<AccountTenantMembership> member =
+                  accountTenantMembershipRepository.findFreshMembershipForUpdate(
+                      scope.accountId(), scope.tenantId());
+              boolean active =
+                  member.filter(value -> "ACTIVE".equals(value.getLifecycleState())).isPresent();
+              if ("PENDING".equals(policyBoundOperation.status())
+                  && (!gameplayAvailable || (!active && !allowPublicJoin))) {
+                String outcome =
+                    gameplayAvailable
+                        ? "PUBLIC_PRODUCTION_ADMISSION_DENIED"
+                        : "TENANT_BILLING_BLOCKED";
+                accountJoinOperationRepository.finishCanonicalFailure(
+                    requestId, scope, callerBinding, outcome);
+                return new CanonicalJoinResult(outcome, null, false, false);
+              }
+              var committed =
+                  consumers
+                      .firstJoin()
+                      .commitCanonicalJoin(
+                          scope,
+                          requestId,
+                          callerBinding,
+                          prepared.fence() == null ? null : consumers.hosting(),
+                          prepared.fence(),
+                          observation);
+              requireCanonicalScopeFresh(consumers, scope);
+              Optional<AccountTenantMembership> currentMembership =
+                  accountTenantMembershipRepository.findFreshMembershipForUpdate(
+                      scope.accountId(), scope.tenantId());
+              if ("COMMITTED".equals(policyBoundOperation.status())) {
+                // A committed exact retry returns its original operation proof after the current
+                // policy binding above. Membership may have changed since that proof was retained;
+                // expose only the current admission flag, never use the old proof as admission.
+                return new CanonicalJoinResult(
+                    committed.outcome(),
+                    committed.terminalProof(),
+                    gameplayAvailable
+                        && currentMembership
+                            .map(AccountTenantMembership::isGameplayAdmissionAllowed)
+                            .orElse(false),
+                    true);
+              }
+              AccountTenantMembership committedMembership = currentMembership.orElseThrow();
+              if (committedMembership.getMembershipVersion()
+                      != committed.terminalProof().membershipVersion()
+                  || committedMembership.getMembershipAuthorityGeneration()
+                      != committed.terminalProof().membershipAuthorityGeneration()) {
+                throw new IllegalStateException(
+                    "Canonical JOIN result differs from current membership");
+              }
+              return new CanonicalJoinResult(
+                  committed.outcome(),
+                  committed.terminalProof(),
+                  committedMembership.isGameplayAdmissionAllowed(),
+                  false);
+            }));
+  }
+
+  private void requireCanonicalScopeFresh(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    Instant now = consumers.clock().instant();
+    if (now.isBefore(Instant.parse(scope.evaluatedAt()))
+        || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) {
+      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
+    }
+  }
+
+  private record CanonicalScopeConsumers(
+      AccountCanonicalConnectScopeReader reader,
+      CanonicalGameplayAdmissionDecisionReadClient targets,
+      AccountTenantAuthorityEventRepository tenantSources,
+      AccountDemoTenantEntitlementRepository demos,
+      AccountHostingSubscriptionLifecycleRepository hosting,
+      StripeHostingSubscriptionObserver observer,
+      AccountCanonicalFirstJoinTerminalCoordinator firstJoin,
+      String namespace,
+      Clock clock) {}
+
+  private record CanonicalJoinPreparation(
+      CanonicalJoinOperationEvidence operation,
+      SourceSelection source,
+      DemoTenantEntitlementSnapshot demo,
+      ReadFence fence) {}
+
+  private record CanonicalJoinResult(
+      String outcome,
+      CanonicalJoinTerminalProof proof,
+      boolean gameplayAdmissionAllowed,
+      boolean replayed) {}
+
+  /** Explicit non-admitting Entity projection; no default runtime client is registered here. */
+  public void setAccountBootstrapRosterReadClient(AccountBootstrapRosterReadClient client) {
+    accountBootstrapRosterReadClient = Objects.requireNonNull(client);
+  }
+
+  private BootstrapCharacterAuthority prepareBootstrapCharacterAuthority(
+      CanonicalScopeConsumers consumers, CanonicalJoinScopeV2 scope) {
+    return Objects.requireNonNull(
+        joinTransactionTemplate.execute(
+            status -> {
+              lockCanonicalScopeAccount(scope);
+              requireCanonicalScopeFresh(consumers, scope);
+              var membership = readBootstrapCharacterMembership(scope);
+              try {
+                SourceSelection source =
+                    consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+                return new BootstrapCharacterAuthority(
+                    source,
+                    membership,
+                    source.kind() == AccountTenantAuthorityEventRepository.SourceKind.NON_PAID_DEMO
+                        ? consumers.demos().readCurrent(scope.tenantId())
+                        : null,
+                    source.kind() == AccountTenantAuthorityEventRepository.SourceKind.PAID_HOSTING
+                        ? consumers.hosting().prepareCurrentRead(scope.tenantId())
+                        : null,
+                    consumers.clock().instant());
+              } catch (RuntimeException failure) {
+                throw new AuthenticationException(
+                    "ENTITLEMENT_UNAVAILABLE",
+                    "Bootstrap entitlement source is unavailable",
+                    failure);
+              }
+            }));
+  }
+
+  private Optional<AccountCanonicalPublicRealmScopeOwner.ExistingMembership>
+      readBootstrapCharacterMembership(CanonicalJoinScopeV2 scope) {
+    try {
+      return accountTenantMembershipRepository
+          .findFreshMembershipForUpdate(scope.accountId(), scope.tenantId())
+          .map(
+              member ->
+                  new AccountCanonicalPublicRealmScopeOwner.ExistingMembership(
+                      member.getId(),
+                      member.getLifecycleState(),
+                      member.isGameplayAdmissionAllowed(),
+                      member.getMembershipVersion(),
+                      member.getMembershipAuthorityGeneration()));
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Bootstrap membership source is unavailable", failure);
+    }
+  }
+
+  private void requireBootstrapCharacterAuthority(
+      CanonicalScopeConsumers consumers,
+      CanonicalJoinScopeV2 scope,
+      BootstrapCharacterAuthority prepared,
+      StripeHostingSubscriptionObserver.Result observation) {
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          lockCanonicalScopeAccount(scope);
+          requireCanonicalScopeFresh(consumers, scope);
+          var membership = readBootstrapCharacterMembership(scope);
+          if (!prepared.membership().equals(membership)) {
+            throw new AuthenticationException(
+                "AUTH_UNAVAILABLE", "Bootstrap membership changed during discovery");
+          }
+          final boolean gameplayAvailable;
+          final boolean allowPublicJoin;
+          try {
+            SourceSelection current =
+                consumers.tenantSources().readCurrentSourceSelection(scope.tenantId());
+            if (current.kind() != prepared.source().kind()
+                || !prepared.source().matches(current.checkpoint())) {
+              throw new IllegalStateException("Bootstrap entitlement source changed");
+            }
+            if (prepared.fence() != null) {
+              var receipt = consumers.hosting().readCurrent(prepared.fence(), observation);
+              gameplayAvailable = receipt.gameplayAvailable();
+              allowPublicJoin = receipt.allowPublicJoin();
+            } else {
+              Instant currentTime = consumers.clock().instant();
+              if (currentTime.isBefore(prepared.observedAt())
+                  || !currentTime.isBefore(prepared.observedAt().plusSeconds(15))) {
+                throw new IllegalStateException(
+                    "Original bootstrap entitlement observation expired");
+              }
+              var demo = consumers.demos().revalidate(prepared.demo());
+              gameplayAvailable = demo.gameplayAvailable();
+              allowPublicJoin = demo.allowPublicJoin();
+            }
+          } catch (RuntimeException failure) {
+            throw new AuthenticationException(
+                "ENTITLEMENT_UNAVAILABLE",
+                "Bootstrap entitlement source is unavailable or changed",
+                failure);
+          }
+          if (!gameplayAvailable) {
+            throw new AuthenticationException(
+                "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+          }
+          if (membership.isEmpty()
+              || "INACTIVE".equals(membership.orElseThrow().lifecycleState())) {
+            throw new AuthenticationException(
+                allowPublicJoin ? "JOIN_REQUIRED" : "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+                allowPublicJoin ? JOIN_REQUIRED_CHARACTERS_MESSAGE : "Public enrollment is closed");
+          }
+          if (!"ACTIVE".equals(membership.orElseThrow().lifecycleState())
+              || !membership.orElseThrow().gameplayAdmissionAllowed()) {
+            throw new AuthenticationException(
+                "PUBLIC_PRODUCTION_ADMISSION_DENIED", "Membership does not allow actor discovery");
+          }
+        });
+  }
+
+  private record BootstrapCharacterAuthority(
+      SourceSelection source,
+      Optional<AccountCanonicalPublicRealmScopeOwner.ExistingMembership> membership,
+      DemoTenantEntitlementSnapshot demo,
+      ReadFence fence,
+      Instant observedAt) {}
+
+  private StripeHostingSubscriptionObserver.Result observeBootstrapCharacterSource(
+      CanonicalScopeConsumers consumers, BootstrapCharacterAuthority prepared) {
+    if (prepared.fence() == null) return null;
+    try {
+      return consumers.observer().observe(prepared.fence().binding());
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE", "Bootstrap provider source is unavailable", failure);
+    }
+  }
+
+  private void requireSameBootstrapCaller(BootstrapContext original, String token) {
+    if (!original.equals(requireBootstrapContext(token))) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Bootstrap caller changed during actor discovery");
+    }
+  }
+
+  @Override
+  @Timed(value = "account.bootstrap_realms")
+  public List<BootstrapRealmDto> listBootstrapRealms(
+      String bootstrapToken, String tenantSlug, String worldSlug) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Public bootstrap realm discovery refuses ambient SQL");
+    }
+    AccountCanonicalPublicRealmScopeOwner owner = canonicalPublicRealmScopeOwner;
+    if (owner == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical public-realm scope source is unavailable");
+    }
+    return owner.listRealmScopes(bootstrapToken, tenantSlug, worldSlug).stream()
         .map(
-            realm ->
-                new BootstrapRealmDto(
-                    realm.worldSlug(),
-                    realm.realmSlug(),
-                    realm.realmId().toString(),
-                    realm.displayName(),
-                    realm.tenantId(),
-                    realm.gameInstanceId(),
-                    realm.pointerVersion(),
-                    realm.catalogRevision(),
-                    realm.playableStateNamespaceId(),
-                    toPlayableStateScope(realm).name(),
-                    realm.requiresCharacterSelection(),
-                    realm.stateScope(),
-                    realm.characterCreationPolicy(),
-                    evaluatedAt.toString(),
-                    expiresAt.toString(),
-                    mintAndRetainConnectScope(bootstrapContext, realm, evaluatedAt, expiresAt)))
+            retained -> {
+              var target = retained.target();
+              var scope = retained.scope();
+              return new BootstrapRealmDto(
+                  scope.worldSlug(),
+                  scope.realmSlug(),
+                  scope.realmId(),
+                  target.realmDisplayName(),
+                  scope.tenantId(),
+                  scope.gameInstanceId(),
+                  scope.pointerVersion(),
+                  scope.catalogRevision(),
+                  scope.playableStateNamespaceId(),
+                  PlayableStateScope.valueOf("PLAYABLE_STATE_SCOPE_" + scope.playableStateScope())
+                      .name(),
+                  scope.playableStateScope(),
+                  target.characterCreationPolicy(),
+                  scope.evaluatedAt(),
+                  scope.connectScopeExpiresAt(),
+                  scope.connectScopeId());
+            })
         .toList();
   }
 
   @Override
-  @Transactional(readOnly = true)
   @Timed(value = "account.bootstrap_characters")
   public List<BootstrapCharacterDto> listBootstrapCharacters(
       String bootstrapToken, String worldSlug, String realmSlug, String connectScopeId) {
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
+    AccountBootstrapRosterReadClient roster = accountBootstrapRosterReadClient;
+    if (roster == null)
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical Entity bootstrap discovery is unavailable");
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    ConnectScopeContext scopeContext = requireConnectScopeContext(connectScopeId);
-    validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
-    validateConnectScopeRoute(scopeContext, worldSlug, realmSlug);
-    RuntimeRealmTarget realm =
-        requireCurrentAdmissibleConnectScopeTarget(bootstrapContext, scopeContext);
-    UUID accountUuid = bootstrapContext.accountUuid();
-    if (accountUuid == null || NIL_ACCOUNT_UUID.equals(accountUuid)) {
-      throw new IllegalStateException("Bootstrap Account UUID is unavailable");
+    CanonicalJoinScopeV2 scope =
+        consumers.reader().read(bootstrapContext.accountUuid(), connectScopeId);
+    if (!scope.worldSlug().equals(worldSlug) || !scope.realmSlug().equals(realmSlug)) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
-    return entityManagementClient
-        .listCharactersByAccount(
-            realm.tenantId(), accountUuid, realm.gameInstanceId(), toPlayableStateScope(realm))
-        .stream()
-        .sorted(Comparator.comparing(net.firedevops.firemud.entitymanagement.v1.Character::getName))
+    if (!"SHARED".equals(scope.playableStateScope())) {
+      throw new AuthenticationException(
+          "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
+    }
+    PublishedRealmEvidence published = readCanonicalScopePublishedTarget(consumers, scope);
+    if (!"SHARED".equals(published.currentTarget().playableStateScope())
+        || !"PRESEEDED_ONLY".equals(published.currentTarget().characterCreationPolicy())) {
+      throw new AuthenticationException(
+          "REALM_UNAVAILABLE", "Bootstrap actor discovery does not yet support this realm policy");
+    }
+    BootstrapCharacterAuthority prepared = prepareBootstrapCharacterAuthority(consumers, scope);
+    var observation = observeBootstrapCharacterSource(consumers, prepared);
+    requireBootstrapCharacterAuthority(consumers, scope, prepared, observation);
+    requireSameBootstrapCaller(bootstrapContext, bootstrapToken);
+    final List<AccountBootstrapRosterReadClient.Actor> actors;
+    try {
+      actors = List.copyOf(roster.read(UUID.randomUUID(), scope.accountId(), published));
+    } catch (io.grpc.StatusRuntimeException failure) {
+      String code =
+          failure.getStatus().getCode() == io.grpc.Status.Code.FAILED_PRECONDITION
+              ? "CONNECT_SCOPE_MISMATCH"
+              : "AUTH_UNAVAILABLE";
+      throw new AuthenticationException(
+          code, "Entity bootstrap discovery is unavailable or changed", failure);
+    } catch (RuntimeException failure) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Entity bootstrap discovery is malformed or unavailable", failure);
+    }
+    PublishedRealmEvidence current = readCanonicalScopePublishedTarget(consumers, scope);
+    if (!published.currentTarget().equals(current.currentTarget())
+        || !java.util.Arrays.equals(
+            published.sourceEvidence().publishedPolicySetEvidence().canonicalBytes(),
+            current.sourceEvidence().publishedPolicySetEvidence().canonicalBytes())) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    requireSameBootstrapCaller(bootstrapContext, bootstrapToken);
+    var finalObservation = observeBootstrapCharacterSource(consumers, prepared);
+    requireBootstrapCharacterAuthority(consumers, scope, prepared, finalObservation);
+    requireCanonicalScopeFresh(consumers, scope);
+    requireSameBootstrapCaller(bootstrapContext, bootstrapToken);
+    return actors.stream()
+        .sorted(
+            Comparator.comparing(AccountBootstrapRosterReadClient.Actor::displayName)
+                .thenComparing(actor -> actor.characterId().toString()))
         .map(
-            character ->
+            actor ->
                 new BootstrapCharacterDto(
-                    character.getId(),
-                    character.getName(),
-                    character.getLevel(),
-                    realm.stateScope(),
-                    realm.characterCreationPolicy()))
+                    actor.characterId().toString(),
+                    actor.displayName(),
+                    actor.level(),
+                    scope.playableStateScope(),
+                    published.currentTarget().characterCreationPolicy()))
         .toList();
   }
 
@@ -541,6 +1020,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.public_production_join")
   public JoinPublicProductionResult joinPublicProduction(
       String bootstrapToken, JoinPublicProductionRequest request) {
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
     BootstrapContext caller = requireBootstrapContext(bootstrapToken);
     Claims callerClaims =
         requireSignedTokenClaims(
@@ -556,84 +1036,25 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_CONTEXT_INVALID", "Bootstrap caller binding is missing", ex);
     }
-    requireAuthenticationEligible(requireAccount(caller.accountId()));
-    return projectJoinOutcome(
-        joinPublicProductionForTrustedCaller(caller.accountId(), callerBinding, null, request));
+    return joinCanonicalPublicProduction(
+        consumers,
+        caller.accountUuid(),
+        callerBinding,
+        request,
+        () -> {
+          BootstrapContext current = requireBootstrapContext(bootstrapToken);
+          if (!caller.equals(current)) {
+            throw new AuthenticationException("AUTH_UNAVAILABLE", "Bootstrap caller changed");
+          }
+        });
   }
 
-  @Override
-  @Transactional(propagation = Propagation.NOT_SUPPORTED)
-  @Timed(value = "account.direct_text_connect_scope")
-  public DirectTextJoinScope issueDirectTextConnectScope(
-      DirectTextCallerContext caller, DirectTextJoinTarget target) {
-    if (caller == null
-        || target == null
-        || caller.accountId() <= 0L
-        || !StringUtils.hasText(caller.requestId())
-        || caller.tenantId() != target.tenantId()
-        || !caller.realmId().equals(target.realmId())
-        || caller.gameInstanceId() != target.gameInstanceId()
-        || !caller.playableStateNamespaceId().equals(target.playableStateNamespaceId())
-        || !caller.playableStateScope().equals(target.playableStateScope())) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
-    }
-    Account account = requireAccount(caller.accountId());
-    requireAuthenticationEligible(account);
-    RuntimeRealmTarget current =
-        requireRealmTarget(target.tenantId(), target.worldSlug(), target.realmSlug());
-    if (!isPublicProductionRealm(current)) {
-      throw new AuthenticationException(
-          "REALM_UNAVAILABLE", "Selected public realm is unavailable");
-    }
-    if (!current.realmId().equals(target.realmId())
-        || !current.playableStateNamespaceId().equals(target.playableStateNamespaceId())
-        || !current.stateScope().equals(target.playableStateScope())
-        || current.gameInstanceId() != target.gameInstanceId()
-        || current.catalogRevision() != target.catalogRevision()
-        || current.pointerVersion() != target.pointerVersion()) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
-    }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(current.tenantId(), caller.requestId());
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-    }
-    Instant evaluatedAt = Instant.now();
-    Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
-    requireAuthenticationAccountUuid(account);
-    String scopeId =
-        mintAndRetainConnectScope(
-            new BootstrapContext(caller.accountId(), account.getAccountUuid()),
-            current,
-            evaluatedAt,
-            expiresAt);
-    return new DirectTextJoinScope(scopeId, expiresAt.toString(), evaluatedAt.toString());
-  }
-
-  @Override
-  @Timed(value = "account.public_production_join_internal")
-  public JoinPublicProductionResult joinPublicProductionFromGameSession(
-      DirectTextCallerContext caller, JoinPublicProductionRequest request) {
-    if (caller == null
-        || caller.accountId() <= 0L
-        || !StringUtils.hasText(caller.sessionId())
-        || request == null
-        || !caller.requestId().equals(request.requestId())) {
-      throw new AuthenticationException(
-          "CONNECT_CONTEXT_INVALID", "JOIN caller context is missing");
-    }
-    requireAuthenticationEligible(requireAccount(caller.accountId()));
-    return projectJoinOutcome(
-        joinPublicProductionForTrustedCaller(
-            caller.accountId(), caller.sessionId(), caller, request));
-  }
-
-  private JoinOutcome joinPublicProductionForTrustedCaller(
-      long accountId,
+  private JoinPublicProductionResult joinCanonicalPublicProduction(
+      CanonicalScopeConsumers consumers,
+      UUID accountUuid,
       String callerBinding,
-      DirectTextCallerContext directTextCaller,
-      JoinPublicProductionRequest request) {
+      JoinPublicProductionRequest request,
+      Runnable recheckCaller) {
     if (request == null
         || !StringUtils.hasText(request.connectScopeId())
         || !StringUtils.hasText(request.requestId())) {
@@ -643,338 +1064,160 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "INVALID_ARGUMENT", "JOIN requestId exceeds the maximum length");
     }
-    String requestId = request.requestId();
-    String scopeTokenHash = AccountJoinDigest.tokenHash(request.connectScopeId());
-    Optional<JoinOperation> existing = accountJoinOperationRepository.find(requestId);
-    VerifiedJoinScope retained;
-    if (existing.isPresent()) {
-      JoinOperation operation = existing.orElseThrow();
-      if (operation.accountId() != accountId
-          || !operation.callerBinding().equals(callerBinding)
-          || !operation.scopeTokenHash().equals(scopeTokenHash)) {
-        throw new AuthenticationException(
-            "IDEMPOTENCY_CONFLICT", "JOIN request ID was reused with different input");
-      }
-      retained = retainedJoinScope(request.connectScopeId());
-      validateDirectTextJoinScope(directTextCaller, retained);
-      requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
-    } else {
-      ConnectScopeContext signedScope = requireConnectScopeContext(request.connectScopeId());
-      retained = retainedJoinScope(request.connectScopeId());
-      validateDirectTextJoinScope(directTextCaller, retained);
-      validateSignedJoinScope(signedScope, retained, accountId);
-      String intentDigest = AccountJoinDigest.intent(requestId, retained, callerBinding);
-      try {
-        joinTransactionTemplate.execute(
-            transactionStatus ->
-                accountJoinOperationRepository.insertIntent(
-                    requestId, retained, callerBinding, intentDigest));
-      } catch (RuntimeException ex) {
-        Optional<JoinOperation> claimReadback = safeFindJoinOperation(requestId);
-        if (claimReadback.isEmpty()) {
-          if (connectScopeEvidenceIsMissing(request.connectScopeId())) {
-            throw new AuthenticationException(
-                "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable", ex);
-          }
-          throw new AuthenticationException(
-              "AUTH_UNAVAILABLE", "JOIN request claim is uncertain; retry the same request", ex);
-        }
-        requireMatchingJoinIntent(claimReadback.orElseThrow(), requestId, callerBinding, retained);
-      }
-      JoinOperation claimed =
-          accountJoinOperationRepository
-              .find(requestId)
-              .orElseThrow(
-                  () ->
-                      new AuthenticationException(
-                          "AUTH_UNAVAILABLE", "JOIN request claim is not yet readable"));
-      requireMatchingJoinIntent(claimed, requestId, callerBinding, retained);
-    }
-
+    CanonicalJoinScopeV2 scope = consumers.reader().read(accountUuid, request.connectScopeId());
     try {
-      JoinAttemptOutcome outcome =
-          joinTransactionTemplate.execute(
-              transactionStatus ->
-                  executeJoinAttempt(accountId, callerBinding, requestId, retained));
-      if (outcome.terminalOperation() != null) {
-        return replayTerminalJoinSafely(outcome.terminalOperation(), callerBinding, retained);
-      }
-      return outcome.result();
-    } catch (AuthenticationException ex) {
-      if ("IDEMPOTENCY_CONFLICT".equals(ex.getCode())) {
-        throw ex;
-      }
-      recordJoinAttemptFailureAfterRollback(requestId, ex.getCode());
-      return pendingJoinFailure(retained, ex.getCode());
-    } catch (RuntimeException ex) {
-      Optional<JoinOperation> outcomeReadback = safeFindJoinOperation(requestId);
-      if (outcomeReadback.isPresent()) {
-        JoinOperation operation = outcomeReadback.orElseThrow();
-        requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
-        if (!"PENDING".equals(operation.status())) {
-          return replayTerminalJoinSafely(operation, callerBinding, retained);
+      CanonicalJoinPreparation prepared =
+          prepareCanonicalJoin(consumers, scope, request.requestId(), callerBinding);
+      StripeHostingSubscriptionObserver.Result observation = null;
+      if (!"FAILED".equals(prepared.operation().status())) {
+        Target target = readCanonicalScopeTarget(consumers, scope);
+        // The SDK's sealed result crosses source transactions; provider I/O never runs under SQL.
+        observation =
+            prepared.fence() == null
+                ? null
+                : consumers.observer().observe(prepared.fence().binding());
+        if (!target.equals(readCanonicalScopeTarget(consumers, scope))) {
+          throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
         }
-        recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
       }
+      // Terminal failures need no remote authority, but retain caller and locked identity checks.
+      recheckCaller.run();
+      CanonicalJoinResult committed =
+          commitCanonicalJoin(
+              consumers, scope, request.requestId(), callerBinding, prepared, observation);
+      CanonicalJoinTerminalProof proof = committed.proof();
+      // Publish only after the owner transaction has committed; response loss is exact-retryable.
+      return new JoinPublicProductionResult(
+          proof != null,
+          committed.outcome(),
+          scope.accountId().toString(),
+          scope.tenantId(),
+          proof == null ? 0L : proof.membershipId(),
+          proof == null ? 0L : proof.membershipVersion(),
+          proof == null ? 0L : proof.membershipAuthorityGeneration(),
+          committed.gameplayAdmissionAllowed(),
+          committed.replayed());
+    } catch (AccountJoinOperationRepository.CanonicalJoinOperationConflictException failure) {
       throw new AuthenticationException(
-          "AUTH_UNAVAILABLE", "JOIN outcome is uncertain; retry the same request", ex);
-    }
-  }
-
-  private JoinAttemptOutcome executeJoinAttempt(
-      long accountId, String callerBinding, String requestId, VerifiedJoinScope scope) {
-    accountJoinOperationRepository.lockAccount(accountId);
-    JoinOperation operation =
-        accountJoinOperationRepository
-            .findForUpdate(requestId)
-            .orElseThrow(() -> new IllegalStateException("JOIN request claim disappeared"));
-    requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
-
-    if (!"PENDING".equals(operation.status())) {
-      return JoinAttemptOutcome.terminal(operation);
-    }
-    return JoinAttemptOutcome.result(
-        executePendingJoinAttempt(accountId, callerBinding, requestId, scope, operation));
-  }
-
-  private JoinOutcome executePendingJoinAttempt(
-      long accountId,
-      String callerBinding,
-      String requestId,
-      VerifiedJoinScope scope,
-      JoinOperation operation) {
-    if (isConnectScopeExpired(scope)) {
-      return failedJoin(requestId, scope, "CONNECT_SCOPE_INVALID");
-    }
-
-    JoinEvaluation evaluation = evaluateJoin(scope, false);
-    if (evaluation.failureCode() != null) {
-      if (isRetryableJoinAuthorityFailure(evaluation)) {
-        accountJoinOperationRepository.recordAttemptFailure(
-            requestId, evaluation.authorityAvailability(), evaluation.failureCode());
-        return pendingJoinFailure(scope, evaluation.failureCode());
+          "IDEMPOTENCY_CONFLICT", "JOIN request ID conflicts", failure);
+    } catch (RuntimeException failure) {
+      String code =
+          failure instanceof AuthenticationException authentication
+              ? authentication.getCode()
+              : "ENTITLEMENT_UNAVAILABLE";
+      try {
+        recordCanonicalJoinFailure(scope, request.requestId(), callerBinding, code);
+      } catch (RuntimeException recordFailure) {
+        if (recordFailure != failure) failure.addSuppressed(recordFailure);
+        logger.warn(
+            "Canonical JOIN failure state could not be recorded; cause={}",
+            recordFailure.getClass().getSimpleName());
       }
-      return failedJoin(requestId, scope, evaluation.failureCode());
+      if (failure instanceof AuthenticationException authentication) throw authentication;
+      throw new AuthenticationException(
+          code, "Canonical JOIN authority is unavailable; retry the same request", failure);
     }
-    if (!"AVAILABLE".equals(evaluation.authorityAvailability())
-        || evaluation.allowPublicJoin() == null
-        || evaluation.entitlementVersion() == null) {
-      accountJoinOperationRepository.recordAttemptFailure(
-          requestId, evaluation.authorityAvailability(), "ENTITLEMENT_UNAVAILABLE");
-      return pendingJoinFailure(scope, "ENTITLEMENT_UNAVAILABLE");
-    }
-    String requestDigest =
-        AccountJoinDigest.request(
-            scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
-    if (operation.requestDigest() != null
-        && (!Integer.valueOf(1).equals(operation.requestDigestVersion())
-            || !operation.requestDigest().equals(requestDigest))) {
-      return failedJoin(requestId, scope, "IDEMPOTENCY_CONFLICT");
-    }
-    if (operation.requestDigest() == null) {
-      accountJoinOperationRepository.bindPolicyEvidence(
-          requestId, requestDigest, evaluation.entitlementVersion(), evaluation.allowPublicJoin());
-    }
-    if (!evaluation.gameplayAvailable()) {
-      return failedJoin(requestId, scope, "TENANT_BILLING_BLOCKED");
-    }
-    if (!evaluation.allowPublicJoin()) {
-      return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
-    }
-
-    JoinEvaluation commitEvaluation = evaluateJoin(scope, true);
-    if (commitEvaluation.failureCode() != null) {
-      if (isRetryableJoinAuthorityFailure(commitEvaluation)) {
-        accountJoinOperationRepository.recordAttemptFailure(
-            requestId, commitEvaluation.authorityAvailability(), commitEvaluation.failureCode());
-        return pendingJoinFailure(scope, commitEvaluation.failureCode());
-      }
-      return failedJoin(requestId, scope, commitEvaluation.failureCode());
-    }
-    if (!"AVAILABLE".equals(commitEvaluation.authorityAvailability())) {
-      accountJoinOperationRepository.recordAttemptFailure(
-          requestId, commitEvaluation.authorityAvailability(), "ENTITLEMENT_UNAVAILABLE");
-      return pendingJoinFailure(scope, "ENTITLEMENT_UNAVAILABLE");
-    }
-    String commitDigest =
-        AccountJoinDigest.request(
-            scope,
-            callerBinding,
-            commitEvaluation.allowPublicJoin(),
-            commitEvaluation.entitlementVersion());
-    if (!requestDigest.equals(commitDigest)) {
-      return failedJoin(requestId, scope, "IDEMPOTENCY_CONFLICT");
-    }
-    if (!commitEvaluation.gameplayAvailable()) {
-      return failedJoin(requestId, scope, "TENANT_BILLING_BLOCKED");
-    }
-    if (!commitEvaluation.allowPublicJoin()) {
-      return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
-    }
-    AccountTenantMembership membership =
-        accountTenantMembershipRepository
-            .findByAccountIdAndTenantId(accountId, scope.tenantId())
-            .orElse(null);
-    boolean transitioned = false;
-    if (membership == null) {
-      membership = new AccountTenantMembership();
-      membership.setAccount(requireAccount(accountId));
-      membership.setTenantId(scope.tenantId());
-      membership.setMembershipVersion(1L);
-      membership.setMembershipAuthorityGeneration(1L);
-      membership.setLifecycleState("ACTIVE");
-      membership.setGameplayAdmissionAllowed(true);
-      membership.setAuthorityProvenance("EXPLICIT_JOIN");
-      accountTenantMembershipRepository.save(membership);
-      transitioned = true;
-    } else if ("INACTIVE".equals(membership.getLifecycleState())) {
-      accountJoinOperationRepository.recordCallerBoundAuthorityInvalidation(requestId);
-      membership.setLifecycleState("ACTIVE");
-      membership.setGameplayAdmissionAllowed(true);
-      membership.setMembershipVersion(membership.getMembershipVersion() + 1L);
-      membership.setMembershipAuthorityGeneration(
-          membership.getMembershipAuthorityGeneration() + 1L);
-      membership.setAuthorityProvenance("EXPLICIT_JOIN");
-      accountTenantMembershipRepository.save(membership);
-      transitioned = true;
-    } else if (!"ACTIVE".equals(membership.getLifecycleState())
-        || !membership.isGameplayAdmissionAllowed()) {
-      return failedJoin(requestId, scope, "MEMBERSHIP_RECONCILIATION_REQUIRED");
-    }
-    if (transitioned) {
-      String payload =
-          AUDIT_JSON.writeValueAsString(
-              new JoinAuditPayload(
-                  accountId,
-                  scope.tenantId(),
-                  scope.worldSlug(),
-                  scope.realmSlug(),
-                  membership.getMembershipVersion(),
-                  requestId));
-      UUID auditEventId =
-          UUID.nameUUIDFromBytes(
-              ("account-join-audit/v1:" + requestId).getBytes(StandardCharsets.UTF_8));
-      accountAuditOutboxRepository.append(
-          auditEventId, "tenant", scope.tenantId(), "ACCOUNT_JOINED_PUBLIC_PRODUCTION", payload);
-    }
-    accountJoinOperationRepository.finish(
-        requestId,
-        "COMMITTED",
-        transitioned ? "JOINED" : "ALREADY_ACTIVE",
-        membership.getId(),
-        membership.getMembershipVersion(),
-        membership.getMembershipAuthorityGeneration());
-    return new JoinOutcome(
-        true,
-        transitioned ? "JOINED" : "ALREADY_ACTIVE",
-        accountId,
-        scope.tenantId(),
-        membership.getId(),
-        membership.getMembershipVersion(),
-        membership.getMembershipAuthorityGeneration(),
-        false);
   }
 
-  private JoinOutcome failedJoin(String requestId, VerifiedJoinScope scope, String outcomeCode) {
-    accountJoinOperationRepository.finish(requestId, "FAILED", outcomeCode, null, null, null);
-    return new JoinOutcome(
-        false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+  private void recordCanonicalJoinFailure(
+      CanonicalJoinScopeV2 scope, String requestId, String callerBinding, String failureCode) {
+    // Expiry is terminal for this caller attempt, not a new durable operation outcome. The
+    // reader rejects the same expired scope without rewriting its retained intent; preserve
+    // that behavior when time crosses the boundary during provider I/O or the commit gate.
+    if ("CONNECT_SCOPE_INVALID".equals(failureCode)) return;
+    joinTransactionTemplate.executeWithoutResult(
+        status -> {
+          lockCanonicalScopeAccount(scope);
+          Optional<CanonicalJoinOperationEvidence> found =
+              accountJoinOperationRepository.findCanonicalEvidenceForUpdateByRequestId(requestId);
+          if (found.isEmpty() || !"PENDING".equals(found.orElseThrow().status())) return;
+          if ("CONNECT_SCOPE_MISMATCH".equals(failureCode)) {
+            accountJoinOperationRepository.finishCanonicalFailure(
+                requestId, scope, callerBinding, failureCode);
+          } else {
+            String retryCode =
+                List.of(
+                            "ADMISSION_POINTER_UNAVAILABLE",
+                            "ENTITLEMENT_UNAVAILABLE",
+                            "AUTH_UNAVAILABLE")
+                        .contains(failureCode)
+                    ? failureCode
+                    : "AUTH_UNAVAILABLE";
+            String authorityAvailability =
+                "ENTITLEMENT_UNAVAILABLE".equals(retryCode) ? "UNAVAILABLE" : "NOT_EVALUATED";
+            accountJoinOperationRepository.recordCanonicalAttemptFailure(
+                requestId, scope, callerBinding, authorityAvailability, retryCode);
+          }
+        });
   }
 
-  private JoinOutcome pendingJoinFailure(VerifiedJoinScope scope, String outcomeCode) {
-    return joinRetryFailure(scope, outcomeCode);
-  }
-
-  private JoinOutcome replayTerminalJoin(
-      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
-    if (isConnectScopeExpired(scope)) {
-      return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
+  @Override
+  @Timed(value = "account.direct_text_connect_scope")
+  public DirectTextJoinScope issueDirectTextConnectScope(
+      DirectTextCallerContext caller, DirectTextJoinTarget target) {
+    if (canonicalPublicRealmScopeOwner == null) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Canonical scope producer is unavailable");
     }
+    CanonicalJoinScopeV2 scope =
+        canonicalPublicRealmScopeOwner.issueDirectTextScope(caller, target).scope();
+    return new DirectTextJoinScope(
+        scope.connectScopeId(), scope.connectScopeExpiresAt(), scope.evaluatedAt());
+  }
 
-    boolean replayUnboundFailure =
-        "FAILED".equals(operation.status()) && operation.requestDigest() == null;
+  @Override
+  @Timed(value = "account.public_production_join_internal")
+  public JoinPublicProductionResult joinPublicProductionFromGameSession(
+      DirectTextCallerContext caller, JoinPublicProductionRequest request) {
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
+    requireCanonicalDirectPeer(consumers);
+    if (caller == null
+        || caller.accountId() == null
+        || NIL_ACCOUNT_UUID.equals(caller.accountId())
+        || !StringUtils.hasText(caller.sessionId())
+        || caller.sessionId().length() > 32
+        || !caller.sessionId().matches("[0-9]+")
+        || !isPositiveTransportSession(caller.sessionId())
+        || !StringUtils.hasText(caller.requestId())
+        || request == null
+        || !caller.requestId().equals(request.requestId())) {
+      throw new AuthenticationException(
+          "CONNECT_CONTEXT_INVALID", "JOIN caller context is missing");
+    }
+    CanonicalJoinScopeV2 scope =
+        consumers.reader().read(caller.accountId(), request.connectScopeId());
+    if (!scope.tenantId().equals(caller.tenantId())
+        || !scope.realmId().equals(caller.realmId())
+        || !scope.playableStateNamespaceId().equals(caller.playableStateNamespaceId())
+        || !scope.playableStateScope().equals(caller.playableStateScope())
+        || !scope.gameInstanceId().equals(caller.gameInstanceId())) {
+      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    }
+    return joinCanonicalPublicProduction(
+        consumers,
+        caller.accountId(),
+        caller.sessionId(),
+        request,
+        () -> requireCanonicalDirectPeer(consumers));
+  }
 
-    JoinEvaluation evaluation;
+  private static boolean isPositiveTransportSession(String value) {
     try {
-      evaluation = evaluateJoin(scope);
-    } catch (AuthenticationException ex) {
-      return joinRetryFailure(
-          scope, isStorageBackedEntitlementFailure(ex) ? ex.getCode() : "AUTH_UNAVAILABLE");
-    } catch (RuntimeException ex) {
-      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
-    }
-    if (evaluation.failureCode() != null) {
-      if ("ENTITLEMENT_UNAVAILABLE".equals(evaluation.failureCode())) {
-        return joinRetryFailure(scope, evaluation.failureCode());
-      }
-      if (isRetryableJoinAuthorityFailure(evaluation)) {
-        return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
-      }
-      return joinRetryFailure(scope, evaluation.failureCode());
-    }
-    if (!"AVAILABLE".equals(evaluation.authorityAvailability())
-        || evaluation.allowPublicJoin() == null
-        || evaluation.entitlementVersion() == null) {
-      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
-    }
-    if (replayUnboundFailure) {
-      return resultFromJoinOperation(operation, true);
-    }
-
-    String currentRequestDigest =
-        AccountJoinDigest.request(
-            scope, callerBinding, evaluation.allowPublicJoin(), evaluation.entitlementVersion());
-    if (!Integer.valueOf(1).equals(operation.requestDigestVersion())
-        || operation.requestDigest() == null
-        || operation.allowPublicJoin() == null
-        || !operation.allowPublicJoin().equals(evaluation.allowPublicJoin())
-        || operation.entitlementVersion() == null
-        || !operation.entitlementVersion().equals(evaluation.entitlementVersion())
-        || !operation.requestDigest().equals(currentRequestDigest)
-        || ("COMMITTED".equals(operation.status())
-            && (!evaluation.gameplayAvailable() || !evaluation.allowPublicJoin()))) {
-      return joinRetryFailure(scope, "IDEMPOTENCY_CONFLICT");
-    }
-    return resultFromJoinOperation(operation, true);
-  }
-
-  private JoinOutcome replayTerminalJoinSafely(
-      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
-    try {
-      return replayTerminalJoin(operation, callerBinding, scope);
-    } catch (RuntimeException policyCheckFailure) {
-      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+      return Long.parseLong(value) > 0;
+    } catch (NumberFormatException malformed) {
+      return false;
     }
   }
 
-  private JoinOutcome joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
-    return new JoinOutcome(
-        false, outcomeCode, scope.accountId(), scope.tenantId(), 0L, 0L, 0L, false);
+  private void requireCanonicalDirectPeer(CanonicalScopeConsumers consumers) {
+    var peer = net.firedevops.firemud.common.grpc.GrpcPeerIdentity.current();
+    if (peer == null
+        || !peer.isService("game-session-service")
+        || !peer.isInNamespace(consumers.namespace())) {
+      throw new AuthenticationException(
+          "AUTH_UNAVAILABLE", "Exact Game Session workload is required");
+    }
   }
-
-  /** Project only after the JOIN transaction has returned, preserving any committed receipt. */
-  private JoinPublicProductionResult projectJoinOutcome(JoinOutcome outcome) {
-    return new JoinPublicProductionResult(
-        outcome.success(),
-        outcome.outcomeCode(),
-        responseAccountUuid(outcome.accountId()),
-        outcome.tenantId(),
-        outcome.membershipId(),
-        outcome.membershipVersion(),
-        outcome.membershipAuthorityGeneration(),
-        outcome.replayed());
-  }
-
-  /** Private Account row identities never escape through response projection. */
-  private record JoinOutcome(
-      boolean success,
-      String outcomeCode,
-      long accountId,
-      long tenantId,
-      long membershipId,
-      long membershipVersion,
-      long membershipAuthorityGeneration,
-      boolean replayed) {}
 
   private String responseAccountUuid(Long accountId) {
     try {
@@ -997,256 +1240,20 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private boolean isConnectScopeExpired(VerifiedJoinScope scope) {
-    try {
-      return !Instant.parse(scope.connectScopeExpiresAt()).isAfter(Instant.now());
-    } catch (RuntimeException ex) {
-      return true;
-    }
-  }
-
-  private boolean isRetryableJoinAuthorityFailure(JoinEvaluation evaluation) {
-    return "UNAVAILABLE".equals(evaluation.authorityAvailability())
-        || "ADMISSION_POINTER_UNAVAILABLE".equals(evaluation.failureCode())
-        || "AUTH_UNAVAILABLE".equals(evaluation.failureCode())
-        || "ENTITLEMENT_UNAVAILABLE".equals(evaluation.failureCode());
-  }
-
-  private VerifiedJoinScope retainedJoinScope(String connectScopeId) {
-    return accountConnectScopeRepository
-        .find(connectScopeId)
-        .orElseThrow(
-            () ->
-                new AuthenticationException(
-                    "CONNECT_SCOPE_INVALID", "JOIN scope evidence is unavailable"));
-  }
-
-  private boolean connectScopeEvidenceIsMissing(String connectScopeId) {
-    try {
-      return accountConnectScopeRepository.find(connectScopeId).isEmpty();
-    } catch (RuntimeException ex) {
-      return false;
-    }
-  }
-
-  private void validateSignedJoinScope(
-      ConnectScopeContext signedScope, VerifiedJoinScope retained, long accountId) {
-    if (retained.accountId() != accountId
-        || signedScope.accountId() != accountId
-        || signedScope.tenantId() != retained.tenantId()
-        || !signedScope.realmId().equals(retained.realmId())
-        || !signedScope.playableStateNamespaceId().equals(retained.playableStateNamespaceId())
-        || !signedScope.playableStateScope().equals(retained.playableStateScope())
-        || signedScope.gameInstanceId() != retained.gameInstanceId()
-        || signedScope.catalogRevision() != retained.catalogRevision()
-        || signedScope.pointerVersion() != retained.pointerVersion()
-        || !signedScope.worldSlug().equals(retained.worldSlug())
-        || !signedScope.realmSlug().equals(retained.realmSlug())
-        || !signedScope.evaluatedAt().toString().equals(retained.evaluatedAt())
-        || !signedScope
-            .connectScopeExpiresAt()
-            .toString()
-            .equals(retained.connectScopeExpiresAt())) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
-    }
-  }
-
-  private void requireMatchingJoinIntent(
-      JoinOperation operation, String requestId, String callerBinding, VerifiedJoinScope scope) {
-    String expectedIntentDigest = AccountJoinDigest.intent(requestId, scope, callerBinding);
-    if (operation.accountId() != scope.accountId()
-        || !operation.realmId().equals(scope.realmId())
-        || !operation.callerBinding().equals(callerBinding)
-        || !operation.scopeTokenHash().equals(AccountJoinDigest.tokenHash(scope.connectScopeId()))
-        || !operation.connectScopeDigest().equals(scope.snapshotDigest())
-        || operation.intentDigestVersion() != 1
-        || !operation.intentDigest().equals(expectedIntentDigest)) {
-      throw new AuthenticationException(
-          "IDEMPOTENCY_CONFLICT", "JOIN request ID was reused with different input");
-    }
-  }
-
-  private JoinOutcome resultFromJoinOperation(JoinOperation operation, boolean replayed) {
-    return new JoinOutcome(
-        "COMMITTED".equals(operation.status()),
-        operation.outcome(),
-        operation.accountId(),
-        operation.tenantId(),
-        operation.membershipId() == null ? 0L : operation.membershipId(),
-        operation.membershipVersion() == null ? 0L : operation.membershipVersion(),
-        operation.membershipAuthorityGeneration() == null
-            ? 0L
-            : operation.membershipAuthorityGeneration(),
-        replayed);
-  }
-
-  private Optional<JoinOperation> safeFindJoinOperation(String requestId) {
-    try {
-      return accountJoinOperationRepository.find(requestId);
-    } catch (RuntimeException ignored) {
-      return Optional.empty();
-    }
-  }
-
-  private void recordJoinAttemptFailureAfterRollback(String requestId, String failureCode) {
-    String availability =
-        "ENTITLEMENT_UNAVAILABLE".equals(failureCode) ? "UNAVAILABLE" : "NOT_EVALUATED";
-    try {
-      joinTransactionTemplate.execute(
-          transactionStatus -> {
-            accountJoinOperationRepository
-                .findForUpdate(requestId)
-                .ifPresent(
-                    operation -> {
-                      if ("PENDING".equals(operation.status())) {
-                        accountJoinOperationRepository.recordAttemptFailure(
-                            requestId, availability, failureCode);
-                      }
-                    });
-            return null;
-          });
-    } catch (RuntimeException ignored) {
-      // The durable intent stays pending, and the caller retries the same request ID.
-    }
-  }
-
-  private void validateDirectTextJoinScope(
-      DirectTextCallerContext caller, VerifiedJoinScope scope) {
-    if (caller != null
-        && (caller.accountId() != scope.accountId()
-            || caller.tenantId() != scope.tenantId()
-            || !caller.realmId().equals(scope.realmId())
-            || caller.gameInstanceId() != scope.gameInstanceId()
-            || !caller.playableStateNamespaceId().equals(scope.playableStateNamespaceId())
-            || !caller.playableStateScope().equals(scope.playableStateScope()))) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
-    }
-  }
-
-  private JoinEvaluation evaluateJoin(VerifiedJoinScope scope) {
-    return evaluateJoin(scope, true);
-  }
-
-  private JoinEvaluation evaluateJoin(VerifiedJoinScope scope, boolean lockEntitlement) {
-    return evaluateJoin(
-        new ConnectScopeContext(
-            scope.accountId(),
-            scope.tenantId(),
-            scope.realmId(),
-            scope.worldSlug(),
-            scope.realmSlug(),
-            scope.playableStateNamespaceId(),
-            scope.playableStateScope(),
-            scope.gameInstanceId(),
-            scope.catalogRevision(),
-            scope.pointerVersion(),
-            Instant.parse(scope.evaluatedAt()),
-            Instant.parse(scope.connectScopeExpiresAt())),
-        lockEntitlement);
-  }
-
-  private JoinEvaluation evaluateJoin(ConnectScopeContext scope, boolean lockEntitlement) {
-    RuntimeRealmTarget target;
-    try {
-      target = requireCurrentConnectScopeTarget(scope);
-    } catch (AuthenticationException ex) {
-      if ("CONNECT_SCOPE_MISMATCH".equals(ex.getCode())
-          || "ADMISSION_POINTER_UNAVAILABLE".equals(ex.getCode())) {
-        return new JoinEvaluation("NOT_EVALUATED", null, null, false, ex.getCode());
-      }
-      throw ex;
-    }
-    if (!isPublicProductionRealm(target)) {
-      return new JoinEvaluation(
-          "NOT_EVALUATED", null, null, false, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
-    }
-    try {
-      RuntimeEntitlementsDto entitlement = joinEntitlement(scope.tenantId(), lockEntitlement);
-      return new JoinEvaluation(
-          "AVAILABLE",
-          entitlement.allowPublicJoin(),
-          entitlement.entitlementVersion(),
-          entitlement.gameplayAvailable(),
-          null);
-    } catch (AuthenticationException ex) {
-      if ("ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
-        if (isStorageBackedEntitlementFailure(ex)) {
-          // Leave a potentially aborted SQL transaction before recording the failed attempt.
-          throw ex;
-        }
-        return new JoinEvaluation("UNAVAILABLE", null, null, false, ex.getCode());
-      }
-      throw ex;
-    }
-  }
-
-  private boolean isStorageBackedEntitlementFailure(AuthenticationException failure) {
-    return "ENTITLEMENT_UNAVAILABLE".equals(failure.getCode())
-        && (failure.getCause() instanceof org.jooq.exception.DataAccessException
-            || failure.getCause() instanceof DataAccessException);
-  }
-
-  private record JoinEvaluation(
-      String authorityAvailability,
-      Boolean allowPublicJoin,
-      Long entitlementVersion,
-      boolean gameplayAvailable,
-      String failureCode) {}
-
-  private record JoinAttemptOutcome(JoinOutcome result, JoinOperation terminalOperation) {
-    private static JoinAttemptOutcome result(JoinOutcome result) {
-      return new JoinAttemptOutcome(result, null);
-    }
-
-    private static JoinAttemptOutcome terminal(JoinOperation operation) {
-      return new JoinAttemptOutcome(null, operation);
-    }
-  }
-
-  private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
-    return readTenantEntitlements(tenantId, lockSubscription);
-  }
-
   private RuntimeEntitlementsDto readTenantEntitlements(long tenantId, boolean lockSubscription) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> rows;
-    try {
-      rows =
-          lockSubscription
-              ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
-              : subscriptionRepository.findByTenantId(tenantId);
-    } catch (org.jooq.exception.MappingException | org.jooq.exception.ConfigurationException ex) {
-      throw ex;
-    } catch (org.jooq.exception.DataAccessException | DataAccessException ex) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE",
-          "Tenant entitlement authority is unavailable; retry later",
-          ex);
-    }
-    if (rows == null || rows.size() != 1 || rows.getFirst() == null) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");
-    }
-    var subscription = rows.getFirst();
-    if (subscription.getEntitlementVersion() <= 0L) {
-      throw new AuthenticationException(
-          "ENTITLEMENT_UNAVAILABLE", "Entitlement version is missing");
-    }
-    return new RuntimeEntitlementsDto(
-        tenantId,
-        isGameplayAvailableStatus(subscription.getStatus()),
-        isPublicJoinAllowedStatus(subscription.getStatus()),
-        subscription.getEntitlementVersion(),
-        subscription.getEntitlementVersion(),
-        Instant.now().toString());
+    // Retained numeric rows cannot supply canonical identity, provider provenance, current-row
+    // selection, or a committed billing checkpoint. Deny before any historical evidence read.
+    throw new AuthenticationException(
+        "ENTITLEMENT_UNAVAILABLE",
+        "Canonical tenant entitlement authority is unavailable; retry later");
   }
 
   @Override
-  @Transactional(readOnly = true)
   @Timed(value = "account.connect_token")
   public ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request) {
+    CanonicalScopeConsumers consumers = requireCanonicalScopeConsumers();
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    ConnectScopeContext scopeContext = requireConnectScopeContext(request.connectScopeId());
-    validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
+    consumers.reader().read(bootstrapContext.accountUuid(), request.connectScopeId());
     throw new AuthenticationException(
         "AUTH_UNAVAILABLE", "Canonical gameplay connect-token authority is unavailable");
   }
@@ -1350,385 +1357,11 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private BootstrapContext requireBootstrapContext(String bootstrapToken) {
-    Claims claims =
-        requireSignedTokenClaims(
-            bootstrapToken,
-            "player-bootstrap",
-            "CONNECT_CONTEXT_INVALID",
-            "Missing bootstrap token",
-            "Invalid bootstrap token");
-    UUID subject =
-        claims.get("sub") instanceof String text ? AccountUuidText.parseOrNull(text) : null;
-    UUID accountUuid =
-        claims.get("accountId") instanceof String text ? AccountUuidText.parseOrNull(text) : null;
-    if (subject == null || accountUuid == null || !subject.equals(accountUuid)) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
-    }
-    final Long accountId;
-    try {
-      accountId = resolveAccountStorageId(accountUuid);
-    } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
-      throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
-    }
-    if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
-      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
-    }
-    return new BootstrapContext(accountId, accountUuid);
-  }
-
-  private RuntimeRealmTarget requireRealmTarget(
-      Long expectedTenantId, String worldSlug, String realmSlug) {
-    try {
-      List<RuntimeRealmTarget> candidates =
-          listRuntimeRealmTargets(worldSlug, realmSlug).stream()
-              .filter(realm -> java.util.Objects.equals(worldSlug, realm.worldSlug()))
-              .filter(realm -> java.util.Objects.equals(realmSlug, realm.realmSlug()))
-              .filter(realm -> expectedTenantId == null || realm.tenantId() == expectedTenantId)
-              .toList();
-      if (candidates.size() != 1) {
-        throw new IllegalStateException("Selected gameplay realm is absent or ambiguous");
-      }
-      RuntimeRealmTarget candidate = candidates.getFirst();
-      RuntimeRealmTarget realm =
-          readRuntimeRealmTarget(
-              gameSessionClient.getAdmissionPointer(candidate.tenantId(), worldSlug, realmSlug));
-      if (realm.tenantId() != candidate.tenantId()
-          || !realm.realmId().equals(candidate.realmId())
-          || !realm.playableStateNamespaceId().equals(candidate.playableStateNamespaceId())
-          || !realm.stateScope().equals(candidate.stateScope())
-          || realm.gameInstanceId() != candidate.gameInstanceId()
-          || realm.visible() != candidate.visible()
-          || realm.publicProductionRealm() != candidate.publicProductionRealm()
-          || realm.catalogRevision() != candidate.catalogRevision()
-          || realm.pointerVersion() != candidate.pointerVersion()
-          || !java.util.Objects.equals(worldSlug, realm.worldSlug())
-          || !java.util.Objects.equals(realmSlug, realm.realmSlug())) {
-        throw new AuthenticationException(
-            "ADMISSION_POINTER_UNAVAILABLE",
-            "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-      }
-      return realm;
-    } catch (AuthenticationException ex) {
-      throw ex;
-    } catch (RuntimeException ex) {
-      throw admissionPointerUnavailable(ex);
-    }
-  }
-
-  private boolean hasAdmissibleRealm(
-      BootstrapContext bootstrapContext,
-      String worldSlug,
-      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
-    try {
-      return !listAdmissibleRuntimeRealmTargets(
-              bootstrapContext, worldSlug, discoveryEntitlementMemo)
-          .isEmpty();
-    } catch (IllegalStateException ex) {
-      return false;
-    }
-  }
-
-  private List<RuntimeRealmTarget> listAdmissibleRuntimeRealmTargets(
-      BootstrapContext bootstrapContext,
-      String worldSlug,
-      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
-    List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
-        gameSessionClient.listGameplayRealms(worldSlug);
-    if (realms == null) {
-      throw new IllegalStateException("Gameplay realm discovery returned no authority");
-    }
-    List<RuntimeRealmTarget> targets =
-        realms.stream()
-            .map(realm -> readReachableDiscoveryRealm(bootstrapContext, realm))
-            .flatMap(Optional::stream)
-            .toList();
-    validatePublicRealmCardinality(targets);
-    return targets.stream()
-        .filter(
-            realm -> isDiscoveryRealmAdmissible(bootstrapContext, realm, discoveryEntitlementMemo))
-        .toList();
-  }
-
-  private List<RuntimeRealmTarget> listRuntimeRealmTargets(
-      String worldSlug, String selectedRealmSlug) {
-    try {
-      List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
-          gameSessionClient.listGameplayRealms(worldSlug);
-      if (realms == null) {
-        throw new IllegalStateException("Gameplay realm discovery returned no authority");
-      }
-      var realmStream = realms.stream();
-      if (selectedRealmSlug != null) {
-        realmStream =
-            realmStream.filter(
-                realm ->
-                    realm != null
-                        && java.util.Objects.equals(selectedRealmSlug, realm.getRealmSlug()));
-      }
-      List<RuntimeRealmTarget> targets = realmStream.map(this::readRuntimeRealmTarget).toList();
-      validatePublicRealmCardinality(targets);
-      return targets;
-    } catch (AuthenticationException ex) {
-      throw ex;
-    } catch (RuntimeException ex) {
-      throw admissionPointerUnavailable(ex);
-    }
-  }
-
-  private void validatePublicRealmCardinality(List<RuntimeRealmTarget> realms) {
-    // The RPC is world-local: zero local public realms may be a valid private-only world when the
-    // tenant's public realm is in another world. Game Session owns the tenant-global zero check;
-    // Account can defensively reject only duplicate visible public targets returned here.
-    Map<Long, Long> visiblePublicRealmCounts =
-        realms.stream()
-            .filter(this::isPublicProductionRealm)
-            .collect(
-                java.util.stream.Collectors.groupingBy(
-                    RuntimeRealmTarget::tenantId, java.util.stream.Collectors.counting()));
-    if (realms.stream()
-        .map(RuntimeRealmTarget::tenantId)
-        .distinct()
-        .anyMatch(tenantId -> visiblePublicRealmCounts.getOrDefault(tenantId, 0L) > 1L)) {
-      throw admissionPointerUnavailable(
-          new IllegalStateException("Public production realm authority is ambiguous"));
-    }
-  }
-
-  private Optional<RuntimeRealmTarget> readReachableDiscoveryRealm(
-      BootstrapContext bootstrapContext,
-      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
-    if (realm == null) {
-      throw admissionPointerUnavailable(
-          new IllegalArgumentException("Gameplay realm discovery returned a null realm"));
-    }
-    final RuntimeRealmTarget target;
-    try {
-      target = readRuntimeRealmTarget(realm);
-    } catch (IllegalArgumentException ex) {
-      if (isMalformedRealmReachable(bootstrapContext, realm)) {
-        throw admissionPointerUnavailable(ex);
-      }
-      return Optional.empty();
-    }
-    return Optional.of(target);
-  }
-
-  private boolean isMalformedRealmReachable(
-      BootstrapContext bootstrapContext,
-      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
-    if (realm.getVisible() && realm.getPublicProductionRealm()) {
-      return true;
-    }
-
-    final long tenantId;
-    try {
-      tenantId = requirePositiveLong(realm.getTenantId(), "tenantId");
-    } catch (IllegalArgumentException ex) {
-      return false;
-    }
-    if (accountTenantMembershipRepository
-        .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
-        .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
-        .isEmpty()) {
-      return false;
-    }
-    if (!hasRealmAccessGrant(
-        bootstrapContext.accountId(), tenantId, realm.getWorldSlug(), realm.getRealmSlug())) {
-      return false;
-    }
-    return true;
-  }
-
-  private AuthenticationException admissionPointerUnavailable(Throwable cause) {
-    return new AuthenticationException(
-        "ADMISSION_POINTER_UNAVAILABLE",
-        "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry",
-        cause);
-  }
-
-  private boolean isDiscoveryRealmAdmissible(
-      BootstrapContext bootstrapContext,
-      RuntimeRealmTarget realm,
-      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
-    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
-      return false;
-    }
-    RuntimeEntitlementsDto entitlements =
-        discoveryEntitlementMemo.computeIfAbsent(
-            realm.tenantId(),
-            tenantId -> getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery"));
-    return entitlements.gameplayAvailable();
-  }
-
-  private boolean hasRealmAdmissionAccess(
-      BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
-    long tenantId = realm.tenantId();
-    if (!isPublicProductionRealm(realm)) {
-      if (accountTenantMembershipRepository
-          .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
-          .filter(AccountTenantMembership::isGameplayAdmissionAllowed)
-          .isEmpty()) {
-        return false;
-      }
-      if (!hasRealmAccessGrant(
-          bootstrapContext.accountId(), tenantId, realm.worldSlug(), realm.realmSlug())) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {
-    return realm.visible() && realm.publicProductionRealm();
-  }
-
-  private boolean sameRuntimeRealmAuthority(
-      RuntimeRealmTarget expected, RuntimeRealmTarget actual) {
-    return expected.tenantId() == actual.tenantId()
-        && expected.realmId().equals(actual.realmId())
-        && expected.playableStateNamespaceId().equals(actual.playableStateNamespaceId())
-        && expected.gameInstanceId() == actual.gameInstanceId()
-        && expected.worldSlug().equals(actual.worldSlug())
-        && expected.realmSlug().equals(actual.realmSlug())
-        && expected.pointerVersion() == actual.pointerVersion()
-        && expected.catalogRevision() == actual.catalogRevision()
-        && expected.visible() == actual.visible()
-        && expected.publicProductionRealm() == actual.publicProductionRealm()
-        && expected.stateScope().equals(actual.stateScope())
-        && expected.characterCreationPolicy().equals(actual.characterCreationPolicy())
-        && expected.requiresCharacterSelection() == actual.requiresCharacterSelection();
-  }
-
-  private String mintConnectScopeId(
-      BootstrapContext bootstrapContext,
-      RuntimeRealmTarget realm,
-      Instant evaluatedAt,
-      Instant expiresAt) {
-    long expirationMs = Math.max(1L, expiresAt.toEpochMilli() - evaluatedAt.toEpochMilli());
-    return mintToken(
-        bootstrapContext.accountUuid().toString(),
-        expirationMs,
-        Map.ofEntries(
-            Map.entry("aud", "bootstrap-connect-scope"),
-            Map.entry("accountId", bootstrapContext.accountUuid().toString()),
-            Map.entry("tenantId", realm.tenantId()),
-            Map.entry("realmId", realm.realmId().toString()),
-            Map.entry("worldSlug", realm.worldSlug()),
-            Map.entry("realmSlug", realm.realmSlug()),
-            Map.entry("playableStateNamespaceId", realm.playableStateNamespaceId()),
-            Map.entry("playableStateScope", realm.stateScope()),
-            Map.entry("gameInstanceId", realm.gameInstanceId()),
-            Map.entry("catalogRevision", realm.catalogRevision()),
-            Map.entry("pointerVersion", realm.pointerVersion()),
-            Map.entry("evaluatedAt", evaluatedAt.toString()),
-            Map.entry("connectScopeExpiresAt", expiresAt.toString()),
-            Map.entry(
-                "jti",
-                stableId(
-                    "connect-scope",
-                    bootstrapContext.accountId(),
-                    Long.toString(realm.tenantId()),
-                    realm.worldSlug(),
-                    realm.realmSlug(),
-                    realm.pointerVersion(),
-                    evaluatedAt.toString()))));
-  }
-
-  private String mintAndRetainConnectScope(
-      BootstrapContext caller, RuntimeRealmTarget realm, Instant evaluatedAt, Instant expiresAt) {
-    try {
-      if (!Long.valueOf(caller.accountId()).equals(resolveAccountStorageId(caller.accountUuid()))) {
-        throw new IllegalStateException("Scope Account UUID resolved to a different owner");
-      }
-    } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
-      throw new AuthenticationException("AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
-    }
-    String connectScopeId = mintConnectScopeId(caller, realm, evaluatedAt, expiresAt);
-    if (isPublicProductionRealm(realm)) {
-      VerifiedJoinScope pending =
-          new VerifiedJoinScope(
-              connectScopeId,
-              caller.accountId(),
-              realm.tenantId(),
-              realm.realmId(),
-              realm.worldSlug(),
-              realm.realmSlug(),
-              realm.playableStateNamespaceId(),
-              realm.stateScope(),
-              realm.gameInstanceId(),
-              realm.catalogRevision(),
-              realm.pointerVersion(),
-              evaluatedAt.toString(),
-              expiresAt.toString(),
-              "");
-      accountConnectScopeRepository.insert(
-          new VerifiedJoinScope(
-              pending.connectScopeId(),
-              pending.accountId(),
-              pending.tenantId(),
-              pending.realmId(),
-              pending.worldSlug(),
-              pending.realmSlug(),
-              pending.playableStateNamespaceId(),
-              pending.playableStateScope(),
-              pending.gameInstanceId(),
-              pending.catalogRevision(),
-              pending.pointerVersion(),
-              pending.evaluatedAt(),
-              pending.connectScopeExpiresAt(),
-              AccountJoinDigest.scope(pending)));
-    }
-    return connectScopeId;
-  }
-
-  private ConnectScopeContext requireConnectScopeContext(String connectScopeId) {
-    Claims claims =
-        requireSignedTokenClaims(
-            connectScopeId,
-            "bootstrap-connect-scope",
-            "CONNECT_SCOPE_INVALID",
-            INVALID_CONNECT_SCOPE_MESSAGE,
-            INVALID_CONNECT_SCOPE_MESSAGE);
-    try {
-      JwtClaims.SignedGameplayRoutingClaims routingClaims =
-          JwtClaims.requireSignedGameplayRoutingClaims(
-              claims, "signed token account subject mismatch");
-      Instant connectScopeExpiresAt = parseInstant(claims.get("connectScopeExpiresAt"));
-      Instant evaluatedAt = parseInstant(claims.get("evaluatedAt"));
-      if (connectScopeExpiresAt == null) {
-        throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
-      }
-      if (evaluatedAt == null) {
-        throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
-      }
-      UUID realmId = requireCanonicalRealmId(claims.get("realmId"));
-      String namespace =
-          JwtClaims.requireText(claims.get("playableStateNamespaceId"), "playableStateNamespaceId");
-      String scope = JwtClaims.requireText(claims.get("playableStateScope"), "playableStateScope");
-      long catalogRevision = requirePositiveLong(claims.get("catalogRevision"), "catalogRevision");
-      final Long accountId;
-      try {
-        accountId = resolveAccountStorageId(UUID.fromString(routingClaims.accountId()));
-      } catch (IllegalArgumentException | IllegalStateException | DataAccessException ex) {
-        throw new AuthenticationException(
-            "AUTH_UNAVAILABLE", "Account authority is unavailable", ex);
-      }
-      return new ConnectScopeContext(
-          accountId,
-          routingClaims.tenantId(),
-          realmId,
-          routingClaims.worldSlug(),
-          routingClaims.realmSlug(),
-          namespace,
-          scope,
-          routingClaims.gameInstanceId(),
-          catalogRevision,
-          routingClaims.pointerVersion(),
-          evaluatedAt,
-          connectScopeExpiresAt);
-    } catch (IllegalArgumentException ex) {
-      throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
-    }
+    var caller =
+        new net.firedevops.firemud.accountservice.service.session
+                .AccountPlayerBootstrapCallerVerifier(jwtUtil, accountRepository, sessionService)
+            .requireCaller(bootstrapToken);
+    return new BootstrapContext(caller.accountId(), caller.accountUuid());
   }
 
   private Claims requireSignedTokenClaims(
@@ -1754,93 +1387,6 @@ public class AccountServiceImpl implements AccountService {
     } catch (IllegalArgumentException ex) {
       throw new AuthenticationException(errorCode, invalidTokenMessage, ex);
     }
-  }
-
-  private void validateConnectScopeAgainstBootstrap(
-      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
-    if (scopeContext.accountId() != bootstrapContext.accountId()) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
-    }
-  }
-
-  private void validateConnectScopeRoute(
-      ConnectScopeContext scopeContext, String worldSlug, String realmSlug) {
-    if (!java.util.Objects.equals(scopeContext.worldSlug(), worldSlug)
-        || !java.util.Objects.equals(scopeContext.realmSlug(), realmSlug)) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
-    }
-  }
-
-  private RuntimeRealmTarget requireCurrentConnectScopeTarget(ConnectScopeContext scopeContext) {
-    RuntimeRealmTarget currentRealm =
-        requireRealmTarget(
-            scopeContext.tenantId(), scopeContext.worldSlug(), scopeContext.realmSlug());
-    if (currentRealm.tenantId() != scopeContext.tenantId()
-        || !currentRealm.realmId().equals(scopeContext.realmId())
-        || !currentRealm.playableStateNamespaceId().equals(scopeContext.playableStateNamespaceId())
-        || !currentRealm.stateScope().equals(scopeContext.playableStateScope())
-        || currentRealm.gameInstanceId() != scopeContext.gameInstanceId()
-        || currentRealm.catalogRevision() != scopeContext.catalogRevision()
-        || currentRealm.pointerVersion() != scopeContext.pointerVersion()) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
-    }
-    return currentRealm;
-  }
-
-  private RuntimeRealmTarget requireCurrentAdmissibleConnectScopeTarget(
-      BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
-    RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(currentRealm.tenantId(), "bootstrap-characters");
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-    }
-
-    boolean publicProductionRealm = isPublicProductionRealm(currentRealm);
-    Optional<AccountTenantMembership> maybeMembership =
-        accountTenantMembershipRepository.findByAccountIdAndTenantId(
-            bootstrapContext.accountId(), currentRealm.tenantId());
-    if (maybeMembership.isPresent()
-        && "INACTIVE".equals(maybeMembership.orElseThrow().getLifecycleState())
-        && publicProductionRealm) {
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
-    }
-    if (maybeMembership.isPresent()
-        && !maybeMembership.orElseThrow().isGameplayAdmissionAllowed()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-    if (maybeMembership.isEmpty()) {
-      if (!publicProductionRealm) {
-        throw new AuthenticationException(
-            "NON_PUBLIC_ENROLLMENT_REQUIRED",
-            "Existing game membership is required for this non-public realm");
-      }
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException("JOIN_REQUIRED", JOIN_REQUIRED_CHARACTERS_MESSAGE);
-    }
-
-    if (!publicProductionRealm
-        && !hasRealmAccessGrant(
-            bootstrapContext.accountId(),
-            currentRealm.tenantId(),
-            currentRealm.worldSlug(),
-            currentRealm.realmSlug())) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE",
-          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-    }
-    return currentRealm;
   }
 
   private Optional<Account> findAccountForAuthentication(String usernameOrEmail) {
@@ -2250,12 +1796,6 @@ public class AccountServiceImpl implements AccountService {
     return account.getId();
   }
 
-  private boolean hasRealmAccessGrant(
-      Long accountId, Long tenantId, String worldSlug, String realmSlug) {
-    return accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-        accountId, tenantId, worldSlug, realmSlug);
-  }
-
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
     return jwtUtil.generateToken(subject, expirationMs, claims);
   }
@@ -2274,56 +1814,6 @@ public class AccountServiceImpl implements AccountService {
         globalRoles,
         "jti",
         UUID.randomUUID().toString());
-  }
-
-  private Instant parseInstant(Object value) {
-    if (value == null) {
-      return null;
-    }
-    try {
-      return Instant.parse(value.toString());
-    } catch (RuntimeException ex) {
-      return null;
-    }
-  }
-
-  private String stableId(Object... components) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      for (Object component : components) {
-        digest.update(String.valueOf(component).getBytes(StandardCharsets.UTF_8));
-        digest.update((byte) 0);
-      }
-      byte[] encoded = digest.digest();
-      StringBuilder builder = new StringBuilder(encoded.length * 2);
-      for (byte value : encoded) {
-        builder.append(Character.forDigit((value >> 4) & 0xF, 16));
-        builder.append(Character.forDigit(value & 0xF, 16));
-      }
-      return builder.toString();
-    } catch (NoSuchAlgorithmException ex) {
-      throw new IllegalStateException("Missing SHA-256 implementation", ex);
-    }
-  }
-
-  private boolean isGameplayAvailableStatus(String status) {
-    if (status == null) {
-      return false;
-    }
-    return switch (status.trim().toLowerCase(java.util.Locale.ROOT)) {
-      case "active", "trialing", "past_due", "grace" -> true;
-      default -> false;
-    };
-  }
-
-  private boolean isPublicJoinAllowedStatus(String status) {
-    if (status == null) {
-      return false;
-    }
-    return switch (status.trim().toLowerCase(java.util.Locale.ROOT)) {
-      case "active", "trialing", "past_due" -> true;
-      default -> false;
-    };
   }
 
   @Override
@@ -2476,9 +1966,9 @@ public class AccountServiceImpl implements AccountService {
           "ACCOUNT_DELETE_JOIN_RECEIPT_RETAINED",
           "Account JOIN receipts require retention and deletion reconciliation");
     }
-    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
-        subscriptionRepository.findByAccountId(accountId);
-    Optional<net.firedevops.firemud.accountservice.entity.Subscription> blockingSubscription =
+    List<RetainedSubscriptionEvidence> subscriptions =
+        retainedSubscriptionEvidenceRepository.findHistoryByAccountId(accountId);
+    Optional<RetainedSubscriptionEvidence> blockingSubscription =
         subscriptions.stream().filter(this::isNonterminalSubscription).findFirst();
     if (blockingSubscription.isPresent()) {
       throw new AccountLifecycleException(
@@ -2491,18 +1981,17 @@ public class AccountServiceImpl implements AccountService {
             + "deletion reconciliation are implemented");
   }
 
-  private boolean isNonterminalSubscription(
-      net.firedevops.firemud.accountservice.entity.Subscription subscription) {
+  private boolean isNonterminalSubscription(RetainedSubscriptionEvidence subscription) {
     String status =
-        subscription.getStatus() == null
+        subscription.status() == null
             ? ""
-            : subscription.getStatus().trim().toLowerCase(java.util.Locale.ROOT);
+            : subscription.status().trim().toLowerCase(java.util.Locale.ROOT);
     boolean terminalStatus =
         switch (status) {
           case "canceled", "cancelled", "ended", "expired" -> true;
           default -> false;
         };
-    return !terminalStatus || subscription.getEndedAt() == null;
+    return !terminalStatus || subscription.endedAt() == null;
   }
 
   @Override
@@ -3398,176 +2887,4 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private record BootstrapContext(long accountId, UUID accountUuid) {}
-
-  private record JoinAuditPayload(
-      long accountId,
-      long tenantId,
-      String worldSlug,
-      String realmSlug,
-      long membershipVersion,
-      String requestId) {}
-
-  private RuntimeRealmTarget readRuntimeRealmTarget(
-      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
-    return buildRuntimeRealmTarget(
-        realm.getTenantId(),
-        realm.getRealmId(),
-        realm.getPlayableStateNamespaceId(),
-        realm.getGameInstanceId(),
-        realm.getCatalogRevision(),
-        realm.getPointerVersion(),
-        realm.getWorldSlug(),
-        realm.getRealmSlug(),
-        realm.getVisible(),
-        realm.getPublicProductionRealm(),
-        realm.getStateScope(),
-        realm.getCharacterCreationPolicy(),
-        realm.getRequiresCharacterSelection(),
-        realm.getDisplayName());
-  }
-
-  private RuntimeRealmTarget readRuntimeRealmTarget(
-      net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer realm) {
-    return buildRuntimeRealmTarget(
-        realm.getTenantId(),
-        realm.getRealmId(),
-        realm.getPlayableStateNamespaceId(),
-        realm.getGameInstanceId(),
-        realm.getCatalogRevision(),
-        realm.getPointerVersion(),
-        realm.getWorldSlug(),
-        realm.getRealmSlug(),
-        realm.getVisible(),
-        realm.getPublicProductionRealm(),
-        realm.getStateScope(),
-        realm.getCharacterCreationPolicy(),
-        realm.getRequiresCharacterSelection(),
-        realm.getRealmDisplayName());
-  }
-
-  private RuntimeRealmTarget buildRuntimeRealmTarget(
-      String tenantIdText,
-      String realmIdText,
-      String playableStateNamespaceId,
-      String gameInstanceIdText,
-      long catalogRevision,
-      long pointerVersion,
-      String worldSlug,
-      String realmSlug,
-      boolean visible,
-      boolean publicProductionRealm,
-      String stateScope,
-      String characterCreationPolicy,
-      boolean requiresCharacterSelection,
-      String displayName) {
-    long tenantId = requirePositiveLong(tenantIdText, "tenantId");
-    UUID realmId = requireCanonicalRealmId(realmIdText);
-    long gameInstanceId = requirePositiveLong(gameInstanceIdText, "gameInstanceId");
-    String canonicalPlayableStateNamespaceId =
-        requireCanonicalPlayableStateNamespaceId(playableStateNamespaceId);
-    if (catalogRevision <= 0) {
-      throw new IllegalArgumentException("catalogRevision must be positive");
-    }
-    if (pointerVersion <= 0) {
-      throw new IllegalArgumentException("pointerVersion must be positive");
-    }
-    if (!StringUtils.hasText(worldSlug)) {
-      throw new IllegalArgumentException("worldSlug is required");
-    }
-    if (!StringUtils.hasText(realmSlug)) {
-      throw new IllegalArgumentException("realmSlug is required");
-    }
-    if (!"SHARED".equals(stateScope) && !"ISOLATED".equals(stateScope)) {
-      throw new IllegalArgumentException("stateScope must be SHARED or ISOLATED");
-    }
-    return new RuntimeRealmTarget(
-        tenantId,
-        realmId,
-        canonicalPlayableStateNamespaceId,
-        gameInstanceId,
-        worldSlug,
-        realmSlug,
-        pointerVersion,
-        catalogRevision,
-        visible,
-        publicProductionRealm,
-        stateScope,
-        characterCreationPolicy,
-        requiresCharacterSelection,
-        displayName);
-  }
-
-  private PlayableStateScope toPlayableStateScope(RuntimeRealmTarget realm) {
-    if ("SHARED".equals(realm.stateScope())) {
-      return PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
-    }
-    if ("ISOLATED".equals(realm.stateScope())) {
-      return PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
-    }
-    throw new IllegalArgumentException("stateScope must be SHARED or ISOLATED");
-  }
-
-  private long requirePositiveLong(Object value, String field) {
-    return JwtClaims.requireLong(value, field, false);
-  }
-
-  private UUID requireCanonicalRealmId(Object value) {
-    if (!(value instanceof String text) || text.isBlank()) {
-      throw new IllegalArgumentException("realmId must be a canonical UUID");
-    }
-    try {
-      UUID realmId = UUID.fromString(text);
-      if (!realmId.toString().equals(text)) {
-        throw new IllegalArgumentException("realmId must be a canonical UUID");
-      }
-      return realmId;
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
-    }
-  }
-
-  private String requireCanonicalPlayableStateNamespaceId(String value) {
-    if (!StringUtils.hasText(value)) {
-      throw new IllegalArgumentException("playableStateNamespaceId is required");
-    }
-    try {
-      UUID namespaceId = UUID.fromString(value);
-      if (!namespaceId.toString().equals(value)) {
-        throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID");
-      }
-      return value;
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID", ex);
-    }
-  }
-
-  private record ConnectScopeContext(
-      long accountId,
-      long tenantId,
-      UUID realmId,
-      String worldSlug,
-      String realmSlug,
-      String playableStateNamespaceId,
-      String playableStateScope,
-      long gameInstanceId,
-      long catalogRevision,
-      long pointerVersion,
-      Instant evaluatedAt,
-      Instant connectScopeExpiresAt) {}
-
-  private record RuntimeRealmTarget(
-      long tenantId,
-      UUID realmId,
-      String playableStateNamespaceId,
-      long gameInstanceId,
-      String worldSlug,
-      String realmSlug,
-      long pointerVersion,
-      long catalogRevision,
-      boolean visible,
-      boolean publicProductionRealm,
-      String stateScope,
-      String characterCreationPolicy,
-      boolean requiresCharacterSelection,
-      String displayName) {}
 }

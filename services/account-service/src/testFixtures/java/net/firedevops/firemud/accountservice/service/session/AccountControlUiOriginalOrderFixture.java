@@ -464,6 +464,29 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       CapturedEnvironmentBoundary environment,
       AccountControlUiOwnerSourcesFixture sources) {}
 
+  /** Same-package reuse of genuine certified ACCOUNT issuance, separate from tenant creation. */
+  IssuedAccount issueCertifiedAccount(String password) {
+    var account = f.createCertifiedGlobalAccount(password);
+    var request =
+        new AccountControlUiIssuanceService.AccountSignInRequest(
+            UUID.randomUUID(), account.getEmail(), password, UUID.randomUUID());
+    String compact;
+    try (var peer =
+            AccountControlUiOwnerSourcesFixture.withPeer(
+                AccountControlUiOwnerSourcesFixture.CALLER);
+        var issued = issuance.issueAccount(request)) {
+      compact = new String(issued.compactBytes(), StandardCharsets.US_ASCII);
+    }
+    assertThat(actors.authenticateAccount(compact).accountId()).isEqualTo(account.getAccountUuid());
+    return new IssuedAccount(account, compact, actors, f);
+  }
+
+  record IssuedAccount(
+      net.firedevops.firemud.accountservice.entity.Account account,
+      String compact,
+      AccountControlUiActorService actors,
+      AccountControlUiOwnerSourcesFixture sources) {}
+
   // These fixture entry points use actual Account owners with test-only creator/legal,
   // environment, signer-platform and Redis inputs. They confer no production authority.
   public net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec.Request

@@ -41,7 +41,9 @@ import net.firedevops.firemud.common.account.AccountProfileJson;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 
-/** Shared fake Account runtime authority for cross-service gameplay tests. */
+/**
+ * Shared test-only Account runtime fake; its responses establish no canonical runtime authority.
+ */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
     implements AutoCloseable {
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
@@ -70,6 +72,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final Map<String, Long> accountIdsByUuid = new ConcurrentHashMap<>();
   private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
   private final Map<String, StubConnectScope> connectScopesById = new ConcurrentHashMap<>();
+  private final Map<String, StubJoinOutcome> joinOutcomesByRequestId = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
     this(port, Clock.systemUTC());
@@ -166,7 +169,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     realmAccessGranted.set(granted);
   }
 
-  public void resetRuntimeState() {
+  public synchronized void resetRuntimeState() {
     authenticateRequests.clear();
     membershipLifecycleState.set("ACTIVE");
     gameplayAdmissionAllowed.set(true);
@@ -181,6 +184,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         .values()
         .forEach(id -> accountIdsByUuid.put(accountUuidForTestFixture(id), id));
     connectScopesById.clear();
+    joinOutcomesByRequestId.clear();
   }
 
   @Override
@@ -265,27 +269,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       IssueDirectTextConnectScopeRequest request,
       StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
-    if (caller.getAccountId().isBlank()
-        || resolveRegisteredAccountId(caller.getAccountId()) == null
-        || caller.getTenantId().isBlank()
-        || caller.getRealmId().isBlank()
-        || caller.getRequestId().isBlank()
-        || caller.getGameInstanceId().isBlank()
-        || caller.getPlayableStateNamespaceId().isBlank()
-        || caller.getPlayableStateScope().isBlank()
-        || request.getTenantId().isBlank()
-        || request.getRealmId().isBlank()
-        || request.getGameInstanceId().isBlank()
-        || request.getWorldSlug().isBlank()
-        || request.getRealmSlug().isBlank()
-        || request.getPlayableStateNamespaceId().isBlank()
-        || request.getPlayableStateScope().isBlank()
+    if (!isValidDirectTextCaller(caller)
+        || !isBoundedText(request.getWorldSlug(), 128)
+        || !isBoundedText(request.getRealmSlug(), 128)
         || request.getCatalogRevision() <= 0
         || request.getPointerVersion() <= 0
-        || !isCanonicalUuid(caller.getRealmId())
-        || !isCanonicalUuid(request.getRealmId())
-        || !isCanonicalUuid(caller.getPlayableStateNamespaceId())
-        || !isCanonicalUuid(request.getPlayableStateNamespaceId())
         || !caller.getTenantId().equals(request.getTenantId())
         || !caller.getRealmId().equals(request.getRealmId())
         || !caller.getGameInstanceId().equals(request.getGameInstanceId())
@@ -327,25 +315,49 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       return false;
     }
     try {
-      return UUID.fromString(value).toString().equals(value);
+      UUID parsed = UUID.fromString(value);
+      return !parsed.equals(new UUID(0L, 0L)) && parsed.toString().equals(value);
     } catch (IllegalArgumentException ex) {
       return false;
     }
   }
 
+  private boolean isValidDirectTextCaller(PlayerExecutionContext caller) {
+    return resolveRegisteredAccountId(caller.getAccountId()) != null
+        && isCanonicalUuid(caller.getTenantId())
+        && isCanonicalUuid(caller.getRealmId())
+        && isCanonicalUuid(caller.getGameInstanceId())
+        && isCanonicalUuid(caller.getPlayableStateNamespaceId())
+        && Set.of("SHARED", "ISOLATED").contains(caller.getPlayableStateScope())
+        && isPositiveTransportSession(caller.getSessionId())
+        && isBoundedText(caller.getRequestId(), 128);
+  }
+
+  private static boolean isPositiveTransportSession(String value) {
+    if (value.length() > 32 || !value.matches("[0-9]+")) {
+      return false;
+    }
+    try {
+      return Long.parseLong(value) > 0;
+    } catch (NumberFormatException ex) {
+      return false;
+    }
+  }
+
+  private static boolean isBoundedText(String value, int maximumLength) {
+    return !value.isBlank() && value.length() <= maximumLength;
+  }
+
   @Override
-  public void joinPublicProductionMembership(
+  public synchronized void joinPublicProductionMembership(
       JoinPublicProductionMembershipRequest request,
       StreamObserver<JoinPublicProductionMembershipResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
     StubConnectScope scope = connectScopesById.get(request.getConnectScopeId());
-    if (request.getConnectScopeId().isBlank()
-        || request.getRequestId().isBlank()
+    if (!isBoundedText(request.getConnectScopeId(), 2048)
+        || !isBoundedText(request.getRequestId(), 128)
         || !request.getRequestId().equals(caller.getRequestId())
-        || caller.getAccountId().isBlank()
-        || resolveRegisteredAccountId(caller.getAccountId()) == null
-        || caller.getTenantId().isBlank()
-        || caller.getSessionId().isBlank()
+        || !isValidDirectTextCaller(caller)
         || scope == null
         || !scope.expiresAt().isAfter(clock.instant())
         || !scope.accountId().equals(caller.getAccountId())
@@ -361,29 +373,68 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
                       .setCode("INVALID_ARGUMENT")
                       .setMessage("Direct-text JOIN request is incomplete"))
               .build());
-    } else if (!allowPublicJoin.get()) {
-      responseObserver.onNext(
-          JoinPublicProductionMembershipResponse.newBuilder()
-              .setOutcomeCode("PUBLIC_PRODUCTION_ADMISSION_DENIED")
-              .setAccountId(caller.getAccountId())
-              .setTenantId(caller.getTenantId())
-              .build());
     } else {
-      membershipLifecycleState.set("ACTIVE");
-      gameplayAdmissionAllowed.set(true);
-      responseObserver.onNext(
-          JoinPublicProductionMembershipResponse.newBuilder()
-              .setSuccess(true)
-              .setOutcomeCode("JOINED")
-              .setAccountId(caller.getAccountId())
-              .setTenantId(caller.getTenantId())
-              .setMembershipId(
-                  "stub-membership-" + caller.getAccountId() + "-" + caller.getTenantId())
-              .setMembershipVersion(1L)
-              .setMembershipAuthorityGeneration(1L)
-              .build());
+      StubJoinOutcome retained = joinOutcomesByRequestId.get(request.getRequestId());
+      if (retained != null) {
+        if (retained.request().equals(request)) {
+          var replay = retained.response().toBuilder().setReplayed(true);
+          if (retained.response().getSuccess()) {
+            // A retained membership receipt never preserves historical admission permission.
+            replay.setGameplayAdmissionAllowed(
+                "ACTIVE".equals(membershipLifecycleState.get()) && gameplayAdmissionAllowed.get());
+          }
+          responseObserver.onNext(replay.build());
+        } else {
+          responseObserver.onNext(
+              JoinPublicProductionMembershipResponse.newBuilder()
+                  .setError(
+                      ErrorDetail.newBuilder()
+                          .setCode("IDEMPOTENCY_CONFLICT")
+                          .setMessage("Direct-text JOIN request ID conflicts"))
+                  .build());
+        }
+      } else {
+        JoinPublicProductionMembershipResponse response = evaluateJoin(caller);
+        joinOutcomesByRequestId.put(request.getRequestId(), new StubJoinOutcome(request, response));
+        responseObserver.onNext(response);
+      }
     }
     responseObserver.onCompleted();
+  }
+
+  private JoinPublicProductionMembershipResponse evaluateJoin(PlayerExecutionContext caller) {
+    if ("ACTIVE".equals(membershipLifecycleState.get())) {
+      return JoinPublicProductionMembershipResponse.newBuilder()
+          .setSuccess(true)
+          .setOutcomeCode("ALREADY_ACTIVE")
+          .setAccountId(caller.getAccountId())
+          .setTenantId(caller.getTenantId())
+          .setMembershipId("1")
+          .setMembershipVersion(membershipVersion.get())
+          .setMembershipAuthorityGeneration(membershipAuthorityGeneration.get())
+          .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
+          .build();
+    } else if (!allowPublicJoin.get()) {
+      return JoinPublicProductionMembershipResponse.newBuilder()
+          .setOutcomeCode("PUBLIC_PRODUCTION_ADMISSION_DENIED")
+          .setAccountId(caller.getAccountId())
+          .setTenantId(caller.getTenantId())
+          .build();
+    } else {
+      long joinedMembershipVersion = membershipVersion.incrementAndGet();
+      membershipLifecycleState.set("ACTIVE");
+      gameplayAdmissionAllowed.set(true);
+      return JoinPublicProductionMembershipResponse.newBuilder()
+          .setSuccess(true)
+          .setOutcomeCode("JOINED")
+          .setAccountId(caller.getAccountId())
+          .setTenantId(caller.getTenantId())
+          .setMembershipId("1")
+          .setMembershipVersion(joinedMembershipVersion)
+          .setMembershipAuthorityGeneration(membershipAuthorityGeneration.get())
+          .setGameplayAdmissionAllowed(true)
+          .build();
+    }
   }
 
   @Override
@@ -487,4 +538,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       String playableStateNamespaceId,
       String playableStateScope,
       Instant expiresAt) {}
+
+  private record StubJoinOutcome(
+      JoinPublicProductionMembershipRequest request,
+      JoinPublicProductionMembershipResponse response) {}
 }

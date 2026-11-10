@@ -14,6 +14,8 @@ Game Session follows the configuration scheme from [Environment Variables & Secr
 
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`. The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT`.
 
+The authenticated TCP gameplay receiver uses a separate internal TLS listener, disabled by default and distinct from the configured ordinary HTTP port. [Security Architecture](../../system-architecture-security.md#authenticated-tcp-gateway-to-game-session-receiving) owns the mTLS trust and custody contract. The [environment and secrets catalog](../../infrastructure/environment-and-secrets-catalog.md#authenticated-tcp-gameplay-bridge) records the deployed bindings.
+
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `GAME_TICK_DURATION_MS` | Tick cadence (`tick_interval_ms`): target interval between ticks for a region | `1000` |
@@ -25,6 +27,8 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for World Management Service | `world-management-service:6565` |
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_ENABLED` | Enables the separate mTLS listener for authenticated TCP gameplay receiving. | `false` (hosted Helm: `true`) |
+| `FIREMUD_GAMEPLAY_AUTHENTICATED_LISTENER_PORT` | Port for the separate listener; must differ from the ordinary HTTP port. | `8444` (hosted Helm: `8444`) |
 
 ## FireMUD Settings Domains
 
@@ -77,3 +81,7 @@ The generated reference carries the current defaults, descriptions, valid values
 - Bounded semantic reconnect context, including its retention/resource controls, scope, and non-authority semantics, is owned by [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md#canonical-resume-context-model) and [ADR 0134](../../decisions/adr-0134-bounded-durable-semantic-reconnect-context.md). This service document links that owner rather than duplicating the full contract. Prompt/status output remains excluded from semantic reconnect context unless a future explicit transcript policy says otherwise.
 - The owner documentation records the current implementation/proof gaps for oversized-single-entry handling and namespace/schema-envelope accounting; this service document does not claim strict hard-ceiling enforcement.
 - The older internal reconnect-adjacent rendered-room snapshot helper is no longer part of the surfaced settings model and should not be treated as an authoritative `LOOK` cache.
+
+## Authenticated TCP Receiving
+
+The [Security Architecture](../../system-architecture-security.md#authenticated-tcp-gateway-to-game-session-receiving) owns the dedicated Gateway-to-Game Session mTLS configuration and custody contract. This receiver requires distinct same-namespace workload leaves and a separately reachable internal TLS port; the ordinary HTTP/WebSocket route and shared legacy TLS leaf cannot supply its authority. Public receiving accepts only actual protected LOGIN/lobby source owners. Their runtime and protected-source composition is a separate successor boundary; absent owners or source qualification remain unavailable rather than selecting numeric entitlement or legacy credential fallback. See the [player access tracker](../../../project-management/implementation-tracking/player-access-and-session.md) for current proof and missing provider boundaries.

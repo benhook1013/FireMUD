@@ -1306,6 +1306,34 @@ social_spec = social_groups["spec"]["template"]["spec"]
 social_spec["containers"][0]["name"] = "social-groups-service"
 social_spec["volumes"][0]["secret"]["secretName"] = "firemud-grpc-social-groups-service"
 documents.append(social_groups)
+gateway = next(
+    document for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "spring-cloud-gateway"
+)
+gateway_pod = gateway["spec"]["template"]["spec"]
+gateway_container = gateway_pod["containers"][0]
+gateway_container["env"] = [
+    {"name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE", "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}}},
+    {"name": "FIREMUD_GRPC_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
+    {"name": "FIREMUD_GRPC_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
+    {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+    {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH", "value": "/gameplay-client-tls/tls.crt"},
+    {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH", "value": "/gameplay-client-tls/tls.key"},
+    {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH", "value": "/gameplay-client-trust/ca.crt"},
+]
+gateway_container["volumeMounts"].extend([
+    {"name": "gameplay-client-tls", "mountPath": "/gameplay-client-tls", "readOnly": True},
+    {"name": "gameplay-client-trust", "mountPath": "/gameplay-client-trust", "readOnly": True},
+])
+gateway_pod["volumes"].extend([
+    {"name": "gameplay-client-tls", "secret": {"secretName": "firemud-grpc-spring-cloud-gateway", "items": [
+        {"key": "tls.crt", "path": "tls.crt"}, {"key": "tls.key", "path": "tls.key"},
+    ]}},
+    {"name": "gameplay-client-trust", "secret": {"secretName": "firemud-grpc-tls", "items": [
+        {"key": "ca.crt", "path": "ca.crt"},
+    ]}},
+])
 path.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
 PY
 
@@ -9971,6 +9999,24 @@ publication_documents = [
     }
     for workload in module.GRPC_WORKLOAD_SECRET_CONSUMERS
 ]
+for document in publication_documents:
+    if document["metadata"]["name"] != "spring-cloud-gateway":
+        continue
+    pod = document["spec"]["template"]["spec"]
+    pod["volumes"][0]["name"] = "gameplay-client-tls"
+    pod["volumes"][1]["name"] = "gameplay-client-trust"
+    container = pod["containers"][0]
+    container["env"] = [
+        {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CERT_CHAIN_PATH", "value": "/gameplay-client-tls/tls.crt"},
+        {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_PRIVATE_KEY_PATH", "value": "/gameplay-client-tls/tls.key"},
+        {"name": "FIREMUD_GATEWAY_GAMEPLAY_BRIDGE_TLS_CA_CERT_PATH", "value": "/gameplay-client-trust/ca.crt"},
+        {"name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE", "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}}},
+        {"name": "FIREMUD_GRPC_CERT_CHAIN_PATH", "value": "/tls/client.crt"},
+        {"name": "FIREMUD_GRPC_PRIVATE_KEY_PATH", "value": "/tls/client.key"},
+        {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+    ]
+    container["volumeMounts"][0].update(name="gameplay-client-tls", mountPath="/gameplay-client-tls")
+    container["volumeMounts"][1].update(name="gameplay-client-trust", mountPath="/gameplay-client-trust")
 if module.PUBLICATION_GRPC_WORKLOADS != (
     "game-design-service",
     "world-management-service",
@@ -9996,7 +10042,7 @@ if {name for name, _, _ in publication_requirements} != (
     expected_workload_secret_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):
     raise SystemExit(
-        "workload Secret requirements do not follow the eight leaf bindings and shared trust binding"
+        "workload Secret requirements do not follow the nine leaf bindings and shared trust binding"
     )
 publication_keys = {name: keys for name, _, keys in publication_requirements}
 if any(namespace != "firemud" for _, namespace, _ in publication_requirements):
@@ -10029,6 +10075,19 @@ def expect_publication_static_failure(description, documents, expected_fragment=
         )
 
 
+gateway_index = module.GRPC_WORKLOAD_SECRET_CONSUMERS.index("spring-cloud-gateway")
+gateway_wrong_secret = copy.deepcopy(publication_documents)
+gateway_wrong_secret[gateway_index]["spec"]["template"]["spec"]["volumes"][0]["secret"]["secretName"] = "firemud-grpc-tls"
+expect_publication_static_failure("a Gateway client sharing its management credential", gateway_wrong_secret)
+gateway_wrong_path = copy.deepcopy(publication_documents)
+gateway_wrong_path[gateway_index]["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"] = "/tls/client.crt"
+expect_publication_static_failure("a Gateway client using the management TLS path", gateway_wrong_path)
+gateway_private_trust = copy.deepcopy(publication_documents)
+gateway_private_trust[gateway_index]["spec"]["template"]["spec"]["volumes"][1]["secret"]["items"].append({"key": "client.key", "path": "client.key"})
+expect_publication_static_failure("a Gateway client trust projection exposing a private key", gateway_private_trust)
+gateway_namespace = copy.deepcopy(publication_documents)
+gateway_namespace[gateway_index]["spec"]["template"]["spec"]["containers"][0]["env"][3] = {"name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE", "value": "other"}
+expect_publication_static_failure("a Gateway client overriding its namespace", gateway_namespace)
 social_groups_index = module.SHARED_TRUST_GRPC_WORKLOADS.index("social-groups-service")
 missing_social_groups_documents = copy.deepcopy(publication_documents)
 missing_social_groups_documents.pop(social_groups_index)
@@ -10593,7 +10652,7 @@ with patch.object(
     if module.publication_workload_secret_issues(
         publication_expected, publication_documents
     ):
-        raise SystemExit("complete eight-workload Secret fixture failed preflight")
+        raise SystemExit("complete nine-workload Secret fixture failed preflight")
 if {name for name, _, _ in queried_publication_secrets} != (
     expected_workload_secret_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):

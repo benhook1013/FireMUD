@@ -184,7 +184,7 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']",
         "firemud-hosted-identity-controller",
         "system:serviceaccount:kube-system:namespace-controller",
-        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
+        "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service|spring-cloud-gateway))$')",
     ):
         require(certificate, needle, "Certificate boundary")
     status_rules = certificate_status["matchConstraints"]["resourceRules"]
@@ -212,7 +212,7 @@ def check_contract(items: list[dict]) -> None:
         fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
-        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service|spring-cloud-gateway))$",
         "standalone Certificate validation",
     )
     for needle in (
@@ -250,6 +250,16 @@ def check_contract(items: list[dict]) -> None:
             expected_branch,
             f"standalone {workload} Certificate identity",
         )
+    require(
+        normalized_certificate_validation,
+        "(object.metadata.name.endsWith('-grpc-spring-cloud-gateway') && "
+        "object.spec.secretName == 'firemud-grpc-spring-cloud-gateway' && "
+        "object.spec.issuerRef.name == 'firemud-ca-issuer' && "
+        "(!has(object.spec.dnsNames) || object.spec.dnsNames.size() == 0) && "
+        "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/spring-cloud-gateway'] && "
+        "object.spec.usages == ['digital signature', 'key encipherment', 'client auth'])",
+        "standalone Gateway client-only identity",
+    )
     require(
         certificate_validation,
         "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer",

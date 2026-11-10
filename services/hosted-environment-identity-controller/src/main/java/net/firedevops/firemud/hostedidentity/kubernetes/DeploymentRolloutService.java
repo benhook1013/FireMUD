@@ -116,7 +116,12 @@ public class DeploymentRolloutService {
                   HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
                   HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD,
                   "social-groups-leaf",
-                  "Social Groups gRPC workload identity revision is required"))) {
+                  "Social Groups gRPC workload identity revision is required"),
+              new RequiredGrpcWorkloadRevision(
+                  HostedIdentityContract.GRPC_GATEWAY_CLIENT_ROLE,
+                  HostedIdentityContract.GRPC_GATEWAY_WORKLOAD,
+                  "gateway-client-leaf",
+                  "Gateway client workload identity revision is required"))) {
         String revision = grpcWorkloadIdentityRevisions.get(workloadRevision.role());
         if (revision == null) {
           throw new IllegalArgumentException(workloadRevision.missingRevisionMessage());
@@ -146,6 +151,7 @@ public class DeploymentRolloutService {
       requiredGrpcConsumers.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
       requiredGrpcConsumers.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
       requiredGrpcConsumers.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
+      requiredGrpcConsumers.add(HostedIdentityContract.GRPC_GATEWAY_WORKLOAD);
     }
     boolean grpcReady =
         requiredGrpcConsumers.stream()

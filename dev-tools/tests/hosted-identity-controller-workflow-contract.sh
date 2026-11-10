@@ -335,15 +335,30 @@ stop_smoke_step = runtime_steps_by_name["Stop smoke stack"]
 assert "Build controller image for credential-free local validation" not in runtime_steps_by_name
 assert "Smoke controller image entrypoint and paused health" not in runtime_steps_by_name
 assert "if" not in build_runtime_step
-assert "if" not in export_step
-assert "if" not in upload_step
+# A passed job under the bounded PLAY exception must not export images.
+# Gate publication on the native smoke outcome, never its continued conclusion.
+artifact_gate = (
+    "${{ success() && (needs.image-meta.outputs.runtime_smoke_required == 'false' "
+    "|| steps.runtime-smoke.outcome == 'success') }}"
+)
+assert export_step["if"] == artifact_gate
+assert upload_step["if"] == artifact_gate
+assert runtime_steps_by_name["Summarize secure PR runtime artifact"]["if"] == artifact_gate
+assert upload_step["id"] == "runtime-artifact"
+assert runtime_job["outputs"]["publishable"] == (
+    "${{ steps.runtime-artifact.outcome == 'success' }}"
+)
+assert run_smoke_step["id"] == "runtime-smoke"
+assert run_smoke_step["continue-on-error"] is True
+assert run_smoke_step["env"]["FIREMUD_SMOKE_ADMISSION_QUALIFICATION"] == "held"
 smoke_gate = "${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}"
 assert setup_smoke_python_step["if"] == smoke_gate
 assert setup_smoke_python_step["uses"] == "./.github/actions/setup-python"
 assert setup_smoke_python_step["with"] == {"requirements": "smoke"}
 assert run_smoke_step["if"] == smoke_gate
 assert dump_logs_step["if"] == (
-    "${{ failure() && needs.image-meta.outputs.runtime_smoke_required == 'true' "
+    "${{ always() && steps.runtime-smoke.outcome == 'failure' && "
+    "needs.image-meta.outputs.runtime_smoke_required == 'true' "
     "&& steps.minio-source.outputs.server_image_id != '' "
     "&& steps.minio-source.outputs.client_image_id != '' }}"
 )
@@ -351,6 +366,35 @@ assert stop_smoke_step["if"] == (
     "${{ always() && needs.image-meta.outputs.runtime_smoke_required == 'true' "
     "&& steps.minio-source.outputs.server_image_id != '' "
     "&& steps.minio-source.outputs.client_image_id != '' }}"
+)
+
+assert stop_smoke_step["id"] == "runtime-cleanup"
+exception_step = runtime_steps_by_name[
+    "Known canonical transition PLAY failure with successful authenticated cleanup"
+]
+assert exception_step["id"] == "canonical-play-transition"
+for condition in (
+    "always()",
+    "github.repository == 'benhook1013/FireMUD'",
+    "contains(github.event.pull_request.labels.*.name, 'canonical-play-transition')",
+    "needs.image-meta.outputs.runtime_smoke_required == 'true'",
+    "steps.runtime-smoke.outcome == 'failure'",
+    "steps.runtime-smoke.outputs.known_play_failure == 'direct-backend-play-entitlement-unavailable-after-login'",
+    "steps.runtime-cleanup.outcome == 'success'",
+):
+    assert condition in exception_step["if"], condition
+guard = runtime_steps_by_name["Require successful runtime smoke and authenticated cleanup"]
+assert guard["if"] == "${{ always() }}"
+assert guard["env"] == {
+    "RUNTIME_SMOKE_REQUIRED": "${{ needs.image-meta.outputs.runtime_smoke_required }}",
+    "RUNTIME_SMOKE_OUTCOME": "${{ steps.runtime-smoke.outcome }}",
+    "RUNTIME_CLEANUP_OUTCOME": "${{ steps.runtime-cleanup.outcome }}",
+    "KNOWN_PLAY_EXCEPTION_OUTCOME": "${{ steps.canonical-play-transition.outcome }}",
+}
+# Executed success/failure, skipped, cancelled and malformed-outcome guard cases
+# are exercised by pr-required-gate-context-contract.sh.
+assert "needs.pr-local-smoke.outputs.publishable == 'true'" in (
+    workflow["jobs"]["dispatch-pr-runtime-publication"]["if"]
 )
 
 controller_job = workflow["jobs"]["pr-controller-smoke"]
@@ -675,6 +719,7 @@ contains "$waiter" 'firemud-grpc-${workload}|grpc-publication-${workload}|tls.cr
 contains "$waiter" 'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt'
 contains "$waiter" 'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt'
 contains "$waiter" 'firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt'
+contains "$waiter" 'firemud-grpc-spring-cloud-gateway|grpc-spring-cloud-gateway|tls.crt,tls.key,ca.crt'
 for workload in \
   game-design-service \
   world-management-service \
@@ -6044,6 +6089,9 @@ if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
     firemud-grpc-social-groups-service)
       printf '%s' '{"metadata":{"name":"firemud-grpc-social-groups-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-social-groups-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
       ;;
+    firemud-grpc-spring-cloud-gateway)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-spring-cloud-gateway","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-spring-cloud-gateway","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
     *)
       printf 'unexpected projection Secret: %s\n' "$secret_name" >&2
       exit 2
@@ -6159,20 +6207,20 @@ run_projection_waiter_fixture() {
   fi
 }
 
-# Successful two-retry fixtures read 13 canonical projections plus two retries.
-run_projection_waiter_fixture projection-absence 0 15 2
+# Successful two-retry fixtures read 14 canonical projections plus two retries.
+run_projection_waiter_fixture projection-absence 0 16 2
 run_projection_waiter_fixture projection-command-failure 42 1 0 'Error from server (Forbidden)'
 run_projection_waiter_fixture projection-command-not-found 46 1 0 'Error from server (NotFound)'
 run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from server (Unauthorized)'
 run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
-run_projection_waiter_fixture projection-transport-recovery 0 15 2
+run_projection_waiter_fixture projection-transport-recovery 0 16 2
 run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
-run_projection_waiter_fixture projection-etcd-timeout-recovery 0 15 2
-run_projection_waiter_fixture projection-etcd-leader-recovery 0 15 2
-run_projection_waiter_fixture projection-overload-recovery 0 15 2
-run_projection_waiter_fixture projection-unavailable-recovery 0 15 2
-run_projection_waiter_fixture projection-currently-unavailable-recovery 0 15 2
-run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 15 2
+run_projection_waiter_fixture projection-etcd-timeout-recovery 0 16 2
+run_projection_waiter_fixture projection-etcd-leader-recovery 0 16 2
+run_projection_waiter_fixture projection-overload-recovery 0 16 2
+run_projection_waiter_fixture projection-unavailable-recovery 0 16 2
+run_projection_waiter_fixture projection-currently-unavailable-recovery 0 16 2
+run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 16 2
 
 run_active_waiter_fixture() {
   local scenario="$1"

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
+import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -521,28 +522,36 @@ class AccountRepositoryIntegrationTest {
   }
 
   @Test
-  void subscriptionForUpdateLocksOnlySubscriptionAndKeepsThatLockThroughTransaction()
-      throws Exception {
+  void canonicalSubscriptionOriginalBindingLocksRequiredOwnerChainThroughCommit() throws Exception {
+    var fixture = CanonicalHostingSubscriptionTestFixture.create(dataSource);
+    var claim =
+        fixture
+            .service()
+            .claimProvisioning(fixture.creation().requestId(), 1, UUID.randomUUID())
+            .claim();
+    assertThat(
+            fixture
+                .service()
+                .reconcile(
+                    UUID.randomUUID(),
+                    fixture.creation().requestId(),
+                    claim.subscriptionRowVersion(),
+                    fixture.providerId(),
+                    claim.attemptId())
+                .outcome())
+        .isEqualTo(AccountHostingSubscriptionLifecycleRepository.Outcome.COMMITTED);
+    var receipt = fixture.service().readCurrent(fixture.tenantId());
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
-    long accountId =
+    long unrelatedAccountId =
         Objects.requireNonNull(
             jdbc.queryForObject(
                 "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
                 Long.class,
-                "subscription-lock",
-                "subscription-lock@example.com",
+                "unrelated-subscription-lock",
+                "unrelated-subscription-lock@example.com",
                 "hash"));
-    long tenantId = 7654321L;
-    jdbc.update(
-        "INSERT INTO subscription (account_id, plan_id, status, tenant_id, entitlement_version) "
-            + "VALUES (?, 'test-plan', 'active', ?, 1)",
-        accountId,
-        tenantId);
-
     TransactionAwareDataSourceProxy transactionAwareDataSource =
         new TransactionAwareDataSourceProxy(dataSource);
-    DSLContext transactionDsl = DSL.using(transactionAwareDataSource, SQLDialect.POSTGRES);
-    SubscriptionRepository subscriptions = new SubscriptionRepository(transactionDsl);
     TransactionTemplate lockTransaction =
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     CountDownLatch subscriptionLocked = new CountDownLatch(1);
@@ -553,7 +562,15 @@ class AccountRepositoryIntegrationTest {
             () ->
                 lockTransaction.executeWithoutResult(
                     status -> {
-                      assertThat(subscriptions.findByTenantIdForUpdate(tenantId)).hasSize(1);
+                      assertThat(
+                              fixture
+                                  .intents()
+                                  .lockForLifecycle(
+                                      fixture.creation().requestId(),
+                                      receipt.current().rowVersion()))
+                          .isEqualTo(receipt.current());
+                      assertThat(fixture.intents().findCreation(fixture.creation().requestId()))
+                          .contains(fixture.creation());
                       subscriptionLocked.countDown();
                       try {
                         if (!releaseSubscriptionLock.await(10, TimeUnit.SECONDS)) {
@@ -572,16 +589,33 @@ class AccountRepositoryIntegrationTest {
       TransactionTemplate conflictingTransaction =
           new TransactionTemplate(new DataSourceTransactionManager(dataSource));
       JdbcTemplate conflictingJdbc = new JdbcTemplate(transactionAwareDataSource);
-      assertThatThrownBy(
-              () ->
-                  conflictingTransaction.executeWithoutResult(
-                      status -> {
-                        conflictingJdbc.execute("SET LOCAL lock_timeout = '250ms'");
-                        conflictingJdbc.update(
-                            "UPDATE subscription SET status = status WHERE tenant_id = ?",
-                            tenantId);
-                      }))
-          .hasMessageContaining("lock timeout");
+      // These are the mutable rows actually locked by the canonical original-binding reader.
+      // Creation intent is immutable and validated above; it is not a competing mutable row.
+      Map<String, UUID> lockedRows =
+          Map.of(
+              "SELECT 1 FROM accounts WHERE account_uuid = ? FOR UPDATE", fixture.accountUuid(),
+              "SELECT 1 FROM billing_customer WHERE account_uuid = ? FOR UPDATE",
+                  fixture.accountUuid(),
+              "SELECT 1 FROM payment_instrument WHERE instrument_uuid = ? FOR UPDATE",
+                  fixture.instrument().instrumentUuid(),
+              "SELECT 1 FROM account_tenant_billing_owners WHERE tenant_uuid = ? FOR UPDATE",
+                  fixture.tenantId(),
+              "SELECT 1 FROM subscription WHERE subscription_id = ? FOR UPDATE",
+                  fixture.creation().subscriptionId(),
+              "SELECT 1 FROM subscription_instrument_reservations WHERE request_id = ? FOR UPDATE",
+                  fixture.creation().requestId());
+      for (var row : lockedRows.entrySet()) {
+        assertThatThrownBy(
+                () ->
+                    conflictingTransaction.executeWithoutResult(
+                        status -> {
+                          conflictingJdbc.execute("SET LOCAL lock_timeout = '250ms'");
+                          conflictingJdbc.queryForObject(
+                              row.getKey(), Integer.class, row.getValue());
+                        }))
+            .as("owner-chain lock retained: %s", row.getKey())
+            .hasMessageContaining("lock timeout");
+      }
 
       Integer updatedAccounts =
           conflictingTransaction.execute(
@@ -589,8 +623,8 @@ class AccountRepositoryIntegrationTest {
                 conflictingJdbc.execute("SET LOCAL lock_timeout = '2s'");
                 return conflictingJdbc.update(
                     "UPDATE accounts SET email = ? WHERE id = ?",
-                    "subscription-lock-updated@example.com",
-                    accountId);
+                    "unrelated-subscription-lock-updated@example.com",
+                    unrelatedAccountId);
               });
       assertThat(updatedAccounts).isEqualTo(1);
     } finally {
@@ -601,6 +635,19 @@ class AccountRepositoryIntegrationTest {
         executor.shutdownNow();
       }
     }
+    // The same real owner operation succeeds from an independent transaction after holder commit.
+    lockTransaction.executeWithoutResult(
+        status -> {
+          jdbc.execute("SET LOCAL lock_timeout = '2s'");
+          assertThat(
+                  fixture
+                      .intents()
+                      .lockForLifecycle(
+                          fixture.creation().requestId(), receipt.current().rowVersion()))
+              .isEqualTo(receipt.current());
+        });
+    assertThat(fixture.intents().findCreation(fixture.creation().requestId()))
+        .contains(fixture.creation());
   }
 
   @Test
@@ -643,16 +690,13 @@ class AccountRepositoryIntegrationTest {
             null,
             null,
             null,
-            null,
             grants,
             null,
             null,
             null,
             null,
             null,
-            null,
-            null,
-            null,
+            org.mockito.Mockito.mock(RetainedSubscriptionEvidenceRepository.class),
             null,
             null,
             null,
