@@ -137,6 +137,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
       upstreamConnector =
           upstreamHandler -> client.execute(upstreamUri, upstreamHeaders, upstreamHandler);
     } else {
+      upstreamHeaders.remove(TRANSPORT_SESSION_HEADER);
       upstreamHeaders.set("X-Client-IP", origin.clientAddress());
       upstreamHeaders.set("X-Proxy-Connection-Id", origin.proxyConnectionId().toString());
       upstreamHeaders.set(CONNECTION_MODE_HEADER, "trusted_tcp_proxy");
@@ -254,7 +255,9 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
                     downstream.getId());
               }
               return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
-                  .then(connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
+                  .flatMap(
+                      ignored ->
+                          connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
             })
         .onErrorResume(
             GameplayBridgeTerminalCloseException.class,
@@ -292,7 +295,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler, SmartLi
           downstream.getId());
     }
     return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
-        .then(connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
+        .flatMap(ignored -> connectWithRetry(downstream, upstreamConnector, state, attempt + 1));
   }
 
   private Mono<Void> bridgeUpstreamSession(

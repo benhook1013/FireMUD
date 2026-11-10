@@ -82,7 +82,12 @@ class DirectTextWorldSelectionServiceTest {
     assertThat(foreignOwner.encodeSnapshot(menu)).isEmpty();
     assertThat(source.encodeSnapshot(null)).isEmpty();
     assertThat(source.restoreSnapshot(original)).isEmpty();
-    assertThat(source.resolve(menu, "1")).isEmpty();
+    if (expired) {
+      assertThatThrownBy(() -> source.resolve(menu, "1"))
+          .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
+    } else {
+      assertThat(source.resolve(menu, "1")).isEmpty();
+    }
     assertThat(reads.get()).isEqualTo(2);
     verifyNoInteractions(reader);
   }
@@ -120,7 +125,8 @@ class DirectTextWorldSelectionServiceTest {
     clearInvocations(reader);
     clock.now = NOW.plusSeconds(300);
     assertThat(replacement.restoreSnapshot(stored)).isEmpty();
-    assertThat(replacement.resolve(restored, "1")).isEmpty();
+    assertThatThrownBy(() -> replacement.resolve(restored, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     verifyNoInteractions(reader);
   }
 
@@ -479,8 +485,10 @@ class DirectTextWorldSelectionServiceTest {
     assertThat(service.resolve(refreshed, "1")).containsSame(revised);
     clock.now = NOW.plusSeconds(300);
     clearInvocations(reader);
-    assertThat(service.resolve(oldMenu, "1")).isEmpty();
-    assertThat(service.resolve(refreshed, "1")).isEmpty();
+    assertThatThrownBy(() -> service.resolve(oldMenu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
+    assertThatThrownBy(() -> service.resolve(refreshed, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     verifyNoInteractions(reader);
   }
 
@@ -555,10 +563,31 @@ class DirectTextWorldSelectionServiceTest {
     int before = catalogReads.get();
     clock.now = NOW.plusSeconds(300);
 
-    assertThat(service.resolve(menu, "1")).isEmpty();
+    assertThatThrownBy(() -> service.resolve(menu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     clock.now = NOW.plusSeconds(301);
-    assertThat(service.resolve(menu, "studio/forest")).isEmpty();
+    assertThatThrownBy(() -> service.resolve(menu, "studio/forest"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
     assertThat(catalogReads.get()).isEqualTo(before);
+    verifyNoInteractions(reader);
+  }
+
+  @Test
+  void expiryOutcomeRequiresTheExactOwnerAndDoesNotClassifyFutureMenusAsExpired() {
+    var first = target("");
+    var catalog = GameplayWorldCatalog.forWorldViews(List.of(world(first)));
+    var service = service(catalog, List.of(first));
+    var menu = service.browse().orElseThrow();
+    var foreignOwner = service(catalog, List.of(first));
+    clearInvocations(reader);
+
+    clock.now = menu.expiresAt();
+    assertThatThrownBy(() -> service.resolve(menu, "1"))
+        .isInstanceOf(DirectTextWorldSelectionService.ExpiredWorldSelectionException.class);
+    assertThat(foreignOwner.resolve(menu, "1")).isEmpty();
+
+    clock.now = NOW.minusNanos(1);
+    assertThat(service.resolve(menu, "1")).isEmpty();
     verifyNoInteractions(reader);
   }
 
@@ -583,9 +612,9 @@ class DirectTextWorldSelectionServiceTest {
             });
     assertThat(service.resolve(menu, "1")).isEmpty();
 
-    clock.now = NOW;
     when(reader.readCurrentTarget(first)).thenReturn(first);
     onCatalogRead.set(() -> clock.now = NOW.plusSeconds(300));
+    clock.now = NOW;
     assertThat(service.resolve(menu, "1")).isEmpty();
   }
 

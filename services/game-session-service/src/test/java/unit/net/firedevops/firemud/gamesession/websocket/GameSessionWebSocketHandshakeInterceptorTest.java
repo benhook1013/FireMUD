@@ -112,6 +112,7 @@ class GameSessionWebSocketHandshakeInterceptorTest {
     assertThat(observed.proxyConnectionId()).isEqualTo(UUID.fromString(proxyConnectionId));
     assertThat(observed.transportSessionId())
         .isEqualTo(attributes.get(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR));
+    assertThat(observed.transportSessionId()).matches("\\d+");
     assertThat(observed.transportSessionId()).isNotEqualTo(proxyConnectionId);
   }
 
@@ -155,6 +156,11 @@ class GameSessionWebSocketHandshakeInterceptorTest {
     var duplicateMode = authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
     duplicateMode.addHeader("X-Firemud-Connection-Mode", "first_party_web");
     assertRejected(duplicateMode);
+    var transportOverride =
+        authenticatedRequest("spiffe://firemud/ns/test/sa/spring-cloud-gateway");
+    transportOverride.addHeader(
+        GameSessionWebSocketHandshakeInterceptor.TRANSPORT_SESSION_HEADER, "999999");
+    assertRejected(transportOverride);
   }
 
   @Test

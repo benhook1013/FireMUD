@@ -1995,6 +1995,7 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(consumerSchema, statusProperties.get("grpcAccountService"));
     assertEquals(consumerSchema, statusProperties.get("grpcGameSessionService"));
     assertEquals(consumerSchema, statusProperties.get("grpcSocialGroupsService"));
+    assertEquals(consumerSchema, statusProperties.get("grpcGatewayClient"));
     assertEquals(
         consumerSchema,
         publicationSchema.get("additionalProperties"),

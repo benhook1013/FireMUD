@@ -48,6 +48,7 @@ public final class AuthenticatedDirectTextIngress {
         || address.contains("%")
         || !address.matches("[0-9a-fA-F:.]+")
         || !"trusted_tcp_proxy".equals(mode)
+        || headers.containsHeader("X-Firemud-Transport-Session-Id")
         || headers.containsHeader("X-Firemud-Connect-Context")) throw unavailable();
     String canonicalAddress = java.net.InetAddress.ofLiteral(address).getHostAddress();
     var observed =

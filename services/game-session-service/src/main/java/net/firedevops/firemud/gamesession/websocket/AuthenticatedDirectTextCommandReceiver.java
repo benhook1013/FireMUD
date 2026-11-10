@@ -5,6 +5,7 @@ import java.util.Map;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.ExpiredWorldSelectionException;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
@@ -114,6 +115,9 @@ public final class AuthenticatedDirectTextCommandReceiver {
       };
     } catch (AuthenticatedDirectTextSessions.LoginRequiredException missingLogin) {
       return failure("LOGIN_REQUIRED", "Use LOGIN <email> <password> before REALMS or JOIN");
+    } catch (ExpiredWorldSelectionException expiredSelection) {
+      return failure(
+          "INVALID_ARGUMENT", "World menu expired. Run WORLDS and choose a listed selector again.");
     } catch (UnknownWorldSelectorException unknownSelector) {
       return failure(
           "INVALID_ARGUMENT",

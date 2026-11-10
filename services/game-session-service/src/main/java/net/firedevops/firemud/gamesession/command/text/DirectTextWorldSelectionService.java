@@ -125,16 +125,21 @@ public final class DirectTextWorldSelectionService {
    *
    * @throws UnknownWorldSelectorException when a nonblank selector does not uniquely match a choice
    *     in a live menu owned by this service
+   * @throws ExpiredWorldSelectionException when this service's exact menu has expired before the
+   *     resolution begins
    */
   public Optional<CanonicalPlayableTarget> resolve(SelectionSnapshot retained, String selector) {
-    if (retained == null
-        || retained.owner != this
-        || selector == null
-        || selector.isBlank()
-        || !isLive(retained.snapshot)) {
+    if (retained == null || retained.owner != this || selector == null || selector.isBlank()) {
       return Optional.empty();
     }
     Snapshot snapshot = retained.snapshot;
+    Instant now = clock.instant();
+    if (now.isBefore(snapshot.createdAt())) {
+      return Optional.empty();
+    }
+    if (!now.isBefore(snapshot.expiresAt())) {
+      throw new ExpiredWorldSelectionException();
+    }
     Optional<Choice> selected = select(snapshot.choices(), selector);
     if (selected.isEmpty()) {
       throw new UnknownWorldSelectorException();
@@ -290,6 +295,15 @@ public final class DirectTextWorldSelectionService {
 
     public UnknownWorldSelectorException() {
       super("Unknown or ambiguous world selector");
+    }
+  }
+
+  /** The exact selection owner's retained menu expired before resolution began. */
+  public static final class ExpiredWorldSelectionException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public ExpiredWorldSelectionException() {
+      super("World selection menu expired");
     }
   }
 

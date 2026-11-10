@@ -16,6 +16,7 @@ import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService;
+import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.ExpiredWorldSelectionException;
 import net.firedevops.firemud.gamesession.command.text.DirectTextWorldSelectionService.UnknownWorldSelectorException;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandPayload;
@@ -136,6 +137,41 @@ class AuthenticatedDirectTextCommandReceiverTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo("Unknown or ambiguous world selector. Run WORLDS and choose a listed selector.");
+    verifyNoInteractions(fixture.lobby);
+  }
+
+  @Test
+  void expiredRealmMenuReturnsActionableInvalidArgumentAfterTheGuardedLobbyCall() {
+    var fixture = fixture();
+    when(fixture.lobby.realms(null, null, fixture.connection, fixture.connection.menu, "demo"))
+        .thenThrow(new ExpiredWorldSelectionException());
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket,
+            new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("World menu expired. Run WORLDS and choose a listed selector again.");
+    verify(fixture.lobby).realms(null, null, fixture.connection, fixture.connection.menu, "demo");
+  }
+
+  @Test
+  void expiredJoinMenuReturnsActionableInvalidArgumentBeforeLobbyDispatch() {
+    var fixture = fixture();
+    when(fixture.selections.resolve(fixture.connection.menu, "demo"))
+        .thenThrow(new ExpiredWorldSelectionException());
+
+    var result =
+        fixture.receiver.receive(
+            fixture.socket, new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("World menu expired. Run WORLDS and choose a listed selector again.");
     verifyNoInteractions(fixture.lobby);
   }
 
