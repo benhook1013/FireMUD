@@ -3,24 +3,30 @@ package net.firedevops.firemud.gamesession.service;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceCustodyRejectedException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourcePreparedDenyException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.TrustedPublicJwksSource;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 
 /**
  * Pins current Account provenance once and requires the exact protected mounted bytes each load.
  */
 public final class GameSessionAccountPublicJwksSource implements TrustedPublicJwksSource {
-  private final TrustedPublicJwksSource account;
+  private final Supplier<ReadResult> account;
   private final ProtectedAccountPublicJwksProjection projection;
   private final String namespace;
   private SourceIdentity pinned;
-  private boolean quarantined;
+  private volatile boolean quarantined;
+  private volatile boolean preparedDenied;
+  private final java.util.concurrent.atomic.AtomicLong preparedDenyEpoch =
+      new java.util.concurrent.atomic.AtomicLong();
   private byte[] lastAcceptedBytes;
 
   public GameSessionAccountPublicJwksSource(AccountPublicJwksReadClient account, String namespace) {
@@ -31,7 +37,7 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
   }
 
   GameSessionAccountPublicJwksSource(
-      TrustedPublicJwksSource account,
+      Supplier<ReadResult> account,
       ProtectedAccountPublicJwksProjection projection,
       String namespace) {
     this.account = Objects.requireNonNull(account);
@@ -45,8 +51,31 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
   /** Initializes from authenticated Account evidence, never from configured identity strings. */
   public synchronized SourceIdentity sourceIdentity() {
     if (quarantined) throw new SourceCustodyRejectedException();
-    if (pinned == null) load();
+    if (pinned == null) {
+      try {
+        load();
+      } catch (SourcePreparedDenyException denied) {
+        // An authenticated deny supplies the lifetime pin without qualifying any keys.
+        if (pinned == null) throw denied;
+      }
+    }
     return pinned;
+  }
+
+  @Override
+  public boolean isPreparedDenied() {
+    // Cache calls this under its own monitor; never wait for an in-flight remote read.
+    return preparedDenied;
+  }
+
+  @Override
+  public boolean isCustodyRejected() {
+    return quarantined;
+  }
+
+  @Override
+  public long preparedDenyEpoch() {
+    return preparedDenyEpoch.get();
   }
 
   @Override
@@ -58,9 +87,9 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
     boolean qualifiedTransition = false;
     try {
       first = projection.read();
-      PublicJwksSnapshot before = requireSnapshot(account.load());
+      ReadResult before = requireResult(account.get(), null);
       requireBytes(before, first);
-      PublicJwksSnapshot after = requireSnapshot(account.load());
+      ReadResult after = requireResult(account.get(), before.sourceIdentity());
       last = projection.read();
       if (!before.sourceIdentity().equals(after.sourceIdentity())) {
         throw new InvalidJwksException();
@@ -79,10 +108,22 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
         qualifiedTransition = true;
         throw new SourceUnavailableException();
       }
+      if (preparedDenied) {
+        AccountPublicJwksCache.validatePublicJwks(first);
+        if (!before.committedRecoveryEligible() || !after.committedRecoveryEligible()) {
+          throw new SourcePreparedDenyException();
+        }
+      }
       pinned = before.sourceIdentity();
       if (lastAcceptedBytes != null) Arrays.fill(lastAcceptedBytes, (byte) 0);
       lastAcceptedBytes = first.clone();
-      return new PublicJwksSnapshot(pinned, first);
+      boolean recoveryEligible =
+          before.committedRecoveryEligible() && after.committedRecoveryEligible();
+      preparedDenied = false;
+      return new PublicJwksSnapshot(pinned, first, recoveryEligible, preparedDenyEpoch.get());
+    } catch (SourcePreparedDenyException denied) {
+      // A valid prepared deny is recoverable and never installs bytes or renews cache age.
+      throw denied;
     } catch (SourceUnavailableException unavailable) {
       // A network outage cannot conceal local custody loss or changed projected content.
       try {
@@ -111,16 +152,27 @@ public final class GameSessionAccountPublicJwksSource implements TrustedPublicJw
     }
   }
 
-  private PublicJwksSnapshot requireSnapshot(PublicJwksSnapshot snapshot) {
-    if (snapshot == null
-        || !namespace.equals(snapshot.sourceIdentity().namespace())
-        || (pinned != null && !pinned.equals(snapshot.sourceIdentity()))) {
+  private ReadResult requireResult(ReadResult result, SourceIdentity expected) {
+    if (result == null
+        || result.sourceIdentity() == null
+        || !namespace.equals(result.sourceIdentity().namespace())
+        || (pinned != null && !pinned.equals(result.sourceIdentity()))
+        || (expected != null && !expected.equals(result.sourceIdentity()))) {
       throw new InvalidJwksException();
     }
-    return snapshot;
+    if (result.preparedDeny()) {
+      if (pinned == null) pinned = result.sourceIdentity();
+      if (!preparedDenied) {
+        if (preparedDenyEpoch.get() == Long.MAX_VALUE) throw new InvalidJwksException();
+        preparedDenyEpoch.incrementAndGet();
+      }
+      preparedDenied = true;
+      throw new SourcePreparedDenyException();
+    }
+    return result;
   }
 
-  private void requireBytes(PublicJwksSnapshot snapshot, byte[] expected) {
+  private void requireBytes(ReadResult snapshot, byte[] expected) {
     byte[] actual = snapshot.jwksBytes();
     try {
       if (actual == null) throw new InvalidJwksException();

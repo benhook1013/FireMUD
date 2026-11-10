@@ -102,6 +102,8 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         String.class);
     assertMandatoryWritable("readPreparedGenerationForRecovery", Binding.class, TrustFence.class);
     assertMandatoryWritable(
+        "readPreparedPrivatePromotionReceiptForRecovery", Binding.class, TrustFence.class);
+    assertMandatoryWritable(
         "readAndMarkPreparedPromotionDispatched", Binding.class, TrustFence.class);
     assertMandatoryWritable(
         "readCurrentCommittedSigner", Binding.class, TrustFence.class, String.class, String.class);
@@ -148,6 +150,10 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
     try {
       assertThatThrownBy(() -> repository.readPreparedGenerationForRecovery(BINDING, TRUST))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Writable Account transaction");
+      assertThatThrownBy(
+              () -> repository.readPreparedPrivatePromotionReceiptForRecovery(BINDING, TRUST))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Writable Account transaction");
       assertThatThrownBy(() -> repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST))
@@ -432,7 +438,29 @@ class AccountJwtSignerDesiredStateRepositoryTest {
 
     String exactPrivateReceiptDigest =
         (String) conversation.preparedPromotionValues.get("private_promotion_receipt_digest");
+    var exactPrivateRecovery =
+        inWritableTransaction(
+            () ->
+                conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(
+                    BINDING, TRUST));
+    assertThat(exactPrivateRecovery.promotionOperationId())
+        .isEqualTo(conversation.preparedPromotionId);
+    assertThat(exactPrivateRecovery.generationOperationId()).isEqualTo(result.operationId());
+    assertThat(exactPrivateRecovery.receiptDigest()).isEqualTo(exactPrivateReceiptDigest);
+    int statementsBeforeRecovery = conversation.executedStatements.size();
     conversation.preparedPromotionValues.put("private_promotion_receipt_digest", "0".repeat(64));
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(
+                            BINDING, TRUST)))
+        .isExactlyInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+        .hasMessageContaining("private promotion receipt digest is invalid");
+    assertThat(
+            conversation.executedStatements.subList(
+                statementsBeforeRecovery, conversation.executedStatements.size()))
+        .noneMatch(sql -> sql.contains("UPDATE ") || sql.contains("INSERT "));
     assertThatThrownBy(
             () ->
                 inWritableTransaction(

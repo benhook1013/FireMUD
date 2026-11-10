@@ -177,6 +177,68 @@ class GameSessionAccountPublicJwksConfigurationTest {
   }
 
   @Test
+  void preparedStartupStaysEmptyAndScheduledInvocationRequiresEligibleRecovery() throws Exception {
+    var source = mock(GameSessionAccountPublicJwksSource.class);
+    SourceIdentity identity =
+        new SourceIdentity(
+            "test",
+            "cluster",
+            "11111111-1111-4111-8111-111111111111",
+            "test",
+            "22222222-2222-4222-8222-222222222222",
+            "33333333-3333-4333-8333-333333333333",
+            "revision-1",
+            "https://kubernetes.example:6443",
+            "a".repeat(64));
+    var generator = java.security.KeyPairGenerator.getInstance("RSA");
+    generator.initialize(3072);
+    var key = (java.security.interfaces.RSAPublicKey) generator.generateKeyPair().getPublic();
+    String json =
+        "{\"keys\":[{\"kty\":\"RSA\",\"use\":\"sig\",\"alg\":\"RS256\","
+            + "\"kid\":\"known\",\"n\":\""
+            + unsigned(key.getModulus().toByteArray())
+            + "\",\"e\":\""
+            + unsigned(key.getPublicExponent().toByteArray())
+            + "\"}]}";
+    byte[] bytes = json.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    var denied = new java.util.concurrent.atomic.AtomicBoolean(true);
+    when(source.sourceIdentity()).thenReturn(identity);
+    when(source.isPreparedDenied()).thenAnswer(invocation -> denied.get());
+    when(source.load()).thenThrow(new AccountPublicJwksCache.SourcePreparedDenyException());
+    var cache =
+        new GameSessionAccountPublicJwksConfiguration().accountPublicJwksCache(source, 2000);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    var scheduler = mock(ScheduledExecutorService.class);
+    var task = ArgumentCaptor.forClass(Runnable.class);
+    try (var refresh =
+        new GameSessionAccountPublicJwksConfiguration.PublicJwksRefresh(
+            cache, Duration.ofSeconds(2), scheduler)) {
+      verify(scheduler)
+          .scheduleWithFixedDelay(task.capture(), eq(1000L), eq(1000L), eq(TimeUnit.MILLISECONDS));
+      org.mockito.Mockito.doThrow(new SourceUnavailableException()).when(source).load();
+      task.getValue().run();
+      assertThatThrownBy(() -> cache.keyFor("known"))
+          .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+      denied.set(false);
+      // An unqualified snapshot, including PREPUBLISHED beside an older commit, cannot recover.
+      org.mockito.Mockito.doReturn(new PublicJwksSnapshot(identity, bytes, false))
+          .when(source)
+          .load();
+      task.getValue().run();
+      assertThatThrownBy(() -> cache.keyFor("known"))
+          .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+      // Source tests prove the Account and protected same-pin mount gate behind this flag.
+      org.mockito.Mockito.doReturn(new PublicJwksSnapshot(identity, bytes, true))
+          .when(source)
+          .load();
+      task.getValue().run();
+      assertThat(cache.keyFor("known")).isEqualTo(key);
+    }
+    verify(scheduler).shutdownNow();
+  }
+
+  @Test
   void boundedProactiveRefreshSurvivesDenialAndStopsAtContextShutdown() {
     for (long age : new long[] {2000, 300000}) {
       var cache = mock(AccountPublicJwksCache.class);
@@ -188,10 +250,15 @@ class GameSessionAccountPublicJwksConfigurationTest {
       verify(scheduler)
           .scheduleWithFixedDelay(
               task.capture(), eq(age / 2), eq(age / 2), eq(TimeUnit.MILLISECONDS));
-      doThrow(new SourceUnavailableException()).doNothing().when(cache).refresh();
+      doThrow(new AccountPublicJwksCache.SourcePreparedDenyException())
+          .doThrow(new SourceUnavailableException())
+          .doNothing()
+          .when(cache)
+          .refresh();
       task.getValue().run();
       task.getValue().run();
-      verify(cache, times(2)).refresh();
+      task.getValue().run();
+      verify(cache, times(3)).refresh();
       refresh.close();
       verify(scheduler).shutdownNow();
     }

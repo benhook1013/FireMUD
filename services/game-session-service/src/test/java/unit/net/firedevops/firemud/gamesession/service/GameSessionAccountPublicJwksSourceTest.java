@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +19,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
@@ -25,9 +29,11 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwks
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceCustodyRejectedException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourcePreparedDenyException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.TrustedPublicJwksSource;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.UnknownKeyException;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -399,6 +405,204 @@ class GameSessionAccountPublicJwksSourceTest {
     }
   }
 
+  @Test
+  void separatelyObservedCustodyRejectionImmediatelyBlocksWarmCachedKeys() throws Exception {
+    var fixture = new PublicationFixture();
+    var cache = fixture.cache();
+    cache.refresh();
+    assertThat(cache.keyFor("known")).isEqualTo(fixture.key);
+    byte[] original = fixture.mounted.get();
+    fixture.mounted.set("tampered".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertInvalid(fixture.source);
+    assertThat(fixture.source.isCustodyRejected()).isTrue();
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(InvalidJwksException.class);
+    fixture.mounted.set(original);
+    assertThatThrownBy(cache::refresh).isInstanceOf(InvalidJwksException.class);
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(InvalidJwksException.class);
+  }
+
+  @Test
+  void preparedDenyAtStartupPinsIdentityAndRecoversOnlyFromEligibleCommittedSnapshot()
+      throws Exception {
+    var fixture = new PublicationFixture();
+    assertThat(fixture.source.preparedDenyEpoch()).isZero();
+    fixture.denied.set(true);
+    assertThat(fixture.source.sourceIdentity()).isEqualTo(fixture.pin.get());
+    assertThat(fixture.source.isPreparedDenied()).isTrue();
+    assertThat(fixture.source.preparedDenyEpoch()).isEqualTo(1);
+    var cache = fixture.cache();
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.denied.set(false);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    assertThat(fixture.source.isPreparedDenied()).isTrue();
+    fixture.recoveryEligible.set(true);
+    cache.refresh();
+    assertThat(fixture.source.isPreparedDenied()).isFalse();
+    assertThat(cache.keyFor("known")).isEqualTo(fixture.key);
+    assertThat(fixture.source.sourceIdentity()).isEqualTo(fixture.pin.get());
+    assertThat(fixture.source.preparedDenyEpoch()).isEqualTo(1);
+    fixture.denied.set(true);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    assertThat(fixture.source.preparedDenyEpoch()).isEqualTo(2);
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(SourcePreparedDenyException.class);
+  }
+
+  @Test
+  void startupPreparedDenyNeverPermitsSourceReplacement() throws Exception {
+    for (boolean wrongNamespace : new boolean[] {false, true}) {
+      var fixture = new PublicationFixture();
+      fixture.denied.set(true);
+      SourceIdentity original = fixture.source.sourceIdentity();
+      fixture.pin.set(
+          wrongNamespace ? identity("other", "revision-1") : identity("test", "revision-2"));
+      assertInvalid(fixture.source);
+      fixture.pin.set(original);
+      fixture.denied.set(false);
+      fixture.recoveryEligible.set(true);
+      assertInvalid(fixture.source);
+      assertThatThrownBy(fixture.source::sourceIdentity)
+          .isInstanceOf(SourceCustodyRejectedException.class);
+    }
+  }
+
+  @Test
+  void separatelyObservedDenyBlocksWarmCachedKeysThroughoutOutageWithoutRenewingAge()
+      throws Exception {
+    var fixture = new PublicationFixture();
+    var cache = fixture.cache();
+    cache.refresh();
+    fixture.advance(5);
+    fixture.denied.set(true);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.unavailable.set(true);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourceUnavailableException.class);
+    assertThatThrownBy(cache::refresh).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.advance(6);
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.unavailable.set(false);
+    fixture.denied.set(false);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.recoveryEligible.set(true);
+    cache.refresh();
+    assertThat(cache.keyFor("known")).isEqualTo(fixture.key);
+    fixture.advance(10);
+    fixture.unavailable.set(true);
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(SourceUnavailableException.class);
+  }
+
+  @Test
+  void recoveryRequiresBothEligibleAccountReadsAndCoherentMountedBytes() throws Exception {
+    var fixture = new PublicationFixture();
+    fixture.source.load();
+    fixture.denied.set(true);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.denied.set(false);
+    fixture.afterAccountRead.set(() -> fixture.recoveryEligible.set(true));
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    assertThat(fixture.source.isPreparedDenied()).isTrue();
+    fixture.publishNext();
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourceUnavailableException.class);
+    assertThat(fixture.source.isPreparedDenied()).isTrue();
+    fixture.converge();
+    PublicJwksSnapshot recovered = fixture.source.load();
+    assertThat(recovered.committedRecoveryEligible()).isTrue();
+    assertThat(recovered.jwksBytes()).containsExactly(fixture.current.get());
+    assertThat(fixture.source.isPreparedDenied()).isFalse();
+  }
+
+  @Test
+  void cachedKeyDenialDoesNotWaitForBlockedSamePinRecoveryLoad() throws Exception {
+    var fixture = new PublicationFixture();
+    var cache = fixture.cache();
+    cache.refresh();
+    fixture.denied.set(true);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.denied.set(false);
+    fixture.recoveryEligible.set(true);
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    fixture.beforeAccountRead.set(
+        () -> {
+          entered.countDown();
+          try {
+            if (!release.await(3, TimeUnit.SECONDS))
+              throw new IllegalStateException("test timeout");
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(interrupted);
+          }
+        });
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var recovering = executor.submit(fixture.source::load);
+      try {
+        assertThat(entered.await(3, TimeUnit.SECONDS)).isTrue();
+        var denied =
+            executor.submit(
+                () -> {
+                  assertThat(fixture.source.isPreparedDenied()).isTrue();
+                  assertThatThrownBy(() -> cache.keyFor("known"))
+                      .isInstanceOf(SourcePreparedDenyException.class);
+                });
+        denied.get(1, TimeUnit.SECONDS);
+        cache.invalidateKid("known");
+      } finally {
+        release.countDown();
+      }
+      assertThat(recovering.get(3, TimeUnit.SECONDS).committedRecoveryEligible()).isTrue();
+    }
+    cache.refresh();
+    assertThatThrownBy(() -> cache.keyFor("known")).isInstanceOf(UnknownKeyException.class);
+  }
+
+  @Test
+  void secondAccountReadDenyLatchesBeforeReturningAnySnapshot() throws Exception {
+    var fixture = new PublicationFixture();
+    fixture.source.load();
+    fixture.afterAccountRead.set(() -> fixture.denied.set(true));
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    assertThat(fixture.source.isPreparedDenied()).isTrue();
+    fixture.denied.set(false);
+    fixture.recoveryEligible.set(true);
+    assertThat(fixture.source.load().sourceIdentity()).isEqualTo(fixture.pin.get());
+    assertThat(fixture.source.isPreparedDenied()).isFalse();
+  }
+
+  @Test
+  void preparedDenyCannotHideReplacementIdentityOrLocalTampering() throws Exception {
+    for (boolean replaceIdentity : new boolean[] {false, true}) {
+      var fixture = new PublicationFixture();
+      fixture.source.load();
+      fixture.denied.set(true);
+      assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+      if (replaceIdentity) fixture.pin.set(identity("test", "revision-2"));
+      else when(fixture.projection.read()).thenThrow(new IllegalArgumentException("unsafe"));
+      assertInvalid(fixture.source);
+      fixture.denied.set(false);
+      fixture.recoveryEligible.set(true);
+      fixture.pin.set(identity("test", "revision-1"));
+      doAnswer(invocation -> fixture.mounted.get().clone()).when(fixture.projection).read();
+      assertInvalid(fixture.source);
+    }
+  }
+
+  @Test
+  void malformedSnapshotAfterDenyRemainsTerminalEvenWithoutRecoveryEligibility() throws Exception {
+    var fixture = new PublicationFixture();
+    fixture.source.load();
+    fixture.denied.set(true);
+    assertThatThrownBy(fixture.source::load).isInstanceOf(SourcePreparedDenyException.class);
+    fixture.denied.set(false);
+    fixture.current.set("{broken".getBytes(StandardCharsets.US_ASCII));
+    fixture.converge();
+    assertInvalid(fixture.source);
+    fixture.publishNext();
+    fixture.converge();
+    fixture.recoveryEligible.set(true);
+    assertInvalid(fixture.source);
+  }
+
   private static RSAPublicKey newPublicKey() {
     try {
       var generator = KeyPairGenerator.getInstance("RSA");
@@ -434,8 +638,12 @@ class GameSessionAccountPublicJwksSourceTest {
   private static final class PublicationFixture {
     private static final RSAPublicKey SHARED_KEY = newPublicKey();
     private final RSAPublicKey key = SHARED_KEY;
+    private final AtomicReference<Runnable> beforeAccountRead = new AtomicReference<>();
     private final AtomicReference<Runnable> afterAccountRead = new AtomicReference<>();
     private final AtomicInteger accountReads = new AtomicInteger();
+    private final AtomicReference<Boolean> denied = new AtomicReference<>(false);
+    private final AtomicReference<Boolean> recoveryEligible = new AtomicReference<>(false);
+    private final AtomicReference<Boolean> unavailable = new AtomicReference<>(false);
     private final AtomicReference<SourceIdentity> pin =
         new AtomicReference<>(identity("test", "revision-1"));
     private final AtomicReference<byte[]> current = new AtomicReference<>(publicJwks(key, "known"));
@@ -449,15 +657,24 @@ class GameSessionAccountPublicJwksSourceTest {
     private PublicationFixture() throws Exception {
       when(projection.read()).thenAnswer(invocation -> mounted.get().clone());
       source =
-          source(
+          new GameSessionAccountPublicJwksSource(
               () -> {
                 accountReads.incrementAndGet();
-                var snapshot = new PublicJwksSnapshot(pin.get(), current.get());
+                Runnable before = beforeAccountRead.getAndSet(null);
+                if (before != null) before.run();
+                if (unavailable.get()) throw new SourceUnavailableException();
+                var snapshot =
+                    new ReadResult(
+                        pin.get(),
+                        denied.get() ? new byte[0] : current.get(),
+                        denied.get(),
+                        !denied.get() && recoveryEligible.get());
                 Runnable action = afterAccountRead.getAndSet(null);
                 if (action != null) action.run();
                 return snapshot;
               },
-              projection);
+              projection,
+              "test");
     }
 
     private AccountPublicJwksCache cache() {
@@ -482,7 +699,19 @@ class GameSessionAccountPublicJwksSourceTest {
 
   private static GameSessionAccountPublicJwksSource source(
       TrustedPublicJwksSource account, ProtectedAccountPublicJwksProjection projection) {
-    return new GameSessionAccountPublicJwksSource(account, projection, "test");
+    return new GameSessionAccountPublicJwksSource(
+        () -> {
+          PublicJwksSnapshot snapshot = account.load();
+          return snapshot == null
+              ? null
+              : new ReadResult(
+                  snapshot.sourceIdentity(),
+                  snapshot.jwksBytes(),
+                  false,
+                  snapshot.committedRecoveryEligible());
+        },
+        projection,
+        "test");
   }
 
   private static ProtectedAccountPublicJwksProjection projection(byte[] before, byte[] after)

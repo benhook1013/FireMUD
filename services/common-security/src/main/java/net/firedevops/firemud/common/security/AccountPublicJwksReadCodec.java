@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString;
 import net.firedevops.firemud.account.v1.AccountPublicJwksSourceIdentity;
 import net.firedevops.firemud.account.v1.GetCurrentAccountPublicJwksRequest;
 import net.firedevops.firemud.account.v1.GetCurrentAccountPublicJwksResponse;
+import net.firedevops.firemud.account.v1.GetCurrentAccountPublicJwksResponse.Disposition;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 
@@ -11,7 +12,7 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdent
 public final class AccountPublicJwksReadCodec {
   public static final int MAX_REQUEST_BYTES = 32;
   public static final int MAX_RESPONSE_BYTES = AccountPublicJwksCache.MAX_JWKS_BYTES + 2048;
-  private static final int SCHEMA_VERSION = 1;
+  private static final int SCHEMA_VERSION = 2;
 
   private AccountPublicJwksReadCodec() {}
 
@@ -28,16 +29,16 @@ public final class AccountPublicJwksReadCodec {
     }
   }
 
-  /** Producer accepts only the snapshot already checked by Account's real trusted source. */
+  /** Ordinary snapshots do not assert current committed promotion evidence. */
   public static GetCurrentAccountPublicJwksResponse response(PublicJwksSnapshot snapshot) {
     if (snapshot == null) throw new InvalidFrameException();
-    SourceIdentity source = snapshot.sourceIdentity();
-    byte[] bytes = snapshot.jwksBytes();
-    if (bytes == null
-        || bytes.length == 0
-        || bytes.length > AccountPublicJwksCache.MAX_JWKS_BYTES) {
-      throw new InvalidFrameException();
-    }
+    return response(new ReadResult(snapshot.sourceIdentity(), snapshot.jwksBytes(), false, false));
+  }
+
+  /** Producer classification comes only from Account's verified current owner evidence. */
+  public static GetCurrentAccountPublicJwksResponse response(ReadResult result) {
+    if (result == null) throw new InvalidFrameException();
+    SourceIdentity source = result.sourceIdentity();
     var identity =
         AccountPublicJwksSourceIdentity.newBuilder()
             .setEnvironmentId(source.environmentId())
@@ -54,26 +55,49 @@ public final class AccountPublicJwksReadCodec {
         GetCurrentAccountPublicJwksResponse.newBuilder()
             .setSchemaVersion(SCHEMA_VERSION)
             .setSourceIdentity(identity)
-            .setPublicJwks(ByteString.copyFrom(bytes))
-            .build();
-    snapshot(response);
-    return response;
+            .setDisposition(
+                result.preparedDeny() ? Disposition.PREPARED_DENY : Disposition.SNAPSHOT);
+    if (!result.preparedDeny()) {
+      response.setPublicJwks(ByteString.copyFrom(result.jwksBytes()));
+      response.setCommittedRecoveryEligible(result.committedRecoveryEligible());
+    }
+    var built = response.build();
+    result(built);
+    return built;
   }
 
+  /** A deny is never a snapshot and cannot be mistaken for ordinary source unavailability. */
   public static PublicJwksSnapshot snapshot(GetCurrentAccountPublicJwksResponse response) {
+    ReadResult result = result(response);
+    if (result.preparedDeny()) throw new InvalidFrameException();
+    return new PublicJwksSnapshot(
+        result.sourceIdentity(), result.jwksBytes(), result.committedRecoveryEligible());
+  }
+
+  public static ReadResult result(GetCurrentAccountPublicJwksResponse response) {
     if (response == null
         || response.getSchemaVersion() != SCHEMA_VERSION
         || !response.hasSourceIdentity()
         || !response.getUnknownFields().asMap().isEmpty()
         || !response.getSourceIdentity().getUnknownFields().asMap().isEmpty()
-        || response.getSerializedSize() > MAX_RESPONSE_BYTES
-        || response.getPublicJwks().isEmpty()
-        || response.getPublicJwks().size() > AccountPublicJwksCache.MAX_JWKS_BYTES) {
+        || response.getSerializedSize() > MAX_RESPONSE_BYTES) {
       throw new InvalidFrameException();
+    }
+    boolean deny;
+    switch (response.getDisposition()) {
+      case SNAPSHOT -> {
+        deny = false;
+        if (!response.hasCommittedRecoveryEligible()) throw new InvalidFrameException();
+      }
+      case PREPARED_DENY -> {
+        deny = true;
+        if (response.hasCommittedRecoveryEligible()) throw new InvalidFrameException();
+      }
+      default -> throw new InvalidFrameException();
     }
     var source = response.getSourceIdentity();
     try {
-      return new PublicJwksSnapshot(
+      return new ReadResult(
           new SourceIdentity(
               source.getEnvironmentId(),
               source.getClusterId(),
@@ -84,9 +108,35 @@ public final class AccountPublicJwksReadCodec {
               source.getBindingRevision(),
               source.getApiServerOrigin(),
               source.getServingCaSha256()),
-          response.getPublicJwks().toByteArray());
+          response.getPublicJwks().toByteArray(),
+          deny,
+          response.getCommittedRecoveryEligible());
     } catch (IllegalArgumentException invalid) {
       throw new InvalidFrameException();
+    }
+  }
+
+  /** Public-only owner result. Wire presence and closed-disposition checks remain in the codec. */
+  public record ReadResult(
+      SourceIdentity sourceIdentity,
+      byte[] jwksBytes,
+      boolean preparedDeny,
+      boolean committedRecoveryEligible) {
+    public ReadResult {
+      if (sourceIdentity == null
+          || jwksBytes == null
+          || jwksBytes.length > AccountPublicJwksCache.MAX_JWKS_BYTES
+          || (preparedDeny
+              ? jwksBytes.length != 0 || committedRecoveryEligible
+              : jwksBytes.length == 0)) {
+        throw new InvalidFrameException();
+      }
+      jwksBytes = jwksBytes.clone();
+    }
+
+    @Override
+    public byte[] jwksBytes() {
+      return jwksBytes.clone();
     }
   }
 
