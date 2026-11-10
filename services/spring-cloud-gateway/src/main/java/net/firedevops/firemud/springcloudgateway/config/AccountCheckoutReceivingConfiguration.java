@@ -3,6 +3,7 @@ package net.firedevops.firemud.springcloudgateway.config;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLException;
@@ -19,13 +20,13 @@ import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RateLimiter;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.Ordered;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.server.ServerWebExchange;
@@ -98,14 +99,11 @@ public final class AccountCheckoutReceivingConfiguration {
       GatewayProperties gatewayProperties,
       ReactiveStringRedisTemplate redisTemplate,
       @Qualifier("gatewayClientIpKeyResolver") KeyResolver keyResolver,
-      ApplicationContext applicationContext) {
+      @Qualifier(RedisRateLimiter.REDIS_SCRIPT_NAME) RedisScript<List<Long>> script) {
     Objects.requireNonNull(redisTemplate, "Gateway Redis rate limiting must be available");
     GatewayRateLimiterConfig.DefaultRequestRateLimiterArguments arguments =
         GatewayRateLimiterConfig.defaultRequestRateLimiterArguments(gatewayProperties);
-    RedisRateLimiter rateLimiter =
-        new RedisRateLimiter(
-            arguments.replenishRate(), arguments.burstCapacity(), arguments.requestedTokens());
-    rateLimiter.setApplicationContext(applicationContext);
+    var rateLimiter = new AccountCheckoutReceivingRateLimiter(redisTemplate, script, arguments);
     return receivingRateLimitWebFilter(rateLimiter, keyResolver);
   }
 

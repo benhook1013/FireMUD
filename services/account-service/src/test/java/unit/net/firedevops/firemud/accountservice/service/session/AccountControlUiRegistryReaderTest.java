@@ -110,7 +110,30 @@ class AccountControlUiRegistryReaderTest {
     AccountControlUiRegistryReader reader = new AccountControlUiRegistryReader(() -> connection);
 
     assertThatThrownBy(() -> reader.readActive(TOKEN_HASH))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class);
+  }
+
+  @Test
+  void refusesMissingKeyWithoutReportingRegistryUnavailable() {
+    StatefulRedisConnection<byte[], byte[]> connection = mock(StatefulRedisConnection.class);
+    ClientOptions options = mock(ClientOptions.class);
+    @SuppressWarnings("unchecked")
+    RedisCommands<byte[], byte[]> commands = mock(RedisCommands.class);
+    when(connection.isOpen()).thenReturn(true);
+    when(connection.getOptions()).thenReturn(options);
+    when(options.isAutoReconnect()).thenReturn(false);
+    when(connection.sync()).thenReturn(commands);
+    when(commands.aclWhoami()).thenReturn(AccountControlUiRegistryReader.REQUIRED_ACL_IDENTITY);
+    when(commands.get(any(byte[].class))).thenReturn(null);
+
+    AccountControlUiRegistryReader reader = new AccountControlUiRegistryReader(() -> connection);
+
+    assertThatThrownBy(() -> reader.readActive(TOKEN_HASH))
+        .isInstanceOf(IllegalStateException.class)
+        .isNotInstanceOf(AccountControlUiRegistryReader.RegistryUnavailableException.class);
+    verify(commands).aclWhoami();
+    verify(commands).get(any(byte[].class));
   }
 
   @Test

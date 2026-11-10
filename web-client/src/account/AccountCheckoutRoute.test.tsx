@@ -227,7 +227,7 @@ describe('App-owned first-invoice route', () => {
     expect(loadStripeClient).not.toHaveBeenCalled();
   });
 
-  it.each([429, 0])(
+  it.each([0, 429, 502, 503])(
     'shows safe temporary feedback for sign-in status %i without retrying',
     async (status) => {
       const { api } = setupApp();

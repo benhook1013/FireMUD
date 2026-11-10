@@ -10,6 +10,7 @@ import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.account.v1.AccountControlUiAuthLoginStatus;
 import net.firedevops.firemud.account.v1.AuthLoginRequest;
 import net.firedevops.firemud.account.v1.AuthLoginResponse;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
@@ -28,12 +29,14 @@ class AccountControlUiAuthenticationGrpcServiceTest {
     var result = new Result();
     receiver.authLogin(AuthLoginRequest.getDefaultInstance(), result);
     assertThat(result.failureCode).isEqualTo(Status.Code.PERMISSION_DENIED);
+    var wrongPeer = new Result();
     Context.current()
         .withValue(
             GrpcPeerIdentity.CONTEXT_KEY,
             GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/game-session-service")
                 .orElseThrow())
-        .run(() -> receiver.authLogin(AuthLoginRequest.getDefaultInstance(), result));
+        .run(() -> receiver.authLogin(AuthLoginRequest.getDefaultInstance(), wrongPeer));
+    assertThat(wrongPeer.failureCode).isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(issuer, actors);
   }
 
@@ -47,7 +50,8 @@ class AccountControlUiAuthenticationGrpcServiceTest {
     when(credential.expiresAt()).thenReturn(Instant.ofEpochSecond(2_000_000_300L));
     when(issuer.issueAccount(any())).thenReturn(credential);
     var actor = mock(AccountControlUiActorService.AccountAuthenticatedActor.class);
-    when(actor.accountId()).thenReturn(UUID.randomUUID());
+    UUID accountId = UUID.randomUUID();
+    when(actor.accountId()).thenReturn(accountId);
     when(actors.authenticateAccount("controlled.compact.jwt")).thenReturn(actor);
     var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
     var request = request("test");
@@ -60,6 +64,9 @@ class AccountControlUiAuthenticationGrpcServiceTest {
     assertThat(result.failureCode).isNull();
     assertThat(result.completed).isTrue();
     assertThat(result.value.toString()).doesNotContain(request.secret(), request.email());
+    assertThat(result.value.getAccountIdList()).containsExactly(accountId.toString());
+    assertThat(result.value.getAuthTokenList()).containsExactly("controlled.compact.jwt");
+    assertThat(result.value.getExpiresAtEpochSecondsList()).containsExactly(2_000_000_300L);
     assertThat(returned).containsOnly((byte) 0);
     verify(credential).close();
     verify(actors).authenticateAccount("controlled.compact.jwt");
@@ -88,6 +95,9 @@ class AccountControlUiAuthenticationGrpcServiceTest {
                     AccountControlUiAuthenticationGrpcCodec.toRequest(request("test")), denied));
     assertThat(denied.failureCode).isNull();
     assertThat(denied.completed).isTrue();
+    assertThat(denied.value.getStatusList())
+        .containsExactly(
+            AccountControlUiAuthLoginStatus.ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_DENIED);
     assertThat(denied.value.toString()).doesNotContain("not disclosed", "controlled-secret");
     verifyNoInteractions(actors);
   }

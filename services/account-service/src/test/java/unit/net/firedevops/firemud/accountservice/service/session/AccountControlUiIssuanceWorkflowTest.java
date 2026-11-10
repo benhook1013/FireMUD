@@ -144,7 +144,7 @@ class AccountControlUiIssuanceWorkflowTest {
       }
       try (var ignored = fixture.withPeer(ISSUER)) {
         assertThatThrownBy(() -> fixture.service().issue(request, fixture.environment))
-            .isInstanceOf(IllegalArgumentException.class);
+            .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
       }
       verify(fixture.operations, never()).beginRecoveryFailure(any());
       verifyNoInteractions(fixture.registry, fixture.primary, fixture.signers);
@@ -400,7 +400,7 @@ class AccountControlUiIssuanceWorkflowTest {
                               conflict.request(
                                   conflict.tenant, conflict.context, "test-only-secret"),
                               conflict.environment))
-              .isInstanceOf(IllegalArgumentException.class);
+              .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
         } else {
           assertThatThrownBy(() -> conflict.service().issueAccount(conflict.accountRequest()))
               .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
@@ -589,17 +589,19 @@ class AccountControlUiIssuanceWorkflowTest {
             Clock.fixed(NOW, ZoneOffset.UTC),
             300_000L,
             ISSUER);
-    assertThatThrownBy(
-            () ->
-                issuer.issue(
-                    new AccountControlUiIssuanceService.Request(
-                        f.requestId,
-                        "owner@example.test",
-                        "controlled-secret",
-                        f.tenant,
-                        f.context),
-                    f.environment))
-        .isInstanceOf(IllegalStateException.class);
+    try (var ignored = f.withPeer(ISSUER)) {
+      assertThatThrownBy(
+              () ->
+                  issuer.issue(
+                      new AccountControlUiIssuanceService.Request(
+                          f.requestId,
+                          "owner@example.test",
+                          "controlled-secret",
+                          f.tenant,
+                          f.context),
+                      f.environment))
+          .isInstanceOf(IllegalStateException.class);
+    }
     org.mockito.Mockito.verifyNoInteractions(f.primary, f.operations, f.signers, f.registry);
   }
 

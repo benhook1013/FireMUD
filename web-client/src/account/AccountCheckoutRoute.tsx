@@ -331,7 +331,7 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
     } catch (error) {
       if (
         error instanceof AccountControlUiApiError &&
-        [0, 429, 503].includes(error.status)
+        [0, 429, 502, 503].includes(error.status)
       ) {
         setMessage(
           'Account sign-in is temporarily unavailable. Try again later.'

@@ -465,7 +465,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       CapturedEnvironmentBoundary environment,
       AccountControlUiOwnerSourcesFixture sources) {}
 
-  /** Same-package reuse of genuine certified ACCOUNT issuance, separate from tenant creation. */
+  /** Returns the fixture's authenticated Account Coordination Redis URI. */
   RedisURI receivingCoordinationUri() {
     return receivingCoordinationUri;
   }
@@ -479,6 +479,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     return f.createCertifiedGlobalAccount(password);
   }
 
+  /** Same-package reuse of genuine certified ACCOUNT issuance, separate from tenant creation. */
   IssuedAccount issueCertifiedAccount(String password) {
     var account = f.createCertifiedGlobalAccount(password);
     var request =
