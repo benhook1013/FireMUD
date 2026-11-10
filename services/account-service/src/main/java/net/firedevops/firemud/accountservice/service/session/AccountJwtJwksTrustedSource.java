@@ -762,6 +762,11 @@ public final class AccountJwtJwksTrustedSource
     return new SourceUnavailableException();
   }
 
+  /** Keeps the private custody category distinct at the Account public-read boundary. */
+  static boolean isSourceRejected(RuntimeException failure) {
+    return failure instanceof SourceRejectedException;
+  }
+
   private static SourceRejectedException rejected() {
     return new SourceRejectedException();
   }

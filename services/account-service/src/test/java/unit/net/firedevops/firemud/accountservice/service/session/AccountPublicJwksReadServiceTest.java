@@ -82,6 +82,30 @@ class AccountPublicJwksReadServiceTest {
   }
 
   @Test
+  void rejectsProducerBytesAsPublicationFailureAfterAcceptingRequest() {
+    when(guard.requireCaller()).thenReturn(caller);
+    when(source.sourceIdentity()).thenReturn(PIN);
+    for (byte[] bytes :
+        new byte[][] {new byte[0], new byte[AccountPublicJwksCache.MAX_JWKS_BYTES + 1]}) {
+      when(source.load()).thenReturn(new AccountPublicJwksCache.PublicJwksSnapshot(PIN, bytes));
+      assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
+          .isExactlyInstanceOf(AccountPublicJwksCache.InvalidJwksException.class)
+          .hasNoCause();
+    }
+    when(source.load()).thenReturn(null);
+    assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
+        .isExactlyInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+  }
+
+  @Test
+  void preservesUnclassifiedHandlerFaultForReceiverAvailabilityMapping() {
+    when(guard.requireCaller()).thenReturn(caller);
+    var fault = new IllegalStateException("unclassified internal fault");
+    when(source.sourceIdentity()).thenThrow(fault);
+    assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request())).isSameAs(fault);
+  }
+
+  @Test
   void refusesChangedSourceOrProtectedGuardAndPreservesTemporaryOutageType() {
     when(guard.requireCaller()).thenReturn(caller);
     when(source.sourceIdentity()).thenReturn(PIN);
