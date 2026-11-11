@@ -170,8 +170,19 @@ public class AccountJwtSignerDesiredStateRepository {
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
   public Optional<DesiredState> readEnrollmentState(Binding expectedBinding) {
     requireAccountTransaction();
+    return readEnrollmentState(expectedBinding, false);
+  }
+
+  /** Pins the enrollment row before a writable recovery read; it never changes owner state. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<DesiredState> readLockedEnrollmentState(Binding expectedBinding) {
+    requireWritableAccountTransaction();
+    return readEnrollmentState(expectedBinding, true);
+  }
+
+  private Optional<DesiredState> readEnrollmentState(Binding expectedBinding, boolean lock) {
     Objects.requireNonNull(expectedBinding, "Expected JWT signer binding is required");
-    Record row = selectState(expectedBinding.environmentId(), false);
+    Record row = selectState(expectedBinding.environmentId(), lock);
     if (row == null) {
       return Optional.empty();
     }

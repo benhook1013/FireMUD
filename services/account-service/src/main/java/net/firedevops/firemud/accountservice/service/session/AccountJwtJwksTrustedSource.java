@@ -62,6 +62,7 @@ public final class AccountJwtJwksTrustedSource
   private static final String ACCOUNT_SERVICE_USERNAME_PREFIX = "system:serviceaccount:";
   private static final String ACCOUNT_SERVICE_NAME = "account-service";
   private static final int MAX_KEYS = 64;
+  private static final int MAX_PUBLIC_READ_TRIALS = 3;
   private static final java.util.Set<String> JWKS_FIELDS = java.util.Set.of("keys");
   private static final java.util.Set<String> REQUIRED_JWK_FIELDS =
       java.util.Set.of("kty", "use", "alg", "kid", "n", "e");
@@ -158,19 +159,31 @@ public final class AccountJwtJwksTrustedSource
 
   /** Reads the public-only disposition; PREPARED denial grants no cached-key authority. */
   public ReadResult currentPublicRead() {
-    synchronized (pinMonitor) {
-      VerifiedSource verified = readVerifiedSource(true);
-      TrustedPin expected = trustedPin;
-      if (expected != null && !expected.equals(verified.pin())) {
-        throw rejected();
+    io.grpc.Context incoming = io.grpc.Context.current();
+    TrustedPin expected = trustedPin;
+    if (expected == null) {
+      synchronized (pinMonitor) {
+        expected = trustedPin;
+        if (expected == null) {
+          VerifiedSource verified = readVerifiedSource(true, incoming);
+          requirePublicReadActive(true, incoming, verified.ownerMovementObserved());
+          trustedPin = verified.pin();
+          return publicReadResult(verified.pin(), verified, incoming);
+        }
       }
-      if (expected == null) {
-        trustedPin = verified.pin();
-      }
-      return new ReadResult(
-          verified.pin().sourceIdentity(), verified.jwksBytes(),
-          verified.preparedDeny(), verified.committedRecoveryEligible());
     }
+    return publicReadResult(expected, readVerifiedSource(true, incoming), incoming);
+  }
+
+  private static ReadResult publicReadResult(
+      TrustedPin expected, VerifiedSource verified, io.grpc.Context incoming) {
+    requirePublicReadActive(true, incoming, verified.ownerMovementObserved());
+    if (!expected.equals(verified.pin())) throw rejected();
+    return new ReadResult(
+        verified.pin().sourceIdentity(),
+        verified.jwksBytes(),
+        verified.preparedDeny(),
+        verified.committedRecoveryEligible());
   }
 
   private VerifiedSource readVerifiedSource() {
@@ -178,98 +191,165 @@ public final class AccountJwtJwksTrustedSource
   }
 
   private VerifiedSource readVerifiedSource(boolean allowPreparedDeny) {
-    Binding materializerBefore = currentMaterializerBinding();
-    BindingIdentity apiBefore = currentApiIdentity();
-    requireBindingsAgree(materializerBefore, apiBefore);
-    TrustedPin alreadyPinned = trustedPin;
-    if (alreadyPinned != null
-        && (!alreadyPinned.materializerBinding().equals(materializerBefore)
-            || !alreadyPinned.apiIdentity().equals(apiBefore))) {
-      throw rejected();
-    }
+    return readVerifiedSource(allowPreparedDeny, io.grpc.Context.current());
+  }
 
-    OwnerProjection ownerBefore =
-        currentOwnerProjection(materializerBefore, apiBefore, allowPreparedDeny);
-    SourceIdentity pinnedIdentity =
-        sourceIdentity(materializerBefore, apiBefore, ownerBefore.projection().configMapUid());
-    if (alreadyPinned != null && !alreadyPinned.sourceIdentity().equals(pinnedIdentity)) {
-      throw rejected();
-    }
-
-    ConfigMapSnapshot live;
-    try {
-      live = configMapClient.observe();
-    } catch (AccountJwtJwksConfigMapClient.ResourceMissingException unavailable) {
-      requireUnchangedProtectedTrust(materializerBefore, apiBefore);
-      throw unavailable();
-    } catch (AccountJwtJwksConfigMapClient.ApiFailureException failure) {
-      requireUnchangedProtectedTrust(materializerBefore, apiBefore);
-      if (isTemporaryApiFailure(failure.statusCode())) {
-        throw unavailable();
-      }
-      throw rejected();
-    } catch (AccountJwtJwksConfigMapClient.BindingRejectedException trustRejected) {
-      throw rejected();
-    } catch (RuntimeException unexpected) {
-      throw rejected();
-    }
-
-    Binding materializerAfter = currentMaterializerBinding();
-    BindingIdentity apiAfter = currentApiIdentity();
-    if (!materializerBefore.equals(materializerAfter) || !apiBefore.equals(apiAfter)) {
-      throw rejected();
-    }
-
-    OwnerProjection ownerAfter =
-        currentOwnerProjection(materializerAfter, apiAfter, allowPreparedDeny);
-    if (!ownerBefore.equals(ownerAfter)) {
-      // The public read has not qualified the intervening live source. An outage response could
-      // preserve cached keys across PREPARED; only the ordinary issuance adapter retains retry.
-      if (allowPreparedDeny) throw rejected();
-      throw unavailable();
-    }
-    PublishedProjection projection = ownerAfter.projection();
-    if (ownerAfter.pendingPrepublication() != null) {
+  private VerifiedSource readVerifiedSource(boolean allowPreparedDeny, io.grpc.Context incoming) {
+    TrustedPin anchor = trustedPin;
+    boolean ownerMovementObserved = false;
+    int totalTrials = allowPreparedDeny ? MAX_PUBLIC_READ_TRIALS : 1;
+    for (int trial = 0; trial < totalTrials; trial++) {
       try {
-        requireUnreceiptedPrepublicationReadback(ownerAfter, live);
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        Binding materializerBefore = currentMaterializerBinding();
+        BindingIdentity apiBefore = currentApiIdentity();
+        requireBindingsAgree(materializerBefore, apiBefore);
+        if (anchor != null
+            && (!anchor.materializerBinding().equals(materializerBefore)
+                || !anchor.apiIdentity().equals(apiBefore))) {
+          throw rejected();
+        }
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        OwnerProjection ownerBefore =
+            currentOwnerProjection(materializerBefore, apiBefore, allowPreparedDeny);
+        SourceIdentity identity =
+            sourceIdentity(materializerBefore, apiBefore, ownerBefore.projection().configMapUid());
+        if (anchor == null) anchor = new TrustedPin(materializerBefore, apiBefore, identity);
+        if (!anchor.sourceIdentity().equals(identity)) throw rejected();
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+
+        ConfigMapSnapshot live;
+        try {
+          live = configMapClient.observe();
+        } catch (AccountJwtJwksConfigMapClient.ResourceMissingException unavailable) {
+          requireUnchangedProtectedTrust(materializerBefore, apiBefore);
+          throw unavailable();
+        } catch (AccountJwtJwksConfigMapClient.ApiFailureException failure) {
+          requireUnchangedProtectedTrust(materializerBefore, apiBefore);
+          if (isTemporaryApiFailure(failure.statusCode())) throw unavailable();
+          throw rejected();
+        } catch (AccountJwtJwksConfigMapClient.BindingRejectedException trustRejected) {
+          throw rejected();
+        } catch (RuntimeException unexpected) {
+          throw rejected();
+        }
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        Binding materializerAfter = currentMaterializerBinding();
+        BindingIdentity apiAfter = currentApiIdentity();
+        if (!materializerBefore.equals(materializerAfter) || !apiBefore.equals(apiAfter)) {
+          throw rejected();
+        }
+        if (allowPreparedDeny && !anchor.sourceIdentity().configMapUid().equals(live.uid())) {
+          throw rejected();
+        }
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        OwnerProjection ownerAfter =
+            currentOwnerProjection(materializerAfter, apiAfter, allowPreparedDeny);
+        boolean ownerMoved = !ownerBefore.equals(ownerAfter);
+        if (allowPreparedDeny && ownerMoved) ownerMovementObserved = true;
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        if (allowPreparedDeny
+            && !anchor
+                .sourceIdentity()
+                .equals(
+                    sourceIdentity(
+                        materializerAfter, apiAfter, ownerAfter.projection().configMapUid()))) {
+          throw rejected();
+        }
+        if (ownerMoved) {
+          if (!allowPreparedDeny) throw unavailable();
+          // Movement alone cannot qualify the intervening API bytes. Requalify the complete read
+          // only when at least one coherent bracket proves those exact bytes at the original pin.
+          if ((!qualifiesMovingProjection(ownerBefore, live)
+                  && !qualifiesMovingProjection(ownerAfter, live))
+              || trial + 1 == totalTrials) {
+            throw rejected();
+          }
+          continue;
+        }
+        PublishedProjection projection = qualifiedProjection(ownerAfter, live);
+        if (projection == null) {
+          // This complete stable trial qualified prepublication without serving unreceipted keys.
+          throw new QualifiedTemporaryRead();
+        }
+        byte[] jwks =
+            live.data()
+                .get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY)
+                .getBytes(StandardCharsets.UTF_8);
+        if (jwks.length == 0 || jwks.length > MAX_JWKS_BYTES) throw rejected();
+        boolean preparedDeny = ownerAfter.preparedPromotion() != null;
+        boolean committedRecoveryEligible =
+            !preparedDeny
+                && ownerAfter.committedSigner() != null
+                && projection.equals(committedProjection(ownerAfter.committedSigner()));
+        return new VerifiedSource(
+            anchor,
+            preparedDeny ? new byte[0] : jwks,
+            preparedDeny,
+            committedRecoveryEligible,
+            ownerMovementObserved);
+      } catch (QualifiedTemporaryRead qualifiedTemporary) {
+        // Only complete local qualification resolves movement; dependency failure never does.
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        throw unavailable();
+      } catch (SourceUnavailableException unavailableAfterObservation) {
+        if (ownerMovementObserved) throw rejected();
+        throw unavailableAfterObservation;
+      }
+    }
+    throw rejected();
+  }
+
+  private static void requirePublicReadActive(
+      boolean publicRead, io.grpc.Context incoming, boolean ownerMovementObserved) {
+    if (publicRead
+        && (Thread.currentThread().isInterrupted()
+            || incoming.isCancelled()
+            || (incoming.getDeadline() != null && incoming.getDeadline().isExpired()))) {
+      if (ownerMovementObserved) throw rejected();
+      throw unavailable();
+    }
+  }
+
+  private boolean qualifiesMovingProjection(OwnerProjection owner, ConfigMapSnapshot live) {
+    try {
+      qualifiedProjection(owner, live);
+      return true;
+    } catch (QualifiedTemporaryRead qualifiedVersionOnly) {
+      // Exact UID and complete owned bytes qualify another trial, never a moving-bracket response.
+      return true;
+    } catch (SourceRejectedException | SourceUnavailableException unqualified) {
+      return false;
+    }
+  }
+
+  private PublishedProjection qualifiedProjection(OwnerProjection owner, ConfigMapSnapshot live) {
+    PublishedProjection projection = owner.projection();
+    if (owner.pendingPrepublication() != null) {
+      try {
+        requireUnreceiptedPrepublicationReadback(owner, live);
       } catch (RuntimeException malformedOrUnproven) {
         throw rejected();
       }
-      // No snapshot, cache-age renewal or PREPARED latch before pending-key readiness.
-      throw unavailable();
+      return null;
     }
-    if (ownerAfter.preparedPromotion() != null
-        && ownerAfter
+    if (owner.preparedPromotion() != null
+        && owner
             .preparedPromotion()
             .expectedActiveMarkerJson()
             .equals(
                 live.data().get(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY))) {
-      PromotionOperationEvidence promotion = ownerAfter.preparedPromotion();
+      PromotionOperationEvidence promotion = owner.preparedPromotion();
       if (promotion.activeJwksObservedResourceVersion().isEmpty()
           && promotion.activeJwksPublicDataDigest().isEmpty()
           && promotion.activeJwksReceiptDigest().isEmpty()) {
-        projection = unreceiptedPreparedActiveProjection(ownerAfter, live);
+        projection = unreceiptedPreparedActiveProjection(owner, live);
       } else {
         projection = preparedActiveProjection(promotion);
       }
     }
     requireExactReadback(projection, live);
-
-    byte[] jwks =
-        live.data()
-            .get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY)
-            .getBytes(StandardCharsets.UTF_8);
-    if (jwks.length == 0 || jwks.length > MAX_JWKS_BYTES) {
-      throw rejected();
-    }
-    TrustedPin pin = new TrustedPin(materializerBefore, apiBefore, pinnedIdentity);
-    boolean preparedDeny = ownerAfter.preparedPromotion() != null;
-    boolean committedRecoveryEligible =
-        !preparedDeny
-            && ownerAfter.committedSigner() != null
-            && projection.equals(committedProjection(ownerAfter.committedSigner()));
-    return new VerifiedSource(
-        pin, preparedDeny ? new byte[0] : jwks, preparedDeny, committedRecoveryEligible);
+    return projection;
   }
 
   private Binding currentMaterializerBinding() {
@@ -293,10 +373,12 @@ public final class AccountJwtJwksTrustedSource
       OwnerProjection result =
           accountTransaction.execute(
               status -> {
+                Optional<DesiredState> enrollment =
+                    allowPreparedDeny
+                        ? desiredStateRepository.readLockedEnrollmentState(binding.accountBinding())
+                        : desiredStateRepository.readEnrollmentState(binding.accountBinding());
                 DesiredState enrolled =
-                    desiredStateRepository
-                        .readEnrollmentState(binding.accountBinding())
-                        .orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
+                    enrollment.orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
                 if (allowPreparedDeny && enrolled.preparedOperationId().isPresent()) {
                   return preparedProjection(enrolled, binding, api);
                 }
@@ -1055,8 +1137,8 @@ public final class AccountJwtJwksTrustedSource
     }
     if (!projection.resourceVersion().equals(live.resourceVersion())) {
       // Exact owned bytes and UID do not authorize serving a different, unreceipted version.
-      // Preserve bounded outage handling until a later exact owner-receipted publication.
-      throw unavailable();
+      // The stable caller distinguishes this exact local result from dependency unavailability.
+      throw new QualifiedTemporaryRead();
     }
   }
 
@@ -1111,6 +1193,11 @@ public final class AccountJwtJwksTrustedSource
     return new SourceRejectedException();
   }
 
+  /** Internal control flow for the two fully qualified, no-snapshot temporary windows only. */
+  private static final class QualifiedTemporaryRead extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+  }
+
   private static final class SourceRejectedException extends IllegalStateException {
     private SourceRejectedException() {
       super("Account trusted public JWKS source was rejected");
@@ -1140,5 +1227,9 @@ public final class AccountJwtJwksTrustedSource
       String publicDataDigest) {}
 
   private record VerifiedSource(
-      TrustedPin pin, byte[] jwksBytes, boolean preparedDeny, boolean committedRecoveryEligible) {}
+      TrustedPin pin,
+      byte[] jwksBytes,
+      boolean preparedDeny,
+      boolean committedRecoveryEligible,
+      boolean ownerMovementObserved) {}
 }
