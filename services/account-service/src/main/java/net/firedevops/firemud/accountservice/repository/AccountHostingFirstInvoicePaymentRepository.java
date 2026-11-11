@@ -11,6 +11,7 @@ import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePay
 import net.firedevops.firemud.accountservice.client.StripeHostingWebhookVerifier.VerifiedEvent;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.ProviderDispatch;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence;
+import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose;
 import net.firedevops.firemud.accountservice.service.session.AccountRecentReauthenticationPolicy;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -196,6 +197,94 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         .get("version", Long.class);
   }
 
+  /**
+   * Stores the original reauthentication as a durable, exact operation fence, or validates a
+   * separately bound renewal attempt against that fence or an already retained confirmation. The
+   * caller holds the current authenticated Account and exact reauthentication evidence locks.
+   */
+  public void bindReauthenticationContext(
+      UUID actor,
+      UUID subscriptionId,
+      AccountRecentReauthenticationEvidence.BillingContext context,
+      AccountRecentReauthenticationEvidence evidence) {
+    transaction();
+    Objects.requireNonNull(context);
+    Objects.requireNonNull(evidence);
+    var invoice = requireOwner(subscriptionId, actor);
+    requireCheckoutCurrent(invoice);
+    requireAwaitingPayment(invoice, context.expectedRowVersion());
+    requireContext(invoice, actor, context, evidence);
+    long currentAuthorizationVersion = authorizationVersion(subscriptionId);
+    Record original =
+        dsl.fetchOne(
+            "SELECT * FROM subscription_first_invoice_confirmations WHERE subscription_id = ? FOR UPDATE",
+            subscriptionId);
+    Record fence = operationFence(subscriptionId, true);
+    if (context.authorizationPurpose() == BillingAuthorizationPurpose.INITIAL_CONFIRMATION) {
+      if (context.expectedAuthorizationVersion() != 0L) throw refused();
+      if (fence == null) {
+        if (original != null || currentAuthorizationVersion != 0L) throw refused();
+        dsl.execute(
+            "INSERT INTO subscription_first_invoice_operation_fences (subscription_id, request_id, account_uuid, tuple_digest, "
+                + "expected_row_version, invoice_expires_at, reauthentication_evidence_id, binding_digest) "
+                + "VALUES (?, ?, ?, ?, ?, ?::timestamptz, ?, ?)",
+            subscriptionId,
+            context.originalRequestId(),
+            actor,
+            invoice.digest(),
+            context.expectedRowVersion(),
+            utc(context.invoiceExpiresAt()),
+            evidence.evidenceId(),
+            context.digest());
+        fence = operationFence(subscriptionId, true);
+      }
+      requireFenceMatches(fence, invoice, actor, context, evidence.evidenceId());
+      return;
+    }
+
+    if (context.authorizationPurpose() == BillingAuthorizationPurpose.PRE_ROW_RENEWAL) {
+      requireFenceMatches(fence, invoice, actor, context, null);
+      if (context.expectedAuthorizationVersion() != 0L) throw refused();
+      if (original == null) {
+        if (currentAuthorizationVersion != 0L
+            || dsl.fetchOne(
+                    "SELECT 1 FROM subscription_first_invoice_dispatches WHERE subscription_id = ? LIMIT 1",
+                    subscriptionId)
+                != null
+            || dsl.fetchOne(
+                    "SELECT 1 FROM subscription_first_invoice_command_claims WHERE subscription_id = ? LIMIT 1",
+                    subscriptionId)
+                != null) throw refused();
+      } else {
+        Record winner = authorization(context.authorizationRequestId());
+        if (!context.originalRequestId().equals(original.get("request_id", UUID.class))
+            || winner == null
+            || winner.get("authorization_version", Long.class) != 1L
+            || !evidence
+                .evidenceId()
+                .equals(winner.get("reauthentication_evidence_id", UUID.class))) throw refused();
+      }
+      return;
+    }
+    if (original == null
+        || !context.originalRequestId().equals(original.get("request_id", UUID.class))
+        || !context.tupleDigest().equals(original.get("tuple_digest", String.class))
+        || context.expectedRowVersion() != original.get("expected_row_version", Long.class)
+        || !actor.equals(original.get("account_uuid", UUID.class))) throw refused();
+    if (fence != null) requireFenceMatches(fence, invoice, actor, context, null);
+    Record priorAttempt = authorization(context.authorizationRequestId());
+    if (priorAttempt != null) {
+      if (priorAttempt.get("authorization_version", Long.class)
+              != context.expectedAuthorizationVersion() + 1L
+          || !evidence
+              .evidenceId()
+              .equals(priorAttempt.get("reauthentication_evidence_id", UUID.class)))
+        throw refused();
+    } else if (currentAuthorizationVersion != context.expectedAuthorizationVersion()) {
+      throw refused();
+    }
+  }
+
   public boolean hasCompleted(UUID subscriptionId) {
     transaction();
     Record row =
@@ -224,6 +313,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || !AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(reauthentication.purpose())
         || !requestId.equals(reauthentication.creationOperationId())
         || !actor.equals(reauthentication.accountId())) throw refused();
+    Record fence = operationFence(subscriptionId, true);
     Record existing =
         dsl.fetchOne(
             "SELECT * FROM subscription_first_invoice_confirmations WHERE subscription_id = ? FOR UPDATE",
@@ -237,6 +327,16 @@ public final class AccountHostingFirstInvoicePaymentRepository {
           || expectedVersion != existing.get("expected_row_version", Long.class)) throw refused();
       return authorizedDispatch(existing, authorization(requestId), invoice, false, false);
     }
+    var context = reauthentication.billingContext();
+    if (context == null
+        || context.authorizationPurpose() != BillingAuthorizationPurpose.INITIAL_CONFIRMATION
+        || !requestId.equals(context.originalRequestId())
+        || context.expectedAuthorizationVersion() != 0L
+        || context.expectedRowVersion() != expectedVersion
+        || !context.tupleDigest().equals(acceptedTupleDigest)) throw refused();
+    requireContext(invoice, actor, context, reauthentication);
+    requireFenceMatches(fence, invoice, actor, context, reauthentication.evidenceId());
+    if (authorizationVersion(subscriptionId) != 0L) throw refused();
     intents.lockForLifecycle(invoice.creationRequestId(), expectedVersion);
     Instant validUntil =
         earlier(
@@ -290,16 +390,13 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     var invoice = requireOwner(subscriptionId, actor);
     requireCheckoutCurrent(invoice);
     requireAwaitingPayment(invoice, expectedVersion);
+    Record fence = operationFence(subscriptionId, true);
     Record original =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT * FROM subscription_first_invoice_confirmations WHERE subscription_id = ? FOR UPDATE",
-                subscriptionId));
-    if (!requestId.equals(original.get("request_id", UUID.class))
-        || requestId.equals(authorizationRequestId)
+        dsl.fetchOne(
+            "SELECT * FROM subscription_first_invoice_confirmations WHERE subscription_id = ? FOR UPDATE",
+            subscriptionId);
+    if (requestId.equals(authorizationRequestId)
         || !invoice.digest().equals(acceptedTupleDigest)
-        || !acceptedTupleDigest.equals(original.get("tuple_digest", String.class))
-        || expectedVersion != original.get("expected_row_version", Long.class)
         || !actor.equals(reauthentication.accountId())
         || !AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(reauthentication.purpose())
         || !authorizationRequestId.equals(reauthentication.creationOperationId())) throw refused();
@@ -312,10 +409,42 @@ public final class AccountHostingFirstInvoicePaymentRepository {
               .equals(existing.get("reauthentication_evidence_id", UUID.class))
           || existing.get("authorization_version", Long.class) != expectedAuthorizationVersion + 1)
         throw refused();
+      if (original == null
+          || !requestId.equals(original.get("request_id", UUID.class))
+          || !acceptedTupleDigest.equals(original.get("tuple_digest", String.class))
+          || expectedVersion != original.get("expected_row_version", Long.class)) throw refused();
+      var context = reauthentication.billingContext();
+      if (context != null) {
+        requireContext(invoice, actor, context, reauthentication);
+        if (!requestId.equals(context.originalRequestId())
+            || !authorizationRequestId.equals(context.authorizationRequestId())
+            || context.expectedAuthorizationVersion() != expectedAuthorizationVersion
+            || context.expectedRowVersion() != expectedVersion
+            || !context.tupleDigest().equals(acceptedTupleDigest)
+            || (expectedAuthorizationVersion == 0L
+                && context.authorizationPurpose() != BillingAuthorizationPurpose.PRE_ROW_RENEWAL)
+            || (expectedAuthorizationVersion > 0L
+                && context.authorizationPurpose() != BillingAuthorizationPurpose.FOLLOWUP_RENEWAL))
+          throw refused();
+        if (context.authorizationPurpose() == BillingAuthorizationPurpose.PRE_ROW_RENEWAL
+            || fence != null) {
+          requireFenceMatches(fence, invoice, actor, context, null);
+        }
+      } else if (existing.get("authorization_version", Long.class) <= 1L) {
+        throw refused();
+      }
       return authorizedDispatch(original, existing, invoice, false, false);
     }
-    if (expectedAuthorizationVersion < 1
+    if (expectedAuthorizationVersion < 0L
         || authorizationVersion(subscriptionId) != expectedAuthorizationVersion) throw refused();
+    var context = reauthentication.billingContext();
+    if (context == null) throw refused();
+    requireContext(invoice, actor, context, reauthentication);
+    if (!requestId.equals(context.originalRequestId())
+        || !authorizationRequestId.equals(context.authorizationRequestId())
+        || context.expectedAuthorizationVersion() != expectedAuthorizationVersion
+        || context.expectedRowVersion() != expectedVersion
+        || !context.tupleDigest().equals(acceptedTupleDigest)) throw refused();
     Instant validUntil =
         earlier(
             invoice.expiresAt(),
@@ -324,6 +453,48 @@ public final class AccountHostingFirstInvoicePaymentRepository {
                 .plusSeconds(
                     reauthentication.recentAgeSeconds() - reauthentication.maxClockSkewSeconds()));
     if (!now().isBefore(validUntil)) throw refused();
+
+    if (original == null) {
+      if (expectedAuthorizationVersion != 0L
+          || context.authorizationPurpose() != BillingAuthorizationPurpose.PRE_ROW_RENEWAL) {
+        throw refused();
+      }
+      requireFenceMatches(fence, invoice, actor, context, null);
+      dsl.execute(
+          "INSERT INTO subscription_first_invoice_confirmations (request_id, subscription_id, account_uuid, tuple_digest, expected_row_version, "
+              + "reauthentication_evidence_id, provider_idempotency_id, lifecycle_request_id, audit_event_id, consented_at, valid_until) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
+          requestId,
+          subscriptionId,
+          actor,
+          invoice.digest(),
+          expectedVersion,
+          reauthentication.evidenceId(),
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          utc(now()),
+          utc(validUntil));
+      dsl.execute(
+          "INSERT INTO subscription_first_invoice_dispatches (request_id, subscription_id, authorized_at) VALUES (?, ?, ?::timestamptz)",
+          requestId,
+          subscriptionId,
+          utc(now()));
+      original =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT * FROM subscription_first_invoice_confirmations WHERE request_id = ?",
+                  requestId));
+    } else {
+      if (!requestId.equals(original.get("request_id", UUID.class))
+          || !acceptedTupleDigest.equals(original.get("tuple_digest", String.class))
+          || expectedVersion != original.get("expected_row_version", Long.class)
+          || !actor.equals(original.get("account_uuid", UUID.class))
+          || expectedAuthorizationVersion < 1L
+          || context.authorizationPurpose() != BillingAuthorizationPurpose.FOLLOWUP_RENEWAL)
+        throw refused();
+      if (fence != null) requireFenceMatches(fence, invoice, actor, context, null);
+    }
     retainAuthorization(
         original,
         invoice,
@@ -339,6 +510,47 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     return dsl.fetchOne(
         "SELECT * FROM subscription_first_invoice_authorizations WHERE authorization_request_id = ?",
         authorizationRequestId);
+  }
+
+  private Record operationFence(UUID subscriptionId, boolean lock) {
+    return dsl.fetchOne(
+        "SELECT * FROM subscription_first_invoice_operation_fences WHERE subscription_id = ?"
+            + (lock ? " FOR UPDATE" : ""),
+        subscriptionId);
+  }
+
+  private static void requireContext(
+      AccountHostingFirstInvoicePayment invoice,
+      UUID actor,
+      AccountRecentReauthenticationEvidence.BillingContext context,
+      AccountRecentReauthenticationEvidence evidence) {
+    if (!actor.equals(context.accountId())
+        || !invoice.subscriptionId().equals(context.subscriptionId())
+        || !invoice.digest().equals(context.tupleDigest())
+        || !invoice.expiresAt().equals(context.invoiceExpiresAt())
+        || !AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(evidence.purpose())
+        || !context.authorizationRequestId().equals(evidence.creationOperationId())
+        || !context.equals(evidence.billingContext())) throw refused();
+  }
+
+  private static void requireFenceMatches(
+      Record fence,
+      AccountHostingFirstInvoicePayment invoice,
+      UUID actor,
+      AccountRecentReauthenticationEvidence.BillingContext context,
+      UUID expectedEvidenceId) {
+    if (fence == null
+        || !invoice.subscriptionId().equals(fence.get("subscription_id", UUID.class))
+        || !context.originalRequestId().equals(fence.get("request_id", UUID.class))
+        || !actor.equals(fence.get("account_uuid", UUID.class))
+        || !invoice.digest().equals(fence.get("tuple_digest", String.class))
+        || context.expectedRowVersion() != fence.get("expected_row_version", Long.class)
+        || !context.invoiceExpiresAt().equals(instant(fence, "invoice_expires_at"))
+        || (expectedEvidenceId != null
+            && !context.digest().equals(fence.get("binding_digest", String.class)))
+        || (expectedEvidenceId != null
+            && !expectedEvidenceId.equals(fence.get("reauthentication_evidence_id", UUID.class))))
+      throw refused();
   }
 
   private void retainAuthorization(

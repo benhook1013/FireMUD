@@ -14,6 +14,11 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceController;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -29,6 +34,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.context.support.GenericWebApplicationContext;
 import org.springframework.web.servlet.DispatcherServlet;
+import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurationSupport;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 import org.testcontainers.containers.GenericContainer;
@@ -129,8 +136,12 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               hosting.webhookVerifier(),
               hosting.service(),
               issued.sources().manager);
+      var renewalGate = new OwnerEntryGate("/first-invoice/renew");
       try (var https =
-          new HttpsReceiver(temporary, new AccountHostingFirstInvoiceController(payments))) {
+              new HttpsReceiver(
+                  temporary, new AccountHostingFirstInvoiceController(payments), renewalGate);
+          var requestExecutor = new TestRequestExecutor();
+          var releaseRenewalGate = renewalGate) {
         String path =
             "/billing/hosting/subscriptions/"
                 + hosting.creation().subscriptionId()
@@ -149,7 +160,7 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         assertNoReceipt(hosting);
 
         UUID confirmation = UUID.randomUUID();
-        var proof =
+        var unboundProof =
             https.request(
                 "POST",
                 path + "/reauthenticate",
@@ -163,6 +174,25 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                     issued.account().getEmail(),
                     "secret",
                     PASSWORD));
+        assertThat(unboundProof.statusCode()).isEqualTo(409);
+        assertThat(count(hosting, "SELECT count(*) FROM account_recent_reauthentication_evidence"))
+            .isZero();
+        assertThat(
+                count(hosting, "SELECT count(*) FROM subscription_first_invoice_operation_fences"))
+            .isZero();
+        var proof =
+            https.request(
+                "POST",
+                path + "/reauthenticate",
+                issued.compact(),
+                billingReauthenticationRequest(
+                    tuple,
+                    UUID.randomUUID(),
+                    confirmation,
+                    confirmation,
+                    0L,
+                    "INITIAL_CONFIRMATION",
+                    issued.account().getEmail()));
         assertThat(proof.statusCode()).isEqualTo(200);
         UUID evidence = UUID.fromString(JSON.readTree(proof.body()).path("evidenceId").asText());
         assertThat(
@@ -173,6 +203,23 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                         evidence)
                     .get(0, String.class))
             .isEqualTo(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
+        UUID competingAuthorization = UUID.randomUUID();
+        var competingProof =
+            https.request(
+                "POST",
+                path + "/reauthenticate",
+                issued.compact(),
+                billingReauthenticationRequest(
+                    tuple,
+                    UUID.randomUUID(),
+                    competingAuthorization,
+                    confirmation,
+                    0L,
+                    "PRE_ROW_RENEWAL",
+                    issued.account().getEmail()));
+        assertThat(competingProof.statusCode()).isEqualTo(200);
+        UUID competingEvidence =
+            UUID.fromString(JSON.readTree(competingProof.body()).path("evidenceId").asText());
         Map<String, Object> consent =
             Map.of(
                 "requestId",
@@ -185,34 +232,154 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 tuple.path("tupleDigest").asText(),
                 "acceptCharge",
                 true);
+        Map<String, Object> stalePreRowRenewal =
+            Map.of(
+                "requestId",
+                confirmation,
+                "authorizationRequestId",
+                competingAuthorization,
+                "expectedRowVersion",
+                tuple.path("expectedRowVersion").asLong(),
+                "expectedAuthorizationVersion",
+                0L,
+                "reauthenticationEvidenceId",
+                competingEvidence,
+                "acceptedTupleDigest",
+                tuple.path("tupleDigest").asText(),
+                "acceptCharge",
+                true);
+        var delayedPreRowRenewal =
+            asyncRequest(
+                https,
+                "POST",
+                path + "/renew",
+                issued.compact(),
+                stalePreRowRenewal,
+                null,
+                requestExecutor);
+        assertThat(renewalGate.arrived.await(30, TimeUnit.SECONDS)).isTrue();
         hosting.firstInvoiceConfirmationStatus("requires_action");
-        var handoff = https.request("POST", path + "/confirm", issued.compact(), consent);
+        var openingEvidenceBefore =
+            hosting
+                .dsl()
+                .fetchSingle(
+                    "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
+                        + "billing_context_digest, xmin::text AS row_xmin "
+                        + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                    evidence);
+        hosting
+            .dsl()
+            .execute(
+                "CREATE FUNCTION reject_first_invoice_authorization() RETURNS TRIGGER LANGUAGE plpgsql AS $$ "
+                    + "BEGIN RAISE EXCEPTION 'controlled first-invoice authorization rollback' USING ERRCODE='23514'; END; $$");
+        hosting
+            .dsl()
+            .execute(
+                "CREATE TRIGGER reject_first_invoice_authorization BEFORE INSERT ON "
+                    + "subscription_first_invoice_authorizations FOR EACH ROW "
+                    + "EXECUTE FUNCTION reject_first_invoice_authorization()");
+        try {
+          assertThat(
+                  https.request("POST", path + "/confirm", issued.compact(), consent).statusCode())
+              .isEqualTo(500);
+          assertThat(consumptionCount(hosting, evidence)).isZero();
+          assertThat(
+                  count(hosting, "SELECT count(*) FROM subscription_first_invoice_confirmations"))
+              .isZero();
+          assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_dispatches"))
+              .isZero();
+          assertThat(
+                  count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
+              .isZero();
+          assertThat(
+                  count(
+                      hosting, "SELECT count(*) FROM subscription_first_invoice_operation_fences"))
+              .isOne();
+          assertNoReceipt(hosting);
+          assertThat(
+                  hosting
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
+                              + "billing_context_digest, xmin::text AS row_xmin "
+                              + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                          evidence))
+              .isEqualTo(openingEvidenceBefore);
+        } finally {
+          hosting
+              .dsl()
+              .execute(
+                  "DROP TRIGGER reject_first_invoice_authorization ON subscription_first_invoice_authorizations");
+          hosting.dsl().execute("DROP FUNCTION reject_first_invoice_authorization()");
+        }
+        hosting.loseNextFirstInvoiceConfirmationResponse();
+        var uncertain = https.request("POST", path + "/confirm", issued.compact(), consent);
+        assertThat(uncertain.statusCode()).isEqualTo(502);
+        assertThat(uncertain.body()).contains("FIRST_INVOICE_PROVIDER_UNCERTAIN");
+        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_command_claims"))
+            .isOne();
+        var retryStart = new CountDownLatch(1);
+        var exactRetryOne =
+            asyncRequest(
+                https,
+                "POST",
+                path + "/confirm",
+                issued.compact(),
+                consent,
+                retryStart,
+                requestExecutor);
+        var exactRetryTwo =
+            asyncRequest(
+                https,
+                "POST",
+                path + "/confirm",
+                issued.compact(),
+                consent,
+                retryStart,
+                requestExecutor);
+        retryStart.countDown();
+        var handoff = exactRetryOne.get(60, TimeUnit.SECONDS);
+        var duplicateHandoff = exactRetryTwo.get(60, TimeUnit.SECONDS);
         assertThat(handoff.statusCode()).isEqualTo(200);
+        assertThat(duplicateHandoff.statusCode()).isEqualTo(200);
         assertThat(handoff.headers().firstValue("cache-control")).contains("no-store");
         assertThat(JSON.readTree(handoff.body()).path("status").asText())
+            .isEqualTo("requires_action");
+        assertThat(JSON.readTree(duplicateHandoff.body()).path("status").asText())
             .isEqualTo("requires_action");
         assertThat(JSON.readTree(handoff.body()).path("clientSecret").asText())
             .startsWith(hosting.firstInvoice().paymentIntentId() + "_secret_");
         assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
-        assertThat(https.request("POST", path + "/confirm", issued.compact(), consent).statusCode())
-            .isEqualTo(200);
-        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
+        assertThat(
+                hosting
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT provider_idempotency_id FROM subscription_first_invoice_confirmations "
+                            + "WHERE request_id = ?",
+                        confirmation)
+                    .get("provider_idempotency_id", UUID.class)
+                    .toString())
+            .isEqualTo(hosting.lastFirstInvoiceConfirmationIdempotencyKey());
         assertNoReceipt(hosting);
+        releaseRenewalGate.releaseNow();
+        assertThat(delayedPreRowRenewal.get(60, TimeUnit.SECONDS).statusCode()).isEqualTo(409);
+        assertThat(consumptionCount(hosting, competingEvidence)).isZero();
+        assertThat(consumptionCount(hosting, evidence)).isOne();
         UUID authorization = UUID.randomUUID();
         var renewedProof =
             https.request(
                 "POST",
                 path + "/reauthenticate",
                 issued.compact(),
-                Map.of(
-                    "requestId",
+                billingReauthenticationRequest(
+                    tuple,
                     UUID.randomUUID(),
-                    "confirmationRequestId",
                     authorization,
-                    "email",
-                    issued.account().getEmail(),
-                    "secret",
-                    PASSWORD));
+                    confirmation,
+                    1L,
+                    "FOLLOWUP_RENEWAL",
+                    issued.account().getEmail()));
         assertThat(renewedProof.statusCode()).isEqualTo(200);
         Map<String, Object> renewal = new java.util.HashMap<>(consent);
         renewal.put("authorizationRequestId", authorization);
@@ -352,6 +519,422 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void delayedOriginalConfirmationLosesToExplicitPreRowRenewalWithoutConsumingItsProof()
+      throws Exception {
+    try (var owners =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var issued = owners.issueCertifiedAccount(PASSWORD);
+      var hosting =
+          CanonicalHostingSubscriptionTestFixture.createAwaitingPayment(
+              Objects.requireNonNull(issued.sources().manager.getDataSource()), issued.account());
+      var reauthentication =
+          new AccountRecentReauthenticationService(
+              issued.sources().primary,
+              issued.sources().accounts,
+              new AccountAuthorityGenerationRepository(hosting.dsl()),
+              new AccountRecentReauthenticationRepository(hosting.dsl()),
+              new AccountRecentReauthenticationPolicyRepository(hosting.dsl()),
+              issued.sources().manager,
+              hosting.clock(),
+              new AccountControlUiResponseCryptography(
+                  new AccountControlUiKeyring(temporary.resolve("custody")), hosting.clock()));
+      var payments =
+          new AccountHostingFirstInvoicePaymentService(
+              issued.actors(),
+              reauthentication,
+              hosting.firstInvoiceRepository(),
+              new StripeEventInboxRepository(hosting.dsl()),
+              hosting.firstInvoiceProvider(),
+              hosting.webhookVerifier(),
+              hosting.service(),
+              issued.sources().manager);
+      var gate = new OwnerEntryGate("/first-invoice/confirm");
+      var renewalGate = new OwnerEntryGate("/first-invoice/renew", 2, false);
+      try (var https =
+              new HttpsReceiver(
+                  temporary,
+                  new AccountHostingFirstInvoiceController(payments),
+                  gate,
+                  renewalGate);
+          var requestExecutor = new TestRequestExecutor();
+          var releaseConfirmationGate = gate;
+          var releaseRenewalGate = renewalGate) {
+        String path =
+            "/billing/hosting/subscriptions/"
+                + hosting.creation().subscriptionId()
+                + "/first-invoice";
+        JsonNode tuple = JSON.readTree(https.request("GET", path, issued.compact(), null).body());
+        UUID originalRequestId = UUID.randomUUID();
+        var openingProof =
+            https.request(
+                "POST",
+                path + "/reauthenticate",
+                issued.compact(),
+                billingReauthenticationRequest(
+                    tuple,
+                    UUID.randomUUID(),
+                    originalRequestId,
+                    originalRequestId,
+                    0L,
+                    "INITIAL_CONFIRMATION",
+                    issued.account().getEmail()));
+        assertThat(openingProof.statusCode()).isEqualTo(200);
+        UUID openingEvidence =
+            UUID.fromString(JSON.readTree(openingProof.body()).path("evidenceId").asText());
+        Map<String, Object> originalConsent =
+            Map.of(
+                "requestId",
+                originalRequestId,
+                "expectedRowVersion",
+                tuple.path("expectedRowVersion").asLong(),
+                "reauthenticationEvidenceId",
+                openingEvidence,
+                "acceptedTupleDigest",
+                tuple.path("tupleDigest").asText(),
+                "acceptCharge",
+                true);
+        hosting.firstInvoiceConfirmationStatus("requires_action");
+        var delayedOriginal =
+            asyncRequest(
+                https,
+                "POST",
+                path + "/confirm",
+                issued.compact(),
+                originalConsent,
+                null,
+                requestExecutor);
+        assertThat(gate.arrived.await(30, TimeUnit.SECONDS)).isTrue();
+
+        JsonNode whileDelayed =
+            JSON.readTree(https.request("GET", path, issued.compact(), null).body());
+        assertThat(whileDelayed.path("confirmationRequestId").isNull()).isTrue();
+        assertThat(whileDelayed.path("authorizationVersion").asLong()).isZero();
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_confirmations"))
+            .isZero();
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
+            .isZero();
+        assertThat(consumptionCount(hosting, openingEvidence)).isZero();
+        assertNoReceipt(hosting);
+
+        UUID winningAuthorization = UUID.randomUUID();
+        var winningProof =
+            https.request(
+                "POST",
+                path + "/reauthenticate",
+                issued.compact(),
+                billingReauthenticationRequest(
+                    tuple,
+                    UUID.randomUUID(),
+                    winningAuthorization,
+                    originalRequestId,
+                    0L,
+                    "PRE_ROW_RENEWAL",
+                    issued.account().getEmail()));
+        assertThat(winningProof.statusCode()).isEqualTo(200);
+        UUID winningEvidence =
+            UUID.fromString(JSON.readTree(winningProof.body()).path("evidenceId").asText());
+        UUID competingAuthorization = UUID.randomUUID();
+        var competingProof =
+            https.request(
+                "POST",
+                path + "/reauthenticate",
+                issued.compact(),
+                billingReauthenticationRequest(
+                    tuple,
+                    UUID.randomUUID(),
+                    competingAuthorization,
+                    originalRequestId,
+                    0L,
+                    "PRE_ROW_RENEWAL",
+                    issued.account().getEmail()));
+        assertThat(competingProof.statusCode()).isEqualTo(200);
+        UUID competingEvidence =
+            UUID.fromString(JSON.readTree(competingProof.body()).path("evidenceId").asText());
+        Map<String, Object> renewal =
+            Map.of(
+                "requestId",
+                originalRequestId,
+                "authorizationRequestId",
+                winningAuthorization,
+                "expectedRowVersion",
+                tuple.path("expectedRowVersion").asLong(),
+                "expectedAuthorizationVersion",
+                0L,
+                "reauthenticationEvidenceId",
+                winningEvidence,
+                "acceptedTupleDigest",
+                tuple.path("tupleDigest").asText(),
+                "acceptCharge",
+                true);
+        var changedRenewal = new java.util.HashMap<>(renewal);
+        changedRenewal.put("acceptedTupleDigest", "sha256:" + "c".repeat(64));
+        assertThat(
+                https
+                    .request("POST", path + "/renew", issued.compact(), changedRenewal)
+                    .statusCode())
+            .isEqualTo(409);
+        assertThat(consumptionCount(hosting, winningEvidence)).isZero();
+        assertThat(consumptionCount(hosting, openingEvidence)).isZero();
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_confirmations"))
+            .isZero();
+
+        Map<String, Object> competingRenewal =
+            Map.of(
+                "requestId",
+                originalRequestId,
+                "authorizationRequestId",
+                competingAuthorization,
+                "expectedRowVersion",
+                tuple.path("expectedRowVersion").asLong(),
+                "expectedAuthorizationVersion",
+                0L,
+                "reauthenticationEvidenceId",
+                competingEvidence,
+                "acceptedTupleDigest",
+                tuple.path("tupleDigest").asText(),
+                "acceptCharge",
+                true);
+        var renewalStart = new CountDownLatch(1);
+        renewalGate.arm();
+        var firstRenewal =
+            asyncRequest(
+                https,
+                "POST",
+                path + "/renew",
+                issued.compact(),
+                renewal,
+                renewalStart,
+                requestExecutor);
+        var secondRenewal =
+            asyncRequest(
+                https,
+                "POST",
+                path + "/renew",
+                issued.compact(),
+                competingRenewal,
+                renewalStart,
+                requestExecutor);
+        renewalStart.countDown();
+        assertThat(renewalGate.arrived.await(30, TimeUnit.SECONDS)).isTrue();
+        releaseRenewalGate.releaseNow();
+        var firstRenewalResponse = firstRenewal.get(60, TimeUnit.SECONDS);
+        var secondRenewalResponse = secondRenewal.get(60, TimeUnit.SECONDS);
+        boolean firstRenewalWon = firstRenewalResponse.statusCode() == 200;
+        assertThat(firstRenewalResponse.statusCode()).isIn(200, 409);
+        assertThat(secondRenewalResponse.statusCode()).isEqualTo(firstRenewalWon ? 409 : 200);
+        var renewalWinner = firstRenewalWon ? firstRenewalResponse : secondRenewalResponse;
+        Map<String, Object> winningRenewal = firstRenewalWon ? renewal : competingRenewal;
+        Map<String, Object> losingRenewal = firstRenewalWon ? competingRenewal : renewal;
+        UUID winnerAuthorizationId =
+            firstRenewalWon ? winningAuthorization : competingAuthorization;
+        UUID winnerEvidenceId = firstRenewalWon ? winningEvidence : competingEvidence;
+        UUID losingEvidenceId = firstRenewalWon ? competingEvidence : winningEvidence;
+        assertThat(renewalWinner.statusCode()).isEqualTo(200);
+        assertThat(JSON.readTree(renewalWinner.body()).path("status").asText())
+            .isEqualTo("requires_action");
+        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
+            .isOne();
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_command_claims"))
+            .isOne();
+        assertThat(
+                hosting
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT request_id, authorization_request_id, reauthentication_evidence_id FROM "
+                            + "subscription_first_invoice_authorizations")
+                    .get("request_id", UUID.class))
+            .isEqualTo(originalRequestId);
+        assertThat(
+                hosting
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT authorization_request_id FROM "
+                            + "subscription_first_invoice_authorizations")
+                    .get("authorization_request_id", UUID.class))
+            .isEqualTo(winnerAuthorizationId);
+        assertThat(
+                hosting
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT reauthentication_evidence_id FROM "
+                            + "subscription_first_invoice_authorizations")
+                    .get("reauthentication_evidence_id", UUID.class))
+            .isEqualTo(winnerEvidenceId);
+        var evidenceBefore =
+            hosting
+                .dsl()
+                .fetchSingle(
+                    "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
+                        + "billing_context_digest, xmin::text AS row_xmin "
+                        + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                    openingEvidence);
+        var originalFence =
+            hosting
+                .dsl()
+                .fetchSingle(
+                    "SELECT request_id, reauthentication_evidence_id, binding_digest "
+                        + "FROM subscription_first_invoice_operation_fences");
+        assertThat(originalFence.get("request_id", UUID.class)).isEqualTo(originalRequestId);
+        assertThat(originalFence.get("reauthentication_evidence_id", UUID.class))
+            .isEqualTo(openingEvidence);
+        assertThat(originalFence.get("binding_digest", String.class))
+            .isEqualTo(evidenceBefore.get("billing_context_digest", String.class));
+        assertThat(consumptionCount(hosting, winnerEvidenceId)).isOne();
+        assertThat(consumptionCount(hosting, openingEvidence)).isZero();
+        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
+        assertThat(
+                hosting
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT provider_idempotency_id FROM subscription_first_invoice_confirmations "
+                            + "WHERE request_id = ?",
+                        originalRequestId)
+                    .get("provider_idempotency_id", UUID.class)
+                    .toString())
+            .isEqualTo(hosting.lastFirstInvoiceConfirmationIdempotencyKey());
+
+        assertThat(
+                https
+                    .request("POST", path + "/renew", issued.compact(), losingRenewal)
+                    .statusCode())
+            .isEqualTo(409);
+        assertThat(consumptionCount(hosting, losingEvidenceId)).isZero();
+
+        assertThat(
+                https
+                    .request("POST", path + "/renew", issued.compact(), winningRenewal)
+                    .statusCode())
+            .isEqualTo(200);
+        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
+            .isOne();
+
+        releaseConfirmationGate.releaseNow();
+        assertThat(delayedOriginal.get(60, TimeUnit.SECONDS).statusCode()).isEqualTo(409);
+        assertThat(consumptionCount(hosting, openingEvidence)).isZero();
+        assertThat(consumptionCount(hosting, winnerEvidenceId)).isOne();
+        assertThat(
+                hosting
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
+                            + "billing_context_digest, xmin::text AS row_xmin "
+                            + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                        openingEvidence))
+            .isEqualTo(evidenceBefore);
+        JsonNode after = JSON.readTree(https.request("GET", path, issued.compact(), null).body());
+        assertThat(after.path("confirmationRequestId").asText())
+            .isEqualTo(originalRequestId.toString());
+        assertThat(after.path("authorizationVersion").asLong()).isEqualTo(1L);
+        assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
+        UUID expiredAuthorization = UUID.randomUUID();
+        var expiredProof =
+            https.request(
+                "POST",
+                path + "/reauthenticate",
+                issued.compact(),
+                billingReauthenticationRequest(
+                    tuple,
+                    UUID.randomUUID(),
+                    expiredAuthorization,
+                    originalRequestId,
+                    1L,
+                    "FOLLOWUP_RENEWAL",
+                    issued.account().getEmail()));
+        assertThat(expiredProof.statusCode()).isEqualTo(200);
+        UUID expiredEvidence =
+            UUID.fromString(JSON.readTree(expiredProof.body()).path("evidenceId").asText());
+        var expiredEvidenceBefore =
+            hosting
+                .dsl()
+                .fetchSingle(
+                    "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
+                        + "billing_context_digest, xmin::text AS row_xmin "
+                        + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                    expiredEvidence);
+        hosting.clock().advance(Duration.ofMinutes(6));
+        Map<String, Object> expiredRenewal =
+            Map.of(
+                "requestId",
+                originalRequestId,
+                "authorizationRequestId",
+                expiredAuthorization,
+                "expectedRowVersion",
+                tuple.path("expectedRowVersion").asLong(),
+                "expectedAuthorizationVersion",
+                1L,
+                "reauthenticationEvidenceId",
+                expiredEvidence,
+                "acceptedTupleDigest",
+                tuple.path("tupleDigest").asText(),
+                "acceptCharge",
+                true);
+        assertThat(
+                https
+                    .request("POST", path + "/renew", issued.compact(), expiredRenewal)
+                    .statusCode())
+            .isEqualTo(409);
+        assertThat(consumptionCount(hosting, expiredEvidence)).isZero();
+        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
+            .isOne();
+        assertThat(
+                hosting
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
+                            + "billing_context_digest, xmin::text AS row_xmin "
+                            + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                        expiredEvidence))
+            .isEqualTo(expiredEvidenceBefore);
+        assertNoReceipt(hosting);
+      }
+    }
+  }
+
+  private static long consumptionCount(
+      CanonicalHostingSubscriptionTestFixture.Fixture hosting, UUID evidenceId) {
+    return hosting
+        .dsl()
+        .fetchSingle(
+            "SELECT count(*) FROM account_recent_reauthentication_consumptions WHERE evidence_id = ?",
+            evidenceId)
+        .get(0, Long.class);
+  }
+
+  private static long count(CanonicalHostingSubscriptionTestFixture.Fixture hosting, String sql) {
+    return hosting.dsl().fetchSingle(sql).get(0, Long.class);
+  }
+
+  private static CompletableFuture<HttpResponse<String>> asyncRequest(
+      HttpsReceiver https,
+      String method,
+      String path,
+      String bearer,
+      Object body,
+      CountDownLatch start,
+      TestRequestExecutor requestExecutor) {
+    return CompletableFuture.supplyAsync(
+        () -> {
+          try {
+            if (start != null && !start.await(30, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Concurrent HTTP request barrier did not release");
+            }
+            return https.request(method, path, bearer, body);
+          } catch (Exception failure) {
+            throw new java.util.concurrent.CompletionException(failure);
+          }
+        },
+        requestExecutor.executor());
+  }
+
   private static void assertNoReceipt(CanonicalHostingSubscriptionTestFixture.Fixture hosting) {
     assertThat(
             hosting
@@ -363,6 +946,39 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         .isEqualTo("provisioning");
   }
 
+  private static Map<String, Object> billingReauthenticationRequest(
+      JsonNode tuple,
+      UUID requestId,
+      UUID authorizationRequestId,
+      UUID originalRequestId,
+      long expectedAuthorizationVersion,
+      String authorizationPurpose,
+      String email) {
+    return Map.of(
+        "requestId",
+        requestId,
+        "confirmationRequestId",
+        authorizationRequestId,
+        "billingBinding",
+        Map.of(
+            "originalRequestId",
+            originalRequestId,
+            "expectedRowVersion",
+            tuple.path("expectedRowVersion").asLong(),
+            "expectedAuthorizationVersion",
+            expectedAuthorizationVersion,
+            "acceptedTupleDigest",
+            tuple.path("tupleDigest").asText(),
+            "invoiceExpiresAt",
+            tuple.path("expiresAt").asText(),
+            "authorizationPurpose",
+            authorizationPurpose),
+        "email",
+        email,
+        "secret",
+        PASSWORD);
+  }
+
   /** Explicit test-only mount for the deliberately unregistered production owner. */
   private static final class HttpsReceiver implements AutoCloseable {
     private final Tomcat tomcat;
@@ -371,6 +987,12 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
     private final URI origin;
 
     private HttpsReceiver(Path directory, AccountHostingFirstInvoiceController controller)
+        throws Exception {
+      this(directory, controller, new OwnerEntryGate[0]);
+    }
+
+    private HttpsReceiver(
+        Path directory, AccountHostingFirstInvoiceController controller, OwnerEntryGate... gates)
         throws Exception {
       Path tls = Files.createDirectory(directory.resolve("https"));
       var pki =
@@ -404,7 +1026,7 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
       org.springframework.context.annotation.AnnotationConfigUtils
           .registerAnnotationConfigProcessors(web);
       web.registerBean(AccountHostingFirstInvoiceController.class, () -> controller);
-      web.registerBean(ExplicitOwnerMvc.class);
+      web.registerBean(ExplicitOwnerMvc.class, () -> new ExplicitOwnerMvc(gates));
       web.refresh();
       Tomcat.addServlet(context, "checkout", new DispatcherServlet(web));
       context.addServletMappingDecoded("/", "checkout");
@@ -418,7 +1040,7 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
 
     private HttpResponse<String> request(String method, String path, String bearer, Object body)
         throws Exception {
-      var request = HttpRequest.newBuilder(origin.resolve(path)).timeout(Duration.ofSeconds(10));
+      var request = HttpRequest.newBuilder(origin.resolve(path)).timeout(Duration.ofSeconds(90));
       if (bearer != null) request.header("Authorization", "Bearer " + bearer);
       if (body != null) request.header("Content-Type", "application/json");
       request.method(
@@ -440,6 +1062,39 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
 
   @Configuration(proxyBeanMethods = false)
   static class ExplicitOwnerMvc extends WebMvcConfigurationSupport {
+    private final OwnerEntryGate[] gates;
+
+    ExplicitOwnerMvc(OwnerEntryGate... gates) {
+      this.gates = gates;
+    }
+
+    @Override
+    protected void addInterceptors(InterceptorRegistry registry) {
+      if (gates.length == 0) return;
+      registry.addInterceptor(
+          new HandlerInterceptor() {
+            @Override
+            public boolean preHandle(
+                jakarta.servlet.http.HttpServletRequest request,
+                jakarta.servlet.http.HttpServletResponse response,
+                Object handler)
+                throws Exception {
+              if ("POST".equals(request.getMethod())) {
+                for (OwnerEntryGate gate : gates) {
+                  if (gate.armed && request.getRequestURI().endsWith(gate.endpointSuffix)) {
+                    gate.arrived.countDown();
+                    if (!gate.release.await(60, TimeUnit.SECONDS)) {
+                      throw new IllegalStateException("Test owner-entry gate did not release");
+                    }
+                    break;
+                  }
+                }
+              }
+              return true;
+            }
+          });
+    }
+
     @Override
     protected RequestMappingHandlerMapping createRequestMappingHandlerMapping() {
       return new RequestMappingHandlerMapping() {
@@ -448,6 +1103,59 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
           return beanType == AccountHostingFirstInvoiceController.class;
         }
       };
+    }
+  }
+
+  private static final class OwnerEntryGate implements AutoCloseable {
+    private final String endpointSuffix;
+    private final CountDownLatch arrived;
+    private final CountDownLatch release = new CountDownLatch(1);
+    private volatile boolean armed;
+
+    private OwnerEntryGate(String endpointSuffix) {
+      this(endpointSuffix, 1, true);
+    }
+
+    private OwnerEntryGate(String endpointSuffix, int arrivals) {
+      this(endpointSuffix, arrivals, true);
+    }
+
+    private OwnerEntryGate(String endpointSuffix, int arrivals, boolean armed) {
+      this.endpointSuffix = endpointSuffix;
+      this.arrived = new CountDownLatch(arrivals);
+      this.armed = armed;
+    }
+
+    private void arm() {
+      armed = true;
+    }
+
+    private void releaseNow() {
+      release.countDown();
+    }
+
+    @Override
+    public void close() {
+      releaseNow();
+    }
+  }
+
+  private static final class TestRequestExecutor implements AutoCloseable {
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+
+    private ExecutorService executor() {
+      return executor;
+    }
+
+    @Override
+    public void close() {
+      executor.shutdown();
+      try {
+        if (!executor.awaitTermination(10, TimeUnit.SECONDS)) executor.shutdownNow();
+      } catch (InterruptedException interrupted) {
+        executor.shutdownNow();
+        Thread.currentThread().interrupt();
+      }
     }
   }
 }

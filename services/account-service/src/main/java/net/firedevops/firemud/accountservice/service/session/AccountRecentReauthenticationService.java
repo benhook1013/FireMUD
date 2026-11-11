@@ -112,6 +112,10 @@ public final class AccountRecentReauthenticationService {
                 if (!AccountRecentReauthenticationPolicy.supportedPurpose(request.purpose)) {
                   throw conflict();
                 }
+                if (AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(request.purpose)
+                    && request.billingContext == null) {
+                  throw conflict();
+                }
 
                 evidenceRepository.lockCreationOperation(request.creationOperationId);
                 if (evidenceRepository
@@ -156,7 +160,8 @@ public final class AccountRecentReauthenticationService {
                         request.requestId,
                         request.accountId,
                         request.purpose,
-                        request.creationOperationId);
+                        request.creationOperationId,
+                        request.billingContext);
                 var evidence =
                     new AccountRecentReauthenticationEvidence(
                         UUID.randomUUID(),
@@ -177,7 +182,8 @@ public final class AccountRecentReauthenticationService {
                         policy.effectivePolicyVersion(),
                         policy.recentAgeSeconds(),
                         policy.maxClockSkewSeconds(),
-                        issuedAt);
+                        issuedAt,
+                        request.billingContext);
                 String keyId = cryptography.currentKeyId();
                 var replayProof =
                     new AccountRecentReauthenticationRepository.ReplayProof(
@@ -246,7 +252,11 @@ public final class AccountRecentReauthenticationService {
   private static byte[] credentialRequest(Request request) {
     byte[] identity =
         AccountRecentReauthenticationRepository.requestPayload(
-            request.requestId, request.accountId, request.purpose, request.creationOperationId);
+            request.requestId,
+            request.accountId,
+            request.purpose,
+            request.creationOperationId,
+            request.billingContext);
     byte[] email = new byte[0];
     byte[] secret = new byte[0];
     try {
@@ -434,7 +444,11 @@ public final class AccountRecentReauthenticationService {
       AccountRecentReauthenticationEvidence evidence, Request request) {
     byte[] payload =
         AccountRecentReauthenticationRepository.requestPayload(
-            request.requestId, request.accountId, request.purpose, request.creationOperationId);
+            request.requestId,
+            request.accountId,
+            request.purpose,
+            request.creationOperationId,
+            request.billingContext);
     if (!evidence.requestId().equals(request.requestId)
         || !evidence.accountId().equals(request.accountId)
         || !evidence.purpose().equals(request.purpose)
@@ -444,6 +458,7 @@ public final class AccountRecentReauthenticationService {
             .equals(AccountRecentReauthenticationRepository.digest(payload))) {
       throw conflict();
     }
+    if (!Objects.equals(evidence.billingContext(), request.billingContext)) throw conflict();
   }
 
   private static void requireNonNilUuid(UUID value, String field) {
@@ -474,6 +489,7 @@ public final class AccountRecentReauthenticationService {
     private final UUID accountId;
     private final String purpose;
     private final UUID creationOperationId;
+    private final AccountRecentReauthenticationEvidence.BillingContext billingContext;
     private final String email;
     private final String secret;
 
@@ -484,12 +500,30 @@ public final class AccountRecentReauthenticationService {
         UUID creationOperationId,
         String email,
         String secret) {
+      this(requestId, accountId, purpose, creationOperationId, null, email, secret);
+    }
+
+    public Request(
+        UUID requestId,
+        UUID accountId,
+        String purpose,
+        UUID creationOperationId,
+        AccountRecentReauthenticationEvidence.BillingContext billingContext,
+        String email,
+        String secret) {
       this.requestId = requestId;
       this.accountId = accountId;
       this.purpose = purpose;
       this.creationOperationId = creationOperationId;
+      this.billingContext = billingContext;
       this.email = email;
       this.secret = secret;
+      if (billingContext != null
+          && (!AccountRecentReauthenticationPolicy.BILLING_PURPOSE.equals(purpose)
+              || !Objects.equals(accountId, billingContext.accountId())
+              || !Objects.equals(creationOperationId, billingContext.authorizationRequestId()))) {
+        throw new IllegalArgumentException("Typed billing context differs from Account request");
+      }
     }
 
     @Override

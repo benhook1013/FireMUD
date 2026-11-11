@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -167,6 +168,76 @@ class AccountRecentReauthenticationReplayTest {
     assertThatThrownBy(() -> wrongPurpose.service.reauthenticate(changed))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
     verifyNoInteractions(wrongPurpose.primary, wrongPurpose.crypto);
+  }
+
+  @Test
+  void newBillingEvidenceRequiresTypedContextAndTypedReplayCannotChangeIt() {
+    var unbound = new Fixture(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
+    when(unbound.repository.findByRequest(unbound.requestId)).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> unbound.service.reauthenticate(unbound.request(unbound.operation)))
+        .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    verify(unbound.repository, never()).insert(any(), any(), any());
+    verifyNoInteractions(unbound.primary, unbound.accounts, unbound.generations, unbound.crypto);
+
+    var bound = new Fixture(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
+    Instant expiry = Instant.parse("2026-11-02T01:02:03.123400Z");
+    var context = billingContext(bound, expiry);
+    when(bound.evidence.billingContext()).thenReturn(context);
+    when(bound.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("a".repeat(64));
+    when(bound.evidence.requestDigest())
+        .thenReturn(
+            AccountRecentReauthenticationRepository.digest(
+                AccountRecentReauthenticationRepository.requestPayload(
+                    bound.requestId, bound.account, bound.purpose, bound.operation, context)));
+    var exactRequest =
+        new AccountRecentReauthenticationService.Request(
+            bound.requestId,
+            bound.account,
+            bound.purpose,
+            bound.operation,
+            context,
+            "person@example.test",
+            "test-only-secret");
+    assertThat(bound.service.reauthenticate(exactRequest)).isSameAs(bound.evidence);
+
+    var changedContext =
+        new AccountRecentReauthenticationEvidence.BillingContext(
+            context.accountId(),
+            context.subscriptionId(),
+            context.originalRequestId(),
+            context.tupleDigest(),
+            context.expectedRowVersion(),
+            Instant.parse("2026-11-02T01:02:03.123000Z"),
+            context.authorizationRequestId(),
+            context.expectedAuthorizationVersion(),
+            context.authorizationPurpose());
+    var changedRequest =
+        new AccountRecentReauthenticationService.Request(
+            bound.requestId,
+            bound.account,
+            bound.purpose,
+            bound.operation,
+            changedContext,
+            "person@example.test",
+            "test-only-secret");
+    assertThatThrownBy(() -> bound.service.reauthenticate(changedRequest))
+        .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
+    verifyNoInteractions(bound.primary, bound.accounts, bound.generations);
+  }
+
+  private static AccountRecentReauthenticationEvidence.BillingContext billingContext(
+      Fixture fixture, Instant expiry) {
+    return new AccountRecentReauthenticationEvidence.BillingContext(
+        fixture.account,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "sha256:" + "e".repeat(64),
+        3L,
+        expiry,
+        fixture.operation,
+        0L,
+        AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose.PRE_ROW_RENEWAL);
   }
 
   private static final class Fixture {
