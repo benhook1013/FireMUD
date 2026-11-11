@@ -1,6 +1,6 @@
 {
   "schema": "capacity-admission/1",
-  "validation": "UNRUN: artifact authoring only; not source or runtime proof",
+  "validation": "Encoding vectors and separate native request/Account usage rejection fixtures; not source or runtime authority",
   "request": {
     "tenantId": "22222222-2222-4222-8222-222222222222",
     "requestId": "33333333-3333-4333-8333-333333333333",
@@ -138,26 +138,32 @@
       "capacityDelta": 0.0,
       "expected": "REJECT_BEFORE_COMMIT",
       "acceptedDigest": null
+    }
+  ],
+  "rejectedEvidence": [
+    {
+      "name": "changed-cutoff-without-checkpoint",
+      "expected": "REJECT_BEFORE_COMMIT",
+      "acceptedDigest": null,
+      "canonicalAccountEvidenceBase64": "eyJhbGxvd05ld0dhbWVwbGF5QmluZGluZ3MiOnRydWUsImFsbG93TmV3SW5zdGFuY2VTdGFydHMiOnRydWUsImFsbG93UHVibGljSm9pbiI6dHJ1ZSwiYXV0aG9yaXR5QXZhaWxhYmlsaXR5IjoiQVZBSUxBQkxFIiwiYXV0aG9yaXR5VHVwbGUiOnsidGVuYW50QXV0aG9yaXR5R2VuZXJhdGlvbiI6eyIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiOiI1In0sInRlbmFudEJpbGxpbmdDdXRvZmYiOnsiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIjp7Im91dGJveFNlcXVlbmNlIjoiNCIsIm91dGJveFN0cmVhbUtleSI6ImFjY291bnQ6YXV0aC1hdXRob3JpdHk6djE6dGVuYW50LzIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsInRlbmFudEF1dGhvcml0eUdlbmVyYXRpb24iOiI1IiwidGVuYW50QmlsbGluZ1NlcXVlbmNlIjoiMTEifX19LCJidW5kbGVWZXJzaW9uIjoiMSIsImNhbGxlcldvcmtsb2FkIjoic3BpZmZlOi8vZmlyZW11ZC9ucy9wcm9kL3NhL3dvcmxkLW1hbmFnZW1lbnQtc2VydmljZSIsImVudGl0bGVtZW50VmVyc2lvbiI6IjciLCJldmFsdWF0ZWRBdCI6IjIwMjYtMTEtMDJUMDA6MDA6MDBaIiwiZXZhbHVhdGlvbklkZW50aXR5Ijoic2hhMjU2OmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIiLCJnYW1lcGxheUF2YWlsYWJsZSI6dHJ1ZSwib3V0Ym94Q2hlY2twb2ludHMiOlt7Im91dGJveFNlcXVlbmNlIjoiMyIsIm91dGJveFN0cmVhbUtleSI6ImFjY291bnQ6YXV0aC1hdXRob3JpdHk6djE6dGVuYW50LzIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsInNvdXJjZUV2ZW50RGlnZXN0Ijoic2hhMjU2OmFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJzb3VyY2VFdmVudElkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIn1dLCJwcm92aXNpb25pbmdTdGF0dXMiOm51bGwsInF1b3RhcyI6eyJtYXhBY3RpdmVTZXNzaW9ucyI6IjEwMCIsIm1heENvbmN1cnJlbnRHYW1lSW5zdGFuY2VzIjoiOTIyMzM3MjAzNjg1NDc3NTgwNyIsIm1heFN0b3JhZ2VCeXRlcyI6IjEwNDg1NzYifSwicmVxdWVzdElkIjoiMzMzMzMzMzMtMzMzMy00MzMzLTgzMzMtMzMzMzMzMzMzMzMzIiwic2NoZW1hIjoiYWNjb3VudC1hdXRoLWV2aWRlbmNlLWJ1bmRsZS92MSIsInNuYXBzaG90SWRlbnRpdHkiOiJzaGEyNTY6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInNvdXJjZUtpbmQiOiJQQUlEX0hPU1RJTkciLCJzdWJzY3JpcHRpb25TdGF0dXMiOiJhY3RpdmUiLCJ0ZW5hbnRBdXRob3JpdHlHZW5lcmF0aW9uIjoiNSIsInRlbmFudEJpbGxpbmdTZXF1ZW5jZSI6IjExIiwidGVuYW50SWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJ2YXJpYW50IjoiVEVOQU5UX09QRVJBVElPTiJ9"
     },
+    {
+      "name": "noncanonical-evidence-whitespace",
+      "expected": "REJECT_BEFORE_COMMIT",
+      "acceptedDigest": null,
+      "canonicalAccountEvidenceBase64": "IHsiYWxsb3dOZXdHYW1lcGxheUJpbmRpbmdzIjp0cnVlLCJhbGxvd05ld0luc3RhbmNlU3RhcnRzIjp0cnVlLCJhbGxvd1B1YmxpY0pvaW4iOnRydWUsImF1dGhvcml0eUF2YWlsYWJpbGl0eSI6IkFWQUlMQUJMRSIsImF1dGhvcml0eVR1cGxlIjp7InRlbmFudEF1dGhvcml0eUdlbmVyYXRpb24iOnsiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIjoiNSJ9LCJ0ZW5hbnRCaWxsaW5nQ3V0b2ZmIjp7IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiI6eyJvdXRib3hTZXF1ZW5jZSI6IjMiLCJvdXRib3hTdHJlYW1LZXkiOiJhY2NvdW50OmF1dGgtYXV0aG9yaXR5OnYxOnRlbmFudC8yMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJ0ZW5hbnRBdXRob3JpdHlHZW5lcmF0aW9uIjoiNSIsInRlbmFudEJpbGxpbmdTZXF1ZW5jZSI6IjExIn19fSwiYnVuZGxlVmVyc2lvbiI6IjEiLCJjYWxsZXJXb3JrbG9hZCI6InNwaWZmZTovL2ZpcmVtdWQvbnMvcHJvZC9zYS93b3JsZC1tYW5hZ2VtZW50LXNlcnZpY2UiLCJlbnRpdGxlbWVudFZlcnNpb24iOiI3IiwiZXZhbHVhdGVkQXQiOiIyMDI2LTExLTAyVDAwOjAwOjAwWiIsImV2YWx1YXRpb25JZGVudGl0eSI6InNoYTI1NjpiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIiwiZ2FtZXBsYXlBdmFpbGFibGUiOnRydWUsIm91dGJveENoZWNrcG9pbnRzIjpbeyJvdXRib3hTZXF1ZW5jZSI6IjMiLCJvdXRib3hTdHJlYW1LZXkiOiJhY2NvdW50OmF1dGgtYXV0aG9yaXR5OnYxOnRlbmFudC8yMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJzb3VyY2VFdmVudERpZ2VzdCI6InNoYTI1NjphYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwic291cmNlRXZlbnRJZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSJ9XSwicHJvdmlzaW9uaW5nU3RhdHVzIjpudWxsLCJxdW90YXMiOnsibWF4QWN0aXZlU2Vzc2lvbnMiOiIxMDAiLCJtYXhDb25jdXJyZW50R2FtZUluc3RhbmNlcyI6IjkyMjMzNzIwMzY4NTQ3NzU4MDciLCJtYXhTdG9yYWdlQnl0ZXMiOiIxMDQ4NTc2In0sInJlcXVlc3RJZCI6IjMzMzMzMzMzLTMzMzMtNDMzMy04MzMzLTMzMzMzMzMzMzMzMyIsInNjaGVtYSI6ImFjY291bnQtYXV0aC1ldmlkZW5jZS1idW5kbGUvdjEiLCJzbmFwc2hvdElkZW50aXR5Ijoic2hhMjU2OmFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJzb3VyY2VLaW5kIjoiUEFJRF9IT1NUSU5HIiwic3Vic2NyaXB0aW9uU3RhdHVzIjoiYWN0aXZlIiwidGVuYW50QXV0aG9yaXR5R2VuZXJhdGlvbiI6IjUiLCJ0ZW5hbnRCaWxsaW5nU2VxdWVuY2UiOiIxMSIsInRlbmFudElkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwidmFyaWFudCI6IlRFTkFOVF9PUEVSQVRJT04ifQ=="
+    },
+    {
+      "name": "duplicate-evidence-member",
+      "expected": "REJECT_BEFORE_COMMIT",
+      "acceptedDigest": null,
+      "canonicalAccountEvidenceBase64": "eyJidW5kbGVWZXJzaW9uIjoiMSIsImFsbG93TmV3R2FtZXBsYXlCaW5kaW5ncyI6dHJ1ZSwiYWxsb3dOZXdJbnN0YW5jZVN0YXJ0cyI6dHJ1ZSwiYWxsb3dQdWJsaWNKb2luIjp0cnVlLCJhdXRob3JpdHlBdmFpbGFiaWxpdHkiOiJBVkFJTEFCTEUiLCJhdXRob3JpdHlUdXBsZSI6eyJ0ZW5hbnRBdXRob3JpdHlHZW5lcmF0aW9uIjp7IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiI6IjUifSwidGVuYW50QmlsbGluZ0N1dG9mZiI6eyIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiOnsib3V0Ym94U2VxdWVuY2UiOiIzIiwib3V0Ym94U3RyZWFtS2V5IjoiYWNjb3VudDphdXRoLWF1dGhvcml0eTp2MTp0ZW5hbnQvMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwidGVuYW50QXV0aG9yaXR5R2VuZXJhdGlvbiI6IjUiLCJ0ZW5hbnRCaWxsaW5nU2VxdWVuY2UiOiIxMSJ9fX0sImJ1bmRsZVZlcnNpb24iOiIxIiwiY2FsbGVyV29ya2xvYWQiOiJzcGlmZmU6Ly9maXJlbXVkL25zL3Byb2Qvc2Evd29ybGQtbWFuYWdlbWVudC1zZXJ2aWNlIiwiZW50aXRsZW1lbnRWZXJzaW9uIjoiNyIsImV2YWx1YXRlZEF0IjoiMjAyNi0xMS0wMlQwMDowMDowMFoiLCJldmFsdWF0aW9uSWRlbnRpdHkiOiJzaGEyNTY6YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsImdhbWVwbGF5QXZhaWxhYmxlIjp0cnVlLCJvdXRib3hDaGVja3BvaW50cyI6W3sib3V0Ym94U2VxdWVuY2UiOiIzIiwib3V0Ym94U3RyZWFtS2V5IjoiYWNjb3VudDphdXRoLWF1dGhvcml0eTp2MTp0ZW5hbnQvMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIiwic291cmNlRXZlbnREaWdlc3QiOiJzaGEyNTY6YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInNvdXJjZUV2ZW50SWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEifV0sInByb3Zpc2lvbmluZ1N0YXR1cyI6bnVsbCwicXVvdGFzIjp7Im1heEFjdGl2ZVNlc3Npb25zIjoiMTAwIiwibWF4Q29uY3VycmVudEdhbWVJbnN0YW5jZXMiOiI5MjIzMzcyMDM2ODU0Nzc1ODA3IiwibWF4U3RvcmFnZUJ5dGVzIjoiMTA0ODU3NiJ9LCJyZXF1ZXN0SWQiOiIzMzMzMzMzMy0zMzMzLTQzMzMtODMzMy0zMzMzMzMzMzMzMzMiLCJzY2hlbWEiOiJhY2NvdW50LWF1dGgtZXZpZGVuY2UtYnVuZGxlL3YxIiwic25hcHNob3RJZGVudGl0eSI6InNoYTI1NjphYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwic291cmNlS2luZCI6IlBBSURfSE9TVElORyIsInN1YnNjcmlwdGlvblN0YXR1cyI6ImFjdGl2ZSIsInRlbmFudEF1dGhvcml0eUdlbmVyYXRpb24iOiI1IiwidGVuYW50QmlsbGluZ1NlcXVlbmNlIjoiMTEiLCJ0ZW5hbnRJZCI6IjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiIsInZhcmlhbnQiOiJURU5BTlRfT1BFUkFUSU9OIn0="
+    }
+  ],
+  "rejectedRequests": [
     {
       "name": "delta-10",
       "capacityDelta": null,
-      "expected": "REJECT_BEFORE_COMMIT",
-      "acceptedDigest": null
-    },
-    {
-      "name": "usage-addition-overflow",
-      "usage": "9223372036854775807",
-      "held": "0",
-      "capacityDelta": "1",
-      "expected": "REJECT_BEFORE_COMMIT",
-      "acceptedDigest": null
-    },
-    {
-      "name": "held-addition-overflow",
-      "usage": "0",
-      "held": "9223372036854775807",
-      "capacityDelta": "1",
       "expected": "REJECT_BEFORE_COMMIT",
       "acceptedDigest": null
     },
@@ -170,20 +176,23 @@
       ],
       "expected": "REJECT_BEFORE_COMMIT",
       "acceptedDigest": null
-    },
+    }
+  ],
+  "rejectedUsage": [
     {
-      "name": "changed-cutoff-without-checkpoint",
-      "expected": "REJECT_BEFORE_COMMIT",
+      "name": "usage-addition-overflow",
+      "usage": "9223372036854775807",
+      "held": "0",
+      "capacityDelta": "1",
+      "expected": "CAPACITY_QUOTA_EXCEEDED",
       "acceptedDigest": null
     },
     {
-      "name": "noncanonical-evidence-whitespace",
-      "expected": "REJECT_BEFORE_COMMIT",
-      "acceptedDigest": null
-    },
-    {
-      "name": "duplicate-evidence-member",
-      "expected": "REJECT_BEFORE_COMMIT",
+      "name": "held-addition-overflow",
+      "usage": "0",
+      "held": "9223372036854775807",
+      "capacityDelta": "1",
+      "expected": "CAPACITY_QUOTA_EXCEEDED",
       "acceptedDigest": null
     }
   ]

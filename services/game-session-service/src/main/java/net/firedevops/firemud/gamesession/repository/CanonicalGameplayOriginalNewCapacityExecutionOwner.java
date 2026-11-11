@@ -139,6 +139,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         || !binding.characterId().equals(player.characterId())
         || !binding.sessionId().equals(player.sessionId().toString())
         || !target.realmId().equals(player.realmId())
+        || !(request.evidence().fields().get("target") instanceof Map<?, ?> evidenceTarget)
+        || !Long.toString(target.catalogRevision()).equals(evidenceTarget.get("catalogRevision"))
         || !player
             .requestId()
             .toString()

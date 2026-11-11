@@ -73,6 +73,57 @@ class CapacityAdmissionDigestTest {
   }
 
   @Test
+  void sharedRejectedEvidenceAndRequestsReachCanonicalValidators() throws Exception {
+    var resource = getClass().getResourceAsStream("/capacity/capacity-admission-v1-vectors.json");
+    assertThat(resource).isNotNull();
+    try (resource) {
+      var corpus = JsonMapper.builder().build().readTree(resource);
+      for (var vector : corpus.path("rejectedEvidence")) {
+        byte[] bytes =
+            Base64.getDecoder().decode(vector.path("canonicalAccountEvidenceBase64").asText());
+        assertThatThrownBy(() -> Evidence.parse(bytes, Owner.WORLD_MANAGEMENT))
+            .as(vector.path("name").asText())
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+      for (var vector : corpus.path("rejectedRequests")) {
+        Request base = CapacityAdmissionTestFixture.worldRequest(17L);
+        Shape requested = base.requestedShape();
+        if (vector.has("requestedShape")) {
+          var shape = vector.path("requestedShape");
+          requested =
+              new Shape(
+                  TenantCapacityAdmission.decimal(shape.get(0).asText()),
+                  TenantCapacityAdmission.decimal(shape.get(1).asText()),
+                  TenantCapacityAdmission.decimal(shape.get(2).asText()));
+        }
+        Long delta =
+            vector.has("capacityDelta")
+                ? (vector.path("capacityDelta").isNull()
+                    ? null
+                    : TenantCapacityAdmission.decimal(vector.path("capacityDelta").asText()))
+                : base.capacityDelta();
+        Request rejected =
+            new Request(
+                    base.identity(),
+                    base.admissionAttemptId(),
+                    base.capacityRearmFence(),
+                    base.targetNamespace(),
+                    base.context(),
+                    base.operation(),
+                    base.priorShape(),
+                    requested,
+                    base.evidence(),
+                    delta,
+                    null)
+                .withDigest();
+        assertThatThrownBy(rejected::requireStructurallyValid)
+            .as(vector.path("name").asText())
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+    }
+  }
+
+  @Test
   void nonCreatingEvidenceIsValidContentButCannotAuthorizeExecution() {
     Request denied = CapacityAdmissionTestFixture.playerRequest(false);
     denied.requireStructurallyValid();

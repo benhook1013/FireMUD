@@ -29,6 +29,7 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
@@ -40,6 +41,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Controlled ordering/denial only. Physical transaction and positive current-source proof are
@@ -50,6 +52,40 @@ class AccountTenantCapacityOwnerTest {
   void clear() {
     TransactionSynchronizationManager.setActualTransactionActive(false);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+  }
+
+  @Test
+  void sharedRejectedUsageVectorsReachAccountReservationGuardWithoutWrites() throws Exception {
+    var resource = getClass().getResourceAsStream("/capacity/capacity-admission-v1-vectors.json");
+    assertThat(resource).isNotNull();
+    try (resource) {
+      var corpus = JsonMapper.builder().build().readTree(resource);
+      for (var vector : corpus.path("rejectedUsage")) {
+        DSLContext dsl = mock(DSLContext.class);
+        Record usage = mock(Record.class);
+        when(usage.get("held_units", Long.class))
+            .thenReturn(TenantCapacityAdmission.decimal(vector.path("held").asText()));
+        when(usage.get("used_units", Long.class))
+            .thenReturn(TenantCapacityAdmission.decimal(vector.path("usage").asText()));
+        when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(usage);
+        var request =
+            CapacityAdmissionTestFixture.worldRequest(
+                TenantCapacityAdmission.decimal(vector.path("capacityDelta").asText()));
+        request.requireCommittable();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        try {
+          assertThatThrownBy(
+                  () ->
+                      new AccountTenantCapacityRepository(dsl)
+                          .create(request, request.evidence().expiresAt()))
+              .as(vector.path("name").asText())
+              .hasMessage(vector.path("expected").asText());
+          verify(dsl, never()).execute(anyString(), any(Object[].class));
+        } finally {
+          TransactionSynchronizationManager.setActualTransactionActive(false);
+        }
+      }
+    }
   }
 
   @Test

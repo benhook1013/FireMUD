@@ -114,15 +114,19 @@ class CapacityAdmissionVectors(unittest.TestCase):
                 digests.append(digest)
         self.assertNotEqual(digests[0], digests[1])
 
-    def test_rejected_delta_candidates_and_checked_addition(self):
+    def test_rejected_decimal_candidates(self):
         corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
         for candidate in corpus["rejected"]:
-            if candidate["name"].startswith("delta-"):
-                with self.subTest(candidate["name"]), self.assertRaises(ValueError):
-                    decimal(candidate["capacityDelta"])
-            if "usage" in candidate:
-                occupied = decimal(candidate["usage"]) + decimal(candidate["held"]) + decimal(candidate["capacityDelta"])
-                self.assertGreater(occupied, MAX)
+            with self.subTest(candidate["name"]), self.assertRaises(ValueError):
+                decimal(candidate["capacityDelta"])
+
+    def test_rejected_evidence_candidates(self):
+        corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
+        for candidate in corpus["rejectedEvidence"]:
+            with self.subTest(candidate["name"]), self.assertRaises(ValueError):
+                evidence(candidate["canonicalAccountEvidenceBase64"])
+        # Shape/absence and usage expectations are separate from this encoding corpus:
+        # CapacityAdmissionDigestTest and AccountTenantCapacityOwnerTest invoke their real owners.
 
 
 if __name__ == "__main__":

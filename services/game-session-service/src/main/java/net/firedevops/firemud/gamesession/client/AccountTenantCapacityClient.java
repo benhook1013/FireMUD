@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
+import io.grpc.Context;
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
@@ -25,6 +27,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 public final class AccountTenantCapacityClient
     extends AbstractReloadingBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
   private final String namespace;
+  private final Clock clock;
   private final String expectedPeer;
 
   public AccountTenantCapacityClient(
@@ -42,7 +45,7 @@ public final class AccountTenantCapacityClient
       throw new IllegalArgumentException("Namespace required");
     this.namespace = namespace;
     this.expectedPeer = "spiffe://firemud/ns/" + namespace + "/sa/account-service";
-    Objects.requireNonNull(clock);
+    this.clock = Objects.requireNonNull(clock);
   }
 
   public void init() throws IOException {
@@ -52,18 +55,28 @@ public final class AccountTenantCapacityClient
 
   /**
    * The caller must obtain its typed context from current owned player state, not text/metadata.
-   * Retries retain this exact request. A timeout is indeterminate and never allocates another ID.
+   * Retries retain this exact request. The Account call consumes the remaining absolute admission
+   * budget, capped at five seconds and the incoming deadline. A timeout is indeterminate and never
+   * allocates another ID.
    */
-  public Result commit(Request request) {
+  public Result commit(Request request, long absoluteDeadlineMillis) {
     requireNoAmbientSql("Capacity commitment requires no ambient SQL");
     request.requireStructurallyValid();
     if (request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
         || !namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Exact Game Session context required");
+    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, clock.millis());
+    Deadline deadline =
+        Deadline.after(
+            Math.min(
+                TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS),
+                remainingMillis),
+            TimeUnit.MILLISECONDS);
+    Deadline incoming = Context.current().getDeadline();
+    if (incoming != null) deadline = deadline.minimum(incoming);
     var stub =
         requireInitializedStub("Account capacity unavailable")
-            .withDeadlineAfter(
-                TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadline(deadline)
             .withMaxOutboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES)
             .withMaxInboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
     try {
