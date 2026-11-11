@@ -1512,6 +1512,14 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.classificationRows())
           .containsAllEntriesOf(classifications)
           .hasSize(classifications.size() + 2);
+      assertThat(f.classificationRows().keySet())
+          .containsExactlyInAnyOrderElementsOf(
+              java.util.stream.Stream.concat(
+                      classifications.keySet().stream(),
+                      java.util.stream.Stream.of(
+                          "game_session_region_owner_transfer",
+                          "game_session_region_owner_transfer_item"))
+                  .toList());
       assertThat(
               f.dsl
                   .fetch(
@@ -1524,6 +1532,10 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
       assertThat(f.evidence(original.request()))
           .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThatThrownBy(() -> f.owner().capture(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       var current = f.owner().capture(request());
       assertThat(current.catalog().catalogEpoch()).isEqualTo(9);
       assertThat(f.owner().readExact(current.request())).isEqualTo(current);
@@ -1543,7 +1555,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "game_session_region_owner_transfer", "game_session_region_owner_transfer_item")) {
         assertThat(f.count(table)).isZero();
         assertThatThrownBy(() -> f.dsl.execute("TRUNCATE " + table + " CASCADE"))
-            .isInstanceOf(org.jooq.exception.DataAccessException.class);
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("Region owner transfer custody is retained");
       }
       migration(f.source, f.schema, f.history, "1065").validate();
     }

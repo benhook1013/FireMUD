@@ -174,6 +174,21 @@ class TenantCapacityAdmissionGrpcCodecTest {
     }
   }
 
+  @Test
+  void malformedAndOutOfRangeResponseExpiryUseTheInvalidResponseException() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    var wire = TenantCapacityAdmissionGrpcCodec.toResponse(request, result(request));
+    for (String expires :
+        List.of("not-an-instant", "2026-99-02T00:00:00Z", "+1000000001-01-01T00:00:00Z")) {
+      var malformed =
+          wire.toBuilder()
+              .setCommitment(0, wire.getCommitment(0).toBuilder().setExpiresAt(0, expires))
+              .build();
+      assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.requireResponse(request, malformed))
+          .isExactlyInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
   private static Result result(Request request) {
     return new Result(
         request.identity(),

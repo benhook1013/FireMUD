@@ -79,6 +79,18 @@ public final class CanonicalGameplayBindingInventoryRepository {
     this.dsl = Objects.requireNonNull(dsl, "dsl");
   }
 
+  /** Handoff reads retain this repository's exact provider and the caller's frozen deadline. */
+  <T> T withinTransferRead(
+      java.time.Clock clock,
+      long absoluteDeadlineMillis,
+      java.util.function.Function<CanonicalGameplayBindingInventoryRepository, T> read) {
+    requireNoAmbientTransaction();
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+        clock,
+        absoluteDeadlineMillis,
+        budget -> read.apply(new CanonicalGameplayBindingInventoryRepository(budget.sql(dsl))));
+  }
+
   CanonicalGameplayBindingTransitionSnapshot prepare(
       CanonicalGameplayBindingTransitionRequest request) {
     Objects.requireNonNull(request, "request");

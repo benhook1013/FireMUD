@@ -7,9 +7,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.UUID;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Evidence;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Operation;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Owner;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Shape;
 import org.junit.jupiter.api.Test;
@@ -70,6 +73,107 @@ class CapacityAdmissionDigestTest {
     }
     assertThat(CapacityAdmissionTestFixture.worldRequest(null).mutationDigest())
         .isNotEqualTo(CapacityAdmissionTestFixture.worldRequest(0L).mutationDigest());
+  }
+
+  @Test
+  void sharedPlayerCorpusFixesIndependentPreimageAndDistinctCharacterAndSessionBindings()
+      throws Exception {
+    var resource = getClass().getResourceAsStream("/capacity/capacity-admission-v1-vectors.json");
+    assertThat(resource).isNotNull();
+    try (resource) {
+      var corpus = JsonMapper.builder().build().readTree(resource);
+      var request = corpus.path("playerRequest");
+      var context = request.path("ownerContext");
+      var vector = corpus.path("playerVector");
+      var player =
+          new PlayerContext(
+              UUID.fromString(context.path("accountId").asText()),
+              UUID.fromString(context.path("tenantId").asText()),
+              UUID.fromString(context.path("playableStateNamespaceId").asText()),
+              UUID.fromString(context.path("gameInstanceId").asText()),
+              UUID.fromString(context.path("characterId").asText()),
+              UUID.fromString(context.path("sessionId").asText()),
+              UUID.fromString(context.path("realmId").asText()),
+              UUID.fromString(context.path("requestId").asText()),
+              context.path("playableStateScope").asText());
+      assertThat(
+              List.of(
+                  player.accountId(),
+                  player.tenantId(),
+                  player.playableStateNamespaceId(),
+                  player.gameInstanceId(),
+                  player.characterId(),
+                  player.sessionId(),
+                  player.realmId(),
+                  player.requestId()))
+          .doesNotHaveDuplicates();
+      assertThat(request.path("ownerService").asText()).isEqualTo(player.owner().service());
+      Request action =
+          new Request(
+                  new Identity(
+                      UUID.fromString(request.path("tenantId").asText()),
+                      UUID.fromString(request.path("requestId").asText()),
+                      UUID.fromString(request.path("admissionId").asText())),
+                  UUID.fromString(request.path("admissionAttemptId").asText()),
+                  TenantCapacityAdmission.decimal(request.path("capacityRearmFence").asText()),
+                  request.path("targetNamespace").asText(),
+                  player,
+                  Operation.valueOf(request.path("operation").asText()),
+                  vectorShape(request.path("priorShape")),
+                  vectorShape(request.path("requestedShape")),
+                  Evidence.parse(
+                      Base64.getDecoder()
+                          .decode(request.path("canonicalAccountEvidenceBase64").asText()),
+                      Owner.GAME_SESSION),
+                  TenantCapacityAdmission.decimal(vector.path("capacityDelta").asText()),
+                  null)
+              .withDigest();
+      action.requireCommittable();
+      assertThat(HexFormat.of().formatHex(CapacityAdmissionDigest.preimage(action)))
+          .isEqualTo(vector.path("preimageHex").asText());
+      assertThat(CapacityAdmissionDigest.digest(action)).isEqualTo(vector.path("sha256").asText());
+      UUID changed = UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+      for (var ids :
+          List.of(
+              List.of(changed, player.sessionId()),
+              List.of(player.characterId(), changed),
+              List.of(player.sessionId(), player.characterId()))) {
+        var mutation =
+            new PlayerContext(
+                player.accountId(),
+                player.tenantId(),
+                player.playableStateNamespaceId(),
+                player.gameInstanceId(),
+                ids.get(0),
+                ids.get(1),
+                player.realmId(),
+                player.requestId(),
+                player.playableStateScope());
+        Request altered =
+            new Request(
+                    action.identity(),
+                    action.admissionAttemptId(),
+                    action.capacityRearmFence(),
+                    action.targetNamespace(),
+                    mutation,
+                    action.operation(),
+                    action.priorShape(),
+                    action.requestedShape(),
+                    action.evidence(),
+                    action.capacityDelta(),
+                    null)
+                .withDigest();
+        altered.requireCommittable();
+        assertThat(altered.mutationDigest()).isNotEqualTo(action.mutationDigest());
+      }
+    }
+  }
+
+  private static Shape vectorShape(tools.jackson.databind.JsonNode shape) {
+    return new Shape(
+        TenantCapacityAdmission.decimal(shape.get(0).asText()),
+        TenantCapacityAdmission.decimal(shape.get(1).asText()),
+        TenantCapacityAdmission.decimal(shape.get(2).asText()));
   }
 
   @Test

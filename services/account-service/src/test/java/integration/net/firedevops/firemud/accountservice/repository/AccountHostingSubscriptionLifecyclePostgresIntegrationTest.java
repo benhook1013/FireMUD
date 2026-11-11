@@ -190,10 +190,12 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.transport().reads).isEqualTo(reads);
   }
 
-  @Test
-  void confirmedWorkRejectsMissingOrMismatchedFirstInvoiceCompletionAndRollsBackFulfillment() {
+  @ParameterizedTest
+  @ValueSource(strings = {"1046", "latest"})
+  void confirmedWorkRejectsMissingOrMismatchedFirstInvoiceCompletionAndRollsBackFulfillment(
+      String migrationTarget) {
     for (String fault : List.of("missing", "tuple", "receipt", "transaction")) {
-      Context c = context("latest");
+      Context c = context(migrationTarget);
       Fixture f = fixture(c);
       var claim = paidClaim(f);
       var prepared =
@@ -232,9 +234,16 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
           .execute(
               "CREATE TRIGGER zz_first_invoice_completion_fault BEFORE INSERT ON subscription_first_invoice_completions FOR EACH ROW EXECUTE FUNCTION reject_exact_first_invoice_completion()");
       AtomicInteger applied = new AtomicInteger();
+      // V1046.1 rejects a missing completion at the earlier subscription consistency event.
+      // Keep the older frontier to witness the provisioning predicate independently; malformed
+      // completions still reach that exact predicate on both frontiers. Neither guard is disabled.
+      String expectedDiagnostic =
+          migrationTarget.equals("latest") && fault.equals("missing")
+              ? "Current positive hosting subscription requires exact first-invoice completion"
+              : "Provisioning confirmation lacks its exact lifecycle receipt";
       assertSqlState(
           "23514",
-          "Provisioning confirmation lacks its exact lifecycle receipt",
+          expectedDiagnostic,
           () ->
               in(
                   c,

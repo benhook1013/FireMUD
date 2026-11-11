@@ -1,5 +1,6 @@
 """Independent capacity-admission/1 corpus consumer. Encoding proof, not runtime authority."""
 import base64
+import copy
 import hashlib
 import json
 import re
@@ -59,39 +60,51 @@ def reject_duplicates(pairs):
     return result
 
 
-def evidence(encoded):
+def evidence(encoded, variant="TENANT_OPERATION"):
     raw = base64.b64decode(encoded, validate=True)
     if not 0 < len(raw) <= 262144:
         raise ValueError("evidence bound")
     parsed = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=reject_duplicates)
     canonical = json.dumps(parsed, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    if raw != canonical or parsed["schema"] != "account-auth-evidence-bundle/v1" or parsed["variant"] != "TENANT_OPERATION":
+    if raw != canonical or parsed["schema"] != "account-auth-evidence-bundle/v1" or parsed["variant"] != variant:
         raise ValueError("exact canonical variant required")
     tenant = parsed["tenantId"]
     cutoff = parsed["authorityTuple"]["tenantBillingCutoff"][tenant]
     points = parsed["outboxCheckpoints"]
-    if len(points) != 1 or any(cutoff[k] != points[0][k] for k in ("outboxStreamKey", "outboxSequence")):
+    matching = [point for point in points if point["outboxStreamKey"] == cutoff["outboxStreamKey"]]
+    if (variant == "TENANT_OPERATION" and len(points) != 1) or len(matching) != 1 or any(
+            cutoff[k] != matching[0][k] for k in ("outboxStreamKey", "outboxSequence")):
         raise ValueError("cutoff checkpoint mismatch")
     return encoded
 
 
 def preimage(request, candidate):
     context = request["ownerContext"]
+    if request["ownerService"] == "game-session-service":
+        variant = "PLAYER_ADMISSION"
+        owner_fields = [(key, string(context[key])) for key in
+                        ("accountId", "tenantId", "playableStateNamespaceId", "gameInstanceId",
+                         "characterId", "sessionId", "realmId", "requestId", "playableStateScope")]
+    elif request["ownerService"] == "world-management-service":
+        variant = "TENANT_OPERATION"
+        owner_fields = [(key, string(context[key])) for key in
+                        ("tenantId", "operationId", "lifecycleId", "gameInstanceId", "ownerId")]
+        owner_fields.append(("ownerFence", number(context["ownerFence"])))
+    else:
+        raise ValueError("known owner service required")
     fields = [
         ("actionFamilySchemaId", string("capacity-admission")),
         ("actionFamilySchemaVersion", string("1")),
         ("scope", obj([(key, string(request[key])) for key in ("tenantId", "requestId", "admissionId")])),
         ("target", obj([("ownerService", string(request["ownerService"])),
                         ("targetNamespace", string(request["targetNamespace"])),
-                        ("ownerContext", obj([(key, string(context[key])) for key in
-                                              ("tenantId", "operationId", "lifecycleId", "gameInstanceId", "ownerId")]
-                                             + [("ownerFence", number(context["ownerFence"]))]))])),
+                        ("ownerContext", obj(owner_fields))])),
         ("expectedVersion", obj([("admissionAttemptId", string(request["admissionAttemptId"])),
                                  ("capacityRearmFence", number(request["capacityRearmFence"]))])),
         ("mutation", obj([("operation", string(candidate.get("operation", request["operation"]))),
                           ("priorShape", shape(candidate.get("priorShape", request["priorShape"]))),
                           ("requestedShape", shape(candidate.get("requestedShape", request["requestedShape"]))),
-                          ("accountEvidence", string(evidence(request["canonicalAccountEvidenceBase64"]))),
+                          ("accountEvidence", string(evidence(request["canonicalAccountEvidenceBase64"], variant))),
                           ("capacityDelta", value("absent", b"", False) if candidate["capacityDelta"] is None
                            else number(candidate["capacityDelta"]))])),
         ("auditReason", string("capacity-admission"))]
@@ -113,6 +126,24 @@ class CapacityAdmissionVectors(unittest.TestCase):
                 self.assertEqual(digest, candidate["sha256"])
                 digests.append(digest)
         self.assertNotEqual(digests[0], digests[1])
+
+    def test_player_golden_preimage_and_each_player_identity(self):
+        corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
+        request, candidate = corpus["playerRequest"], corpus["playerVector"]
+        context_ids = [item for key, item in request["ownerContext"].items() if key.endswith("Id")]
+        self.assertEqual(len(context_ids), len(set(context_ids)))
+        encoded = preimage(request, candidate)
+        self.assertEqual(encoded.hex(), candidate["preimageHex"])
+        self.assertEqual(hashlib.sha256(encoded).hexdigest(), candidate["sha256"])
+        for key in ("characterId", "sessionId"):
+            with self.subTest(key):
+                changed = copy.deepcopy(request)
+                changed["ownerContext"][key] = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+                self.assertNotEqual(hashlib.sha256(preimage(changed, candidate)).hexdigest(), candidate["sha256"])
+        swapped = copy.deepcopy(request)
+        context = swapped["ownerContext"]
+        context["characterId"], context["sessionId"] = context["sessionId"], context["characterId"]
+        self.assertNotEqual(hashlib.sha256(preimage(swapped, candidate)).hexdigest(), candidate["sha256"])
 
     def test_rejected_decimal_candidates(self):
         corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
