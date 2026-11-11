@@ -463,7 +463,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
       byte[] key = ascii(original.keys()[6]);
       switch (fault) {
         case "type" -> {
-          admin.del(new byte[][] {key});
+          byte[][] keysToDelete = {key};
+          admin.del(keysToDelete);
           admin.set(key, ascii("foreign-type"));
         }
         case "ttl" -> admin.pexpire(key, 60_000L);
@@ -584,7 +585,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
         .isNotEqualTo(before.get(original.keys()[4]));
     admin.hdel(hash, new byte[] {0, (byte) 0xff, 2});
     admin.hset(hash, field, value);
-    admin.sadd(ascii(original.keys()[2]), value);
+    byte[][] membersToAdd = {value};
+    admin.sadd(ascii(original.keys()[2]), membersToAdd);
     assertThat(physicalImage(original).get(original.keys()[2]))
         .isNotEqualTo(before.get(original.keys()[2]));
     for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
