@@ -231,13 +231,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                       session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5)))
           .isInstanceOf(RuntimeException.class);
       TenantCapacityAdmission.Result result = reservation;
+      var recovery =
+          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+              session.capacityOwner, session.dsl, session.capacityRead, CLOCK);
       for (int attempt = 0; attempt < 12; attempt++) {
-        var recovery =
-            new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
-                session.capacityOwner,
-                session.dsl,
-                session.capacityRead,
-                Clock.offset(CLOCK, Duration.ofSeconds(attempt * 20L)));
         result =
             recovery.reconcile(
                 session.capacityRequest,
@@ -246,9 +243,25 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         assertThat(result.reservationId()).isEqualTo(reservation.reservationId());
         assertThat(result.reservationFence()).isEqualTo(reservation.reservationFence());
         assertThat(result.admissionAttemptId()).isEqualTo(reservation.admissionAttemptId());
+        assertThat(result.identity()).isEqualTo(reservation.identity());
+        assertThat(result.capacityRearmFence()).isEqualTo(reservation.capacityRearmFence());
       }
       assertThat(result.state())
           .isEqualTo(TenantCapacityAdmission.State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION);
+      var retainedRecovery =
+          session.dsl.fetchSingle(
+              "SELECT recovery_attempt_count, recovery_claim_fence FROM account_tenant_capacity_reservations WHERE reservation_id=?",
+              reservation.reservationId());
+      assertThat(retainedRecovery.get("recovery_attempt_count", Integer.class)).isEqualTo(12);
+      assertThat(retainedRecovery.get("recovery_claim_fence", Long.class)).isEqualTo(12L);
+      assertThat(
+              session
+                  .dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_tenant_capacity_recovery_evidence WHERE admission_attempt_id=?",
+                      reservation.admissionAttemptId())
+                  .get(0, Long.class))
+          .isEqualTo(12L);
       var usage =
           session.dsl.fetchSingle(
               "SELECT held_units,used_units FROM account_tenant_capacity_usage WHERE tenant_uuid=? AND owner_service='game-session-service'",

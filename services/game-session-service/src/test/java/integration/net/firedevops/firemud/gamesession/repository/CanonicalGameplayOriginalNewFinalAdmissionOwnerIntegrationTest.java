@@ -608,6 +608,47 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void ordinaryProvisionalHandoffWithoutCapacityExecutionNeedsNoFinalAcknowledgements()
+      throws Exception {
+    regionBinding =
+        CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
+            fixture.dsl(),
+            ownerClient,
+            fixture.transitionId(),
+            sources.request,
+            sources.resolver,
+            sources.entity);
+    var original = regionBinding.installation();
+    var before = inventory.readProvisionalCasEvidence(fixture.transitionId());
+    assertThat(before.candidate().accountIndexState())
+        .isEqualTo(
+            net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry
+                .IndexState.REPAIR_REQUIRED);
+    assertThatThrownBy(() -> inventory.readOriginalNewFinalAdmissionSource(decision))
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+                .get(0, Long.class))
+        .isZero();
+
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var successor = actualTransferHandoff();
+
+    assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(inventory.readProvisionalCasEvidence(fixture.transitionId())).isEqualTo(before);
+    assertThatThrownBy(() -> inventory.readOriginalNewFinalAdmissionSource(decision))
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT count(*) FROM game_session_region_owner_transfer")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
   void committedRedisWinnerMustAcquireFullPositiveSqlRetentionBeforeActualHandoff()
       throws Exception {
     repairAccountMember();
@@ -638,6 +679,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 .get(0, String.class))
         .isNull();
     var original = regionBinding.installation();
+    var pinned = source;
     admin.pexpire(ascii(original.grant.key()), 0);
     var successor = actualTransferHandoff();
     assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
@@ -655,6 +697,26 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 .disposition())
         .isEqualTo("COMMITTED");
     assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
+    var retained = inventory.readRegionTransferOriginalSource(fixture.transitionId(), pinned);
+    assertThat(retained.transitionStatus())
+        .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+    assertThat(retained.candidate()).isEqualTo(pinned.candidate());
+    assertThat(retained.finalReceipt().orElseThrow().finalSessionSha256())
+        .isEqualTo(
+            net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+                committed));
+    assertThat(
+            inventory
+                .readRegionTransferOriginalSource(fixture.transitionId(), retained)
+                .finalReceipt())
+        .isEqualTo(retained.finalReceipt());
+    assertThatThrownBy(() -> inventory.readProvisionalCasEvidence(fixture.transitionId()))
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("A first binding cannot proceed while an active controller exists");
+    assertThatThrownBy(
+            () -> inventory.readRegionTransferOriginalSource(UUID.randomUUID(), retained))
+        .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("Region transfer changed its original transition");
   }
 
   @Test
