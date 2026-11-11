@@ -180,6 +180,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             .transactionResult(
                 configuration -> {
                   var tx = DSL.using(configuration);
+                  // Serialize original effect custody with every durable region-owner replacement.
+                  // This lock is released before any Redis command is submitted.
+                  requireSelectedOwner(tx, source.candidate(), execution);
                   Record row = find(tx, execution);
                   if (row != null) {
                     exact(row, execution);
@@ -286,6 +289,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             row.get("selected_owner_fence", Long.class));
     exact(row, execution);
     Record transition = transition(execution);
+    if ("COMMITTED".equals(transition.get("status", String.class))) {
+      retainCommittedBeforeCleanup(request, reservation, budget.absoluteDeadlineMillis());
+      // Successful positive reconciliation never authorizes the requested negative closure.
+      throw unavailable();
+    }
     if (!"PROVISIONAL".equals(transition.get("status", String.class))
         || transition.get("original_new_final_session_sha256") != null) throw unavailable();
     var candidate =
@@ -298,6 +306,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         scopedFinalOwner()
             .closeCapacityExecutionOnce(
                 execution, candidate, assignment, budget.absoluteDeadlineMillis());
+    if (result == 2) {
+      retainCommittedBeforeCleanup(request, reservation, budget.absoluteDeadlineMillis());
+      throw unavailable();
+    }
     if (result != 4) throw unavailable();
     Map<String, byte[]> physical = readExecution(execution, assignment.tenantGameplayTag());
     exactPhysicalBinding(physical, execution, "CLOSED");
@@ -308,6 +320,62 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             execution.candidateDigest(),
             closedReceipt(execution));
     retainTerminal(execution, "CLOSED", proof);
+  }
+
+  /**
+   * Owner-local continuation after a lost final reply or process stop. It never dispatches FINAL,
+   * issues a credential, or interprets absence as a negative outcome. Serving cleanup must wait for
+   * this retained positive evidence (or the independently verified original CLOSE path).
+   */
+  public Snapshot retainCommittedBeforeCleanup(Request request, Result reservation) {
+    return retainCommittedBeforeCleanup(request, reservation, Long.MAX_VALUE);
+  }
+
+  public Snapshot retainCommittedBeforeCleanup(Request request, Result reservation, long deadline) {
+    noSql();
+    if (budget == null)
+      return within(
+          deadline, owner -> owner.retainCommittedBeforeCleanup(request, reservation, deadline));
+    budget.check();
+    Record row =
+        sql()
+            .fetchOne(
+                "SELECT * FROM "
+                    + TABLE
+                    + " WHERE tenant_id = ? AND request_id = ? AND admission_id = ? AND admission_attempt_id = ?",
+                request.identity().tenantId(),
+                request.identity().requestId(),
+                request.identity().admissionId(),
+                request.admissionAttemptId());
+    if (row == null) throw unavailable();
+    var execution =
+        new OriginalNewCapacityExecution(
+            request,
+            reservation,
+            row.get("transition_id", UUID.class),
+            candidateDigest(row),
+            row.get("selected_owner_id", String.class),
+            row.get("selected_owner_fence", Long.class));
+    exact(row, execution);
+    Record transition = transition(execution);
+    if ("PROVISIONAL".equals(transition.get("status", String.class))) {
+      // Redis may already contain the irreversible positive effect even when its SQL receipt
+      // was not reached. Recover that exact result without the original LOGIN or private grant.
+      var candidate =
+          CanonicalGameplayOriginalNewCandidate.parseCanonical(
+              transition.get("original_new_candidate_bytes", byte[].class));
+      var inventory = new CanonicalGameplayBindingInventoryRepository(sql());
+      var decision =
+          inventory.readAdmissionDecision(execution.transitionId(), candidate.leaseEvidence());
+      var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+      try (var actual = scopedFinalOwner().readCommittedForRetention(source, execution)) {
+        inventory.commitOriginalNewFinalAdmission(actual);
+      }
+    }
+    Snapshot snapshot = readExact(request, reservation, true);
+    if (!"COMMITTED".equals(snapshot.disposition())) throw unavailable();
+    retainTerminal(execution, "COMMITTED", snapshot.canonicalReadback());
+    return readExact(request, reservation, false);
   }
 
   void retainCommitted(CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual) {
@@ -497,6 +565,28 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         || transition.get("original_new_admission_at_ms") != null
         || transition.get("original_new_continuity_expires_at_ms") != null
         || transition.get("original_new_session_duration_ms") != null) throw unavailable();
+  }
+
+  private static void requireSelectedOwner(
+      DSLContext tx,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      OriginalNewCapacityExecution execution) {
+    var binding = candidate.bindingIdentity();
+    Record current =
+        tx.fetchOne(
+            "SELECT owner_service, owner_instance_id, executor_fence, region_epoch, paused FROM game_session_region_runtime_status WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ? FOR UPDATE",
+            binding.tenantId(),
+            binding.gameInstanceId(),
+            binding.regionId());
+    if (current == null
+        || !"game-session-service".equals(current.get("owner_service", String.class))
+        || !execution.selectedOwnerId().equals(current.get("owner_instance_id", String.class))
+        || !Long.valueOf(execution.selectedOwnerFence())
+            .equals(current.get("executor_fence", Long.class))
+        || !binding
+            .regionEpoch()
+            .equals(java.math.BigInteger.valueOf(current.get("region_epoch", Long.class)))
+        || !Boolean.FALSE.equals(current.get("paused", Boolean.class))) throw unavailable();
   }
 
   private CurrentOwner currentOwner(CanonicalGameplayOriginalNewCandidate candidate) {

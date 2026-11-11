@@ -46,30 +46,6 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayRegionBindingBridgeOwner regionBridge,
       CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier,
       CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis,
-      Clock clock) {
-    this.capacityClient = null;
-    this.capacityExecution = null;
-    this.inventory = Objects.requireNonNull(inventory, "Game Session inventory is required");
-    this.accountClient = Objects.requireNonNull(accountClient, "Account lease client is required");
-    this.accountBarrier =
-        Objects.requireNonNull(accountBarrier, "Account INITIAL owner is required");
-    this.issuerBarrier =
-        Objects.requireNonNull(issuerBarrier, "Issuer admission owner is required");
-    this.regionBridge = Objects.requireNonNull(regionBridge, "Region bridge owner is required");
-    this.credentialVerifier =
-        Objects.requireNonNull(credentialVerifier, "Bound credential verifier is required");
-    this.finalRedis = Objects.requireNonNull(finalRedis, "Final admission Redis owner is required");
-    this.clock = Objects.requireNonNull(clock, "Clock is required");
-  }
-
-  CanonicalGameplayOriginalNewFinalAdmissionCoordinator(
-      CanonicalGameplayBindingInventoryRepository inventory,
-      AccountGameplayAdmissionLeaseClient accountClient,
-      CanonicalGameplayAccountInitialBarrierRedisOwner accountBarrier,
-      CanonicalGameplayIssuerAdmissionBarrierRedisOwner issuerBarrier,
-      CanonicalGameplayRegionBindingBridgeOwner regionBridge,
-      CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier,
-      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis,
       Clock clock,
       AccountTenantCapacityClient capacityClient,
       CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution) {
@@ -102,7 +78,6 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       long absoluteDeadlineMillis,
       TenantCapacityAdmission.Request capacityRequest) {
     requireNoAmbientSql();
-    if (capacityClient == null || capacityExecution == null) throw unavailable();
     if (capacityRequest == null) throw unavailable();
     capacityRequest.requireStructurallyValid();
     Objects.requireNonNull(originalDecision, "Original Account decision is required");
@@ -186,6 +161,11 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                 beforeFinalCas.issuerOpen,
                 execution,
                 absoluteDeadlineMillis);
+            // Account commitment and capacity installation may outlive the prior grant check.
+            // Revalidate immediately before dispatch; durable execution custody excludes owner
+            // replacement throughout the residual lease-loss race and result reconciliation.
+            Currentness atDispatch = currentness(source, privateRegionInstallation);
+            requireSameCurrentness(beforeFinalCas, atDispatch);
             requireDeadline(absoluteDeadlineMillis);
             try (CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback finalReadback =
                 finalRedis.finalizeOriginalNewOnce(
@@ -197,9 +177,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                     absoluteDeadlineMillis)) {
               requireFinalReadback(
                   source, finalReadback, credential, canonicalSessionDurationMillis);
-              Currentness afterFinalCas = currentness(source, privateRegionInstallation);
-              requireSameCurrentness(beforeFinalCas, afterFinalCas);
-
+              // The verified positive effect must acquire its durable receipt and retained
+              // evidence before a subsequent liveness/currentness failure withholds success.
               boolean committedByThisAttempt =
                   source.transitionStatus()
                       == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL;
@@ -223,7 +202,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
               requireReadbackMatchesReceipt(finalReadback, finalReceipt);
               capacityExecution.retainCommitted(finalReadback, absoluteDeadlineMillis);
               Currentness beforeConfirmation = currentness(source, privateRegionInstallation);
-              requireSameCurrentness(afterFinalCas, beforeConfirmation, committedByThisAttempt);
+              requireSameCurrentness(atDispatch, beforeConfirmation, committedByThisAttempt);
 
               requireDeadline(absoluteDeadlineMillis);
               OriginalFinalAdmissionConfirmation confirmation =

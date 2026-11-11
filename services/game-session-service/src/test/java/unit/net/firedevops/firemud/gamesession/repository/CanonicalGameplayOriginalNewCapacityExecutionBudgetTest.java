@@ -40,12 +40,29 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.jooq.impl.DefaultConfiguration;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** Controlled acquisition/driver behavior, not database or owner-evidence qualification. */
 class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
   private static final Clock CLOCK = Clock.systemUTC();
+
+  @AfterEach
+  void awaitResourceAndCancellationWorkerCleanup() throws InterruptedException {
+    Semaphore permits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    // A mocked provider release is observed before its caller drains connection custody and
+    // restores admission. Wait for the real worker/cancellation lifecycle, including on failure.
+    assertThat(permits.tryAcquire(maximum, 2, TimeUnit.SECONDS))
+        .as("resource and cancellation workers restore all operation permits")
+        .isTrue();
+    permits.release(maximum);
+  }
 
   @Test
   void actualOwnerReadReturnsAtDeadlineAndLateAcquisitionNeverExecutes() throws Exception {

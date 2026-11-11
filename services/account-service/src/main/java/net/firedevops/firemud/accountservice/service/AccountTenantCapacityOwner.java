@@ -263,11 +263,12 @@ public final class AccountTenantCapacityOwner {
   }
 
   private void requireCaller(Request request, String caller) {
-    if (request == null
-        || !namespace.equals(request.targetNamespace())
-        || !TenantCapacityAdmission.expectedWorkload(namespace, request.context().owner())
+    if (request == null || !namespace.equals(request.targetNamespace()))
+      throw new CapacityException(Failure.INVALID_ARGUMENT);
+    if (!TenantCapacityAdmission.expectedWorkload(namespace, request.context().owner())
             .equals(caller)
-        || !request.evidence().callerWorkload().equals(caller)) throw unavailable();
+        || !request.evidence().callerWorkload().equals(caller))
+      throw new CapacityException(Failure.PERMISSION_DENIED);
   }
 
   static void requireClaim(Record row, UUID owner, long fence, Instant now) {
