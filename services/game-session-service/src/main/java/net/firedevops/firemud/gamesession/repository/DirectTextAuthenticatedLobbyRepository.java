@@ -31,6 +31,7 @@ public final class DirectTextAuthenticatedLobbyRepository {
   public static final String SCOPE = "game_session_direct_text_authenticated_lobby_scope";
   public static final String CURRENT = "game_session_direct_text_authenticated_lobby_current";
   public static final String JOIN = "game_session_direct_text_authenticated_lobby_join";
+  public static final String INTAKE = "game_session_direct_text_authenticated_lobby_scope_intake";
   private static final String ORIGINAL = "game_session_initial_gameplay_login_journal";
   private final DSLContext dsl;
 
@@ -45,6 +46,53 @@ public final class DirectTextAuthenticatedLobbyRepository {
   public void verifyOriginal(
       InitialGameplayLoginAttemptCoordinates original, CanonicalGameplayLoginResult verified) {
     lockOriginal(original, verified, false);
+  }
+
+  /** Reserves one possible Account issuance, serialized by the actual original LOGIN row. */
+  public ScopeIntake reserveScopeIntake(
+      InitialGameplayLoginAttemptCoordinates original,
+      CanonicalGameplayLoginResult verified,
+      UUID scopeRecordId,
+      UUID scopeRequestId,
+      int configuredLimit) {
+    if (configuredLimit <= 0) throw unavailable();
+    lockOriginal(original, verified, false);
+    Record prior =
+        dsl.fetchOne(
+            "SELECT frozen_limit, intake_sequence FROM "
+                + INTAKE
+                + " WHERE original_request_id = ? ORDER BY intake_sequence DESC LIMIT 1",
+            original.requestId());
+    int limit = prior == null ? configuredLimit : prior.get("frozen_limit", Integer.class);
+    int consumed = prior == null ? 0 : prior.get("intake_sequence", Integer.class);
+    if (consumed >= limit) throw unavailable();
+    var intake =
+        new ScopeIntake(original.requestId(), scopeRecordId, scopeRequestId, limit, consumed + 1);
+    dsl.execute(
+        "INSERT INTO "
+            + INTAKE
+            + " (original_request_id, scope_record_id, scope_request_id, frozen_limit, intake_sequence)"
+            + " VALUES (?, ?, ?, ?, ?)",
+        intake.originalRequestId(),
+        intake.scopeRecordId(),
+        intake.scopeRequestId(),
+        intake.frozenLimit(),
+        intake.sequence());
+    if (!intake.equals(requiredIntake(dsl, intake.scopeRecordId()))) throw unavailable();
+    return intake;
+  }
+
+  /** Durable-primary readback before Account; no claim replay is an authorization to redispatch. */
+  public void readCommittedScopeIntake(ScopeIntake expected) {
+    requireNoTransaction();
+    dsl.connectionResult(
+        connection -> {
+          requireConnection(connection, false);
+          var reader = DSL.using(connection, SQLDialect.POSTGRES);
+          if (!expected.equals(requiredIntake(reader, expected.scopeRecordId())))
+            throw unavailable();
+          return null;
+        });
   }
 
   public void retainScope(
@@ -247,6 +295,47 @@ public final class DirectTextAuthenticatedLobbyRepository {
     Record row = reader.fetchOne("SELECT * FROM " + SCOPE + " WHERE scope_record_id = ?", id);
     if (row == null) throw unavailable();
     return decodeScope(row);
+  }
+
+  private static ScopeIntake requiredIntake(DSLContext reader, UUID scopeId) {
+    Record row =
+        reader.fetchOne(
+            "SELECT i.* FROM "
+                + INTAKE
+                + " i JOIN "
+                + ORIGINAL
+                + " o ON o.request_id = i.original_request_id WHERE i.scope_record_id = ?"
+                + " AND NOT o.abandoned AND o.lobby_scope_intake_eligible",
+            scopeId);
+    if (row == null) throw unavailable();
+    return new ScopeIntake(
+        row.get("original_request_id", UUID.class),
+        row.get("scope_record_id", UUID.class),
+        row.get("scope_request_id", UUID.class),
+        row.get("frozen_limit", Integer.class),
+        row.get("intake_sequence", Integer.class));
+  }
+
+  /** Non-secret immutable dispatch claim, not a scope, credential or admission decision. */
+  public record ScopeIntake(
+      UUID originalRequestId, UUID scopeRecordId, UUID scopeRequestId, int frozenLimit, int sequence) {
+    public ScopeIntake {
+      Objects.requireNonNull(originalRequestId);
+      Objects.requireNonNull(scopeRecordId);
+      Objects.requireNonNull(scopeRequestId);
+      if (originalRequestId.version() != 4
+          || scopeRecordId.version() != 4
+          || scopeRequestId.version() != 4
+          || originalRequestId.variant() != 2
+          || scopeRecordId.variant() != 2
+          || scopeRequestId.variant() != 2
+          || originalRequestId.equals(scopeRecordId)
+          || originalRequestId.equals(scopeRequestId)
+          || scopeRecordId.equals(scopeRequestId)
+          || frozenLimit <= 0
+          || sequence <= 0
+          || sequence > frozenLimit) throw unavailable();
+    }
   }
 
   private static DirectTextAuthenticatedLobbyScope decodeScope(Record row) {

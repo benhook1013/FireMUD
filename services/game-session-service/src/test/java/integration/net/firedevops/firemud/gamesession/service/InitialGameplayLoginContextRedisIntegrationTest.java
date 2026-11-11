@@ -1151,7 +1151,8 @@ class InitialGameplayLoginContextRedisIntegrationTest {
             selection,
             lobbyAccount,
             new DataSourceTransactionManager(journalDataSource),
-            CLOCK),
+            CLOCK,
+            3),
         repository,
         selection,
         lobbyAccount);

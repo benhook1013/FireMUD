@@ -91,12 +91,15 @@ public class AuthenticatedGameplayRuntimeConfiguration {
       DSLContext dsl,
       DirectTextWorldSelectionService selections,
       AccountClient account,
+      @Value("${firemud.game-session.authenticated-gameplay.maximum-scope-intakes-per-login:0}")
+          int maximumScopeIntakesPerLogin,
       @Qualifier("transactionManager") PlatformTransactionManager transactions) {
     return new DirectTextAuthenticatedLobbyOwner(
         new DirectTextAuthenticatedLobbyRepository(dsl),
         selections,
         account,
         transactions,
-        Clock.systemUTC());
+        Clock.systemUTC(),
+        maximumScopeIntakesPerLogin);
   }
 }

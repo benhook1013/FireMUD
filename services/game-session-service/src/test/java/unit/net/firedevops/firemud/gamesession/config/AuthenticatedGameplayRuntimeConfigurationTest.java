@@ -126,6 +126,31 @@ class AuthenticatedGameplayRuntimeConfigurationTest {
             });
   }
 
+  @Test
+  void missingOrZeroPolicyDisablesOnlyNewScopeIntake() {
+    for (String value : new String[] {"", "0", "3"}) {
+      var runner = infrastructure().withUserConfiguration(ScannedComposition.class)
+          .withPropertyValues(ENABLED);
+      if (!value.isEmpty()) runner = runner.withPropertyValues(
+          "firemud.game-session.authenticated-gameplay.maximum-scope-intakes-per-login=" + value);
+      runner.run(context -> {
+        assertThat(context).hasNotFailed();
+        assertThat(context.getBean(DirectTextAuthenticatedLobbyOwner.class))
+            .hasFieldOrPropertyWithValue("maximumScopeIntakesPerLogin", value.isEmpty() ? 0 : Integer.parseInt(value));
+        verifyNoInteractions(context.getBean(DSLContext.class));
+      });
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"-1", "unbounded", "2147483648"})
+  void invalidScopeIntakePolicyFailsConfiguration(String value) {
+    infrastructure().withUserConfiguration(ScannedComposition.class)
+        .withPropertyValues(ENABLED,
+            "firemud.game-session.authenticated-gameplay.maximum-scope-intakes-per-login=" + value)
+        .run(context -> assertThat(context).hasFailed());
+  }
+
   private static ApplicationContextRunner infrastructure() {
     return new ApplicationContextRunner()
         .withSystemProperties("firemud.grpc.tls-reload.enabled=false")

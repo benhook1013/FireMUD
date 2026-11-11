@@ -207,6 +207,28 @@ class AuthenticatedDirectTextCommandReceiverTest {
   }
 
   @Test
+  void intakeRefusalPreservesSelectedScopeAndAllowsExistingJoinButNeverPlay() {
+    var fixture = fixture();
+    var selected = fixture.connection.selectedScope;
+    when(fixture.lobby.realms(null, null, fixture.connection, fixture.connection.menu, "demo"))
+        .thenThrow(new IllegalStateException("Controlled exhausted intake"));
+    var refused = fixture.receiver.receive(fixture.socket,
+        new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"));
+    assertThat(refused.commandResult().accepted()).isFalse();
+    assertThat(refused.commandResult().errorCode()).isEqualTo("UNAVAILABLE");
+    assertThat(fixture.connection.selectedScope).isSameAs(selected);
+    when(fixture.lobby.join(null, null, fixture.connection)).thenReturn(
+        new DirectTextAuthenticatedLobbyOwner.Observation(UUID.randomUUID(), UUID.randomUUID(),
+            DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING,
+            Optional.of(JoinPublicProductionMembershipResponse.getDefaultInstance())));
+    assertThat(fixture.receiver.receive(fixture.socket,
+        new TextCommand(TextCommandType.JOIN, List.of("demo"), "JOIN demo")).commandResult().accepted()).isTrue();
+    var play = fixture.receiver.receive(fixture.socket,
+        new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+    assertThat(play.commandResult().errorCode()).isEqualTo("ADMISSION_UNAVAILABLE");
+  }
+
+  @Test
   void loginAndLobbyObservationsNeverSubstituteForCanonicalPlayAdmission() {
     var fixture = fixture();
     var command =

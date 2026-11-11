@@ -3,6 +3,7 @@ package unit.net.firedevops.firemud.gamesession.service.directtext;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -23,6 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
@@ -483,6 +485,53 @@ class DirectTextAuthenticatedLobbyTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void disabledIntakePreservesRetainedJoinContinuation() {
+    var f = new Fixture(CLOCK, 0);
+    assertThatThrownBy(() -> f.owner.realms(f.original, f.result, f.custody, null, "public"))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(f.repository, f.account, f.selection);
+    when(f.account.joinPublicProductionMembership(any(), any(), any(), any())).thenReturn(positive());
+    assertThat(f.owner.join(f.original, f.result, f.custody).status())
+        .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.COMPLETED_CURRENT_NON_ADMITTING);
+  }
+
+  @Test
+  void lostIntakeCommitAndReadbackNeverReachAccount() {
+    for (boolean commitLoss : new boolean[] {true, false}) {
+      var f = new Fixture();
+      when(f.selection.resolve(null, "public")).thenReturn(Optional.of(f.scope.publicTarget()));
+      if (commitLoss) f.failIntakeCommit.set(true);
+      else doAnswer(call -> { throw new IllegalStateException("Lost durable readback"); })
+          .when(f.repository).readCommittedScopeIntake(any());
+      assertThatThrownBy(() -> f.owner.realms(f.original, f.result, f.custody, null, "public"))
+          .isInstanceOf(IllegalStateException.class);
+      verifyNoInteractions(f.account);
+      assertThat(f.intakeCount.get()).isEqualTo(1);
+    }
+  }
+
+  @Test
+  void unknownIssuanceConsumesBoundAcrossOwnerReplacementWithoutRetentionOrRetry() {
+    var f = new Fixture(CLOCK, 2);
+    when(f.selection.resolve(null, "public")).thenReturn(Optional.of(f.scope.publicTarget()));
+    when(f.account.issueDirectTextConnectScope(any(), any())).thenAnswer(call -> {
+      assertThat(f.events.getLast()).isEqualTo("INTAKE_READ");
+      return IssueDirectTextConnectScopeResponse.newBuilder()
+          .setError(ErrorDetail.newBuilder().setCode("AUTH_UNAVAILABLE")).build();
+    });
+    for (int attempt = 0; attempt < 2; attempt++) {
+      var replacement = new DirectTextAuthenticatedLobbyOwner(
+          f.repository, f.selection, f.account, f.transactions, CLOCK, 2);
+      assertThatThrownBy(() -> replacement.realms(f.original, f.result, f.custody, null, "public"))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThatThrownBy(() -> f.owner.realms(f.original, f.result, f.custody, null, "public"))
+        .isInstanceOf(IllegalStateException.class);
+    verify(f.account, times(2)).issueDirectTextConnectScope(any(), any());
+    verify(f.repository, never()).retainScope(any(), any(), any());
+  }
+
   private static final class Fixture {
     final InitialGameplayLoginAttemptCoordinates original =
         new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 7);
@@ -496,6 +545,9 @@ class DirectTextAuthenticatedLobbyTest {
     final AtomicBoolean live = new AtomicBoolean(true);
     final AtomicBoolean resetAfterCallback = new AtomicBoolean();
     final AtomicBoolean failClaimCommit = new AtomicBoolean();
+    final AtomicBoolean failIntakeCommit = new AtomicBoolean();
+    final AtomicInteger intakeCount = new AtomicInteger();
+    final PlatformTransactionManager transactions;
     final List<String> events = new ArrayList<>();
     final DirectTextAuthenticatedLobbyScope scope;
     final DirectTextAuthenticatedLobbyJoin frozen;
@@ -523,6 +575,10 @@ class DirectTextAuthenticatedLobbyTest {
     }
 
     Fixture(Clock ownerClock) {
+      this(ownerClock, 3);
+    }
+
+    Fixture(Clock ownerClock, int maximumIntakes) {
       when(result.evidence()).thenReturn(evidence(original));
       when(result.compactJwtBytes())
           .thenAnswer(call -> "fixture-private-token".getBytes(StandardCharsets.US_ASCII));
@@ -545,6 +601,19 @@ class DirectTextAuthenticatedLobbyTest {
               State.NEVER_DISPATCHED,
               Optional.empty());
       retained.set(frozen);
+      when(repository.reserveScopeIntake(any(), any(), any(), any(), anyInt()))
+          .thenAnswer(call -> {
+            events.add("INTAKE");
+            int sequence = intakeCount.incrementAndGet();
+            if (sequence > maximumIntakes) throw new IllegalStateException("Fixture intake exhausted");
+            return new DirectTextAuthenticatedLobbyRepository.ScopeIntake(
+                original.requestId(), call.getArgument(2), call.getArgument(3), maximumIntakes, sequence);
+          });
+      doAnswer(call -> {
+        assertThat(events.getLast()).isEqualTo("COMMIT");
+        events.add("INTAKE_READ");
+        return null;
+      }).when(repository).readCommittedScopeIntake(any());
       when(repository.current(any(), any(), any(), any())).thenReturn(scope);
       when(repository.freezeCurrentJoin(any(), any(), any(), any()))
           .thenAnswer(
@@ -580,7 +649,7 @@ class DirectTextAuthenticatedLobbyTest {
               })
           .when(repository)
           .recordPositiveReply(any(), any(), any());
-      var transactions =
+      transactions =
           new PlatformTransactionManager() {
             @Override
             public TransactionStatus getTransaction(TransactionDefinition definition) {
@@ -589,7 +658,10 @@ class DirectTextAuthenticatedLobbyTest {
 
             @Override
             public void commit(TransactionStatus status) {
+              boolean intakeCommit = !events.isEmpty() && events.getLast().equals("INTAKE");
               events.add("COMMIT");
+              if (failIntakeCommit.get() && intakeCommit)
+                throw new IllegalStateException("Lost intake commit reply");
               if (failClaimCommit.get() && retained.get().state() == State.DISPATCH_POSSIBLE)
                 throw new IllegalStateException("Lost commit reply");
             }
@@ -601,7 +673,7 @@ class DirectTextAuthenticatedLobbyTest {
           };
       owner =
           new DirectTextAuthenticatedLobbyOwner(
-              repository, selection, account, transactions, ownerClock);
+              repository, selection, account, transactions, ownerClock, maximumIntakes);
     }
   }
 

@@ -30,6 +30,7 @@ public final class DirectTextAuthenticatedLobbyOwner {
   private final AccountClient account;
   private final Clock clock;
   private final TransactionTemplate transaction;
+  private final int maximumScopeIntakesPerLogin;
 
   public DirectTextAuthenticatedLobbyOwner(
       DirectTextAuthenticatedLobbyRepository repository,
@@ -37,10 +38,25 @@ public final class DirectTextAuthenticatedLobbyOwner {
       AccountClient account,
       PlatformTransactionManager transactionManager,
       Clock clock) {
+    this(repository, selections, account, transactionManager, clock, 0);
+  }
+
+  /** Zero disables only new scope intake; it never disables retained JOIN continuations. */
+  public DirectTextAuthenticatedLobbyOwner(
+      DirectTextAuthenticatedLobbyRepository repository,
+      DirectTextWorldSelectionService selections,
+      AccountClient account,
+      PlatformTransactionManager transactionManager,
+      Clock clock,
+      int maximumScopeIntakesPerLogin) {
+    if (maximumScopeIntakesPerLogin < 0) {
+      throw new IllegalArgumentException("Maximum scope intakes per LOGIN cannot be negative");
+    }
     this.repository = Objects.requireNonNull(repository);
     this.selections = Objects.requireNonNull(selections);
     this.account = Objects.requireNonNull(account);
     this.clock = Objects.requireNonNull(clock);
+    this.maximumScopeIntakesPerLogin = maximumScopeIntakesPerLogin;
     transaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
   }
@@ -62,6 +78,7 @@ public final class DirectTextAuthenticatedLobbyOwner {
         verified,
         custody,
         transport -> {
+          if (maximumScopeIntakesPerLogin == 0) throw unavailable();
           transaction.executeWithoutResult(status -> repository.verifyOriginal(original, verified));
           var target =
               selections
@@ -70,6 +87,18 @@ public final class DirectTextAuthenticatedLobbyOwner {
           var accountTarget = DirectTextAuthenticatedLobbyScope.targetFor(target);
           UUID scopeRecordId = distinctId(original, verified, transport, null);
           UUID scopeRequestId = distinctId(original, verified, transport, scopeRecordId);
+          var intake =
+              transaction.execute(
+                  status ->
+                      repository.reserveScopeIntake(
+                          original,
+                          verified,
+                          scopeRecordId,
+                          scopeRequestId,
+                          maximumScopeIntakesPerLogin));
+          // An uncertain COMMIT/readback never permits the RPC. A committed claim is never
+          // refunded, including when Account's reply or the later scope-retention outcome is lost.
+          repository.readCommittedScopeIntake(Objects.requireNonNull(intake));
           var context =
               DirectTextAuthenticatedLobbyJoin.contextFor(
                   verified.evidence().accountId().toString(),

@@ -58,6 +58,9 @@ game:
     default-room-id: "R-1021"
     readiness-url: ${GAME_LOGIC_READINESS_URL:http://game-logic-service:8080/actuator/health/readiness}
 firemud:
+  game-session:
+    authenticated-gameplay:
+      maximum-scope-intakes-per-login: ${FIREMUD_GAME_SESSION_MAXIMUM_SCOPE_INTAKES_PER_LOGIN:0}
   start-session-operator-authorization:
     enabled: false
     owner-claim-lease: ${FIREMUD_START_SESSION_OPERATOR_OWNER_CLAIM_LEASE:}

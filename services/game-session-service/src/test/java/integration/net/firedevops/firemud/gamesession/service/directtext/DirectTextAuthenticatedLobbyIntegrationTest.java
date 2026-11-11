@@ -133,6 +133,10 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
   private final MutableClock clock = new MutableClock();
   private CanonicalPlayableTarget target;
   private String parentBeforeMigration;
+  private InitialGameplayLoginAttemptCoordinates legacyOriginal;
+  private CanonicalGameplayLoginResult legacyVerified;
+  private String legacyBeforeMigration;
+  private String legacyXmin;
 
   @BeforeAll
   static void signingAndPostgres() throws Exception {
@@ -165,8 +169,18 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
           journal.reserve(original);
           journal.recordVerifiedResult(original, verified);
         });
-    parentBeforeMigration = parentJson();
+    legacyOriginal = original;
+    legacyVerified = verified;
+    legacyBeforeMigration = parentJson();
+    legacyXmin = dsl.fetchSingle("SELECT xmin::text FROM " + PARENT + " WHERE request_id = ?", original.requestId()).get(0, String.class);
     migrate(null);
+    original = new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 7);
+    verified = verified(original, ACCOUNT, UUID.randomUUID(), "5");
+    tx.executeWithoutResult(status -> {
+      journal.reserve(original);
+      journal.recordVerifiedResult(original, verified);
+    });
+    parentBeforeMigration = parentJson();
     repository = new DirectTextAuthenticatedLobbyRepository(dsl);
     account = mock(AccountClient.class);
     target = target();
@@ -220,6 +234,7 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
   @AfterEach
   void closeOnlyOwnedResultAndSchema() throws Exception {
     if (verified != null) verified.close();
+    if (legacyVerified != null) legacyVerified.close();
     if (schema != null) {
       try (var connection =
               DriverManager.getConnection(
@@ -232,6 +247,12 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
 
   @Test
   void forwardMigrationPreservesPopulatedMinimalParentAndFullExactNonsecretScope() {
+    assertThat(dsl.fetchSingle("SELECT (to_jsonb(p)-'lobby_scope_intake_eligible')::text FROM " + PARENT + " p WHERE request_id = ?", legacyOriginal.requestId()).get(0, String.class))
+        .isEqualTo(legacyBeforeMigration);
+    assertThat(dsl.fetchSingle("SELECT xmin::text FROM " + PARENT + " WHERE request_id = ?", legacyOriginal.requestId()).get(0, String.class)).isEqualTo(legacyXmin);
+    reject("UPDATE " + PARENT + " SET lobby_scope_intake_eligible=true WHERE request_id = ?", legacyOriginal.requestId());
+    assertThatThrownBy(() -> tx.execute(status -> repository.reserveScopeIntake(legacyOriginal, legacyVerified, UUID.randomUUID(), UUID.randomUUID(), 3)))
+        .isInstanceOf(DataAccessException.class);
     assertThat(parentJson()).isEqualTo(parentBeforeMigration);
     var scope = realms();
     var stored = repository.readCommittedScope(scope);
@@ -746,9 +767,226 @@ class DirectTextAuthenticatedLobbyIntegrationTest {
     assertThat(repository.readCommittedJoin(frozen).state()).isEqualTo(State.NEVER_DISPATCHED);
   }
 
+  @Test
+  void finiteBudgetSurvivesUnknownIssuanceOwnerReplacementAndPolicyChange() {
+    var bounded = new DirectTextAuthenticatedLobbyOwner(repository, selection, account, manager, clock, 2);
+    var first = bounded.realms(original, verified, custody, selection.browse().orElseThrow(), "1");
+    var frozen = freeze();
+    assertThat(claim(frozen)).isTrue();
+    String retainedJoin = joinJson();
+    when(account.issueDirectTextConnectScope(any(), any())).thenThrow(new IllegalStateException("Lost Account reply"));
+    assertThatThrownBy(() -> bounded.realms(original, verified, custody, selection.browse().orElseThrow(), "1"))
+        .isInstanceOf(IllegalStateException.class);
+    var replacement = new DirectTextAuthenticatedLobbyOwner(repository, selection, account, manager, clock, 10);
+    assertThatThrownBy(() -> replacement.realms(original, verified, custody, selection.browse().orElseThrow(), "1"))
+        .isInstanceOf(IllegalStateException.class);
+    verify(account, times(2)).issueDirectTextConnectScope(any(), any());
+    assertThat(dsl.fetchCount(DSL.table(DirectTextAuthenticatedLobbyRepository.INTAKE))).isEqualTo(2);
+    assertThat(dsl.fetchSingle("SELECT min(frozen_limit),max(intake_sequence) FROM " + DirectTextAuthenticatedLobbyRepository.INTAKE).get(0, Integer.class)).isEqualTo(2);
+    assertThat(tx.execute(status -> repository.current(original, verified, custody.transport, clock))).isNotNull();
+    assertThat(repository.readCommittedScope(first).encode()).containsExactly(first.encode());
+    assertThat(joinJson()).isEqualTo(retainedJoin);
+    var disabled = new DirectTextAuthenticatedLobbyOwner(repository, selection, account, manager, clock);
+    assertThat(disabled.join(original, verified, custody).status())
+        .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.RETAINED_UNRESOLVED);
+  }
+
+  @Test
+  void concurrentOwnersReserveExactlyTheFiniteNumberBeforeAnyAccountRpc() throws Exception {
+    var gate = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(6);
+    try {
+      var calls = new java.util.ArrayList<java.util.concurrent.Future<Boolean>>();
+      for (int i = 0; i < 6; i++) calls.add(executor.submit(() -> {
+        await(gate);
+        try {
+          var independent = new DirectTextAuthenticatedLobbyOwner(repository, selection, account, manager, clock, 2);
+          independent.realms(original, verified, custody, selection.browse().orElseThrow(), "1");
+          return true;
+        } catch (IllegalStateException exhausted) {
+          return false;
+        }
+      }));
+      gate.countDown();
+      int admitted = 0;
+      for (var call : calls) if (call.get(10, TimeUnit.SECONDS)) admitted++;
+      assertThat(admitted).isEqualTo(2);
+      verify(account, times(2)).issueDirectTextConnectScope(any(), any());
+      assertThat(dsl.fetchCount(DSL.table(DirectTextAuthenticatedLobbyRepository.INTAKE))).isEqualTo(2);
+      assertThat(dsl.fetchCount(DSL.table(SCOPE))).isEqualTo(2);
+    } finally {
+      gate.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void retainedClaimWithLostReadbackNeverDispatchesAndConsumesItsBound() {
+    var lostReadback = spy(repository);
+    doAnswer(call -> { throw new IllegalStateException("Lost claim readback"); })
+        .when(lostReadback).readCommittedScopeIntake(any());
+    var uncertain = new DirectTextAuthenticatedLobbyOwner(lostReadback, selection, account, manager, clock, 1);
+    assertThatThrownBy(() -> uncertain.realms(original, verified, custody, selection.browse().orElseThrow(), "1"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> owner.realms(original, verified, custody, selection.browse().orElseThrow(), "1"))
+        .isInstanceOf(IllegalStateException.class);
+    verify(account, times(0)).issueDirectTextConnectScope(any(), any());
+    assertThat(dsl.fetchCount(DSL.table(DirectTextAuthenticatedLobbyRepository.INTAKE))).isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table(SCOPE))).isZero();
+  }
+
+  @Test
+  void lostActualIntakeCommitAcknowledgementPreservesClaimWithoutAccountDispatch() {
+    var commits = new AtomicInteger();
+    var lostAcknowledgement =
+        new PlatformTransactionManager() {
+          @Override
+          public org.springframework.transaction.TransactionStatus getTransaction(
+              TransactionDefinition definition) {
+            return manager.getTransaction(definition);
+          }
+
+          @Override
+          public void commit(org.springframework.transaction.TransactionStatus status) {
+            manager.commit(status);
+            // Original verification commits first; the second commit is the durable intake.
+            if (commits.incrementAndGet() == 2)
+              throw new IllegalStateException("Lost actual intake commit acknowledgement");
+          }
+
+          @Override
+          public void rollback(org.springframework.transaction.TransactionStatus status) {
+            manager.rollback(status);
+          }
+        };
+    var uncertain =
+        new DirectTextAuthenticatedLobbyOwner(
+            repository, selection, account, lostAcknowledgement, clock, 1);
+    assertThatThrownBy(
+            () ->
+                uncertain.realms(
+                    original, verified, custody, selection.browse().orElseThrow(), "1"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(this::realms).isInstanceOf(IllegalStateException.class);
+    verify(account, times(0)).issueDirectTextConnectScope(any(), any());
+    assertThat(dsl.fetchCount(DSL.table(DirectTextAuthenticatedLobbyRepository.INTAKE)))
+        .isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table(SCOPE))).isZero();
+  }
+
+  @Test
+  void directSqlCannotRefundRebindEnlargeOrBypassTheFrozenBudget() {
+    var first = tx.execute(status -> repository.reserveScopeIntake(original, verified, UUID.randomUUID(), UUID.randomUUID(), 1));
+    repository.readCommittedScopeIntake(first);
+    String intake = DirectTextAuthenticatedLobbyRepository.INTAKE;
+    reject("UPDATE " + intake + " SET frozen_limit=2");
+    reject("DELETE FROM " + intake);
+    reject("TRUNCATE " + intake);
+    reject("INSERT INTO " + intake + " (original_request_id,scope_record_id,scope_request_id,frozen_limit,intake_sequence) VALUES (?,?,?,?,?)", original.requestId(), UUID.randomUUID(), UUID.randomUUID(), 2, 2);
+    reject("INSERT INTO " + intake + " (original_request_id,scope_record_id,scope_request_id,frozen_limit,intake_sequence) VALUES (?,?,?,?,?)", original.requestId(), UUID.randomUUID(), UUID.randomUUID(), 1, 2);
+    assertThatThrownBy(() -> tx.execute(status -> repository.reserveScopeIntake(original, verified, UUID.randomUUID(), UUID.randomUUID(), 10)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(dsl.fetchCount(DSL.table(intake))).isEqualTo(1);
+    assertThat(dsl.fetchCount(DSL.table(SCOPE))).isZero();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void intakeAndActualOriginalAbandonmentSerializeInBothOrders(boolean abandonmentFirst) throws Exception {
+    var locked = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var followerStarted = new CountDownLatch(1);
+    var followerPid = new AtomicInteger();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var winner = executor.submit(() -> tx.execute(status -> {
+        repository.verifyOriginal(original, verified);
+        if (abandonmentFirst) journal.abandon(original);
+        else repository.reserveScopeIntake(original, verified, UUID.randomUUID(), UUID.randomUUID(), 1);
+        locked.countDown();
+        await(release);
+        return true;
+      }));
+      assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+      var follower = executor.submit(() -> {
+        try {
+          return tx.execute(status -> {
+            followerPid.set(dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+            followerStarted.countDown();
+            if (abandonmentFirst) repository.reserveScopeIntake(original, verified, UUID.randomUUID(), UUID.randomUUID(), 1);
+            else journal.abandon(original);
+            return true;
+          });
+        } catch (IllegalStateException denied) {
+          return false;
+        }
+      });
+      assertThat(followerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      awaitActualLockWait(followerPid.get());
+      assertThat(follower.isDone()).isFalse();
+      release.countDown();
+      assertThat(winner.get(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(follower.get(10, TimeUnit.SECONDS)).isEqualTo(!abandonmentFirst);
+      assertThat(journal.readCommitted(original).orElseThrow().abandoned()).isTrue();
+      assertThat(dsl.fetchCount(DSL.table(DirectTextAuthenticatedLobbyRepository.INTAKE)))
+          .isEqualTo(abandonmentFirst ? 0 : 1);
+      verify(account, times(0)).issueDirectTextConnectScope(any(), any());
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void populatedV1064UpgradePreservesScopesUncertainJoinAndLegacyContinuation() {
+    var retainedScope = realms();
+    String retainedSchema = "gs_lobby_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+    var retainedSource = new DriverManagerDataSource();
+    retainedSource.setDriverClassName("org.postgresql.Driver");
+    retainedSource.setUrl(postgres.getJdbcUrl());
+    retainedSource.setUsername(postgres.getUsername());
+    retainedSource.setPassword(postgres.getPassword());
+    retainedSource.setSchema(retainedSchema);
+    try {
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(retainedSource, retainedSchema,
+          "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(), "1064");
+      var retainedDsl = DSL.using(new TransactionAwareDataSourceProxy(retainedSource), SQLDialect.POSTGRES);
+      var retainedManager = new DataSourceTransactionManager(retainedSource);
+      var retainedTx = new TransactionTemplate(retainedManager);
+      retainedTx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+      var retainedJournal = new InitialGameplayLoginCoordinationJournalRepository(retainedDsl);
+      var retainedRepository = new DirectTextAuthenticatedLobbyRepository(retainedDsl);
+      retainedTx.executeWithoutResult(status -> {
+        retainedJournal.reserve(original);
+        retainedJournal.recordVerifiedResult(original, verified);
+        retainedRepository.retainScope(retainedScope, verified, clock);
+      });
+      var retainedJoin = retainedTx.execute(status -> retainedRepository.freezeCurrentJoin(original, verified, custody.transport, clock));
+      retainedTx.executeWithoutResult(status -> assertThat(retainedRepository.claimDispatch(retainedJoin, verified, custody.transport, clock)).isTrue());
+      var before = new LinkedHashMap<String, String>();
+      for (String table : List.of(PARENT, SCOPE, CURRENT, JOIN)) before.put(table,
+          retainedDsl.fetchSingle("SELECT to_jsonb(r)::text || ':' || xmin::text FROM " + table + " r").get(0, String.class));
+      CanonicalGameplayIssuerTestFixtures.migrateSchema(retainedSource, retainedSchema,
+          "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(), null);
+      for (String table : before.keySet()) assertThat(retainedDsl.fetchSingle(
+          "SELECT " + (table.equals(PARENT) ? "(to_jsonb(r)-'lobby_scope_intake_eligible')" : "to_jsonb(r)")
+              + "::text || ':' || xmin::text FROM " + table + " r").get(0, String.class)).isEqualTo(before.get(table));
+      assertThatThrownBy(() -> retainedTx.execute(status -> retainedRepository.reserveScopeIntake(original, verified, UUID.randomUUID(), UUID.randomUUID(), 2)))
+          .isInstanceOf(DataAccessException.class);
+      var disabled = new DirectTextAuthenticatedLobbyOwner(retainedRepository, selection, account, retainedManager, clock);
+      assertThat(disabled.join(original, verified, custody).status())
+          .isEqualTo(DirectTextAuthenticatedLobbyOwner.Status.RETAINED_UNRESOLVED);
+      assertThat(retainedRepository.readCommittedJoin(retainedJoin).state()).isEqualTo(State.DISPATCH_POSSIBLE);
+    } finally {
+      dsl.execute("DROP SCHEMA IF EXISTS \"" + retainedSchema + "\" CASCADE");
+    }
+  }
+
   private DirectTextAuthenticatedLobbyOwner owner(
       DirectTextAuthenticatedLobbyRepository repo, PlatformTransactionManager transactions) {
-    return new DirectTextAuthenticatedLobbyOwner(repo, selection, account, transactions, clock);
+    return new DirectTextAuthenticatedLobbyOwner(repo, selection, account, transactions, clock, 3);
   }
 
   private DirectTextAuthenticatedLobbyScope realms() {
