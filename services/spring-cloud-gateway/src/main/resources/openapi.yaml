@@ -113,7 +113,7 @@ paths:
       operationId: reauthenticateAccountHostingFirstInvoice
       summary: Reauthenticate the first-invoice billing owner
       x-runtime-status: isolated_only_default_off
-      description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
+      description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result. Account validates the typed billingBinding against the retained invoice and authorization attempt.
       responses:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}

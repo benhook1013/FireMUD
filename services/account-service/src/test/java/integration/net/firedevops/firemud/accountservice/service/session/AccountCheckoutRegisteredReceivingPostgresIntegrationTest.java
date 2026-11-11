@@ -59,8 +59,9 @@ import org.apache.coyote.http11.AbstractHttp11Protocol;
 import org.apache.tomcat.util.net.SSLHostConfig;
 import org.apache.tomcat.util.net.SSLHostConfigCertificate;
 import org.jooq.DSLContext;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.cloud.gateway.filter.ratelimit.RedisRateLimiter;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.AnnotationConfigUtils;
@@ -144,8 +145,10 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
 
   @TempDir Path temporary;
 
-  @Test
-  void registeredChainAuthenticatesRealOwnerAndCommitsOnlyExactSignedProviderSuccess()
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void registeredChainAuthenticatesRealOwnerAndCommitsOnlyExactSignedProviderSuccess(
+      boolean preRowRenewal)
       throws Exception {
     try (var upstream =
         new AccountControlUiOriginalOrderFixture(
@@ -245,15 +248,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                 "POST",
                 path + "/reauthenticate",
                 bearer,
-                Map.of(
-                    "requestId",
-                    UUID.randomUUID(),
-                    "confirmationRequestId",
-                    confirmation,
-                    "email",
-                    account.getEmail(),
-                    "secret",
-                    PASSWORD));
+                billingReauthentication(
+                    tuple, confirmation, confirmation, "INITIAL_CONFIRMATION", account.getEmail()));
         assertThat(proof.statusCode()).isEqualTo(200);
         var consent = new HashMap<String, Object>();
         consent.put("requestId", confirmation);
@@ -266,13 +262,42 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
             .isEqualTo(400);
         assertThat(hosting.firstInvoiceConfirmations()).isZero();
         consent.put("acceptCharge", true);
+        String authorizationPath = path + "/confirm";
+        Map<String, Object> authorization = consent;
+        if (preRowRenewal) {
+          assertThat(
+                  JSON.readTree(receiving.request("GET", path, bearer, null).body())
+                      .path("confirmationRequestId")
+                      .isNull())
+              .isTrue();
+          UUID renewal = UUID.randomUUID();
+          var renewalProof =
+              receiving.request(
+                  "POST",
+                  path + "/reauthenticate",
+                  bearer,
+                  billingReauthentication(
+                      tuple, confirmation, renewal, "PRE_ROW_RENEWAL", account.getEmail()));
+          assertThat(renewalProof.statusCode()).isEqualTo(200);
+          authorizationPath = path + "/renew";
+          authorization = new HashMap<>(consent);
+          authorization.put("authorizationRequestId", renewal);
+          authorization.put("expectedAuthorizationVersion", 0L);
+          authorization.put(
+              "reauthenticationEvidenceId",
+              JSON.readTree(renewalProof.body()).path("evidenceId").asText());
+        }
         hosting.firstInvoiceConfirmationStatus("requires_action");
-        var handoff = receiving.request("POST", path + "/confirm", bearer, consent);
+        var handoff = receiving.request("POST", authorizationPath, bearer, authorization);
         assertThat(handoff.statusCode()).isEqualTo(200);
         assertThat(JSON.readTree(handoff.body()).path("status").asText())
             .isEqualTo("requires_action");
-        assertThat(receiving.request("POST", path + "/confirm", bearer, consent).statusCode())
+        assertThat(receiving.request("POST", authorizationPath, bearer, authorization).statusCode())
             .isEqualTo(200);
+        if (preRowRenewal) {
+          assertThat(receiving.request("POST", path + "/confirm", bearer, consent).statusCode())
+              .isEqualTo(409);
+        }
         assertThat(hosting.firstInvoiceConfirmations()).isOne();
         assertThat(
                 JSON.readTree(receiving.request("GET", path, bearer, null).body())
@@ -348,6 +373,22 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                 org.mockito.ArgumentMatchers.eq(List.of("20", "40", "", "1")));
       }
     }
+  }
+
+  private static Map<String, Object> billingReauthentication(
+      JsonNode tuple, UUID original, UUID authorization, String purpose, String email) {
+    return Map.of(
+        "requestId", UUID.randomUUID(),
+        "confirmationRequestId", authorization,
+        "billingBinding", Map.of(
+            "originalRequestId", original,
+            "expectedRowVersion", tuple.path("expectedRowVersion").asLong(),
+            "expectedAuthorizationVersion", tuple.path("authorizationVersion").asLong(),
+            "acceptedTupleDigest", tuple.path("tupleDigest").asText(),
+            "invoiceExpiresAt", tuple.path("expiresAt").asText(),
+            "authorizationPurpose", purpose),
+        "email", email,
+        "secret", PASSWORD);
   }
 
   private static final class RegisteredChain implements AutoCloseable {
