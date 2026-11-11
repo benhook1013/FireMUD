@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.lettuce.core.AclSetuserArgs;
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -918,6 +919,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                   .withAuthentication("gamesession_coord_app", password)
                   .withTimeout(Duration.ofSeconds(5))
                   .build());
+      redis.setOptions(ClientOptions.builder().autoReconnect(false).build());
       var dataSource = new DriverManagerDataSource();
       dataSource.setDriverClassName(POSTGRES.getDriverClassName());
       String url = POSTGRES.getJdbcUrl();

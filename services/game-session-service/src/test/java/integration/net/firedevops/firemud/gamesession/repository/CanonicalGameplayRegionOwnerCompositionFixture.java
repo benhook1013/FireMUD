@@ -129,6 +129,27 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalInitialPlayerLocationRegionResolver resolver,
       CanonicalGameplayRegionOwnerTransferCoordinator transfer,
       long deadline) {
+    return handoffExistingOriginal(
+        dsl,
+        coordinationRedis,
+        catalog,
+        original,
+        resolver,
+        new ControlledStableIncarnationSource(),
+        transfer,
+        deadline);
+  }
+
+  /** Rechecks the same explicit current incarnation source used by the original installation. */
+  static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
+      DSLContext dsl,
+      RedisClient coordinationRedis,
+      RedisScriptCatalog catalog,
+      CanonicalGameplayRegionLeaseOwner.Installation original,
+      CanonicalInitialPlayerLocationRegionResolver resolver,
+      CanonicalGameplayRegionIncarnationSource incarnationSource,
+      CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+      long deadline) {
     var identity =
         new RuntimeIdentity(
             "game-session-service",
@@ -143,7 +164,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             dsl,
             coordinationRedis,
             catalog,
-            new ControlledStableIncarnationSource(),
+            incarnationSource,
             resolver,
             identity,
             Duration.ofSeconds(30),
