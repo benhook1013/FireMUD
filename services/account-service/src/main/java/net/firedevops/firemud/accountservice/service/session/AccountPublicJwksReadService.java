@@ -28,7 +28,8 @@ public final class AccountPublicJwksReadService {
     try {
       return currentResponse(caller);
     } catch (RuntimeException failure) {
-      if (AccountJwtJwksTrustedSource.isSourceRejected(failure)) {
+      if (AccountJwtJwksTrustedSource.isSourceRejected(failure)
+          || failure instanceof AccountPublicJwksReadCodec.InvalidFrameException) {
         throw new AccountPublicJwksCache.InvalidJwksException();
       }
       throw failure;
@@ -37,12 +38,13 @@ public final class AccountPublicJwksReadService {
 
   private GetCurrentAccountPublicJwksResponse currentResponse(
       AccountPublicJwksReadWorkloadGuard.ProtectedCaller caller) {
-    var identity = source.sourceIdentity();
+    var snapshot = source.currentPublicRead();
+    if (snapshot == null) {
+      throw new AccountPublicJwksCache.InvalidJwksException();
+    }
+    var identity = snapshot.sourceIdentity();
     caller.requireSource(identity);
-    var snapshot = source.load();
-    if (snapshot == null
-        || !identity.equals(snapshot.sourceIdentity())
-        || !identity.equals(source.sourceIdentity())) {
+    if (!identity.equals(source.sourceIdentity())) {
       throw new AccountPublicJwksCache.InvalidJwksException();
     }
     if (!caller.equals(guard.requireCaller())) {

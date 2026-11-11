@@ -30,7 +30,15 @@ message AccountPublicJwksSourceIdentity {
 }
 
 message GetCurrentAccountPublicJwksResponse {
+  enum Disposition {
+    UNSPECIFIED = 0;
+    SNAPSHOT = 1;
+    PREPARED_DENY = 2;
+  }
   int32 schema_version = 1;
   AccountPublicJwksSourceIdentity source_identity = 2;
   bytes public_jwks = 3;
+  Disposition disposition = 4;
+  // Presence is mandatory on SNAPSHOT and forbidden on PREPARED_DENY.
+  optional bool committed_recovery_eligible = 5;
 }

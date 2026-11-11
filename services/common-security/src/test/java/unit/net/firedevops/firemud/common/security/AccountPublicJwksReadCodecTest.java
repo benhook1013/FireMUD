@@ -48,7 +48,7 @@ class AccountPublicJwksReadCodecTest {
         new GetCurrentAccountPublicJwksRequest[] {
           null,
           GetCurrentAccountPublicJwksRequest.getDefaultInstance(),
-          AccountPublicJwksReadCodec.request().toBuilder().setSchemaVersion(2).build(),
+          AccountPublicJwksReadCodec.request().toBuilder().setSchemaVersion(1).build(),
           AccountPublicJwksReadCodec.request().toBuilder().setUnknownFields(UNKNOWN).build()
         }) {
       assertThatThrownBy(() -> AccountPublicJwksReadCodec.requireRequest(request))
@@ -63,7 +63,7 @@ class AccountPublicJwksReadCodecTest {
         new GetCurrentAccountPublicJwksResponse[] {
           null,
           GetCurrentAccountPublicJwksResponse.getDefaultInstance(),
-          valid.toBuilder().setSchemaVersion(2).build(),
+          valid.toBuilder().setSchemaVersion(1).build(),
           valid.toBuilder().setUnknownFields(UNKNOWN).build(),
           valid.toBuilder()
               .setSourceIdentity(valid.getSourceIdentity().toBuilder().setUnknownFields(UNKNOWN))
@@ -88,6 +88,62 @@ class AccountPublicJwksReadCodecTest {
       assertThatThrownBy(() -> AccountPublicJwksReadCodec.snapshot(response))
           .isInstanceOf(AccountPublicJwksReadCodec.InvalidFrameException.class);
     }
+  }
+
+  @Test
+  void closedDispositionAndEligibilityPresenceCannotBeConfusedWithSnapshotBytes() {
+    var snapshot =
+        AccountPublicJwksReadCodec.response(
+            new AccountPublicJwksReadCodec.ReadResult(PIN, new byte[] {1}, false, true));
+    assertThat(snapshot.getSchemaVersion()).isEqualTo(2);
+    assertThat(snapshot.hasCommittedRecoveryEligible()).isTrue();
+    assertThat(AccountPublicJwksReadCodec.result(snapshot).committedRecoveryEligible()).isTrue();
+    var deny =
+        AccountPublicJwksReadCodec.response(
+            new AccountPublicJwksReadCodec.ReadResult(PIN, new byte[0], true, false));
+    assertThat(deny.getPublicJwks()).isEmpty();
+    assertThat(deny.hasCommittedRecoveryEligible()).isFalse();
+    assertThat(AccountPublicJwksReadCodec.result(deny).sourceIdentity()).isEqualTo(PIN);
+    assertThat(AccountPublicJwksReadCodec.result(deny).preparedDeny()).isTrue();
+    assertThatThrownBy(() -> AccountPublicJwksReadCodec.snapshot(deny))
+        .isInstanceOf(AccountPublicJwksReadCodec.InvalidFrameException.class);
+    for (var invalid :
+        new GetCurrentAccountPublicJwksResponse[] {
+          snapshot.toBuilder().clearDisposition().build(),
+          snapshot.toBuilder().setDispositionValue(99).build(),
+          snapshot.toBuilder().clearCommittedRecoveryEligible().build(),
+          deny.toBuilder().setCommittedRecoveryEligible(false).build(),
+          deny.toBuilder().setCommittedRecoveryEligible(true).build(),
+          deny.toBuilder().setPublicJwks(ByteString.copyFromUtf8("not a deny")).build(),
+          deny.toBuilder().setUnknownFields(UNKNOWN).build(),
+          deny.toBuilder().clearSourceIdentity().build(),
+          deny.toBuilder()
+              .setSourceIdentity(deny.getSourceIdentity().toBuilder().setUnknownFields(UNKNOWN))
+              .build()
+        }) {
+      assertThatThrownBy(() -> AccountPublicJwksReadCodec.result(invalid))
+          .isInstanceOf(AccountPublicJwksReadCodec.InvalidFrameException.class);
+    }
+  }
+
+  @Test
+  void localResultRejectsDenyWithBytesOrRecoveryClaimAndCopiesBytes() {
+    for (var invalid :
+        new Object[][] {
+          {new byte[] {1}, true, false}, {new byte[0], true, true}, {new byte[0], false, false}
+        }) {
+      assertThatThrownBy(
+              () ->
+                  new AccountPublicJwksReadCodec.ReadResult(
+                      PIN, (byte[]) invalid[0], (boolean) invalid[1], (boolean) invalid[2]))
+          .isInstanceOf(AccountPublicJwksReadCodec.InvalidFrameException.class);
+    }
+    byte[] bytes = {1};
+    var result = new AccountPublicJwksReadCodec.ReadResult(PIN, bytes, false, false);
+    bytes[0] = 2;
+    assertThat(result.jwksBytes()).containsExactly((byte) 1);
+    result.jwksBytes()[0] = 3;
+    assertThat(result.jwksBytes()).containsExactly((byte) 1);
   }
 
   @Test

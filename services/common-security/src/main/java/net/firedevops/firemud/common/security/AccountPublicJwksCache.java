@@ -70,6 +70,8 @@ public final class AccountPublicJwksCache {
   private Map<String, RSAPublicKey> keys = Map.of();
   private boolean hardCutoverQuarantined;
   private boolean sourceRejected;
+  private boolean preparedDenied;
+  private long observedPreparedDenyEpoch;
   private Instant loadedAt;
   private String loadedJwksFingerprint;
   private Instant lastUnknownKidRefreshAt;
@@ -213,16 +215,36 @@ public final class AccountPublicJwksCache {
   public void refresh() {
     final RefreshRequest refresh;
     synchronized (monitor) {
-      rejectSource();
+      rejectTerminalSource();
       refresh = beginRefresh(true, false);
     }
     refreshFromSource(refresh);
   }
 
-  private void rejectSource() {
-    if (sourceRejected) {
+  private void rejectTerminalSource() {
+    sourceRejected |= source.isCustodyRejected();
+    if (sourceRejected) throw new InvalidJwksException();
+  }
+
+  private void observePreparedDenial() {
+    // A separate source observation can deny while our older refresh is in flight.
+    // This is a local nonblocking state query, never source I/O.
+    long epoch = source.preparedDenyEpoch();
+    if (epoch < observedPreparedDenyEpoch || epoch < 0) {
+      sourceRejected = true;
       throw new InvalidJwksException();
     }
+    if (epoch != observedPreparedDenyEpoch) {
+      observedPreparedDenyEpoch = epoch;
+      preparedDenied = true;
+    }
+    if (source.isPreparedDenied()) preparedDenied = true;
+  }
+
+  private void rejectSource() {
+    rejectTerminalSource();
+    observePreparedDenial();
+    if (preparedDenied) throw new SourcePreparedDenyException();
   }
 
   // All refresh triggers share one flight. No older load can install after a newer load, and
@@ -295,11 +317,12 @@ public final class AccountPublicJwksCache {
           flight.completion.complete(null);
         } catch (RuntimeException failure) {
           RuntimeException reported = failure;
-          if (!(failure instanceof SourceUnavailableException)) {
+          if (!(failure instanceof SourceUnavailableException)
+              && !(failure instanceof SourcePreparedDenyException)) {
             sourceRejected |= flight.proactive;
             reported = new InvalidJwksException();
           }
-          if (flight.stale) {
+          if (flight.stale && !(reported instanceof SourcePreparedDenyException)) {
             recordStaleRefreshFailure(
                 reported instanceof SourceUnavailableException
                     ? StaleRefreshFailure.SOURCE_UNAVAILABLE
@@ -330,8 +353,14 @@ public final class AccountPublicJwksCache {
   // Source identity, freshness, remembered fingerprints, and invalidation history are checked
   // atomically against the current state, including invalidations made while the load was blocked.
   private void installSnapshot(PublicJwksSnapshot snapshot, RuntimeException sourceFailure) {
-    rejectSource();
+    rejectTerminalSource();
+    observePreparedDenial();
+    if (sourceFailure instanceof SourcePreparedDenyException) {
+      preparedDenied = true;
+      throw new SourcePreparedDenyException();
+    }
     if (sourceFailure instanceof SourceUnavailableException) {
+      if (preparedDenied) throw new SourcePreparedDenyException();
       if (!isFresh(clock.instant())) {
         throw new SourceUnavailableException();
       }
@@ -364,6 +393,15 @@ public final class AccountPublicJwksCache {
         throw new InvalidJwksException();
       }
     }
+    rejectTerminalSource();
+    observePreparedDenial();
+    if (preparedDenied
+        && (!snapshot.committedRecoveryEligible()
+            || snapshot.preparedDenyEpoch() != observedPreparedDenyEpoch
+            || source.isPreparedDenied())) {
+      throw new SourcePreparedDenyException();
+    }
+    preparedDenied = false;
     rememberedFingerprints.clear();
     rememberedFingerprints.putAll(nextFingerprints);
     parsed.keySet().removeAll(hardDeniedKids);
@@ -588,12 +626,41 @@ public final class AccountPublicJwksCache {
   @FunctionalInterface
   public interface TrustedPublicJwksSource {
     PublicJwksSnapshot load() throws SourceUnavailableException;
+
+    /** Nonblocking local latch observation; implementations must not perform I/O here. */
+    default boolean isPreparedDenied() {
+      return false;
+    }
+
+    /** Nonblocking terminal custody observation; once observed a cache can never recover. */
+    default boolean isCustodyRejected() {
+      return false;
+    }
+
+    /** Monotonic local epoch retains a deny event even after a later source recovery. */
+    default long preparedDenyEpoch() {
+      return 0;
+    }
   }
 
   /** A single exact public ConfigMap data value plus its independently established source pin. */
-  public record PublicJwksSnapshot(SourceIdentity sourceIdentity, byte[] jwksBytes) {
+  public record PublicJwksSnapshot(
+      SourceIdentity sourceIdentity,
+      byte[] jwksBytes,
+      boolean committedRecoveryEligible,
+      long preparedDenyEpoch) {
+    public PublicJwksSnapshot(SourceIdentity sourceIdentity, byte[] jwksBytes) {
+      this(sourceIdentity, jwksBytes, false, 0);
+    }
+
+    public PublicJwksSnapshot(
+        SourceIdentity sourceIdentity, byte[] jwksBytes, boolean committedRecoveryEligible) {
+      this(sourceIdentity, jwksBytes, committedRecoveryEligible, 0);
+    }
+
     public PublicJwksSnapshot {
       Objects.requireNonNull(sourceIdentity, "source identity is required");
+      if (preparedDenyEpoch < 0) throw new IllegalArgumentException("Invalid source deny epoch");
       jwksBytes = jwksBytes == null ? null : jwksBytes.clone();
     }
 
@@ -606,6 +673,13 @@ public final class AccountPublicJwksCache {
   public static final class SourceUnavailableException extends RuntimeException {
     public SourceUnavailableException() {
       super("Account public JWKS source is unavailable");
+    }
+  }
+
+  /** Verified PREPARED quarantine; only exact committed owner and mount proof may recover it. */
+  public static final class SourcePreparedDenyException extends RuntimeException {
+    public SourcePreparedDenyException() {
+      super("Account public JWKS source is prepared and denied");
     }
   }
 
