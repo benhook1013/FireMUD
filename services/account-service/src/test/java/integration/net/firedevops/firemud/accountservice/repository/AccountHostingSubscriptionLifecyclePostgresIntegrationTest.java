@@ -15,6 +15,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import java.io.InputStream;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
@@ -55,6 +56,8 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -471,31 +474,46 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     f.creation().owner().accountUuid()));
   }
 
-  @Test
-  void rawSqlActiveMappingWithoutGenuineClaimAndReceiptCannotBecomeAReadOrLifecycleSource() {
-    Context c = context("latest");
+  @ParameterizedTest
+  @ValueSource(strings = {"trialing", "active", "past_due", "grace"})
+  void populatedPreCompletionSchemaRefusesActivationWithoutRewritingPositiveRows(String status) {
+    Context c = context("1040");
     Fixture f = fixture(c);
-    c.tx()
-        .executeWithoutResult(
-            s -> {
-              c.dsl()
-                  .execute(
-                      "INSERT INTO subscription_provider_history (provider_subscription_id, subscription_id, operation_kind, request_id, "
-                          + "provider_operation_id, role, effective_at, evidence_digest) VALUES (?, ?, 'SUBSCRIPTION_PROVISIONING', ?, ?, 'canonical', ?::timestamptz, ?)",
-                      f.providerId(),
-                      f.creation().subscriptionId(),
-                      f.creation().requestId(),
-                      f.creation().subscriptionProvisioningRequestId(),
-                      f.clock().instant().atOffset(ZoneOffset.UTC),
-                      DIGEST);
-              c.dsl()
-                  .execute(
-                      "UPDATE subscription SET status = 'active', provider_subscription_id = ?, row_version = row_version + 1 WHERE subscription_id = ?",
-                      f.providerId(),
-                      f.creation().subscriptionId());
-            });
+    retainUnqualifiedPositive(f, status);
     assertThat(c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().status())
-        .isEqualTo("active");
+        .isEqualTo(status);
+    // Controlled schema-valid predecessor data, not a genuine historical signed receipt.
+    var before =
+        one(
+            c,
+            "SELECT to_jsonb(s)::text, xmin::text FROM subscription s WHERE subscription_id = ?",
+            f.creation().subscriptionId());
+    var history = c.setup().fetch("SELECT * FROM subscription_provider_history").intoMaps();
+    configuration(c).target("1046").load().migrate();
+    List<String> evidenceBefore = firstInvoiceImage(c);
+    var flywayBefore =
+        c.setup().fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps();
+    assertSqlState(
+        "23514",
+        "Retained positive hosting subscriptions",
+        () -> configuration(c).target("1046.1").load().migrate());
+    assertThat(
+            c.setup()
+                .fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank")
+                .intoMaps())
+        .isEqualTo(flywayBefore);
+    assertThatThrownBy(() -> inspectRetainedPositivePrerequisite(f))
+        .hasMessageContaining("HOSTING_ACTIVATION_UNAVAILABLE");
+    assertThat(
+            one(
+                c,
+                "SELECT to_jsonb(s)::text, xmin::text FROM subscription s WHERE subscription_id ="
+                    + " ?",
+                f.creation().subscriptionId()))
+        .isEqualTo(before);
+    assertThat(c.setup().fetch("SELECT * FROM subscription_provider_history").intoMaps())
+        .isEqualTo(history);
+    assertThat(firstInvoiceImage(c)).isEqualTo(evidenceBefore);
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     assertThatThrownBy(
@@ -507,6 +525,177 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.transport().reads).isZero();
     assertThat(count(c, "subscription_lifecycle_receipts")).isZero();
     assertThat(count(c, "account_tenant_authority_source_records")).isZero();
+  }
+
+  @Test
+  void completedAndNegativeSubscriptionsDoNotFailRetainedPositivePrerequisite() {
+    for (String status : List.of("active", "canceled")) {
+      Context c = context("latest");
+      Fixture f = fixture(c);
+      f.transport().json = response(f, status);
+      activate(f);
+      List<String> before = firstInvoiceImage(c);
+      inspectRetainedPositivePrerequisite(f);
+      assertThat(firstInvoiceImage(c)).isEqualTo(before);
+    }
+  }
+
+  private static void retainUnqualifiedPositive(Fixture f, String status) {
+    Context c = f.context();
+    c.tx()
+        .executeWithoutResult(
+            s -> {
+              c.dsl()
+                  .execute(
+                      "INSERT INTO subscription_provider_history (provider_subscription_id,"
+                          + " subscription_id, operation_kind, request_id, provider_operation_id,"
+                          + " role, effective_at, evidence_digest) VALUES (?, ?,"
+                          + " 'SUBSCRIPTION_PROVISIONING', ?, ?, 'canonical', ?::timestamptz, ?)",
+                      f.providerId(),
+                      f.creation().subscriptionId(),
+                      f.creation().requestId(),
+                      f.creation().subscriptionProvisioningRequestId(),
+                      f.clock().instant().atOffset(ZoneOffset.UTC),
+                      DIGEST);
+              c.dsl()
+                  .execute(
+                      "UPDATE subscription SET status = ?, provider_subscription_id = ?,"
+                          + " row_version = row_version + 1 WHERE subscription_id = ?",
+                      status,
+                      f.providerId(),
+                      f.creation().subscriptionId());
+            });
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"trialing", "active", "past_due", "grace"})
+  void committedPositiveWithoutCompletionIsRejectedAfterUpgrade(String status) {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    List<String> before = firstInvoiceImage(c);
+    assertSqlState(
+        "23514",
+        "Current positive hosting subscription",
+        () -> retainUnqualifiedPositive(f, status));
+    assertThat(firstInvoiceImage(c)).isEqualTo(before);
+    assertThat(c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().status())
+        .isEqualTo("pending");
+  }
+
+  @Test
+  void genuineSameTransactionCompletionRemainsImmutableAfterUpgrade() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    activate(f);
+    assertThat(count(c, "subscription_first_invoice_completions")).isOne();
+    List<String> before = firstInvoiceImage(c);
+    for (String sql :
+        List.of(
+            "DELETE FROM subscription",
+            "DELETE FROM subscription_first_invoice_completions",
+            "UPDATE subscription_first_invoice_completions SET committed_at = committed_at",
+            "TRUNCATE subscription_first_invoice_completions")) {
+      assertThatThrownBy(() -> c.setup().execute(sql))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class);
+      assertThat(firstInvoiceImage(c)).isEqualTo(before);
+    }
+  }
+
+  @Test
+  void upgradeSerializesConcurrentInsertAndUpdateThenEnforcesFinalCompletion() throws Exception {
+    Context c = context("1046");
+    Fixture existing = fixture(c);
+    String writerName = "hosting_gate_" + UUID.randomUUID().toString().replace("-", "");
+    try (var workers = Executors.newVirtualThreadPerTaskExecutor();
+        var migration = c.source().getConnection()) {
+      migration.setAutoCommit(false);
+      try (var sql = migration.createStatement();
+          var resource =
+              Objects.requireNonNull(
+                  getClass()
+                      .getResourceAsStream(
+                          "/db/migration/V1046.1__hosting_retained_positive_completion_gate.sql"))) {
+        sql.execute(new String(resource.readAllBytes(), StandardCharsets.UTF_8));
+      }
+      var update =
+          workers.submit(
+              () -> {
+                assertSqlState(
+                    "23514",
+                    "Current positive hosting subscription",
+                    () ->
+                        c.tx()
+                            .executeWithoutResult(
+                                ignored -> {
+                                  c.dsl()
+                                      .execute(
+                                          "SELECT set_config('application_name', ?, true), set_config('statement_timeout', '10s', true)",
+                                          writerName + "_update");
+                                  retainUnqualifiedPositive(existing, "active");
+                                }));
+              });
+      var insert =
+          workers.submit(
+              () ->
+                  in(
+                      c,
+                      () -> {
+                        c.dsl()
+                            .execute(
+                                "SELECT set_config('application_name', ?, true), set_config('statement_timeout', '10s', true)",
+                                writerName + "_insert");
+                        return fixture(c);
+                      }));
+      awaitSubscriptionWriterLock(c, writerName + "_update");
+      awaitSubscriptionWriterLock(c, writerName + "_insert");
+      migration.commit();
+      update.get(5, TimeUnit.SECONDS);
+      Fixture pending = insert.get(5, TimeUnit.SECONDS);
+      assertThat(
+              c.intents().findCurrentByTenant(pending.creation().tenantId()).orElseThrow().status())
+          .isEqualTo("pending");
+      assertThat(
+              c.intents()
+                  .findCurrentByTenant(existing.creation().tenantId())
+                  .orElseThrow()
+                  .status())
+          .isEqualTo("pending");
+      assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+      // Failed UPDATE cannot leave its inserted provider mapping behind. The successful INSERT
+      // is an ordinary pending subscription, not synthesized payment or migration authority.
+      assertThat(c.setup().fetchCount(DSL.table("subscription_provider_history"))).isZero();
+    }
+  }
+
+  private static void awaitSubscriptionWriterLock(Context c, String applicationName)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    do {
+      Boolean waiting =
+          Objects.requireNonNull(
+                  c.setup()
+                      .fetchOne(
+                          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = ? "
+                              + "AND wait_event_type = 'Lock')",
+                          applicationName))
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(waiting)) return;
+      Thread.sleep(10);
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError("Concurrent subscription writer never reached the migration lock");
+  }
+
+  private static void inspectRetainedPositivePrerequisite(Fixture f) {
+    Context c = f.context();
+    var readOnly = new TransactionTemplate(Objects.requireNonNull(c.tx().getTransactionManager()));
+    readOnly.setReadOnly(true);
+    readOnly.setTimeout(5);
+    readOnly.executeWithoutResult(
+        ignored -> {
+          assertThat(c.dsl().fetchSingle("SHOW transaction_read_only").get(0, String.class))
+              .isEqualTo("on");
+          f.owner().requireNoRetainedPositiveCompletionGaps(2);
+        });
   }
 
   @Test

@@ -28,9 +28,9 @@ import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Manually composed hosting lifecycle owner. All methods use short writable Account transactions;
- * the service performs actual SDK reads strictly between them. No provider mutation or runtime
- * route is registered. Stored status rows alone are never a positive internal read.
+ * Manually composed hosting lifecycle owner. Mutation methods use short writable Account
+ * transactions; the service performs actual SDK reads strictly between them. No provider mutation
+ * or runtime route is registered. Stored status rows alone are never a positive internal read.
  */
 public final class AccountHostingSubscriptionLifecycleRepository {
   private final DSLContext dsl;
@@ -75,6 +75,37 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     tenantEvents =
         new AccountTenantAuthorityEventRepository(
             dsl, new AccountAuthorityOutboxRepository(dsl), billing, tenantIdentity, generations);
+  }
+
+  /**
+   * Read-only activation prerequisite, not an activation grant or a retained-row repair.
+   *
+   * <p>The caller owns a read-only transaction and must keep registration held on any failure. A
+   * clear snapshot does not fence concurrent writers or qualify the remaining activation gates. No
+   * subscription identities or retained evidence leave this check.
+   */
+  public void requireNoRetainedPositiveCompletionGaps(int queryTimeoutSeconds) {
+    if (queryTimeoutSeconds < 1 || queryTimeoutSeconds > 5) {
+      throw new IllegalArgumentException(
+          "Retained-positive inspection requires a 1..5 second budget");
+    }
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Retained-positive inspection requires read-only Account SQL");
+    }
+    var query =
+        dsl.resultQuery(
+            "SELECT EXISTS (SELECT 1 FROM subscription s WHERE s.superseded_at IS NULL "
+                + "AND s.status IN ('trialing', 'active', 'past_due', 'grace') "
+                + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_completions c "
+                + "WHERE c.subscription_id = s.subscription_id)) AS unresolved");
+    query.queryTimeout(queryTimeoutSeconds);
+    Record result = Objects.requireNonNull(query.fetchOne(), "Retained-positive inspection absent");
+    if (!Boolean.FALSE.equals(result.get("unresolved", Boolean.class))) {
+      throw new FenceRejectedException(
+          "HOSTING_ACTIVATION_UNAVAILABLE: retained positive completion evidence unresolved");
+    }
   }
 
   /** Locked read capture only. No journal, intent, audit or fence changes precede final auth. */
