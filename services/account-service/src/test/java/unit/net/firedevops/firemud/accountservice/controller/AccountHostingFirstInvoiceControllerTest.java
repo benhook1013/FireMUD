@@ -75,9 +75,7 @@ class AccountHostingFirstInvoiceControllerTest {
   static Stream<Arguments> ownerFailures() {
     return Stream.of(
         Arguments.of(
-            new AccountAsymmetricJwtVerifier.VerificationException(),
-            401,
-            "AUTH_SESSION_REVOKED"),
+            new AccountAsymmetricJwtVerifier.VerificationException(), 401, "AUTH_SESSION_REVOKED"),
         Arguments.of(
             new IllegalArgumentException("private request detail"),
             400,
