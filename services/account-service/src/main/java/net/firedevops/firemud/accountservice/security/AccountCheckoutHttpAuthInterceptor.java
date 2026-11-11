@@ -68,6 +68,7 @@ public final class AccountCheckoutHttpAuthInterceptor extends HttpJwtAuthInterce
           // Every owner mutation repeats currentness inside its actual owner transaction.
           return true;
         } catch (org.springframework.dao.DataAccessException
+            | org.springframework.transaction.TransactionException
             | io.lettuce.core.RedisException
             | net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReader
                 .RegistryUnavailableException

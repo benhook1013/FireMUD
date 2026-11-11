@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 import java.util.UUID;
+import java.util.stream.Stream;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceController;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceWebhookController;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService;
@@ -11,6 +12,8 @@ import net.firedevops.firemud.accountservice.service.session.AccountHostingFirst
 import net.firedevops.firemud.common.security.HttpAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.method.HandlerMethod;
@@ -70,8 +73,10 @@ class AccountCheckoutHttpAuthInterceptorTest {
     assertThat(response.getStatus()).isEqualTo(401);
   }
 
-  @Test
-  void unavailableJwksDoesNotMisreportSessionRevocation() throws Exception {
+  @ParameterizedTest
+  @MethodSource("unavailableAuthorities")
+  void unavailableAuthorityDoesNotMisreportSessionRevocation(RuntimeException failure)
+      throws Exception {
     var actors = mock(AccountControlUiActorService.class);
     var interceptor =
         new AccountCheckoutHttpAuthInterceptor(
@@ -88,14 +93,26 @@ class AccountCheckoutHttpAuthInterceptorTest {
         new MockHttpServletRequest("GET", "/billing/hosting/subscriptions/x/first-invoice");
     request.setSecure(true);
     request.addHeader("Authorization", "Bearer controlled");
-    doThrow(
-            new net.firedevops.firemud.common.security.AccountPublicJwksCache
-                .SourceUnavailableException())
-        .when(actors)
-        .authenticateAccount("controlled");
+    doThrow(failure).when(actors).authenticateAccount("controlled");
     var response = new MockHttpServletResponse();
     assertThat(interceptor.preHandle(request, response, handler)).isFalse();
     assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+    assertThat(response.getHeader("Pragma")).isEqualTo("no-cache");
+    assertThat(response.getContentAsString()).isEmpty();
+    verify(actors).authenticateAccount("controlled");
+    verifyNoMoreInteractions(actors);
+  }
+
+  static Stream<RuntimeException> unavailableAuthorities() {
+    return Stream.of(
+        new net.firedevops.firemud.common.security.AccountPublicJwksCache
+            .SourceUnavailableException(),
+        new org.springframework.transaction.CannotCreateTransactionException(
+            "private database connection detail"),
+        new org.springframework.transaction.TransactionSystemException(
+            "private transaction detail"),
+        new org.springframework.transaction.UnexpectedRollbackException("private rollback detail"));
   }
 
   @Test

@@ -139,7 +139,8 @@ public final class AccountHostingFirstInvoiceController {
     net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException.class,
     net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier
         .VerificationUnavailableException.class,
-    org.springframework.dao.DataAccessException.class
+    org.springframework.dao.DataAccessException.class,
+    org.springframework.transaction.TransactionException.class
   })
   public ResponseEntity<ErrorResponse> authenticationUnavailable() {
     return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)

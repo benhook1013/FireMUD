@@ -75,6 +75,21 @@ class AccountHostingFirstInvoiceControllerTest {
   static Stream<Arguments> ownerFailures() {
     return Stream.of(
         Arguments.of(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "private database connection detail"),
+            503,
+            "AUTH_UNAVAILABLE"),
+        Arguments.of(
+            new org.springframework.transaction.TransactionSystemException(
+                "private transaction detail"),
+            503,
+            "AUTH_UNAVAILABLE"),
+        Arguments.of(
+            new org.springframework.transaction.UnexpectedRollbackException(
+                "private rollback detail"),
+            503,
+            "AUTH_UNAVAILABLE"),
+        Arguments.of(
             new AccountAsymmetricJwtVerifier.VerificationException(), 401, "AUTH_SESSION_REVOKED"),
         Arguments.of(
             new IllegalArgumentException("private request detail"),
