@@ -355,7 +355,9 @@ paths:
         required: true
         content:
           application/json:
-            schema: {type: string, description: 'Exact raw signed JSON bytes, at most 262144 UTF-8 bytes'}
+            schema:
+              type: object
+              description: 'JSON object; signature verification uses exact original raw UTF-8 bytes, at most 262144 bytes'
       responses:
         '200': {description: Original Account completion state; no-store}
         '400': {description: 'Missing, ambiguous, malformed or invalid signed event'}

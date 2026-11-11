@@ -470,13 +470,12 @@ export class ControlUiSessionStore {
   }
 
   private expireIfCurrent(identity: string, revision: number): void {
-    if (
-      this.revision === revision &&
-      this.snapshot?.identity === identity &&
-      this.now() >= Date.parse(this.snapshot.expiresAt)
-    ) {
-      this.clearIfCurrent(identity, revision);
+    if (this.revision !== revision || this.snapshot?.identity !== identity) {
+      return;
     }
+    const expiry = Date.parse(this.snapshot.expiresAt);
+    if (this.now() >= expiry) this.clearIfCurrent(identity, revision);
+    else this.scheduleExpiry(identity, revision, expiry);
   }
 
   private clearIfCurrent(identity: string, revision: number): void {

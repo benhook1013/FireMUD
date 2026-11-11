@@ -102,8 +102,14 @@ if KEYS[1] ~= prefix .. slot .. ':' .. gameInstanceId .. ':' .. sessionId
 if action == 'FENCE' then
   local capacityNames = {'schema', 'tenantId', 'requestId', 'admissionId', 'admissionAttemptId',
     'reservationId', 'reservationFence', 'capacityRearmFence', 'selectedOwnerId',
-    'selectedOwnerFence', 'transitionId', 'expiresAtMillis'}
+    'selectedOwnerFence', 'transitionId', 'expiresAtMillis', 'mutationDigest', 'expiresAt',
+    'snapshotIdentity', 'evaluationIdentity', 'candidateDigest', 'canonicalAttemptPayload'}
   if not objectWithFields(capacity, capacityNames) then return -2 end
+  for _, name in ipairs(capacityNames) do
+    if type(capacity[name]) ~= 'string' or #capacity[name] == 0 then return -2 end
+  end
+  if #capacity.candidateDigest ~= 71
+      or not string.match(capacity.candidateDigest, '^sha256:[0-9a-f]+$') then return -2 end
   local capacityType = redis.call('TYPE', KEYS[7]).ok
   if capacityType ~= 'none' then
     if capacityType ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1

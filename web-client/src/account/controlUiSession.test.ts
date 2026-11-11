@@ -210,6 +210,34 @@ describe('memory-only control-ui session owner', () => {
     expect(clearQueryCache.mock.calls.length).toBe(countBeforeSignOut + 1);
   });
 
+  it('rearms expiry when the wall clock rolls back before the timer fires', async () => {
+    const initialTime = 1_700_000_000_000;
+    let now = initialTime;
+    vi.useFakeTimers({ now: initialTime });
+    const clearQueryCache = vi.fn();
+    const store = makeStore({
+      now: () => now,
+      clearQueryCache,
+    });
+    await store.signIn(
+      loginApi(successfulLogin(new Date(initialTime + 60_000).toISOString())),
+      { email: 'owner@example.com', secret: 'primary-secret' }
+    );
+    const clearQueryCacheCalls = clearQueryCache.mock.calls.length;
+
+    now = initialTime - 100_000;
+    vi.advanceTimersByTime(60_000);
+
+    expect(store.getSession()).not.toBeNull();
+    expect(clearQueryCache.mock.calls.length).toBe(clearQueryCacheCalls);
+
+    now = initialTime + 60_000;
+    vi.advanceTimersByTime(160_000);
+
+    expect(store.getSession()).toBeNull();
+    expect(clearQueryCache.mock.calls.length).toBe(clearQueryCacheCalls + 1);
+  });
+
   it('keeps an ordinary 503 session but clears it after an authentication rejection', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

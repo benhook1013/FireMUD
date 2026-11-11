@@ -331,19 +331,50 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void transferFenceRejectsChangedCandidateDigestBeforeSubmittingRedis() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var changed =
+        new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+            controlledCapacity.request(),
+            controlledCapacity.reservation(),
+            controlledCapacity.transitionId(),
+            "sha256:" + "0".repeat(64),
+            controlledCapacity.selectedOwnerId(),
+            controlledCapacity.selectedOwnerFence());
+    String retained = sqlImage();
+    Map<String, String> physical = physicalImage();
+
+    assertThatThrownBy(
+            () ->
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                        ownerClient, catalog, CLOCK, tags)
+                    .fenceCapacityExecutionOnce(
+                        changed, source.candidate(), assignment, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
+    assertThat(sqlImage()).isEqualTo(retained);
+    assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @Test
   void processStopAfterActualSqlAuthorizationBeforeRedisSendFencesUnknownAndActuallyHandsOff()
       throws Exception {
     repairAccountMember();
     bridge(false);
     var executionFile = directory.resolve("original-execution.json");
     java.nio.file.Files.write(executionFile, controlledCapacity.canonicalBytes());
+    String jdbcUrl = POSTGRES.getJdbcUrl();
+    String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
     var process =
         new ProcessBuilder(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-cp",
                 childClasspath(),
                 StopAfterAuthorizationCommit.class.getName(),
-                POSTGRES.getJdbcUrl(),
+                jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema,
                 POSTGRES.getUsername(),
                 POSTGRES.getPassword(),
                 executionFile.toString())
@@ -351,9 +382,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             .start();
     try {
       assertThat(process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      assertThat(process.exitValue()).isEqualTo(72);
-      assertThat(new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8))
-          .contains("INDEPENDENT_INSTALL_DISPATCHED_COMMIT");
+      String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      assertThat(process.exitValue()).as("Child output: %s", output).isEqualTo(72);
+      assertThat(output).contains("INDEPENDENT_INSTALL_DISPATCHED_COMMIT");
     } finally {
       if (process.isAlive()) {
         process.destroyForcibly();
@@ -2505,7 +2536,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     for (byte[] key : admin.keys("session:game:*")) {
       image.put(
           new String(key, StandardCharsets.US_ASCII),
-          java.util.Base64.getEncoder().encodeToString(admin.dump(key)));
+          java.util.Base64.getEncoder()
+              .encodeToString(
+                  CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+                      admin, key)));
     }
     return image;
   }

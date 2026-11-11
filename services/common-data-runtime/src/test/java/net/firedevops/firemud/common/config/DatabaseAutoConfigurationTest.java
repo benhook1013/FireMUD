@@ -14,14 +14,18 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration;
+import org.springframework.boot.data.redis.autoconfigure.DataRedisReactiveAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.ResolvableType;
+import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
@@ -31,7 +35,9 @@ class DatabaseAutoConfigurationTest {
       new ApplicationContextRunner()
           .withConfiguration(
               AutoConfigurations.of(
-                  DatabaseAutoConfiguration.class, DataRedisAutoConfiguration.class))
+                  DatabaseAutoConfiguration.class,
+                  DataRedisAutoConfiguration.class,
+                  DataRedisReactiveAutoConfiguration.class))
           .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
           .withPropertyValues("firemud.database.enabled=false");
 
@@ -66,6 +72,17 @@ class DatabaseAutoConfigurationTest {
         .run(
             context -> {
               var factory = context.getBean(LettuceConnectionFactory.class);
+              assertSame(factory, context.getBean(ReactiveRedisConnectionFactory.class));
+              assertSame(
+                  factory,
+                  context
+                      .getBean("reactiveRedisTemplate", ReactiveRedisTemplate.class)
+                      .getConnectionFactory());
+              assertSame(
+                  factory,
+                  context
+                      .getBean("reactiveStringRedisTemplate", ReactiveStringRedisTemplate.class)
+                      .getConnectionFactory());
               assertEquals(
                   "firemud-redis.internal", factory.getStandaloneConfiguration().getHostName());
               assertEquals(6380, factory.getStandaloneConfiguration().getPort());
