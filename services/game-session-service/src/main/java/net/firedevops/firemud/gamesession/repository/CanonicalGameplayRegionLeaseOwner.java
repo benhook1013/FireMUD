@@ -71,6 +71,19 @@ final class CanonicalGameplayRegionLeaseOwner {
       Installation existingRegionInstallation,
       UUID transitionId,
       CanonicalInitialPlayerLocationRequest worldRequest) {
+    return installForTransition(
+        existingRegionInstallation, transitionId, worldRequest, null, Long.MAX_VALUE);
+  }
+
+  /**
+   * Explicit normal handoff, using actual acquire/install/revalidation and transfer-purpose proof.
+   */
+  Installation installForTransition(
+      Installation existingRegionInstallation,
+      UUID transitionId,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(transitionId, "transitionId");
     Objects.requireNonNull(worldRequest, "worldRequest");
@@ -85,6 +98,7 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionRuntimeStatus prior = statusRepository.find(source).orElse(null);
     if (prior == null && expectedRegionEpoch != 1L) throw unavailable();
     if (prior != null && prior.regionEpoch() != expectedRegionEpoch) throw unavailable();
+    UUID transferId = null;
 
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant;
@@ -189,6 +203,14 @@ final class CanonicalGameplayRegionLeaseOwner {
         throw unavailable();
       }
       if (existingRegionInstallation == null) {
+        if (transferOwner != null) {
+          // Preserve ordinary timeline/incarnation qualification before any transfer effect.
+          // A lost completion reply is not permission to freeze/advance its successor again.
+          if (transferOwner.alreadyCompleted(
+              prior, runtimeIdentity.serviceInstanceId(), absoluteDeadlineMillis))
+            throw unavailable();
+          transferId = transferOwner.advance(source, prior, absoluteDeadlineMillis);
+        }
         grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
       } else {
         requireReusableRegionGrant(
@@ -213,14 +235,23 @@ final class CanonicalGameplayRegionLeaseOwner {
 
     Instant installedAt = clock.instant();
     CanonicalGameplayRegionRuntimeStatus installed =
-        statusRepository.installOwner(
-            source,
-            expectedRegionEpoch,
-            prior,
-            grant.tokenCorrelation(),
-            grant.ownerService(),
-            grant.ownerInstanceId(),
-            installedAt);
+        transferId == null
+            ? statusRepository.installOwner(
+                source,
+                expectedRegionEpoch,
+                prior,
+                grant.tokenCorrelation(),
+                grant.ownerService(),
+                grant.ownerInstanceId(),
+                installedAt)
+            : transferOwner.install(
+                transferId,
+                source,
+                prior,
+                grant.tokenCorrelation(),
+                grant.ownerService(),
+                grant.ownerInstanceId(),
+                absoluteDeadlineMillis);
 
     redisOwner.requireCurrent(grant);
     redisOwner.verifyInitializedTimeline(grant, preparation);

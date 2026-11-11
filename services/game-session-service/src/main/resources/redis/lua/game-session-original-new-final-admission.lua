@@ -1,6 +1,7 @@
 -- Final original-NEW controller boundary. All seven keys share the persisted tenant slot.
--- The two OPEN barriers are checked only. The only write replaces the exact non-admitting
--- session candidate and its capacity outcome; all three installed tenant indexes remain exact.
+-- FINAL checks both OPEN barriers and replaces only the exact non-admitting session candidate
+-- and capacity outcome. FENCE denies future execution without asserting historical non-execution;
+-- it writes only the capacity outcome. All three installed tenant indexes remain exact.
 local admissionPlaceholder = '__ORIGINAL_NEW_ADMISSION_AT_MS__'
 local continuityPlaceholder = '__ORIGINAL_NEW_CONTINUITY_EXPIRES_AT_MS__'
 local accountNames = {'schema', 'accountId', 'tenantId', 'playableStateNamespaceId',
@@ -63,7 +64,7 @@ local function decode(bytes, maximum)
 end
 if #KEYS ~= 7 or #ARGV ~= 19 then return -2 end
 local capacityBytes, action, capacityDigest = ARGV[17], ARGV[18], ARGV[19]
-if action ~= 'FINAL' and action ~= 'INSTALL' and action ~= 'CLOSE' then return -2 end
+if action ~= 'FINAL' and action ~= 'INSTALL' and action ~= 'CLOSE' and action ~= 'FENCE' then return -2 end
 local capacity = decode(capacityBytes, 1048576)
 if not capacity or capacity.schema ~= 'gs-original-new-capacity-execution/v1'
     or type(capacityDigest) ~= 'string' or #capacityDigest ~= 71
@@ -96,6 +97,49 @@ if KEYS[1] ~= prefix .. slot .. ':' .. gameInstanceId .. ':' .. sessionId
     or KEYS[6] ~= prefix .. 'issuer-admission:' .. slot .. ':firemud-account-service:' .. tenantId .. ':' .. namespaceId
     or KEYS[7] ~= prefix .. 'capacity-execution:' .. slot .. ':' .. capacity.admissionAttemptId
     or capacity.tenantId ~= tenantId then return -2 end
+-- Only a separately qualified current incarnation may dispatch FENCE during normal owner handoff.
+-- It excludes future execution, including delayed old callers, but never proves no earlier commit.
+if action == 'FENCE' then
+  local capacityNames = {'schema', 'tenantId', 'requestId', 'admissionId', 'admissionAttemptId',
+    'reservationId', 'reservationFence', 'capacityRearmFence', 'selectedOwnerId',
+    'selectedOwnerFence', 'transitionId', 'expiresAtMillis'}
+  if not objectWithFields(capacity, capacityNames) then return -2 end
+  local capacityType = redis.call('TYPE', KEYS[7]).ok
+  if capacityType ~= 'none' then
+    if capacityType ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
+        or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
+        or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
+    local state, fields = redis.call('HGET', KEYS[7], 'state'), redis.call('HLEN', KEYS[7])
+    if state == 'COMMITTED' then
+      local sessionSha1 = redis.call('HGET', KEYS[7], 'sessionSha1')
+      local admissionAt = exactNumber(redis.call('HGET', KEYS[7], 'admissionAt'))
+      local continuity = exactNumber(redis.call('HGET', KEYS[7], 'continuityExpiresAt'))
+      if fields ~= 6 or type(sessionSha1) ~= 'string' or #sessionSha1 ~= 40
+          or not string.match(sessionSha1, '^[0-9a-f]+$') or not admissionAt or not continuity
+          or continuity <= admissionAt or continuity - admissionAt > 300000 then return -1 end
+      return 2
+    end
+    if fields ~= 3 then return -1 end
+    -- Completed exact outcomes are read-only, even after the operation deadline.
+    if state == 'FENCED_INDETERMINATE' then return 5 end
+    if state == 'CLOSED' then return 4 end
+    if state ~= 'AUTHORIZED' then return -1 end
+  end
+  local fenceTime = redis.call('TIME')
+  local fenceSeconds, fenceMicros = tonumber(fenceTime[1]), tonumber(fenceTime[2])
+  if not fenceSeconds or not fenceMicros or fenceSeconds < 1 or fenceSeconds ~= math.floor(fenceSeconds)
+      or fenceSeconds > math.floor((9007199254740991 - 999) / 1000)
+      or fenceMicros < 0 or fenceMicros >= 1000000 or fenceMicros ~= math.floor(fenceMicros) then return -1 end
+  local fenceNow = fenceSeconds * 1000 + math.floor(fenceMicros / 1000)
+  if fenceNow <= 0 or fenceNow >= deadline then return -1 end
+  if capacityType == 'none' then
+    redis.call('HSET', KEYS[7], 'binding', capacityBytes, 'digest', capacityDigest,
+      'state', 'FENCED_INDETERMINATE')
+  else
+    redis.call('HSET', KEYS[7], 'state', 'FENCED_INDETERMINATE')
+  end
+  return 5
+end
 -- Closure uses retained SQL attempt/candidate identity, not a fresh credential or OPEN grant.
 -- It remains available after process restart/credential expiry and never infers from absence.
 if action == 'CLOSE' then

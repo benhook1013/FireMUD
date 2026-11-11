@@ -678,6 +678,26 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       String ownerService,
       String ownerInstanceId,
       Instant now) {
+    return installOwner(
+        source,
+        expectedRegionEpoch,
+        prior,
+        leaseTokenCorrelation,
+        ownerService,
+        ownerInstanceId,
+        now,
+        null);
+  }
+
+  CanonicalGameplayRegionRuntimeStatus installOwner(
+      Source source,
+      long expectedRegionEpoch,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String leaseTokenCorrelation,
+      String ownerService,
+      String ownerInstanceId,
+      Instant now,
+      CanonicalGameplayRegionOwnerTransferRepository.Completion transferProof) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(source, "source");
     requireDigest(leaseTokenCorrelation);
@@ -727,23 +747,27 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                 throw unavailable();
               }
               if (prior == null || !current.equals(prior)) throw unavailable();
-              // The old generation owns any dispatched original effect until exact COMMITTED
-              // retention or irreversible CLOSED proof. Lease expiry alone cannot release it.
+              // Past-outcome custody remains with the original. Only exact terminal retention
+              // or privately qualified future exclusion permits this normal owner handoff.
+              // Lease expiry alone cannot satisfy either condition.
               // Capacity authorization takes this same row lock before creating that custody.
               if (transaction.fetchExists(
-                  DSL.selectOne()
-                      .from(
-                          DSL.table("game_session_original_new_capacity_execution").as("execution"))
-                      .join(
-                          DSL.table("game_session_canonical_binding_region_bridge_obligation")
-                              .as("binding"))
-                      .on(
-                          DSL.field("binding.transition_id")
-                              .eq(DSL.field("execution.transition_id")))
-                      .where(DSL.field("binding.tenant_id").eq(source.tenantId()))
-                      .and(DSL.field("binding.game_instance_id").eq(source.gameInstanceId()))
-                      .and(DSL.field("binding.region_id").eq(source.regionId()))
-                      .and(DSL.field("execution.status").in("INSTALL_DISPATCHED", "AUTHORIZED")))) {
+                      DSL.selectOne()
+                          .from(
+                              DSL.table("game_session_original_new_capacity_execution")
+                                  .as("execution"))
+                          .join(
+                              DSL.table("game_session_canonical_binding_region_bridge_obligation")
+                                  .as("binding"))
+                          .on(
+                              DSL.field("binding.transition_id")
+                                  .eq(DSL.field("execution.transition_id")))
+                          .where(DSL.field("binding.tenant_id").eq(source.tenantId()))
+                          .and(DSL.field("binding.game_instance_id").eq(source.gameInstanceId()))
+                          .and(DSL.field("binding.region_id").eq(source.regionId()))
+                          .and(
+                              DSL.field("execution.status").in("INSTALL_DISPATCHED", "AUTHORIZED")))
+                  && transferProof == null) {
                 throw unavailable();
               }
             } else if (prior != null || expectedRegionEpoch != 1L) {
@@ -754,6 +778,26 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                 transaction.fetchOne("SELECT nextval('" + FENCE_SEQUENCE + "') AS fence");
             Long fence = fenceRow == null ? null : fenceRow.get("fence", Long.class);
             if (fence == null || fence <= 0L) throw unavailable();
+            if (transferProof != null) {
+              if (current == null) throw unavailable();
+              CanonicalGameplayRegionOwnerTransferRepository.requireAndComplete(
+                  transaction,
+                  transferProof,
+                  source,
+                  current,
+                  ownerInstanceId,
+                  fence,
+                  leaseTokenCorrelation,
+                  now);
+            } else if (current != null
+                && CanonicalGameplayRegionOwnerTransferRepository.frozen(
+                    transaction,
+                    current.tenantId(),
+                    current.gameInstanceId(),
+                    current.regionId())) {
+              CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
+                  transaction, current, ownerInstanceId, fence, leaseTokenCorrelation);
+            }
             Record installed;
             if (current == null) {
               if (expectedRegionEpoch != 1L) throw unavailable();
@@ -845,7 +889,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
     }
   }
 
-  private static CanonicalGameplayRegionRuntimeStatus toStatus(Record row) {
+  static CanonicalGameplayRegionRuntimeStatus toStatus(Record row) {
     return new CanonicalGameplayRegionRuntimeStatus(
         row.get("tenant_id", UUID.class),
         row.get("game_instance_id", UUID.class),
