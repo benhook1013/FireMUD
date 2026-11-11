@@ -364,9 +364,9 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
         new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result(
             request.identity(),
             request.admissionAttemptId(),
-            1,
+            request.capacityRearmFence(),
             request.mutationDigest(),
-            request.admissionAttemptId(),
+            UUID.fromString("99999999-9999-4999-8999-999999999999"),
             1,
             request.evidence().expiresAt(),
             net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State.RESERVED,

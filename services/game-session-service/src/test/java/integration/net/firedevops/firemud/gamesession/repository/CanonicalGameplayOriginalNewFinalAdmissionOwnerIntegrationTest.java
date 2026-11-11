@@ -426,6 +426,41 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void contenderCannotFreezeRenewingOwnerAndExpiredLeaseStillTransfers() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var leases = new CanonicalGameplayRegionLeaseRedisOwner(ownerClient, catalog);
+    String rows = sqlImage();
+    Map<String, String> physical = physicalImage();
+    String key = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
+    for (int attempt = 0; attempt < 2; attempt++) {
+      leases.renew(original.grant, Duration.ofSeconds(30));
+      assertThatThrownBy(this::actualTransferHandoff).isInstanceOf(IllegalStateException.class);
+      leases.requireCurrent(original.grant);
+      assertThat(sqlImage()).isEqualTo(rows);
+      assertThat(physicalImage()).isEqualTo(physical);
+      assertThat(admin.hget(ascii(key), ascii("state"))).containsExactly(ascii("AUTHORIZED"));
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+          .isZero();
+    }
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var successor = actualTransferHandoff();
+    assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(admin.hget(ascii(key), ascii("state")))
+        .containsExactly(ascii("FENCED_INDETERMINATE"));
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT state FROM game_session_region_owner_transfer")
+                .get(0, String.class))
+        .isEqualTo("COMPLETED");
+  }
+
+  @Test
   void authorizedUnknownHandoffKeepsOriginalCandidateAndRefusesCompletedMutation()
       throws Exception {
     repairAccountMember();
@@ -718,6 +753,125 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             () -> inventory.readRegionTransferOriginalSource(UUID.randomUUID(), retained))
         .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessage("Region transfer changed its original transition");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2})
+  void blockedCommittedSelectionOrPreInstallRevalidationCannotOutliveHandoffDeadline(
+      int blockedRead) throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var ignored =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      // Leave positive SQL retention to the actual transfer, as in the crash-window test.
+    }
+    var original = regionBinding.installation();
+    var transferRepository =
+        new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(transferRepository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, transferRepository, capacityOwner(), receiver);
+    String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
+    var blocked = new java.util.concurrent.atomic.AtomicBoolean();
+    var completed = new java.util.concurrent.CountDownLatch(1);
+    var reads = new java.util.concurrent.atomic.AtomicInteger();
+    try (var lock =
+        java.sql.DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      lock.setSchema(schema);
+      lock.setAutoCommit(false);
+      var observer =
+          new org.jooq.impl.DefaultExecuteListener() {
+            @Override
+            public void executeStart(org.jooq.ExecuteContext context) {
+              if (context.sql() == null
+                  || !context.sql().contains("game_session_canonical_binding_inventory_clock")
+                  || !context.sql().contains("FOR UPDATE")) return;
+              // This derived observer belongs only to the successor inventory/status context.
+              // The independently composed transfer has already retained the positive winner.
+              String status =
+                  fixture
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                          controlledCapacity.digest())
+                      .get(0, String.class);
+              if (!"COMMITTED".equals(status) || reads.incrementAndGet() != blockedRead) return;
+              try (var statement = lock.createStatement()) {
+                statement.setQueryTimeout(2);
+                statement.execute(
+                    "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id=1 FOR UPDATE");
+                blocked.set(true);
+              } catch (java.sql.SQLException failure) {
+                throw new IllegalStateException(failure);
+              }
+            }
+
+            @Override
+            public void exception(org.jooq.ExecuteContext context) {
+              if (blocked.get()) completed.countDown();
+            }
+
+            @Override
+            public void executeEnd(org.jooq.ExecuteContext context) {
+              if (blocked.get()) completed.countDown();
+            }
+          };
+      var successorSql =
+          org.jooq.impl.DSL.using(
+              fixture
+                  .dsl()
+                  .configuration()
+                  .derive(new org.jooq.impl.DefaultExecuteListenerProvider(observer)));
+      admin.pexpire(ascii(original.grant.key()), 0);
+      long started = System.nanoTime();
+      long handoffDeadline = CLOCK.millis() + 4000;
+      try {
+        assertThatThrownBy(
+                () ->
+                    CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                        successorSql,
+                        ownerClient,
+                        catalog,
+                        original,
+                        sources.resolver,
+                        transfer,
+                        handoffDeadline))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(blocked).as("exact committed inventory read reached").isTrue();
+        assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
+            .isLessThan(6500);
+        assertThat(completed.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      } finally {
+        lock.rollback();
+      }
+    }
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT executor_fence FROM game_session_region_runtime_status")
+                .get(0, BigInteger.class))
+        .isEqualTo(original.status.executorFence());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT state FROM game_session_region_owner_transfer")
+                .get(0, String.class))
+        .isEqualTo("FROZEN");
   }
 
   @Test

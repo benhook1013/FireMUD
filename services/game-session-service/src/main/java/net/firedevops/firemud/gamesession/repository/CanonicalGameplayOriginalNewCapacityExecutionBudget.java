@@ -34,6 +34,8 @@ import org.jooq.impl.DefaultTransactionProvider;
 final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   static final int MAX_IN_FLIGHT_OPERATIONS = 4;
   private static final Semaphore OPERATIONS = new Semaphore(MAX_IN_FLIGHT_OPERATIONS);
+  static final int MAX_BACKGROUND_OPERATIONS = 2;
+  private static final Semaphore BACKGROUND_OPERATIONS = new Semaphore(MAX_BACKGROUND_OPERATIONS);
   private static final AtomicInteger RELEASE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
 
   static {
@@ -46,6 +48,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   }
 
   private final ThreadFactory cancellationThreads;
+  private final boolean background;
   private final AtomicBoolean releaseFailureRecorded = new AtomicBoolean();
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final Context caller;
@@ -67,7 +70,8 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private boolean released;
 
   private CanonicalGameplayOriginalNewCapacityExecutionBudget(
-      Clock clock, long explicitDeadline, ThreadFactory cancellationThreads) {
+      Clock clock, long explicitDeadline, ThreadFactory cancellationThreads, boolean background) {
+    this.background = background;
     this.clock = clock;
     this.explicitDeadline = explicitDeadline;
     this.cancellationThreads = Objects.requireNonNull(cancellationThreads);
@@ -113,10 +117,37 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       long explicitDeadline,
       Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
       ThreadFactory cancellationThreads) {
+    return run(clock, explicitDeadline, operation, cancellationThreads, false);
+  }
+
+  static <T> T runBackground(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation) {
+    return run(
+        clock,
+        explicitDeadline,
+        operation,
+        Thread.ofVirtual().name("original-new-capacity-sql-cancel").factory(),
+        true);
+  }
+
+  private static <T> T run(
+      Clock clock,
+      long explicitDeadline,
+      Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> operation,
+      ThreadFactory cancellationThreads,
+      boolean background) {
     var budget =
         new CanonicalGameplayOriginalNewCapacityExecutionBudget(
-            clock, explicitDeadline, cancellationThreads);
-    if (!OPERATIONS.tryAcquire()) throw unavailable();
+            clock, explicitDeadline, cancellationThreads, background);
+    // Background reads and transfer work share the same four-operation ceiling, but cannot
+    // consume the two slots reserved for final admission. Neither class waits in a queue.
+    if (background && !BACKGROUND_OPERATIONS.tryAcquire()) throw unavailable();
+    if (!OPERATIONS.tryAcquire()) {
+      if (background) BACKGROUND_OPERATIONS.release();
+      throw unavailable();
+    }
     Context.CancellationListener listener = ignored -> budget.cancel();
     budget.caller.addListener(listener, Runnable::run);
     try {
@@ -316,6 +347,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         && (!cancellationStarted || cancellationDone)) {
       released = true;
       OPERATIONS.release();
+      if (background) BACKGROUND_OPERATIONS.release();
     }
   }
 

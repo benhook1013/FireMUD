@@ -62,6 +62,18 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
         .as("resource and cancellation workers restore all operation permits")
         .isTrue();
     permits.release(maximum);
+    Semaphore background =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int maximumBackground =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+    assertThat(background.tryAcquire(maximumBackground, 2, TimeUnit.SECONDS))
+        .as("background admission follows the same cleanup lifecycle")
+        .isTrue();
+    background.release(maximumBackground);
   }
 
   @Test
@@ -110,6 +122,15 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           .isInstanceOf(IllegalStateException.class);
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(3500);
       assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      Semaphore background =
+          (Semaphore)
+              java.util.Objects.requireNonNull(
+                  ReflectionTestUtils.getField(
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                      "BACKGROUND_OPERATIONS"));
+      assertThat(background.availablePermits())
+          .isEqualTo(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS - 1);
       verifyNoInteractions(connection, redis);
       release.countDown();
       verify(provider, timeout(2000)).release(connection);
@@ -119,6 +140,81 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       release.countDown();
       scheduler.shutdownNow();
     }
+  }
+
+  @Test
+  void actualTransferCommittedReadBoundsAcquisitionAndCannotExecuteAfterItsDeadline()
+      throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              awaitUninterruptibly(release);
+              return connection;
+            });
+    var inventory = new CanonicalGameplayBindingInventoryRepository(source(provider));
+    var candidate = mock(CanonicalGameplayOriginalNewCandidate.class);
+    UUID transitionId = UUID.randomUUID();
+    when(candidate.bindingDecisionId()).thenReturn(transitionId);
+    long started = System.nanoTime();
+    try {
+      assertThatThrownBy(
+              () ->
+                  inventory.withinTransferRead(
+                      CLOCK,
+                      CLOCK.millis() + 1000,
+                      scoped -> scoped.readRegionTransferCommittedSource(transitionId, candidate)))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2500);
+      verifyNoInteractions(connection);
+    } finally {
+      release.countDown();
+      verify(provider, timeout(2000)).release(connection);
+    }
+  }
+
+  @Test
+  void transferReadDerivesItsOwnTransactionProviderAndKeepsTheOriginalAbsoluteDeadline() {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    when(provider.acquire()).thenReturn(connection);
+    try {
+      when(connection.getAutoCommit()).thenReturn(true);
+    } catch (java.sql.SQLException failure) {
+      throw new AssertionError(failure);
+    }
+    var original = source(provider);
+    var sharedTransactions = mock(org.jooq.TransactionProvider.class);
+    original.configuration().set(sharedTransactions);
+    var inventory = new CanonicalGameplayBindingInventoryRepository(original);
+    AtomicLong wall = new AtomicLong(CLOCK.millis());
+    Clock clock = mock();
+    when(clock.millis()).thenAnswer(ignored -> wall.get());
+    long deadline = wall.get() + 2000;
+    boolean read =
+        inventory.withinTransferRead(
+            clock,
+            deadline,
+            scoped -> {
+              var sql = (DSLContext) ReflectionTestUtils.getField(scoped, "dsl");
+              assertThat(sql).isNotNull();
+              assertThat(sql.configuration().connectionProvider()).isNotSameAs(provider);
+              assertThat(sql.configuration().transactionProvider()).isNotSameAs(sharedTransactions);
+              return sql.transactionResult(
+                  transaction -> DSL.using(transaction).connectionResult(owned -> Boolean.TRUE));
+            });
+    assertThat(read).isTrue();
+    verify(provider).acquire();
+    verify(provider).release(connection);
+    verifyNoInteractions(sharedTransactions);
+    wall.set(deadline);
+    assertThatThrownBy(() -> inventory.withinTransferRead(clock, deadline, scoped -> Boolean.TRUE))
+        .isInstanceOf(IllegalStateException.class);
+    verify(provider, org.mockito.Mockito.times(1)).acquire();
   }
 
   @Test
@@ -210,12 +306,19 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                   CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS");
       assertThat(retained).isNotNull();
       assertThat(permits).isNotNull();
+      Semaphore background =
+          (Semaphore)
+              java.util.Objects.requireNonNull(
+                  ReflectionTestUtils.getField(
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                      "BACKGROUND_OPERATIONS"));
+      int backgroundAvailable = background.availablePermits();
       int before = retained.get();
       int available = permits.availablePermits();
       try {
         assertThatThrownBy(
                 () ->
-                    CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
                         CLOCK,
                         Long.MAX_VALUE,
                         budget -> {
@@ -234,6 +337,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                     .value())
             .isEqualTo(before + 1);
         assertThat(permits.availablePermits()).isEqualTo(available - 1);
+        assertThat(background.availablePermits()).isEqualTo(backgroundAvailable - 1);
         assertThat(ReflectionTestUtils.getField(captured.get(), "released")).isEqualTo(false);
         assertThat(
                 (AtomicInteger)
@@ -248,6 +352,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
           retained.decrementAndGet();
         }
         if (permits.availablePermits() == available - 1) permits.release();
+        if (background.availablePermits() == backgroundAvailable - 1) background.release();
       }
     } finally {
       Metrics.removeRegistry(registry);
@@ -323,6 +428,83 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
               () ->
                   CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
                       CLOCK, CLOCK.millis() + 1000, budget -> execute(budget.sql(source))))
+          .isInstanceOf(IllegalStateException.class);
+      verify(provider, org.mockito.Mockito.times(maximum)).acquire();
+      verifyNoInteractions(connection);
+    } finally {
+      release.countDown();
+      verify(provider, timeout(2000).times(maximum)).release(connection);
+    }
+  }
+
+  @Test
+  void backgroundSaturationReservesAdmissionCapacityWithoutExceedingCombinedFourSlots()
+      throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    int backgroundMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+    int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    CountDownLatch backgroundEntered = new CountDownLatch(backgroundMaximum);
+    CountDownLatch allEntered = new CountDownLatch(maximum);
+    CountDownLatch release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(
+            invocation -> {
+              backgroundEntered.countDown();
+              allEntered.countDown();
+              awaitUninterruptibly(release);
+              return connection;
+            });
+    DSLContext source = source(provider);
+    var callers = new ArrayList<CompletableFuture<Void>>();
+    try {
+      for (int index = 0; index < backgroundMaximum; index++)
+        callers.add(
+            CompletableFuture.runAsync(
+                () ->
+                    assertThatThrownBy(
+                            () ->
+                                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                                    CLOCK,
+                                    CLOCK.millis() + 1000,
+                                    budget -> execute(budget.sql(source))))
+                        .isInstanceOf(IllegalStateException.class)));
+      assertThat(backgroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
+      var refused = new AtomicBoolean();
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                      CLOCK,
+                      Long.MAX_VALUE,
+                      budget -> {
+                        refused.set(true);
+                        return true;
+                      }))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(refused).isFalse();
+      boolean admitted =
+          CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+              CLOCK, Long.MAX_VALUE, budget -> Boolean.TRUE);
+      assertThat(admitted).isTrue();
+      for (int index = backgroundMaximum; index < maximum; index++)
+        callers.add(
+            CompletableFuture.runAsync(
+                () ->
+                    assertThatThrownBy(
+                            () ->
+                                CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                                    CLOCK,
+                                    CLOCK.millis() + 1000,
+                                    budget -> execute(budget.sql(source))))
+                        .isInstanceOf(IllegalStateException.class)));
+      assertThat(allEntered.await(2, TimeUnit.SECONDS)).isTrue();
+      CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
+      // Callers timed out, but blocked acquisition still owns all four permits.
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                      CLOCK, Long.MAX_VALUE, budget -> execute(budget.sql(source))))
           .isInstanceOf(IllegalStateException.class);
       verify(provider, org.mockito.Mockito.times(maximum)).acquire();
       verifyNoInteractions(connection);

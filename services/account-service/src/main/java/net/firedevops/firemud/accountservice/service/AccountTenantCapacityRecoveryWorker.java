@@ -148,13 +148,19 @@ public final class AccountTenantCapacityRecoveryWorker {
     }
     Observation candidate = null;
     byte[] candidateProof = null;
-    if (claim.attempts() < 12 && clock.instant().isBefore(claim.reconcileDeadline())) {
-      Instant deadline = clock.instant().plusSeconds(5);
-      if (claim.reconcileDeadline().isBefore(deadline)) deadline = claim.reconcileDeadline();
+    if (claim.attempts() < 12) {
+      Instant started = clock.instant();
+      boolean positiveOnly = !started.isBefore(claim.reconcileDeadline());
+      Instant deadline = started.plusSeconds(5);
+      if (!positiveOnly && claim.reconcileDeadline().isBefore(deadline))
+        deadline = claim.reconcileDeadline();
       try {
         candidate = source.readExact(request, claim.reservation(), deadline);
         if (!clock.instant().isBefore(deadline)) throw unavailable();
         requireExactSource(request, claim.reservation(), candidate);
+        // A delayed first reconciliation must still recognize an exact committed effect. The
+        // expired negative-evidence window never permits a late read to release the hold.
+        if (positiveOnly && candidate.disposition() != Disposition.COMMITTED) throw unavailable();
         candidateProof = proof(request, candidate);
       } catch (RuntimeException unavailableSource) {
         // Missing, malformed, late and failed reads are indeterminate, never no-commit proof.
