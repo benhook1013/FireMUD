@@ -612,33 +612,21 @@ public final class AccountJwtJwksTrustedSource
     String dataDigest =
         AccountJwtJwksPublicationRepository.publicDataDigest(
             promotion.expectedPublicJwksJson(), promotion.expectedActiveMarkerJson());
-    Map<String, Object> preimage = new LinkedHashMap<>();
-    preimage.put("receiptVersion", "account-jwt-active-jwks-promotion-receipt/v1");
-    preimage.put("promotionOperationId", promotion.operationId().toString());
-    preimage.put("promotionRequestDigest", promotion.requestDigest());
-    preimage.put("generationOperationId", promotion.generationOperationId().toString());
-    preimage.put("generationOperationDigest", promotion.generationOperationDigest());
-    preimage.put("generationReceiptDigest", promotion.generationReceiptDigest());
-    preimage.put("configMapName", AccountJwtJwksConfigMapClient.CONFIG_MAP_NAME);
-    preimage.put("configMapUid", promotion.publicConfigMapUid());
-    preimage.put("priorResourceVersion", promotion.expectedPublicResourceVersion());
-    preimage.put("observedResourceVersion", resourceVersion);
-    preimage.put("action", "MARK_ACTIVE");
-    preimage.put("publicDataDigest", dataDigest);
+    String digest;
     try {
-      String digest =
-          HexFormat.of()
-              .formatHex(
-                  MessageDigest.getInstance("SHA-256")
-                      .digest(
-                          Rfc8785CanonicalJson.canonicalizeUtf8(
-                              STRICT_JSON.writeValueAsString(preimage))));
-      if (resourceVersion.equals(promotion.expectedPublicResourceVersion())
-          || !promotion.activeJwksPublicDataDigest().equals(Optional.of(dataDigest))
-          || !promotion.activeJwksReceiptDigest().equals(Optional.of(digest))) {
-        throw rejected();
-      }
-    } catch (IOException | NoSuchAlgorithmException malformed) {
+      digest =
+          AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+              promotion,
+              promotion.publicConfigMapUid(),
+              promotion.expectedPublicResourceVersion(),
+              resourceVersion,
+              dataDigest);
+    } catch (IllegalStateException malformed) {
+      throw rejected();
+    }
+    if (resourceVersion.equals(promotion.expectedPublicResourceVersion())
+        || !promotion.activeJwksPublicDataDigest().equals(Optional.of(dataDigest))
+        || !promotion.activeJwksReceiptDigest().equals(Optional.of(digest))) {
       throw rejected();
     }
     return new PublishedProjection(

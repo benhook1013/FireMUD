@@ -4105,6 +4105,33 @@ public class AccountJwtSignerDesiredStateRepository {
     }
   }
 
+  /**
+   * Computes only the fixed ACTIVE receipt grammar; callers retain owner and observation
+   * validation. The supplied UID and versions are the writer's exact observation, not substituted
+   * owner fields.
+   */
+  public static String activeJwksPromotionReceiptDigest(
+      PromotionOperationEvidence promotion,
+      String configMapUid,
+      String priorResourceVersion,
+      String observedResourceVersion,
+      String dataDigest) {
+    Map<String, Object> preimage = new LinkedHashMap<>();
+    preimage.put("receiptVersion", "account-jwt-active-jwks-promotion-receipt/v1");
+    preimage.put("promotionOperationId", promotion.operationId().toString());
+    preimage.put("promotionRequestDigest", promotion.requestDigest());
+    preimage.put("generationOperationId", promotion.generationOperationId().toString());
+    preimage.put("generationOperationDigest", promotion.generationOperationDigest());
+    preimage.put("generationReceiptDigest", promotion.generationReceiptDigest());
+    preimage.put("configMapName", PUBLIC_JWKS_CONFIG_MAP_NAME);
+    preimage.put("configMapUid", configMapUid);
+    preimage.put("priorResourceVersion", priorResourceVersion);
+    preimage.put("observedResourceVersion", observedResourceVersion);
+    preimage.put("action", "MARK_ACTIVE");
+    preimage.put("publicDataDigest", dataDigest);
+    return digest(preimage);
+  }
+
   public record ActiveJwksPromotionReceipt(
       UUID promotionOperationId,
       String configMapUid,
@@ -4165,26 +4192,18 @@ public class AccountJwtSignerDesiredStateRepository {
         String priorResourceVersion,
         String observedResourceVersion,
         String dataDigest) {
-      Map<String, Object> preimage = new LinkedHashMap<>();
-      preimage.put("receiptVersion", "account-jwt-active-jwks-promotion-receipt/v1");
-      preimage.put("promotionOperationId", promotion.operationId().toString());
-      preimage.put("promotionRequestDigest", promotion.requestDigest());
-      preimage.put("generationOperationId", promotion.generationOperationId().toString());
-      preimage.put("generationOperationDigest", promotion.generationOperationDigest());
-      preimage.put("generationReceiptDigest", promotion.generationReceiptDigest());
-      preimage.put("configMapName", PUBLIC_JWKS_CONFIG_MAP_NAME);
-      preimage.put("configMapUid", configMapUid);
-      preimage.put("priorResourceVersion", priorResourceVersion);
-      preimage.put("observedResourceVersion", observedResourceVersion);
-      preimage.put("action", "MARK_ACTIVE");
-      preimage.put("publicDataDigest", dataDigest);
       return new ActiveJwksPromotionReceipt(
           promotion.operationId(),
           configMapUid,
           priorResourceVersion,
           observedResourceVersion,
           dataDigest,
-          digest(preimage));
+          activeJwksPromotionReceiptDigest(
+              promotion.publicEvidence(),
+              configMapUid,
+              priorResourceVersion,
+              observedResourceVersion,
+              dataDigest));
     }
   }
 

@@ -72,7 +72,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * capacity cohorts prove no durable creation only. Populated-family preservation,
  * retention/erasure, production PKI, admission and owner activation are not qualified here.
  */
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     classes = AccountServiceApplication.class,
     webEnvironment = WebEnvironment.RANDOM_PORT,

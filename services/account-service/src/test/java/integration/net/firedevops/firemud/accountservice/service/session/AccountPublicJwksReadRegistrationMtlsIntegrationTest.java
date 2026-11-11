@@ -352,6 +352,31 @@ class AccountPublicJwksReadRegistrationMtlsIntegrationTest {
                 assertCode(
                     Status.Code.FAILED_PRECONDITION,
                     () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
+                for (String mismatch : List.of("api-origin", "binding-revision")) {
+                  var expected = sourceIdentity();
+                  var changed =
+                      new SourceIdentity(
+                          expected.environmentId(),
+                          expected.clusterId(),
+                          expected.clusterIncarnationUid(),
+                          expected.namespace(),
+                          expected.namespaceUid(),
+                          expected.configMapUid(),
+                          mismatch.equals("binding-revision")
+                              ? "api-r2"
+                              : expected.bindingRevision(),
+                          mismatch.equals("api-origin")
+                              ? "https://different-api.test:6443"
+                              : expected.apiServerOrigin(),
+                          expected.servingCaSha256());
+                  doReturn(new ReadResult(changed, publicJwks, false, false))
+                      .when(source)
+                      .currentPublicRead();
+                  assertCode(
+                      Status.Code.FAILED_PRECONDITION,
+                      () ->
+                          client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
+                }
                 doAnswer(
                         ignored -> {
                           protectedBinding.trust.set(Optional.empty());
