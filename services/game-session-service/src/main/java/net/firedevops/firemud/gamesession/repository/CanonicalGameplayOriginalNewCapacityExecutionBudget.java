@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.repository;
 
 import io.grpc.Context;
 import io.grpc.Deadline;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.Metrics;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -32,7 +34,19 @@ import org.jooq.impl.DefaultTransactionProvider;
 final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   static final int MAX_IN_FLIGHT_OPERATIONS = 4;
   private static final Semaphore OPERATIONS = new Semaphore(MAX_IN_FLIGHT_OPERATIONS);
+  private static final AtomicInteger RELEASE_FAILURE_RETAINED_OPERATIONS = new AtomicInteger();
+
+  static {
+    Gauge.builder(
+            "original_new_capacity_sql_release_failure_retained_operations",
+            RELEASE_FAILURE_RETAINED_OPERATIONS,
+            AtomicInteger::get)
+        .description("Capacity SQL operation permits retained after an uncertain provider release")
+        .register(Metrics.globalRegistry);
+  }
+
   private final ThreadFactory cancellationThreads;
+  private final AtomicBoolean releaseFailureRecorded = new AtomicBoolean();
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final Context caller;
   private final Clock clock;
@@ -122,7 +136,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
                 budget.releaseOutstandingConnections();
               } catch (RuntimeException | Error cleanupFailure) {
                 if (failure == null) failure = cleanupFailure;
-                else failure.addSuppressed(cleanupFailure);
+                else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
               }
               budget.caller.detach(previous);
               synchronized (budget.lifecycle) {
@@ -289,7 +303,7 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         connection.release();
       } catch (RuntimeException cleanupFailure) {
         if (failure == null) failure = cleanupFailure;
-        else failure.addSuppressed(cleanupFailure);
+        else if (failure != cleanupFailure) failure.addSuppressed(cleanupFailure);
       }
     }
     if (failure != null) throw failure;
@@ -398,7 +412,13 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
         }
         // A throwing provider release has uncertain ownership. Do not retry it blindly or free
         // the resource permit as though that connection were known to have returned to its pool.
-        provider.release(raw);
+        try {
+          provider.release(raw);
+        } catch (RuntimeException | Error uncertainReturn) {
+          if (releaseFailureRecorded.compareAndSet(false, true))
+            RELEASE_FAILURE_RETAINED_OPERATIONS.incrementAndGet();
+          throw uncertainReturn;
+        }
         returned = true;
         if (connections.remove(proxy) != null) outstandingConnections.decrementAndGet();
       }

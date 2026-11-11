@@ -327,6 +327,8 @@ class AccountTenantCapacityOwnerTest {
                   return evaluation;
                 if (sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
                   return retained ? evaluation : null;
+                if (sql.startsWith("SELECT * FROM account_tenant_capacity_usage "))
+                  return mock(Record.class);
                 throw new AssertionError(sql);
               });
       owner =

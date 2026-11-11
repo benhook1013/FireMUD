@@ -15,6 +15,8 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -22,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -463,6 +466,76 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertCapacityRefusalWithoutMutation(
           session, session.capacityRequest, Status.Code.UNAVAILABLE, "CAPACITY_ADMISSION_STALE");
     }
+  }
+
+  @Test
+  void actualUsageLockWaitAcrossExpiryCannotCreateAReservationEvenWithAFrozenOwnerClock()
+      throws Exception {
+    try (Session session = session();
+        var worker = Executors.newSingleThreadExecutor();
+        var lock = session.account.dataSource.getConnection()) {
+      var request = session.retainControlledEvaluation(true, null);
+      // Wait outside the owner transaction so the actual lock wait fits its five-second budget.
+      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(2));
+      lock.setAutoCommit(false);
+      int blocker;
+      try (var statement = lock.createStatement();
+          var pid = statement.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(pid.next()).isTrue();
+        blocker = pid.getInt(1);
+      }
+      try (var statement =
+          lock.prepareStatement(
+              "SELECT * FROM account_tenant_capacity_usage WHERE tenant_uuid = ? "
+                  + "AND owner_service = 'game-session-service' FOR UPDATE")) {
+        statement.setObject(1, request.identity().tenantId());
+        try (var usage = statement.executeQuery()) {
+          assertThat(usage.next()).isTrue();
+        }
+      }
+      String before = session.capacityImage();
+      var owner =
+          session.account.capacityOwner(
+              Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC));
+      var result = worker.submit(() -> owner.commit(request, GS));
+      try {
+        long waitUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        boolean waiting;
+        do {
+          waiting =
+              session
+                  .dsl
+                  .fetchSingle(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
+                          + "? = ANY(pg_blocking_pids(pid)) "
+                          + "AND query LIKE 'SELECT * FROM account_tenant_capacity_usage%')",
+                      blocker)
+                  .get(0, boolean.class);
+          if (!waiting) Thread.sleep(10);
+        } while (!waiting && System.nanoTime() < waitUntil);
+        assertThat(waiting).as("the actual owner must wait on the held usage row").isTrue();
+        waitForDatabaseTime(session.dsl, request.evidence().expiresAt());
+      } finally {
+        lock.rollback();
+      }
+      assertThatThrownBy(() -> result.get(3, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
+          .hasStackTraceContaining("CAPACITY_ADMISSION_STALE");
+      assertThat(session.capacityImage()).isEqualTo(before);
+      assertThat(session.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
+    }
+  }
+
+  private static void waitForDatabaseTime(DSLContext dsl, Instant target) {
+    dsl.fetchSingle(
+        "SELECT pg_sleep(GREATEST(0, extract(epoch FROM (?::timestamptz - clock_timestamp()))))",
+        AccountTenantCapacityRepository.at(target));
+    assertThat(
+            dsl.fetchSingle("SELECT clock_timestamp()")
+                .get(0, java.time.OffsetDateTime.class)
+                .toInstant())
+        .isAfterOrEqualTo(target.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
   }
 
   private static void assertCapacityRefusalWithoutMutation(

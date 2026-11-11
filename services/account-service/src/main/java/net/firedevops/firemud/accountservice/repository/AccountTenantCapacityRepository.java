@@ -130,8 +130,18 @@ public final class AccountTenantCapacityRepository {
         || history.get("owner_readback", byte[].class) == null) throw conflict();
   }
 
-  public Result create(Request request, Instant expiresAt) {
-    Record usage = usage(request);
+  /** Fresh database time, not the transaction-start timestamp or an injected application clock. */
+  public void requireFresh(Evidence evidence) {
+    transaction();
+    Instant now = time(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at"), "observed_at");
+    if (now.isBefore(evidence.evaluatedAt())
+        || !now.isBefore(evidence.expiresAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS)))
+      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+  }
+
+  /** The owner already holds this usage row before its final current-source qualification. */
+  public Result create(Request request, Record usage, Instant expiresAt) {
+    requireFresh(request.evidence());
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
     if (delta > request.evidence().quota() - occupied)
