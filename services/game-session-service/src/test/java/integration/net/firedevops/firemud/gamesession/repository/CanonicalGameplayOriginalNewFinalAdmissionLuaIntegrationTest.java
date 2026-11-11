@@ -507,7 +507,20 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   void fenceRequiresTheExactCompleteEnvelopeAndCanonicalKeyIdentityBeforeWriting()
       throws Exception {
     for (String fault :
-        List.of("missing-field", "extra-field", "wrong-tenant", "invalid-fence", "wrong-key")) {
+        List.of(
+            "missing-field",
+            "missing-mutationDigest",
+            "missing-expiresAt",
+            "missing-snapshotIdentity",
+            "missing-evaluationIdentity",
+            "missing-candidateDigest",
+            "missing-canonicalAttemptPayload",
+            "extra-field",
+            "wrong-tenant",
+            "invalid-fence",
+            "invalid-candidate-digest",
+            "non-string-candidate-digest",
+            "wrong-key")) {
       admin.flushdb();
       ScriptCase original = seed(false);
       byte[][] arguments = action(original, "FENCE").arguments().clone();
@@ -515,9 +528,18 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
       var envelope = (tools.jackson.databind.node.ObjectNode) JSON.readTree(arguments[16]);
       switch (fault) {
         case "missing-field" -> envelope.remove("reservationId");
+        case "missing-mutationDigest",
+            "missing-expiresAt",
+            "missing-snapshotIdentity",
+            "missing-evaluationIdentity",
+            "missing-candidateDigest",
+            "missing-canonicalAttemptPayload" ->
+            envelope.remove(fault.substring("missing-".length()));
         case "extra-field" -> envelope.put("unexpected", "foreign");
         case "wrong-tenant" -> envelope.put("tenantId", ACCOUNT);
         case "invalid-fence" -> envelope.put("selectedOwnerFence", "0");
+        case "invalid-candidate-digest" -> envelope.put("candidateDigest", "foreign");
+        case "non-string-candidate-digest" -> envelope.put("candidateDigest", 1);
         case "wrong-key" -> keys[6] = keys[6] + ":foreign";
         default -> throw new IllegalStateException("Unknown fixture fault: " + fault);
       }
@@ -533,16 +555,50 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
 
   private Map<String, byte[]> physicalImage(ScriptCase original) {
     Map<String, byte[]> image = new LinkedHashMap<>();
-    for (String key : original.keys()) image.put(key, admin.dump(ascii(key)));
+    for (String key : original.keys())
+      image.put(
+          key,
+          CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, ascii(key)));
     return image;
+  }
+
+  @Test
+  void physicalImagePreservesRawHashFieldsValuesAndSetMembersIndependentOfIterationOrder()
+      throws Exception {
+    ScriptCase original = seed();
+    byte[] hash = ascii(original.keys()[4]);
+    byte[] field = new byte[] {0, (byte) 0xff, 1};
+    byte[] value = new byte[] {2, 0, (byte) 0xfe};
+    admin.hset(hash, field, value);
+    Map<String, byte[]> before = physicalImage(original);
+    admin.hdel(hash, field);
+    admin.hset(hash, field, value);
+    assertPhysicalImage(original, before, 7);
+
+    admin.hset(hash, field, new byte[] {2, 0, (byte) 0xff});
+    assertThat(physicalImage(original).get(original.keys()[4]))
+        .isNotEqualTo(before.get(original.keys()[4]));
+    admin.hdel(hash, field);
+    admin.hset(hash, new byte[] {0, (byte) 0xff, 2}, value);
+    assertThat(physicalImage(original).get(original.keys()[4]))
+        .isNotEqualTo(before.get(original.keys()[4]));
+    admin.hdel(hash, new byte[] {0, (byte) 0xff, 2});
+    admin.hset(hash, field, value);
+    admin.sadd(ascii(original.keys()[2]), value);
+    assertThat(physicalImage(original).get(original.keys()[2]))
+        .isNotEqualTo(before.get(original.keys()[2]));
+    for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
   }
 
   private void assertPhysicalImage(
       ScriptCase original, Map<String, byte[]> expected, int keyCount) {
     for (int index = 0; index < keyCount; index++) {
       String key = original.keys()[index];
-      if (expected.get(key) == null) assertThat(admin.dump(ascii(key))).as(key).isNull();
-      else assertThat(admin.dump(ascii(key))).as(key).containsExactly(expected.get(key));
+      assertThat(
+              CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+                  admin, ascii(key)))
+          .as(key)
+          .containsExactly(expected.get(key));
     }
   }
 
@@ -659,6 +715,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
         Map.entry("reservationId", UUID.randomUUID().toString()),
         Map.entry("reservationFence", "1"),
         Map.entry("capacityRearmFence", "1"),
+        Map.entry("mutationDigest", "a".repeat(64)),
+        Map.entry("expiresAt", java.time.Instant.ofEpochMilli(expiresAt).toString()),
+        Map.entry("snapshotIdentity", "sha256:" + "b".repeat(64)),
+        Map.entry("evaluationIdentity", "sha256:" + "c".repeat(64)),
+        Map.entry("candidateDigest", "sha256:" + "d".repeat(64)),
+        Map.entry(
+            "canonicalAttemptPayload",
+            Base64.getEncoder().encodeToString(ascii("controlled-attempt"))),
         Map.entry("selectedOwnerId", "controlled-owner"),
         Map.entry("selectedOwnerFence", "1"),
         Map.entry("transitionId", TRANSITION),

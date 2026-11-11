@@ -3,9 +3,12 @@ package net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.codec.ByteArrayCodec;
+import io.lettuce.core.protocol.CommandKeyword;
+import io.lettuce.core.protocol.CommandType;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -850,7 +853,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
    * Actual SQL, candidate/issuer/region and capacity/transfer owners over physical PostgreSQL and
    * Redis. Account lease/reservation/OPEN, World/Entity RPC content, grant and attestor custody are
    * controlled inputs. This proves SQL serialization/retention, not Account issuance or activation.
-   * The Redis test connection is privileged; ACL qualification belongs to its separate owner proof.
+   * Owners use the required named Redis principal; ACL qualification belongs to separate proof.
    */
   private final class TransferSqlProof implements AutoCloseable {
     private final Clock clock = Clock.systemUTC();
@@ -871,14 +874,50 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private CanonicalGameplayRegionOwnerTransferCoordinator coordinator;
 
     private TransferSqlProof() throws Exception {
+      String password = UUID.randomUUID().toString();
+      try (var administrator =
+              RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
+          var connection = administrator.connect(ByteArrayCodec.INSTANCE)) {
+        connection.sync().flushdb();
+        connection
+            .sync()
+            .aclSetuser(
+                "gamesession_coord_app",
+                new AclSetuserArgs()
+                    .reset()
+                    .on()
+                    .addPassword(password)
+                    .keyPattern("session:game:*")
+                    .keyPattern("tick:*")
+                    .keyPattern("tick-executor-lease:*")
+                    .addCommand(CommandType.HELLO)
+                    .addCommand(CommandType.PING)
+                    .addCommand(CommandType.CLIENT, CommandKeyword.SETINFO)
+                    .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
+                    .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
+                    .addCommand(CommandType.EVALSHA)
+                    .addCommand(CommandType.TYPE)
+                    .addCommand(CommandType.PTTL)
+                    .addCommand(CommandType.GET)
+                    .addCommand(CommandType.SET)
+                    .addCommand(CommandType.SADD)
+                    .addCommand(CommandType.SISMEMBER)
+                    .addCommand(CommandType.HGET)
+                    .addCommand(CommandType.HGETALL)
+                    .addCommand(CommandType.HSET)
+                    .addCommand(CommandType.HLEN)
+                    .addCommand(CommandType.HDEL)
+                    .addCommand(CommandType.PEXPIRE)
+                    .addCommand(CommandType.EXISTS)
+                    .addCommand(CommandType.DEL)
+                    .addCommand(CommandType.TIME));
+      }
       redis =
           RedisClient.create(
               RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(6379))
+                  .withAuthentication("gamesession_coord_app", password)
                   .withTimeout(Duration.ofSeconds(5))
                   .build());
-      try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
-        connection.sync().flushdb();
-      }
       var dataSource = new DriverManagerDataSource();
       dataSource.setDriverClassName(POSTGRES.getDriverClassName());
       String url = POSTGRES.getJdbcUrl();
