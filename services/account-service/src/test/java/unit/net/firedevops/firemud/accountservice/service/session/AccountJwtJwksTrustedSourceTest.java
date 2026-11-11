@@ -787,6 +787,87 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
+  void movementThenCoherentPendingPrepublicationRemainsUnavailableWithoutInstallingAPin() {
+    for (boolean additive : List.of(false, true)) {
+      Fixture fixture = new Fixture();
+      if (additive) fixture.useCommittedState();
+      PublicationEvidence complete = additive ? fixture.nextPublication : fixture.publication;
+      var pending = new PublicationEvidence(complete.intent(), Optional.empty(), Optional.empty());
+      when(fixture.publicationRepository.readCurrentPublication(
+              fixture.accountBinding, fixture.trustFence))
+          .thenReturn(
+              Optional.of(complete),
+              Optional.of(pending),
+              Optional.of(pending),
+              Optional.of(pending));
+
+      assertThatThrownBy(fixture.source::currentPublicRead)
+          .isExactlyInstanceOf(SourceUnavailableException.class)
+          .hasNoCause();
+      assertThatThrownBy(fixture.source::load)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account trusted public JWKS source was rejected");
+      verify(fixture.configMapClient, times(2)).observe();
+      verify(fixture.publicationRepository, times(4))
+          .readCurrentPublication(fixture.accountBinding, fixture.trustFence);
+    }
+  }
+
+  @Test
+  void movementThenCoherentVersionOnlyDriftRemainsUnavailableWithoutInstallingAPin() {
+    Fixture fixture = new Fixture();
+    var pending =
+        new PublicationEvidence(fixture.publication.intent(), Optional.empty(), Optional.empty());
+    when(fixture.publicationRepository.readCurrentPublication(
+            fixture.accountBinding, fixture.trustFence))
+        .thenReturn(Optional.of(pending), Optional.of(fixture.publication));
+    when(fixture.configMapClient.observe())
+        .thenReturn(
+            fixture.snapshot, new ConfigMapSnapshot(CONFIG_MAP_UID, "43", fixture.snapshot.data()));
+
+    assertThatThrownBy(fixture.source::currentPublicRead)
+        .isExactlyInstanceOf(SourceUnavailableException.class)
+        .hasNoCause();
+    assertThatThrownBy(fixture.source::load)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account trusted public JWKS source was rejected");
+    verify(fixture.configMapClient, times(2)).observe();
+    verify(fixture.publicationRepository, times(4))
+        .readCurrentPublication(fixture.accountBinding, fixture.trustFence);
+  }
+
+  @Test
+  void movementWithVersionOnlyReadbackRequiresAFreshCoherentTrial() {
+    Fixture fixture = new Fixture();
+    var later =
+        new PublicationEvidence(
+            fixture.publication.intent(),
+            Optional.of(PublicationReceipt.create(fixture.publication.intent(), "44")),
+            Optional.empty());
+    when(fixture.publicationRepository.readCurrentPublication(
+            fixture.accountBinding, fixture.trustFence))
+        .thenReturn(Optional.of(fixture.publication), Optional.of(later));
+    when(fixture.configMapClient.observe())
+        .thenReturn(new ConfigMapSnapshot(CONFIG_MAP_UID, "43", fixture.snapshot.data()))
+        .thenAnswer(
+            invocation -> {
+              assertThatThrownBy(fixture.source::load)
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessage("Account trusted public JWKS source was rejected");
+              return new ConfigMapSnapshot(CONFIG_MAP_UID, "44", fixture.snapshot.data());
+            });
+
+    var result = fixture.source.currentPublicRead();
+    assertThat(result.sourceIdentity().configMapUid()).isEqualTo(CONFIG_MAP_UID);
+    assertThat(result.preparedDeny()).isFalse();
+    assertThat(result.committedRecoveryEligible()).isFalse();
+    assertThat(result.jwksBytes()).containsExactly(JWKS_1.getBytes(StandardCharsets.UTF_8));
+    verify(fixture.configMapClient, times(2)).observe();
+    verify(fixture.publicationRepository, times(4))
+        .readCurrentPublication(fixture.accountBinding, fixture.trustFence);
+  }
+
+  @Test
   void movementThenApiMissingResourceOrSqlOutageIsTerminalWithoutInstallingAPin() {
     for (boolean afterMovement : List.of(false, true)) {
       for (String failure : List.of("api503", "missing-resource", "sql")) {

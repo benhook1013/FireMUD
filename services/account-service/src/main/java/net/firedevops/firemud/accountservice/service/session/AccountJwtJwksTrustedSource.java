@@ -269,8 +269,8 @@ public final class AccountJwtJwksTrustedSource
         }
         PublishedProjection projection = qualifiedProjection(ownerAfter, live);
         if (projection == null) {
-          // Proven prepublication is unavailable, without keys, age renewal or a PREPARED latch.
-          throw unavailable();
+          // This complete stable trial qualified prepublication without serving unreceipted keys.
+          throw new QualifiedTemporaryRead();
         }
         byte[] jwks =
             live.data()
@@ -288,6 +288,10 @@ public final class AccountJwtJwksTrustedSource
             preparedDeny,
             committedRecoveryEligible,
             ownerMovementObserved);
+      } catch (QualifiedTemporaryRead qualifiedTemporary) {
+        // Only complete local qualification resolves movement; dependency failure never does.
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        throw unavailable();
       } catch (SourceUnavailableException unavailableAfterObservation) {
         if (ownerMovementObserved) throw rejected();
         throw unavailableAfterObservation;
@@ -310,6 +314,9 @@ public final class AccountJwtJwksTrustedSource
   private boolean qualifiesMovingProjection(OwnerProjection owner, ConfigMapSnapshot live) {
     try {
       qualifiedProjection(owner, live);
+      return true;
+    } catch (QualifiedTemporaryRead qualifiedVersionOnly) {
+      // Exact UID and complete owned bytes qualify another trial, never a moving-bracket response.
       return true;
     } catch (SourceRejectedException | SourceUnavailableException unqualified) {
       return false;
@@ -1130,8 +1137,8 @@ public final class AccountJwtJwksTrustedSource
     }
     if (!projection.resourceVersion().equals(live.resourceVersion())) {
       // Exact owned bytes and UID do not authorize serving a different, unreceipted version.
-      // Preserve bounded outage handling until a later exact owner-receipted publication.
-      throw unavailable();
+      // The stable caller distinguishes this exact local result from dependency unavailability.
+      throw new QualifiedTemporaryRead();
     }
   }
 
@@ -1184,6 +1191,11 @@ public final class AccountJwtJwksTrustedSource
 
   private static SourceRejectedException rejected() {
     return new SourceRejectedException();
+  }
+
+  /** Internal control flow for the two fully qualified, no-snapshot temporary windows only. */
+  private static final class QualifiedTemporaryRead extends RuntimeException {
+    private static final long serialVersionUID = 1L;
   }
 
   private static final class SourceRejectedException extends IllegalStateException {
