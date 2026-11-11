@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -39,8 +40,74 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
+import reactor.test.publisher.TestPublisher;
 
 class AccountCheckoutReceivingRateLimiterTest {
+  @Test
+  void neverCompletingRedisDecisionTimesOutAndCancelsWithoutForwarding() {
+    var redis = mock(ReactiveStringRedisTemplate.class);
+    var script = tokenBucketScript();
+    var cancelled = new AtomicBoolean();
+    when(redis.execute(eq(script), anyList(), anyList()))
+        .thenReturn(Flux.<List<Long>>never().doOnCancel(() -> cancelled.set(true)));
+    var exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+                .header("X-Client-IP", "192.0.2.123"));
+    var forwarded = new AtomicBoolean();
+    StepVerifier.withVirtualTime(
+            () ->
+                configuredFilter(redis, script)
+                    .filter(
+                        exchange,
+                        ignored -> {
+                          forwarded.set(true);
+                          return Mono.empty();
+                        }))
+        .thenAwait(Duration.ofMillis(1_999))
+        .then(
+            () -> {
+              assertThat(cancelled).isFalse();
+              assertThat(exchange.getResponse().getStatusCode()).isNull();
+            })
+        .thenAwait(Duration.ofMillis(1))
+        .verifyComplete();
+    assertThat(cancelled).isTrue();
+    assertThat(forwarded).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+    assertThat(exchange.getResponse().getHeaders().getCacheControl()).contains("no-store");
+  }
+
+  @Test
+  void lateAllowAfterTimeoutCannotForward() {
+    var redis = mock(ReactiveStringRedisTemplate.class);
+    var script = tokenBucketScript();
+    var publisher =
+        TestPublisher.<List<Long>>createNoncompliant(TestPublisher.Violation.DEFER_CANCELLATION);
+    when(redis.execute(eq(script), anyList(), anyList())).thenReturn(publisher.flux());
+    var exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+                .header("X-Client-IP", "192.0.2.123"));
+    var forwarded = new AtomicBoolean();
+    StepVerifier.withVirtualTime(
+            () ->
+                configuredFilter(redis, script)
+                    .filter(
+                        exchange,
+                        ignored -> {
+                          forwarded.set(true);
+                          return Mono.empty();
+                        }))
+        .thenAwait(Duration.ofSeconds(2))
+        .verifyComplete();
+    publisher.assertCancelled();
+    publisher.emit(List.of(1L, 38L));
+    assertThat(forwarded).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+  }
+
   @ParameterizedTest
   @MethodSource("redisFailures")
   void configuredFilterRefusesReactiveAndSynchronousRedisErrorsWithoutForwarding(
@@ -219,7 +286,11 @@ class AccountCheckoutReceivingRateLimiterTest {
     return new AccountCheckoutReceivingConfiguration(
             new MockEnvironment(), new AccountCheckoutReceivingProperties())
         .accountCheckoutReceivingRateLimitWebFilter(
-            gateway, redis, new GatewayRateLimiterConfig().gatewayClientIpKeyResolver(), script);
+            gateway,
+            redis,
+            new GatewayRateLimiterConfig().gatewayClientIpKeyResolver(),
+            script,
+            new AccountCheckoutReceivingProperties());
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})

@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceController;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceWebhookController;
@@ -48,6 +49,67 @@ class AccountCheckoutReceivingConfigurationTest {
             "spring.profiles.active=isolated-checkout-receiving",
             "firemud.account.checkout-receiving.enabled=true")
         .run(ctx -> assertThat(ctx).hasFailed());
+  }
+
+  @Test
+  void physicalCustodyRootsMustResolveAndRemainDisjoint() throws Exception {
+    Path privateRoot = Files.createDirectory(keys.resolve("private"));
+    Path publicRoot = Files.createDirectory(keys.resolve("public"));
+    Path custody = Files.createDirectory(keys.resolve("custody"));
+    assertThat(
+            new AccountCheckoutReceivingProperties("test", privateRoot, publicRoot, custody, 0)
+                .controlUiKeyringRoot())
+        .isEqualTo(custody.toRealPath());
+    for (Path signer : java.util.List.of(privateRoot, publicRoot)) {
+      Path child = Files.createDirectory(signer.resolve("child"));
+      for (Path overlap : java.util.List.of(signer, child, keys)) {
+        assertThatThrownBy(
+                () ->
+                    new AccountCheckoutReceivingProperties(
+                        "test", privateRoot, publicRoot, overlap, 0))
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+      Path alias = Files.createSymbolicLink(keys.resolve(signer.getFileName() + "-alias"), signer);
+      assertThatThrownBy(
+              () ->
+                  new AccountCheckoutReceivingProperties("test", privateRoot, publicRoot, alias, 0))
+          .isInstanceOf(IllegalArgumentException.class);
+      // A signer alias into custody must also fail, including the ancestor direction.
+      Path custodyChild = Files.createDirectory(custody.resolve(signer.getFileName()));
+      Path signerAlias =
+          Files.createSymbolicLink(keys.resolve(signer.getFileName() + "-custody"), custodyChild);
+      assertThatThrownBy(
+              () ->
+                  new AccountCheckoutReceivingProperties(
+                      "test",
+                      signer == privateRoot ? signerAlias : privateRoot,
+                      signer == publicRoot ? signerAlias : publicRoot,
+                      custody,
+                      0))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    Path missing = keys.resolve("missing");
+    Path dangling = Files.createSymbolicLink(keys.resolve("dangling"), missing);
+    for (Path invalid :
+        java.util.List.of(
+            missing,
+            dangling,
+            custody.resolve("../custody"),
+            Path.of("relative"),
+            Files.createFile(keys.resolve("file")))) {
+      assertThatThrownBy(
+              () ->
+                  new AccountCheckoutReceivingProperties(
+                      "test", privateRoot, publicRoot, invalid, 0))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () -> new AccountCheckoutReceivingProperties("test", invalid, publicRoot, custody, 0))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(
+              () ->
+                  new AccountCheckoutReceivingProperties("test", privateRoot, invalid, custody, 0))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 
   @Test

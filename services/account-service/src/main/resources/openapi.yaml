@@ -384,7 +384,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [subscriptionId, invoiceId, paymentIntentId, paymentInstrumentId, amount, currency, tupleDigest, expectedRowVersion, state, expiresAt, confirmationRequestId, authorizationVersion]
+                required: [subscriptionId, invoiceId, paymentIntentId, paymentInstrumentId, amount, currency, tupleDigest, expectedRowVersion, state, expiresAt, confirmationRequestId, preRowOriginalRequestId, authorizationVersion]
                 properties:
                   subscriptionId: {type: string, format: uuid}
                   invoiceId: {type: string}
@@ -397,6 +397,7 @@ paths:
                   state: {type: string, enum: [AWAITING_PAYMENT, COMMITTED]}
                   expiresAt: {type: string, format: date-time}
                   confirmationRequestId: {type: string, format: uuid, nullable: true}
+                  preRowOriginalRequestId: {type: string, format: uuid, nullable: true, description: Server-verified original operation identity before a confirmation row exists. Observational only; requires fresh explicit consent and PRE_ROW_RENEWAL authentication. Null once a confirmation exists.}
                   authorizationVersion: {type: integer, format: int64, minimum: 0}
         '401': {description: Protected current control-ui owner authentication required}
         '409': {description: Exact evidence refused; prior provider outcome may remain uncertain}

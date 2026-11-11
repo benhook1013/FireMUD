@@ -38,6 +38,7 @@ const firstInvoice = {
   state: 'AWAITING_PAYMENT',
   expiresAt: '2099-01-01T00:00:00Z',
   confirmationRequestId: null,
+  preRowOriginalRequestId: null,
   authorizationVersion: 0,
 };
 
@@ -409,6 +410,118 @@ describe('App-owned first-invoice route', () => {
           ) as HTMLInputElement
         ).value
       ).toBe('');
+    }
+  );
+
+  it.each(['navigation', 'replacement login'])(
+    'restores only the server original operation after %s before a confirmation row exists',
+    async (interruption) => {
+      const { fetchImpl } = setupApp();
+      let original: string | null = null;
+      const openingEvidence = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const freshEvidence = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const proofs: Array<Record<string, unknown>> = [];
+      const renewals: Array<Record<string, unknown>> = [];
+      let confirmations = 0;
+      fetchImpl.mockImplementation(async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if ((init?.method ?? 'GET') === 'GET') {
+          return Response.json({
+            ...firstInvoice,
+            preRowOriginalRequestId: original,
+          });
+        }
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (path.endsWith('/reauthenticate')) {
+          proofs.push(body);
+          const binding = body.billingBinding as Record<string, unknown>;
+          if (original === null) original = binding.originalRequestId as string;
+          return Response.json({
+            evidenceId: proofs.length === 1 ? openingEvidence : freshEvidence,
+          });
+        }
+        if (path.endsWith('/confirm')) {
+          confirmations += 1;
+          return new Response(null, { status: 409 });
+        }
+        if (path.endsWith('/renew')) {
+          renewals.push(body);
+          return Response.json({ status: 'processing', clientSecret: null });
+        }
+        return new Response(null, { status: 404 });
+      });
+      await signIn();
+      async function authorize() {
+        fireEvent.change(screen.getByLabelText('Account email'), {
+          target: { value: 'owner@example.com' },
+        });
+        fireEvent.change(
+          screen.getByLabelText('Primary authentication secret'),
+          { target: { value: 'fresh-primary-secret' } }
+        );
+        fireEvent.click(screen.getByRole('checkbox'));
+        fireEvent.click(
+          screen.getByRole('button', {
+            name: /Authorize first-invoice charge|Resume exact confirmation/,
+          })
+        );
+      }
+      await authorize();
+      await screen.findByRole('button', { name: 'Renew exact authorization' });
+      expect(proofs).toHaveLength(1);
+      expect(confirmations).toBe(1);
+      if (interruption === 'navigation') {
+        act(() => {
+          window.history.pushState({}, '', '/');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        });
+        await screen.findByRole('heading', { name: 'Vite + React' });
+        act(() => {
+          window.history.pushState({}, '', checkoutPath);
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        });
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+        await screen.findByRole('heading', { name: 'Sign in to Account' });
+        await signIn();
+      }
+      const renew = await screen.findByRole('button', {
+        name: 'Renew exact authorization',
+      });
+      expect(screen.queryByRole('checkbox')).toBeNull();
+      expect(
+        screen.queryByLabelText('Primary authentication secret')
+      ).toBeNull();
+      expect(proofs).toHaveLength(1);
+      expect(renewals).toHaveLength(0);
+      fireEvent.click(renew);
+      expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(
+        false
+      );
+      expect(
+        (
+          screen.getByLabelText(
+            'Primary authentication secret'
+          ) as HTMLInputElement
+        ).value
+      ).toBe('');
+      await authorize();
+      await waitFor(() => expect(renewals).toHaveLength(1));
+      expect(confirmations).toBe(1);
+      expect(proofs).toHaveLength(2);
+      expect(renewals[0]).toMatchObject({
+        requestId: original,
+        expectedAuthorizationVersion: 0,
+        reauthenticationEvidenceId: freshEvidence,
+        acceptCharge: true,
+      });
+      expect(renewals[0].authorizationRequestId).not.toBe(original);
+      expect(proofs[1].requestId).not.toBe(proofs[0].requestId);
+      expect(proofs[1].billingBinding).toMatchObject({
+        originalRequestId: original,
+        authorizationPurpose: 'PRE_ROW_RENEWAL',
+        expectedAuthorizationVersion: 0,
+      });
     }
   );
 

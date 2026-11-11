@@ -93,6 +93,15 @@ class AccountCheckoutReceivingConfigurationTest {
     properties.setAccountCaCertPath(ca.toString());
 
     properties.validateEnabledConfiguration();
+    for (int invalid : new int[] {0, -1, 30_001}) {
+      properties.setRateLimitDecisionTimeoutMs(invalid);
+      assertThat(catchThrowable(properties::validateEnabledConfiguration))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    for (int valid : new int[] {1, 30_000}) {
+      properties.setRateLimitDecisionTimeoutMs(valid);
+      properties.validateEnabledConfiguration();
+    }
 
     properties.setAccountHttpsBaseUrl("http://account-service:8080");
     Throwable httpFailure = catchThrowable(properties::validateEnabledConfiguration);

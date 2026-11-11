@@ -30,6 +30,7 @@ const initial: FirstInvoice = {
   state: 'AWAITING_PAYMENT',
   expiresAt: '2099-01-01T00:00:00Z',
   confirmationRequestId: null,
+  preRowOriginalRequestId: null,
   authorizationVersion: 0,
 };
 
@@ -116,7 +117,9 @@ async function consent() {
     target: { value: 'primary-secret' },
   });
   fireEvent.click(screen.getByRole('checkbox'));
-  return screen.getByRole('button', { name: 'Authorize first-invoice charge' });
+  return screen.getByRole('button', {
+    name: /Authorize first-invoice charge|Resume exact confirmation/,
+  });
 }
 
 afterEach(() => {
@@ -380,6 +383,7 @@ describe('owner first-invoice checkout', () => {
         'The result is unknown. Check Account status or retry this same confirmation. Do not start another payment.'
       );
       const original = client.confirm.mock.calls[0][2];
+      setCurrent({ ...initial, preRowOriginalRequestId: original.requestId });
       fireEvent.click(
         screen.getByRole('button', { name: 'Resume exact confirmation' })
       );
@@ -432,7 +436,7 @@ describe('owner first-invoice checkout', () => {
       expect(
         screen.queryByRole('button', { name: 'Renew exact authorization' })
       ).toBeNull();
-      setCurrent(initial);
+      setCurrent({ ...initial, preRowOriginalRequestId: original.requestId });
       fireEvent.click(
         screen.getByRole('button', { name: 'Check Account status' })
       );
@@ -589,6 +593,49 @@ describe('owner first-invoice checkout', () => {
     expect(client.confirm).toHaveBeenCalledOnce();
   });
 
+  it('cannot turn a vanished retained operation into new initial consent', async () => {
+    const { client, setCurrent } = setup({
+      ...initial,
+      confirmationRequestId: '44444444-4444-4444-8444-444444444444',
+      authorizationVersion: 1,
+    });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Renew exact authorization' })
+    );
+    const authorize = await consent();
+    setCurrent(initial);
+    fireEvent.click(authorize);
+    await screen.findByText(
+      'Account no longer exposes the original operation. Check its status before renewing authorization.'
+    );
+    expect(client.reauthenticate).not.toHaveBeenCalled();
+    expect(client.confirm).not.toHaveBeenCalled();
+    expect(client.renew).not.toHaveBeenCalled();
+  });
+
+  it('refuses a changed original reference during the fresh consent readback', async () => {
+    const original = '44444444-4444-4444-8444-444444444444';
+    const { client, setCurrent } = setup({
+      ...initial,
+      preRowOriginalRequestId: original,
+    });
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Renew exact authorization' })
+    );
+    const authorize = await consent();
+    setCurrent({
+      ...initial,
+      preRowOriginalRequestId: '55555555-5555-4555-8555-555555555555',
+    });
+    fireEvent.click(authorize);
+    await screen.findByText(
+      'Account retained a different original operation. Review its status before explicitly renewing authorization.'
+    );
+    expect(client.reauthenticate).not.toHaveBeenCalled();
+    expect(client.confirm).not.toHaveBeenCalled();
+    expect(client.renew).not.toHaveBeenCalled();
+  });
+
   it('requires an explicit renewal click, fresh proof and consent while preserving the original payment identity', async () => {
     const original = '44444444-4444-4444-8444-444444444444';
     const { client, stripe } = setup({
@@ -637,18 +684,24 @@ describe('owner first-invoice checkout', () => {
     await waitFor(() => expect(stripe.handleNextAction).toHaveBeenCalledOnce());
   });
 
-  it('does not offer authorization renewal after the original invoice expires', async () => {
-    setup({
-      ...initial,
-      confirmationRequestId: '44444444-4444-4444-8444-444444444444',
-      authorizationVersion: 1,
-      expiresAt: '2000-01-01T00:00:00Z',
-    });
-    await screen.findByText('in_existing');
-    expect(
-      screen.queryByRole('button', { name: 'Renew exact authorization' })
-    ).toBeNull();
-  });
+  it.each(['pre-row', 'post-row'])(
+    'does not offer %s authorization renewal after the original invoice expires',
+    async (phase) => {
+      setup({
+        ...initial,
+        confirmationRequestId:
+          phase === 'post-row' ? '44444444-4444-4444-8444-444444444444' : null,
+        preRowOriginalRequestId:
+          phase === 'pre-row' ? '44444444-4444-4444-8444-444444444444' : null,
+        authorizationVersion: phase === 'post-row' ? 1 : 0,
+        expiresAt: '2000-01-01T00:00:00Z',
+      });
+      await screen.findByText('in_existing');
+      expect(
+        screen.queryByRole('button', { name: 'Renew exact authorization' })
+      ).toBeNull();
+    }
+  );
 
   it('keeps expired checkout read-only and owner-session refusals non-authorizing', async () => {
     const { client } = setup({ ...initial, expiresAt: '2000-01-01T00:00:00Z' });

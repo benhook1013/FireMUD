@@ -100,11 +100,14 @@ public final class AccountCheckoutReceivingConfiguration {
       GatewayProperties gatewayProperties,
       ReactiveStringRedisTemplate redisTemplate,
       @Qualifier("gatewayClientIpKeyResolver") KeyResolver keyResolver,
-      @Qualifier(RedisRateLimiter.REDIS_SCRIPT_NAME) RedisScript<List<Long>> script) {
+      @Qualifier(RedisRateLimiter.REDIS_SCRIPT_NAME) RedisScript<List<Long>> script,
+      AccountCheckoutReceivingProperties properties) {
     Objects.requireNonNull(redisTemplate, "Gateway Redis rate limiting must be available");
     GatewayRateLimiterConfig.DefaultRequestRateLimiterArguments arguments =
         GatewayRateLimiterConfig.defaultRequestRateLimiterArguments(gatewayProperties);
-    var rateLimiter = new AccountCheckoutReceivingRateLimiter(redisTemplate, script, arguments);
+    var rateLimiter =
+        new AccountCheckoutReceivingRateLimiter(
+            redisTemplate, script, arguments, properties.getRateLimitDecisionTimeoutMs());
     return receivingRateLimitWebFilter(rateLimiter, keyResolver);
   }
 

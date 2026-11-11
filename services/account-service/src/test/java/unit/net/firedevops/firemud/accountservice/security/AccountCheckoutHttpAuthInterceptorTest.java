@@ -106,6 +106,8 @@ class AccountCheckoutHttpAuthInterceptorTest {
 
   static Stream<RuntimeException> unavailableAuthorities() {
     return Stream.of(
+        registryFailure(() -> null),
+        registryFailure(() -> mock(io.lettuce.core.api.StatefulRedisConnection.class)),
         new net.firedevops.firemud.common.security.AccountPublicJwksCache
             .SourceUnavailableException(),
         new org.springframework.transaction.CannotCreateTransactionException(
@@ -113,6 +115,23 @@ class AccountCheckoutHttpAuthInterceptorTest {
         new org.springframework.transaction.TransactionSystemException(
             "private transaction detail"),
         new org.springframework.transaction.UnexpectedRollbackException("private rollback detail"));
+  }
+
+  private static RuntimeException registryFailure(
+      net.firedevops.firemud.accountservice.service.session
+              .AccountCoordinationPinnedConnectionProvider
+          provider) {
+    try {
+      new net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReader(
+              provider)
+          .readActive("a".repeat(64));
+      throw new AssertionError("Expected unavailable registry");
+    } catch (
+        net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReader
+                .RegistryUnavailableException
+            failure) {
+      return failure;
+    }
   }
 
   @Test

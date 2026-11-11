@@ -21,6 +21,60 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 
 class AccountHostingFirstInvoiceControllerTest {
   @Test
+  void ownerStatusSerializesTheObservationalOriginalReferenceWithNoStore() throws Exception {
+    var service = mock(AccountHostingFirstInvoicePaymentService.class);
+    UUID subscription = UUID.randomUUID();
+    UUID original = UUID.randomUUID();
+    when(service.describeOwner("controlled-bearer", subscription))
+        .thenReturn(
+            new AccountHostingFirstInvoicePaymentService.OwnerView(
+                subscription,
+                "in_exact",
+                "pi_exact",
+                UUID.randomUUID(),
+                "2400",
+                "usd",
+                "sha256:" + "a".repeat(64),
+                3,
+                "AWAITING_PAYMENT",
+                java.time.Instant.parse("2099-01-01T00:00:00Z"),
+                null,
+                original,
+                0));
+    registeredController(service)
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                    "/billing/hosting/subscriptions/" + subscription + "/first-invoice")
+                .secure(true)
+                .header("Authorization", "Bearer controlled-bearer"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .string("Cache-Control", "no-store"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.preRowOriginalRequestId")
+                .value(original.toString()))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.confirmationRequestId")
+                .value(org.hamcrest.Matchers.nullValue()))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.authorizationVersion")
+                .value(0))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.reauthenticationEvidenceId")
+                .doesNotExist())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.clientSecret")
+                .doesNotExist());
+  }
+
+  @Test
   void dependencyUnavailabilityIsNotReportedAsRevocationAndNeverDisclosesSecrets() {
     var controller =
         new AccountHostingFirstInvoiceController(

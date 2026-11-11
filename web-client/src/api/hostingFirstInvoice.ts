@@ -12,6 +12,8 @@ export interface FirstInvoice {
   state: 'AWAITING_PAYMENT' | 'COMMITTED';
   expiresAt: string;
   confirmationRequestId: string | null;
+  /** Server-verified original identity only, never restored consent or proof. */
+  preRowOriginalRequestId: string | null;
   authorizationVersion: number;
 }
 
@@ -126,7 +128,13 @@ function invoice(value: unknown, subscriptionId: string): FirstInvoice {
     !Number.isFinite(Date.parse(data.expiresAt)) ||
     (data.confirmationRequestId !== null &&
       (typeof data.confirmationRequestId !== 'string' ||
-        !uuid.test(data.confirmationRequestId)))
+        !uuid.test(data.confirmationRequestId))) ||
+    (data.preRowOriginalRequestId !== null &&
+      (typeof data.preRowOriginalRequestId !== 'string' ||
+        !uuid.test(data.preRowOriginalRequestId) ||
+        data.confirmationRequestId !== null ||
+        data.authorizationVersion !== 0 ||
+        data.state !== 'AWAITING_PAYMENT'))
   ) {
     throw new FirstInvoiceError(0);
   }
@@ -143,6 +151,7 @@ function invoice(value: unknown, subscriptionId: string): FirstInvoice {
     state: data.state,
     expiresAt: data.expiresAt,
     confirmationRequestId: data.confirmationRequestId as string | null,
+    preRowOriginalRequestId: data.preRowOriginalRequestId as string | null,
     authorizationVersion: data.authorizationVersion as number,
   };
 }

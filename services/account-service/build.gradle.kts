@@ -188,6 +188,8 @@ tasks.named<Test>("integrationTest") {
     // This JVM belongs to Account MVC. The checkout proof imports Gateway's explicit receiving
     // configuration, not SCG's foreign application/route auto-configuration (which rejects MVC).
     systemProperty("spring.cloud.gateway.server.webflux.enabled", "false")
+    // SCG Redis auto-configuration has a separate switch and must also stay outside Account.
+    systemProperty("spring.cloud.gateway.server.webflux.redis.enabled", "false")
     // Isolate fixture statics in separate JVMs; JUnit methods remain serial within each suite.
     // Keep other platforms' existing single-fork behavior and respect a one-worker invocation.
     if (System.getProperty("os.name").lowercase().startsWith("linux")) {

@@ -616,6 +616,11 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
             JSON.readTree(https.request("GET", path, issued.compact(), null).body());
         assertThat(whileDelayed.path("confirmationRequestId").isNull()).isTrue();
         assertThat(whileDelayed.path("authorizationVersion").asLong()).isZero();
+        UUID recoveredOriginalRequestId =
+            UUID.fromString(whileDelayed.path("preRowOriginalRequestId").asText());
+        assertThat(recoveredOriginalRequestId).isEqualTo(originalRequestId);
+        assertThat(whileDelayed.has("reauthenticationEvidenceId")).isFalse();
+        assertThat(whileDelayed.has("clientSecret")).isFalse();
         assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_confirmations"))
             .isZero();
         assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
@@ -633,7 +638,7 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                     tuple,
                     UUID.randomUUID(),
                     winningAuthorization,
-                    originalRequestId,
+                    recoveredOriginalRequestId,
                     0L,
                     "PRE_ROW_RENEWAL",
                     issued.account().getEmail()));
@@ -660,7 +665,7 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         Map<String, Object> renewal =
             Map.of(
                 "requestId",
-                originalRequestId,
+                recoveredOriginalRequestId,
                 "authorizationRequestId",
                 winningAuthorization,
                 "expectedRowVersion",
@@ -737,6 +742,11 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         UUID winnerEvidenceId = firstRenewalWon ? winningEvidence : competingEvidence;
         UUID losingEvidenceId = firstRenewalWon ? competingEvidence : winningEvidence;
         assertThat(renewalWinner.statusCode()).isEqualTo(200);
+        JsonNode afterRenewal =
+            JSON.readTree(https.request("GET", path, issued.compact(), null).body());
+        assertThat(afterRenewal.path("confirmationRequestId").asText())
+            .isEqualTo(recoveredOriginalRequestId.toString());
+        assertThat(afterRenewal.path("preRowOriginalRequestId").isNull()).isTrue();
         assertThat(JSON.readTree(renewalWinner.body()).path("status").asText())
             .isEqualTo("requires_action");
         assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);

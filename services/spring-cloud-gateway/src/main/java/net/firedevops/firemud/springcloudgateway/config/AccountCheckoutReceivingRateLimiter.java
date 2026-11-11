@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.config;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -16,11 +17,17 @@ final class AccountCheckoutReceivingRateLimiter
   private final RedisScript<List<Long>> script;
   private final GatewayRateLimiterConfig.DefaultRequestRateLimiterArguments configuration;
   private final List<String> arguments;
+  private final Duration decisionTimeout;
 
   AccountCheckoutReceivingRateLimiter(
       ReactiveStringRedisTemplate redisTemplate,
       RedisScript<List<Long>> script,
-      GatewayRateLimiterConfig.DefaultRequestRateLimiterArguments configuration) {
+      GatewayRateLimiterConfig.DefaultRequestRateLimiterArguments configuration,
+      int decisionTimeoutMs) {
+    if (decisionTimeoutMs < 1 || decisionTimeoutMs > 30_000) {
+      throw new IllegalArgumentException("Bounded positive rate-limit decision timeout required");
+    }
+    this.decisionTimeout = Duration.ofMillis(decisionTimeoutMs);
     this.redisTemplate = Objects.requireNonNull(redisTemplate);
     this.script = Objects.requireNonNull(script);
     this.configuration = Objects.requireNonNull(configuration);
@@ -43,7 +50,8 @@ final class AccountCheckoutReceivingRateLimiter
     String prefix = "request_rate_limiter.{" + routeId + "." + id + "}.";
     var keys = List.of(prefix + "tokens", prefix + "timestamp");
     return Mono.defer(() -> redisTemplate.execute(script, keys, arguments).single())
-        .map(this::decision);
+        .map(this::decision)
+        .timeout(decisionTimeout);
   }
 
   private Response decision(List<?> result) {

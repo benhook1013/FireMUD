@@ -17,6 +17,7 @@ public class AccountCheckoutReceivingProperties {
   private String accountCaCertPath;
   private int connectTimeoutMs = 2_000;
   private int responseTimeoutMs = 5_000;
+  private int rateLimitDecisionTimeoutMs = 2_000;
 
   /** Rejects any enabled configuration that cannot establish a verified HTTPS upstream. */
   public void validateEnabledConfiguration() {
@@ -63,7 +64,9 @@ public class AccountCheckoutReceivingProperties {
     if (connectTimeoutMs < 1
         || connectTimeoutMs > 30_000
         || responseTimeoutMs < 1
-        || responseTimeoutMs > 30_000) {
+        || responseTimeoutMs > 30_000
+        || rateLimitDecisionTimeoutMs < 1
+        || rateLimitDecisionTimeoutMs > 30_000) {
       throw new IllegalStateException("Checkout receiving requires bounded positive timeouts");
     }
   }

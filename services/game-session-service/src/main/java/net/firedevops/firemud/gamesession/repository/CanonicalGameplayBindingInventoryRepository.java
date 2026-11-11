@@ -1044,6 +1044,133 @@ public final class CanonicalGameplayBindingInventoryRepository {
         });
   }
 
+  /** Pins original identity only; ordinary provisional handoff needs no final ACK capability. */
+  CanonicalGameplayOriginalNewCandidate readRegionTransferOriginalCandidate(
+      UUID transitionId, CanonicalGameplayBindingProvisionalCasEvidence expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "expected original placement");
+    if (!expectedOriginal.transition().transitionId().equals(transitionId)
+        || expectedOriginal.transition().status()
+            != CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+        || expectedOriginal.expectedPrior() != null) {
+      throw conflict("Region transfer requires its exact original provisional placement");
+    }
+    CanonicalGameplayAdmissionDecision decision =
+        dsl.transactionResult(
+            configuration ->
+                toAdmissionDecision(
+                    readTransition(DSL.using(configuration), transitionId), expectedOriginal));
+    return CanonicalGameplayOriginalNewCandidate.fromOriginalSources(expectedOriginal, decision);
+  }
+
+  /** Only an explicitly observed COMMITTED original selects the strict terminal source path. */
+  Optional<OriginalNewFinalAdmissionSource> readRegionTransferCommittedSource(
+      UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "pinned original transfer candidate");
+    if (!expectedOriginal.bindingDecisionId().equals(transitionId)) {
+      throw conflict("Region transfer changed its original transition");
+    }
+    boolean committed =
+        dsl.transactionResult(
+            configuration -> {
+              var transaction = DSL.using(configuration);
+              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+              Record row = readTransition(transaction, transitionId);
+              if (row == null) throw conflict("Region transfer original transition is missing");
+              String status = row.get("status", String.class);
+              if ("COMMITTED".equals(status)) return true;
+              if (!"PROVISIONAL".equals(status)) {
+                throw conflict("Region transfer original has no current installation lifecycle");
+              }
+              var provisional = loadProvisionalCasEvidence(transaction, transitionId, false);
+              var decision = toAdmissionDecision(row, provisional);
+              if (!expectedOriginal.equals(
+                  CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
+                      provisional, decision))) {
+                throw conflict(
+                    "Region transfer original differs from its current provisional source");
+              }
+              return false;
+            });
+    if (!committed) return Optional.empty();
+    var decision =
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            expectedOriginal.leaseEvidence(),
+            expectedOriginal.bindingIdentity(),
+            expectedOriginal.transition().bindingGeneration(),
+            null,
+            expectedOriginal.targetEvidence());
+    var current = readOriginalNewFinalAdmissionSource(decision);
+    if (current.transitionStatus() != CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED
+        || !expectedOriginal.equals(current.candidate())) {
+      throw conflict("Region transfer committed source differs from the pinned original");
+    }
+    return Optional.of(current);
+  }
+
+  /** Revalidates actual final lifecycle/receipts; never presents COMMITTED as provisional work. */
+  OriginalNewFinalAdmissionSource readRegionTransferOriginalSource(
+      UUID transitionId, OriginalNewFinalAdmissionSource expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "pinned original transfer source");
+    var candidate = expectedOriginal.candidate();
+    if (!candidate.bindingDecisionId().equals(transitionId)) {
+      throw conflict("Region transfer changed its original transition");
+    }
+    var decision =
+        new CanonicalGameplayAdmissionDecision(
+            transitionId,
+            candidate.leaseEvidence(),
+            candidate.bindingIdentity(),
+            candidate.transition().bindingGeneration(),
+            null,
+            candidate.targetEvidence());
+    var current = readOriginalNewFinalAdmissionSource(decision);
+    if (!candidate.equals(current.candidate())
+        || !expectedOriginal.candidateDigest().equals(current.candidateDigest())
+        || !expectedOriginal
+            .originalCandidateReadbackDigest()
+            .equals(current.originalCandidateReadbackDigest())
+        || !regionTransferAcknowledgementFields(expectedOriginal.regionAcknowledgement())
+            .equals(regionTransferAcknowledgementFields(current.regionAcknowledgement()))
+        || !Arrays.equals(
+            expectedOriginal.issuerAcknowledgement().exactBytes(),
+            current.issuerAcknowledgement().exactBytes())
+        || (expectedOriginal.finalReceipt().isPresent()
+            && !expectedOriginal.finalReceipt().equals(current.finalReceipt()))) {
+      throw conflict("Region transfer original or retained final proof changed");
+    }
+    return current;
+  }
+
+  private static List<?> regionTransferAcknowledgementFields(
+      CanonicalGameplayBindingRegionBridgeObligation acknowledgement) {
+    // The strict source reader separately binds controller identity and current inventory revision.
+    // Final SQL retention advances that revision, but none of the original ACK proof may change.
+    return Arrays.asList(
+        acknowledgement.bridgeOperationId(),
+        acknowledgement.bridgePreimageState(),
+        acknowledgement.runtimeEntityId(),
+        acknowledgement.entityProjectionGeneration(),
+        acknowledgement.entityProjectionFence(),
+        acknowledgement.entityWorkloadNamespace(),
+        acknowledgement.actorOrigin(),
+        acknowledgement.entityReferenceDigest(),
+        acknowledgement.worldSourceDigest(),
+        acknowledgement.canonicalRegionId(),
+        acknowledgement.worldLifecycleEpoch(),
+        acknowledgement.worldLifecycleRowVersion(),
+        acknowledgement.worldCaptureId(),
+        acknowledgement.worldGraphSha256(),
+        acknowledgement.worldPreparationInputDigest(),
+        acknowledgement.executorFence(),
+        acknowledgement.leaseTokenCorrelation(),
+        acknowledgement.redisReadbackDigest(),
+        acknowledgement.acknowledgedAt());
+  }
+
   void requireSameProvisionalSource(
       CanonicalGameplayBindingProvisionalCasEvidence expected,
       CanonicalGameplayBindingProvisionalCasEvidence current) {

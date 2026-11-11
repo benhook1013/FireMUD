@@ -73,6 +73,7 @@ public final class AccountHostingFirstInvoicePaymentService {
               payments.hasCompleted(subscriptionId) ? "COMMITTED" : "AWAITING_PAYMENT",
               invoice.expiresAt(),
               payments.confirmationRequestId(subscriptionId),
+              payments.preRowOriginalRequestId(subscriptionId, actor.accountId()),
               payments.authorizationVersion(subscriptionId));
         });
   }
@@ -333,6 +334,7 @@ public final class AccountHostingFirstInvoicePaymentService {
       String state,
       java.time.Instant expiresAt,
       UUID confirmationRequestId,
+      UUID preRowOriginalRequestId,
       long authorizationVersion) {}
 
   public record Completion(String state, UUID requestId) {}

@@ -54,10 +54,6 @@ export default function HostingFirstInvoiceCheckout({
   const [pending, setPending] = useState(false);
   const [evidenceReady, setEvidenceReady] = useState(false);
   const [held, setHeld] = useState(false);
-  const [retainedOrigin, setRetainedOrigin] = useState<Pick<
-    Attempt,
-    'invoice' | 'requestId'
-  > | null>(null);
   const [renewing, setRenewing] = useState(false);
   const [closed, setClosed] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -100,7 +96,9 @@ export default function HostingFirstInvoiceCheckout({
     refetchInterval: (current) =>
       !closed &&
       current.state.data?.state !== 'COMMITTED' &&
-      (pending || current.state.data?.confirmationRequestId)
+      (pending ||
+        current.state.data?.confirmationRequestId ||
+        current.state.data?.preRowOriginalRequestId)
         ? 3000
         : false,
   });
@@ -111,20 +109,27 @@ export default function HostingFirstInvoiceCheckout({
   const consented = Boolean(
     invoice && accepted && sameCharge(invoice, accepted) && !expired
   );
-  const recovering = Boolean(pending || invoice?.confirmationRequestId);
+  const recovering = Boolean(
+    pending ||
+    invoice?.confirmationRequestId ||
+    invoice?.preRowOriginalRequestId
+  );
   const preRowOriginal =
     invoice &&
     invoice.confirmationRequestId === null &&
     invoice.authorizationVersion === 0 &&
-    retainedOrigin &&
-    sameCharge(invoice, retainedOrigin.invoice)
-      ? retainedOrigin
+    invoice.preRowOriginalRequestId
+      ? { invoice, requestId: invoice.preRowOriginalRequestId }
       : null;
 
   // Reload never authorizes provider work. Renewal requires a separate explicit owner action.
   const readOnlyRecovery =
     held ||
-    Boolean(invoice?.confirmationRequestId && !evidenceReady && !renewing);
+    Boolean(
+      (invoice?.confirmationRequestId || preRowOriginal) &&
+      !evidenceReady &&
+      !renewing
+    );
 
   function renewAuthorization() {
     attempt.current = preRowOriginal
@@ -204,7 +209,24 @@ export default function HostingFirstInvoiceCheckout({
         retained = null;
       }
       if (!retained) {
-        if (latest.confirmationRequestId && !renewing) {
+        if (
+          renewing &&
+          !latest.confirmationRequestId &&
+          !latest.preRowOriginalRequestId
+        ) {
+          setHeld(true);
+          setRenewing(false);
+          setAccepted(null);
+          setEvidenceReady(false);
+          setMessage(
+            'Account no longer exposes the original operation. Check its status before renewing authorization.'
+          );
+          return;
+        }
+        if (
+          (latest.confirmationRequestId || latest.preRowOriginalRequestId) &&
+          !renewing
+        ) {
           setHeld(true);
           setAccepted(null);
           setMessage(
@@ -214,8 +236,11 @@ export default function HostingFirstInvoiceCheckout({
         }
         retained = {
           invoice: latest,
-          requestId: latest.confirmationRequestId ?? crypto.randomUUID(),
-          ...(latest.confirmationRequestId
+          requestId:
+            latest.confirmationRequestId ??
+            latest.preRowOriginalRequestId ??
+            crypto.randomUUID(),
+          ...(latest.confirmationRequestId || latest.preRowOriginalRequestId
             ? { authorizationRequestId: crypto.randomUUID() }
             : {}),
           reauthenticationRequestId: crypto.randomUUID(),
@@ -224,11 +249,26 @@ export default function HostingFirstInvoiceCheckout({
         attempt.current = retained;
       }
       if (
+        latest.preRowOriginalRequestId !== null &&
+        latest.preRowOriginalRequestId !== retained.requestId
+      ) {
+        attempt.current = null;
+        setHeld(true);
+        setRenewing(false);
+        setAccepted(null);
+        setEvidenceReady(false);
+        setMessage(
+          'Account retained a different original operation. Review its status before explicitly renewing authorization.'
+        );
+        return;
+      }
+      if (
         retained.authorizationRequestId &&
         retained.invoice.authorizationVersion === 0 &&
         !retained.dispatched &&
         (latest.confirmationRequestId !== null ||
-          latest.authorizationVersion !== 0)
+          latest.authorizationVersion !== 0 ||
+          latest.preRowOriginalRequestId !== retained.requestId)
       ) {
         attempt.current = null;
         setHeld(true);
@@ -344,16 +384,6 @@ export default function HostingFirstInvoiceCheckout({
         const dispatched = attempt.current;
         if (dispatched?.dispatched) {
           setHeld(true);
-          // Opening proof is returned only after Account retains the exact operation.
-          if (
-            dispatched.evidenceId &&
-            dispatched.invoice.authorizationVersion === 0
-          ) {
-            setRetainedOrigin({
-              invoice: dispatched.invoice,
-              requestId: dispatched.requestId,
-            });
-          }
         }
         setMessage(
           'Account refused stale or expired checkout evidence. Refresh and review the invoice. Any earlier confirmation remains unresolved.'

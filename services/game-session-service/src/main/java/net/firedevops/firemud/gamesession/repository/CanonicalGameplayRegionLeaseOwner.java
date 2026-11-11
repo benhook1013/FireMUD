@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayActorOrigins;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingIdentity;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingInventoryEntry;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingProvisionalCasEvidence;
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegionBridgeObligation;
@@ -99,6 +100,8 @@ final class CanonicalGameplayRegionLeaseOwner {
     if (prior == null && expectedRegionEpoch != 1L) throw unavailable();
     if (prior != null && prior.regionEpoch() != expectedRegionEpoch) throw unavailable();
     UUID transferId = null;
+    CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource =
+        null;
 
     CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation;
     CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant;
@@ -209,7 +212,15 @@ final class CanonicalGameplayRegionLeaseOwner {
           if (transferOwner.alreadyCompleted(
               prior, runtimeIdentity.serviceInstanceId(), absoluteDeadlineMillis))
             throw unavailable();
+          var transferCandidate =
+              bindingInventory.readRegionTransferOriginalCandidate(transitionId, evidence);
           transferId = transferOwner.advance(source, prior, absoluteDeadlineMillis);
+          // Advance may retain a COMMITTED winner and activate its SQL inventory row. Keep that
+          // exact terminal source separate from provisional binding/bridge authority.
+          transferSource =
+              bindingInventory
+                  .readRegionTransferCommittedSource(transitionId, transferCandidate)
+                  .orElse(null);
         }
         grant = redisOwner.acquire(source, expectedRegionEpoch, leaseTtl, runtimeIdentity);
       } else {
@@ -226,7 +237,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       redisOwner.requireGrantScope(grant, source, expectedRegionEpoch, runtimeIdentity);
     }
     CanonicalGameplayRegionRuntimeStatusRepository.Source afterAcquire =
-        resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId));
+        resolveCurrentInstallationSource(worldRequest, evidence, transferSource);
     requireSameSource(source, afterAcquire);
     redisOwner.renew(grant, leaseTtl);
     redisOwner.requireCurrent(grant);
@@ -259,7 +270,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         statusRepository.find(source).orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
     if (!installed.equals(observed) || observed.paused()) throw unavailable();
     CanonicalGameplayRegionRuntimeStatusRepository.Source afterInstall =
-        resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId));
+        resolveCurrentInstallationSource(worldRequest, evidence, transferSource);
     requireSameSource(source, afterInstall);
     redisOwner.requireCurrent(grant);
     requireSameIncarnation(incarnation, readCurrentIncarnation(source));
@@ -269,7 +280,7 @@ final class CanonicalGameplayRegionLeaseOwner {
     redisOwner.verifyInitializedTimeline(grant, preparation);
     requireSameIncarnation(incarnation, readCurrentIncarnation(source));
     requireSameSource(
-        source, resolveExactSource(worldRequest, readCurrentProvisionalEvidence(transitionId)));
+        source, resolveCurrentInstallationSource(worldRequest, evidence, transferSource));
     CanonicalGameplayRegionRuntimeStatus finalStatus =
         statusRepository.find(source).orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
     if (!installed.equals(finalStatus) || finalStatus.paused()) throw unavailable();
@@ -704,11 +715,29 @@ final class CanonicalGameplayRegionLeaseOwner {
     return resolveExactBridgeSource(request, evidence).source;
   }
 
+  private CanonicalGameplayRegionRuntimeStatusRepository.Source resolveCurrentInstallationSource(
+      CanonicalInitialPlayerLocationRequest request,
+      CanonicalGameplayBindingProvisionalCasEvidence original,
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource) {
+    if (transferSource == null) {
+      return resolveExactSource(
+          request, readCurrentProvisionalEvidence(original.transition().transitionId()));
+    }
+    var current =
+        bindingInventory.readRegionTransferOriginalSource(
+            original.transition().transitionId(), transferSource);
+    return resolveExactBridgeSource(request, current.candidate().bindingIdentity()).source;
+  }
+
   private ResolvedBridgeSource resolveExactBridgeSource(
       CanonicalInitialPlayerLocationRequest request,
       CanonicalGameplayBindingProvisionalCasEvidence evidence) {
+    return resolveExactBridgeSource(request, evidence.candidate().identity());
+  }
+
+  private ResolvedBridgeSource resolveExactBridgeSource(
+      CanonicalInitialPlayerLocationRequest request, CanonicalGameplayBindingIdentity identity) {
     requireNoAmbientTransaction();
-    var identity = evidence.candidate().identity();
     var target = request.getExpectedTarget();
     if (!identity.accountId().toString().equals(request.getCanonicalAccountUuid())
         || !identity.characterId().toString().equals(request.getCharacterUuid())

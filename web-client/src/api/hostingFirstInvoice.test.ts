@@ -20,6 +20,7 @@ const invoice: FirstInvoice = {
   state: 'AWAITING_PAYMENT',
   expiresAt: '2099-01-01T00:00:00Z',
   confirmationRequestId: null,
+  preRowOriginalRequestId: null,
   authorizationVersion: 0,
 };
 
@@ -198,6 +199,14 @@ describe('first-invoice owner API', () => {
       { state: 'PAID' },
       { currency: 'USD' },
       { confirmationRequestId: 'untrusted' },
+      { preRowOriginalRequestId: undefined },
+      { preRowOriginalRequestId: 'untrusted' },
+      { preRowOriginalRequestId: subscriptionId, authorizationVersion: 1 },
+      {
+        preRowOriginalRequestId: subscriptionId,
+        confirmationRequestId: subscriptionId,
+      },
+      { preRowOriginalRequestId: subscriptionId, state: 'COMMITTED' },
     ]) {
       authenticated.mockResolvedValueOnce(
         Response.json({ ...invoice, ...changes })
@@ -212,6 +221,24 @@ describe('first-invoice owner API', () => {
     expect(await client.read(subscriptionId)).not.toHaveProperty(
       'clientSecret'
     );
+  });
+
+  it('reads only the verified pre-row reference without restoring proof', async () => {
+    const authenticated = vi.fn().mockResolvedValue(
+      Response.json({
+        ...invoice,
+        preRowOriginalRequestId: subscriptionId,
+        reauthenticationEvidenceId: 'private-proof',
+      })
+    );
+    const client = createFirstInvoiceClient(
+      'https://game.example',
+      authenticated
+    );
+    const result = await client.read(subscriptionId);
+    expect(result.preRowOriginalRequestId).toBe(subscriptionId);
+    expect(result.confirmationRequestId).toBeNull();
+    expect(result).not.toHaveProperty('reauthenticationEvidenceId');
   });
 
   it('compares all consent-bearing display fields and row version', () => {

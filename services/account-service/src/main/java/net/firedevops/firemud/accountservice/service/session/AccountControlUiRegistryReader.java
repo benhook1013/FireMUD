@@ -83,10 +83,10 @@ public final class AccountControlUiRegistryReader {
       throw denied();
     }
     try (var connection = connections.openPinnedConnection()) {
-      if (connection == null
-          || !connection.isOpen()
-          || connection.getOptions() == null
-          || connection.getOptions().isAutoReconnect()) {
+      if (connection == null || !connection.isOpen()) {
+        throw new RegistryUnavailableException();
+      }
+      if (connection.getOptions() == null || connection.getOptions().isAutoReconnect()) {
         throw denied();
       }
       RedisCommands<byte[], byte[]> commands = connection.sync();

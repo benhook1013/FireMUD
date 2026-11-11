@@ -8,7 +8,9 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -36,6 +38,114 @@ class AccountHostingFirstInvoicePaymentRepositoryTest {
   void clearTransactions() {
     TransactionSynchronizationManager.setActualTransactionActive(false);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+  }
+
+  @Test
+  void ownerReadRecoversOnlyTheExactPreRowIdentityEvenAfterExpiryWithoutMutation() {
+    var f = new OwnerReferenceFixture();
+    assertThat(f.read()).isEqualTo(f.original);
+    verify(f.repository).requireOwner(f.invoice.subscriptionId(), f.invoice.ownerAccountId());
+    verify(f.repository).requireAwaitingPayment(f.invoice, 3);
+    verify(f.dsl)
+        .fetchOne(
+            "SELECT * FROM subscription_first_invoice_operation_fences WHERE subscription_id = ? FOR UPDATE",
+            f.invoice.subscriptionId());
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+    f.fencePresent = false;
+    assertThat(f.read()).isNull();
+    f.confirmation = UUID.randomUUID();
+    f.version = 2;
+    f.commandClaimed = true;
+    assertThat(f.read()).isNull();
+  }
+
+  @Test
+  void inconsistentExistingFenceCannotLookLikeAnAbsentOriginalOperation() {
+    for (var mismatch :
+        Map.<String, Object>of(
+                "subscription_id", UUID.randomUUID(),
+                "account_uuid", UUID.randomUUID(),
+                "tuple_digest", "sha256:" + "c".repeat(64),
+                "expected_row_version", 4L,
+                "invoice_expires_at", Instant.EPOCH.atOffset(java.time.ZoneOffset.UTC))
+            .entrySet()) {
+      var f = new OwnerReferenceFixture();
+      f.fields.put(mismatch.getKey(), mismatch.getValue());
+      assertThatThrownBy(f::read).isInstanceOf(IllegalStateException.class);
+    }
+    var missingIdentity = new OwnerReferenceFixture();
+    missingIdentity.fields.remove("request_id");
+    assertThatThrownBy(missingIdentity::read).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void preRowReferenceRefusesAuthorizationDispatchOrCommandWithoutAConfirmation() {
+    var f = new OwnerReferenceFixture();
+    f.version = 1;
+    assertThatThrownBy(f::read).isInstanceOf(IllegalStateException.class);
+    f.version = 0;
+    f.dispatched = true;
+    assertThatThrownBy(f::read).isInstanceOf(IllegalStateException.class);
+    f.dispatched = false;
+    f.commandClaimed = true;
+    assertThatThrownBy(f::read).isInstanceOf(IllegalStateException.class);
+    f.fencePresent = false;
+    assertThatThrownBy(f::read).isInstanceOf(IllegalStateException.class);
+  }
+
+  private static final class OwnerReferenceFixture {
+    final DSLContext dsl = mock(DSLContext.class);
+    final AccountHostingFirstInvoicePayment invoice = invoice("in_exact", "pi_exact", 2400, "usd");
+    final UUID original = UUID.randomUUID();
+    final Map<String, Object> fields = new HashMap<>();
+    final AccountHostingFirstInvoicePaymentRepository repository;
+    UUID confirmation;
+    long version;
+    boolean fencePresent = true;
+    boolean dispatched;
+    boolean commandClaimed;
+
+    OwnerReferenceFixture() {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      repository =
+          spy(
+              new AccountHostingFirstInvoicePaymentRepository(
+                  dsl,
+                  mock(AccountSubscriptionIntentRepository.class),
+                  Clock.fixed(invoice.expiresAt().plusSeconds(1), java.time.ZoneOffset.UTC)));
+      doReturn(invoice)
+          .when(repository)
+          .requireOwner(invoice.subscriptionId(), invoice.ownerAccountId());
+      doReturn(3L)
+          .when(repository)
+          .ownerRowVersion(invoice.subscriptionId(), invoice.ownerAccountId());
+      doAnswer(call -> confirmation)
+          .when(repository)
+          .confirmationRequestId(invoice.subscriptionId());
+      doAnswer(call -> version).when(repository).authorizationVersion(invoice.subscriptionId());
+      doNothing().when(repository).requireAwaitingPayment(invoice, 3);
+      fields.put("subscription_id", invoice.subscriptionId());
+      fields.put("request_id", original);
+      fields.put("account_uuid", invoice.ownerAccountId());
+      fields.put("tuple_digest", invoice.digest());
+      fields.put("expected_row_version", 3L);
+      fields.put("invoice_expires_at", invoice.expiresAt().atOffset(java.time.ZoneOffset.UTC));
+      Record fence = RenewalFixture.row(fields);
+      when(dsl.fetchOne(anyString(), any(Object[].class)))
+          .thenAnswer(
+              call -> {
+                String sql = call.getArgument(0);
+                if (sql.contains("operation_fences")) return fencePresent ? fence : null;
+                if (sql.contains("first_invoice_dispatches")) return dispatched ? fence : null;
+                if (sql.contains("first_invoice_command_claims"))
+                  return commandClaimed ? fence : null;
+                throw new AssertionError(sql);
+              });
+    }
+
+    UUID read() {
+      return repository.preRowOriginalRequestId(invoice.subscriptionId(), invoice.ownerAccountId());
+    }
   }
 
   @Test
