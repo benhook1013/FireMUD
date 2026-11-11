@@ -2710,7 +2710,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       bootstrap.bootstrap(creatorEvidence);
     }
 
-    net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner capacityOwner() {
+    net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner capacityOwner(
+        Clock clock) {
       var snapshots =
           new AccountCanonicalRuntimeMembershipSnapshotRepository(
               accounts,
@@ -2723,14 +2724,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
               membershipRoles,
               authorityOutbox);
       return new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
-          dsl,
-          accounts,
-          snapshots,
-          issuance,
-          connectScopes,
-          manager,
-          Clock.systemUTC(),
-          TEST_NAMESPACE);
+          dsl, accounts, snapshots, issuance, connectScopes, manager, clock, TEST_NAMESPACE);
     }
 
     net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2 capacityScope(

@@ -1,12 +1,10 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
-import com.google.protobuf.Any;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.TlsServerCredentials;
-import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Objects;
@@ -19,9 +17,9 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRep
 import net.firedevops.firemud.accountservice.security.AccountTenantCapacityWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.grpc.BoundedGrpcServerFactory;
 import net.firedevops.firemud.common.grpc.GrpcRequestBytePolicy;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Explicit private composition only. Other Account RPCs remain UNIMPLEMENTED on this server. */
@@ -59,70 +57,49 @@ public final class AccountTenantCapacityGrpcService
     try {
       peer = guard.requireAuthenticatedCaller();
     } catch (StatusRuntimeException denied) {
-      fail(observer, denied.getStatus(), "AUTH_UNAVAILABLE");
+      observer.onError(Failure.AUTH_UNAVAILABLE.toStatusException());
       return;
     }
     if (TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isSynchronizationActive()) {
-      fail(observer, Status.FAILED_PRECONDITION, "ENTITLEMENT_UNAVAILABLE");
+      observer.onError(
+          Failure.ENTITLEMENT_UNAVAILABLE.toStatusException(Status.Code.FAILED_PRECONDITION));
       return;
     }
     final net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request;
     try {
       request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
     } catch (IllegalArgumentException | ArithmeticException invalid) {
-      fail(observer, Status.INVALID_ARGUMENT, "INVALID_ARGUMENT");
+      observer.onError(Failure.INVALID_ARGUMENT.toStatusException());
       return;
     }
     if (!request.evidence().callerWorkload().equals(peer)) {
-      fail(observer, Status.PERMISSION_DENIED, "AUTH_UNAVAILABLE");
+      observer.onError(Failure.PERMISSION_DENIED.toStatusException());
       return;
     }
     final CommitTenantCapacityAdmissionResponse result;
     try {
       result = TenantCapacityAdmissionGrpcCodec.toResponse(request, owner.commit(request, peer));
     } catch (CapacityException denied) {
-      fail(
-          observer,
-          "IDEMPOTENCY_CONFLICT".equals(denied.code())
-              ? Status.ALREADY_EXISTS
-              : "TENANT_BILLING_BLOCKED".equals(denied.code())
-                  ? Status.RESOURCE_EXHAUSTED
-                  : Status.UNAVAILABLE,
-          denied.code());
+      observer.onError(denied.code().toStatusException());
       return;
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException
         | org.springframework.transaction.TransactionException unavailable) {
-      fail(observer, Status.UNAVAILABLE, "ENTITLEMENT_UNAVAILABLE");
+      observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
       return;
     } catch (IllegalArgumentException | ArithmeticException invalid) {
-      fail(observer, Status.INVALID_ARGUMENT, "INVALID_ARGUMENT");
+      observer.onError(Failure.INVALID_ARGUMENT.toStatusException());
       return;
     } catch (RuntimeException internal) {
-      fail(observer, Status.INTERNAL, "ENTITLEMENT_UNAVAILABLE");
+      observer.onError(Status.INTERNAL.asRuntimeException());
       return;
     }
     try {
       observer.onNext(result);
       observer.onCompleted();
     } catch (RuntimeException callback) {
-      fail(observer, Status.INTERNAL, "ENTITLEMENT_UNAVAILABLE");
+      observer.onError(Status.INTERNAL.asRuntimeException());
     }
-  }
-
-  private static void fail(StreamObserver<?> observer, Status status, String code) {
-    observer.onError(
-        StatusProto.toStatusRuntimeException(
-            com.google.rpc.Status.newBuilder()
-                .setCode(status.getCode().value())
-                .setMessage("Tenant capacity commitment did not complete")
-                .addDetails(
-                    Any.pack(
-                        ErrorDetail.newBuilder()
-                            .setCode(code)
-                            .setMessage("Tenant capacity commitment did not complete")
-                            .build()))
-                .build()));
   }
 }

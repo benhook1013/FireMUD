@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import io.grpc.ManagedChannel;
+import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.time.Clock;
 import java.util.Objects;
@@ -65,14 +66,14 @@ public final class AccountTenantCapacityClient
                 TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .withMaxOutboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES)
             .withMaxInboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
-    Result result =
-        TenantCapacityAdmissionGrpcCodec.requireResponse(
-            request,
-            stub.commitTenantCapacityAdmission(
-                TenantCapacityAdmissionGrpcCodec.toRequest(request)));
-    // Exact retry may replay an expired/terminal reservation. Returning it grants no activation;
-    // the selected owner's final CAS must compare its current reservation fence and expiry.
-    return result;
+    try {
+      // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
+      return TenantCapacityAdmissionGrpcCodec.requireResponse(
+          request,
+          stub.commitTenantCapacityAdmission(TenantCapacityAdmissionGrpcCodec.toRequest(request)));
+    } catch (StatusRuntimeException failure) {
+      throw TenantCapacityAdmissionGrpcCodec.validateFailure(failure);
+    }
   }
 
   @Override

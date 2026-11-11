@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import java.sql.Connection;
 import java.time.Clock;
 import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -23,6 +24,9 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.TenantBillingCutoff;
+import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -159,12 +163,57 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
-  void staleNonCreatingEvidenceStaysInvalidInsteadOfBecomingPolicyDenial() throws Exception {
+  void exactRetainedNonCreatingEvidenceOutsideWindowIsStale() throws Exception {
     var f = new Fixture(true, CapacityAdmissionTestFixture.playerRequest(false));
     f.existing = false;
+    f.retained = true;
     assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
-        .isInstanceOf(IllegalArgumentException.class);
+        .hasMessage("CAPACITY_ADMISSION_STALE");
     verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void qualifiedNewerBillingCutoffMakesExactRetainedEvaluationStale() throws Exception {
+    var f = new Fixture(false);
+    f.existing = false;
+    f.retained = true;
+    var current = mock(Snapshot.class);
+    var tuple = mock(AuthorityTuple.class);
+    var tenant = f.request.identity().tenantId().toString();
+    var sequence =
+        Long.parseLong((String) f.request.evidence().fields().get("tenantBillingSequence"));
+    when(current.membershipExists()).thenReturn(true);
+    when(current.membershipLifecycleState()).thenReturn("ACTIVE");
+    when(current.gameplayAdmissionAllowed()).thenReturn(true);
+    when(current.tenantId()).thenReturn(tenant);
+    when(current.authorityTuple()).thenReturn(tuple);
+    when(tuple.tenantBillingCutoff())
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    tenant,
+                    new TenantBillingCutoff("1", Long.toString(sequence + 1), "billing", "2"))));
+    when(f.memberships.readCurrent(
+            CapacityAdmissionTestFixture.ACCOUNT, f.request.identity().tenantId()))
+        .thenReturn(current);
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .hasMessage("CAPACITY_ADMISSION_STALE");
+    verifyNoInteractions(f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void currentOwnerReadWithoutQualifiedEvidenceIsUnavailable() throws Exception {
+    var f = new Fixture(false);
+    f.existing = false;
+    f.retained = true;
+    when(f.memberships.readCurrent(
+            CapacityAdmissionTestFixture.ACCOUNT, f.request.identity().tenantId()))
+        .thenThrow(new IllegalStateException("Missing committed source"));
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .hasMessage("ENTITLEMENT_UNAVAILABLE");
+    verifyNoInteractions(f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
@@ -217,6 +266,7 @@ class AccountTenantCapacityOwnerTest {
     private final UUID reservation = UUID.randomUUID();
     private final AccountTenantCapacityOwner owner;
     private boolean existing = true;
+    private boolean retained;
 
     private Fixture(boolean expired) throws Exception {
       this(expired, CapacityAdmissionTestFixture.playerRequest());
@@ -256,6 +306,16 @@ class AccountTenantCapacityOwnerTest {
       Record evaluation = mock(Record.class);
       when(evaluation.get("snapshot_identity", String.class))
           .thenReturn(request.evidence().snapshotIdentity());
+      var evidence = request.evidence();
+      when(evaluation.get("tenant_uuid", UUID.class)).thenReturn(evidence.tenantId());
+      when(evaluation.get("caller_workload", String.class)).thenReturn(evidence.callerWorkload());
+      when(evaluation.get("owner_service", String.class)).thenReturn(evidence.owner().service());
+      when(evaluation.get("canonical_evidence", byte[].class))
+          .thenReturn(evidence.canonicalBytes());
+      when(evaluation.get("evaluated_at", java.time.OffsetDateTime.class))
+          .thenReturn(AccountTenantCapacityRepository.at(evidence.evaluatedAt()));
+      when(evaluation.get("expires_at", java.time.OffsetDateTime.class))
+          .thenReturn(AccountTenantCapacityRepository.at(evidence.expiresAt()));
       when(dsl.fetchOne(anyString(), any(Object[].class)))
           .thenAnswer(
               invocation -> {
@@ -266,7 +326,7 @@ class AccountTenantCapacityOwnerTest {
                     "SELECT snapshot_identity FROM account_tenant_capacity_evaluations "))
                   return evaluation;
                 if (sql.startsWith("SELECT * FROM account_tenant_capacity_evaluations "))
-                  return null;
+                  return retained ? evaluation : null;
                 throw new AssertionError(sql);
               });
       owner =
