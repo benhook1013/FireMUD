@@ -148,8 +148,7 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void registeredChainAuthenticatesRealOwnerAndCommitsOnlyExactSignedProviderSuccess(
-      boolean preRowRenewal)
-      throws Exception {
+      boolean preRowRenewal) throws Exception {
     try (var upstream =
         new AccountControlUiOriginalOrderFixture(
             postgres.getJdbcUrl(),
@@ -380,13 +379,14 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
     return Map.of(
         "requestId", UUID.randomUUID(),
         "confirmationRequestId", authorization,
-        "billingBinding", Map.of(
-            "originalRequestId", original,
-            "expectedRowVersion", tuple.path("expectedRowVersion").asLong(),
-            "expectedAuthorizationVersion", tuple.path("authorizationVersion").asLong(),
-            "acceptedTupleDigest", tuple.path("tupleDigest").asText(),
-            "invoiceExpiresAt", tuple.path("expiresAt").asText(),
-            "authorizationPurpose", purpose),
+        "billingBinding",
+            Map.of(
+                "originalRequestId", original,
+                "expectedRowVersion", tuple.path("expectedRowVersion").asLong(),
+                "expectedAuthorizationVersion", tuple.path("authorizationVersion").asLong(),
+                "acceptedTupleDigest", tuple.path("tupleDigest").asText(),
+                "invoiceExpiresAt", tuple.path("expiresAt").asText(),
+                "authorizationPurpose", purpose),
         "email", email,
         "secret", PASSWORD);
   }
