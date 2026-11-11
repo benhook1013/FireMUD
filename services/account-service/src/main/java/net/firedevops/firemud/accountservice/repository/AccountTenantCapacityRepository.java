@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Id
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -133,8 +134,8 @@ public final class AccountTenantCapacityRepository {
     Record usage = usage(request);
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
-    long after = Math.addExact(occupied, delta);
-    if (after > request.evidence().quota()) throw quota();
+    if (delta > request.evidence().quota() - occupied)
+      throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED);
     long held = Math.addExact(number(usage, "held_units"), delta);
     updateUsage(request, usage, held, number(usage, "used_units"));
     int created =
@@ -221,26 +222,22 @@ public final class AccountTenantCapacityRepository {
   }
 
   public static CapacityException conflict() {
-    return new CapacityException("IDEMPOTENCY_CONFLICT");
+    return new CapacityException(Failure.IDEMPOTENCY_CONFLICT);
   }
 
   public static CapacityException unavailable() {
-    return new CapacityException("ENTITLEMENT_UNAVAILABLE");
-  }
-
-  public static CapacityException quota() {
-    return new CapacityException("TENANT_BILLING_BLOCKED");
+    return new CapacityException(Failure.ENTITLEMENT_UNAVAILABLE);
   }
 
   public static final class CapacityException extends IllegalStateException {
-    private final String code;
+    private final Failure code;
 
-    public CapacityException(String code) {
-      super(code);
+    public CapacityException(Failure code) {
+      super(code.name());
       this.code = code;
     }
 
-    public String code() {
+    public Failure code() {
       return code;
     }
   }

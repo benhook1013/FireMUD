@@ -3177,7 +3177,7 @@ routes:
       changed_attempt_without_rearm_ordering: rejected_before_any_mutation
     mutation_contract: account_owned_fenced_capacity_reservation_create_or_replay
     canonical_errors:
-      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, FENCE_REJECTED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE]
+      any_of: [CAPACITY_ADMISSION_STALE, CAPACITY_QUOTA_EXCEEDED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, FENCE_REJECTED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE, PERMISSION_DENIED, INVALID_ARGUMENT]
       fence_rejection_requirements: no_accept_no_runtime_mutation_proof
   - service: game-session-service
     route: ReadOriginalNewCapacityExecution

@@ -348,7 +348,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   @Test
   void freshRetainedNonCreatingEvaluationIsPolicyDeniedWithoutOwnerMutation() throws Exception {
     try (Session session = session()) {
-      var denied = session.retainControlledNonCreatingEvaluation();
+      var denied = session.retainControlledEvaluation(false, null);
       assertThat(denied.evidence().permitsCreation()).isFalse();
       byte[] candidate = session.gs.physicalSession();
       assertThat(candidate).isNotNull();
@@ -364,10 +364,43 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void freshCreationEligibleEvidenceWithZeroQuotaIsDeniedWithoutOwnerMutation() throws Exception {
+    try (Session session = session()) {
+      var request = session.retainControlledEvaluation(true, "0");
+      assertThat(request.evidence().permitsCreation()).isTrue();
+      assertThat(request.evidence().quota()).isZero();
+      assertCapacityRefusalWithoutMutation(
+          session, request, Status.Code.RESOURCE_EXHAUSTED, "CAPACITY_QUOTA_EXCEEDED");
+    }
+  }
+
+  @Test
+  void exactRetainedEvaluationOutsideOwnerWindowIsStaleWithoutOwnerMutation() throws Exception {
+    try (Session session = session(Clock.offset(CLOCK, Duration.ofSeconds(60)))) {
+      assertCapacityRefusalWithoutMutation(
+          session, session.capacityRequest, Status.Code.UNAVAILABLE, "CAPACITY_ADMISSION_STALE");
+    }
+  }
+
+  private static void assertCapacityRefusalWithoutMutation(
+      Session session, TenantCapacityAdmission.Request request, Status.Code status, String code)
+      throws Exception {
+    byte[] candidate = session.gs.physicalSession();
+    assertThat(candidate).isNotNull();
+    String before = session.capacityImage() + session.durableImage();
+    assertCapacityFailure(
+        assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(request)),
+        status,
+        code);
+    assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+    assertProvisionalUnchanged(session, candidate);
+  }
+
+  @Test
   void retainedOriginalReplaysBeforeChangedNonCreatingEvidenceCanBecomeADenial() throws Exception {
     try (Session session = session()) {
       var first = session.capacityClient.commit(session.capacityRequest);
-      var changed = session.retainControlledNonCreatingEvaluation();
+      var changed = session.retainControlledEvaluation(false, null);
       byte[] candidate = session.gs.physicalSession();
       assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
@@ -403,8 +436,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   private Session session() throws Exception {
+    return session(CLOCK);
+  }
+
+  private Session session(Clock capacityClock) throws Exception {
     accountFixtures.temporaryDirectory = temporaryDirectory;
-    return new Session();
+    return new Session(capacityClock);
   }
 
   private final class Session implements AutoCloseable {
@@ -437,7 +474,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private AccountGameplayAdmissionLeaseEvidence lease;
     private CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector targetSelector;
 
-    private Session() throws Exception {
+    private Session(Clock capacityClock) throws Exception {
       try {
         account = accountFixtures.newCapacityPlayerEntitlementFixture(redis.client());
         dsl =
@@ -597,7 +634,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                     1L,
                     null)
                 .withDigest();
-        capacityOwner = account.capacityOwner();
+        capacityOwner = account.capacityOwner(capacityClock);
         capacityServer =
             new net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService(
                     capacityOwner, "test")
@@ -702,7 +739,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
 
     /** Controlled entitlement facts, real current caller/scope and actual immutable retention. */
     @SuppressWarnings("unchecked")
-    private TenantCapacityAdmission.Request retainControlledNonCreatingEvaluation() {
+    private TenantCapacityAdmission.Request retainControlledEvaluation(
+        boolean creationAllowed, @org.jspecify.annotations.Nullable String quota) {
       var original = capacityRequest;
       var parsed =
           RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
@@ -724,8 +762,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               "tenantAuthorityGeneration")) {
         facts.put(name, fields.get(name));
       }
-      facts.put("allowNewGameplayBindings", false);
-      var denied =
+      facts.put("allowNewGameplayBindings", creationAllowed);
+      if (quota != null) {
+        var quotas = new LinkedHashMap<>((Map<String, Object>) facts.get("quotas"));
+        quotas.put(original.context().owner().quota(), quota);
+        facts.put("quotas", quotas);
+      }
+      var evaluation =
           RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
               original.identity().requestId(),
               original.evidence().callerWorkload(),
@@ -736,7 +779,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               (Map<String, Object>) fields.get("sourceReferences"),
               CLOCK.instant());
       serializable.executeWithoutResult(
-          ignored -> new AccountTenantCapacityRepository(dsl).retainPlayerEvaluation(denied));
+          ignored -> new AccountTenantCapacityRepository(dsl).retainPlayerEvaluation(evaluation));
       return new TenantCapacityAdmission.Request(
               original.identity(),
               original.admissionAttemptId(),
@@ -746,7 +789,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               original.operation(),
               original.priorShape(),
               original.requestedShape(),
-              TenantCapacityAdmission.Evidence.player(denied),
+              TenantCapacityAdmission.Evidence.player(evaluation),
               original.capacityDelta(),
               null)
           .withDigest();

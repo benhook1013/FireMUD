@@ -3,13 +3,13 @@ package net.firedevops.firemud.accountservice.service;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.conflict;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.number;
-import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.quota;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.unavailable;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.sql.Connection;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -20,12 +20,14 @@ import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepos
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -92,7 +94,8 @@ public final class AccountTenantCapacityOwner {
           if (request.capacityRearmFence() != 1) throw conflict();
           current(request);
           requireSupportedShape(request);
-          if (!request.evidence().permitsCreation()) throw quota();
+          if (!request.evidence().permitsCreation())
+            throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
           return capacity.create(request, request.evidence().expiresAt());
         });
   }
@@ -169,28 +172,41 @@ public final class AccountTenantCapacityOwner {
   }
 
   private void current(Request request) {
+    var evidence = request.evidence();
+    capacity.requireRetained(evidence);
     Instant now = clock.instant();
-    request.evidence().requireCurrent(now);
     // PostgreSQL stores microseconds. Floor the bound, never round an expiry forward.
-    if (!now.isBefore(
-        request.evidence().expiresAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS)))
-      throw unavailable();
-    capacity.requireRetained(request.evidence());
+    if (now.isBefore(evidence.evaluatedAt())
+        || !now.isBefore(evidence.expiresAt().truncatedTo(ChronoUnit.MICROS)))
+      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var parsed =
         RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
             request.evidence().canonicalBytes());
-    var current = memberships.readCurrent(player.accountId(), request.identity().tenantId());
-    if (!current.equals(parsed.membershipSource())
-        || !current.membershipExists()
+    var current =
+        qualifiedSource(() -> memberships.readCurrent(player.accountId(), player.tenantId()));
+    if (!current.membershipExists()
         || !current.gameplayAdmissionAllowed()
         || !"ACTIVE".equals(current.membershipLifecycleState())) throw unavailable();
-    var fields = request.evidence().fields();
+    var fields = evidence.fields();
+    if (!current.equals(parsed.membershipSource())) {
+      var billing =
+          current
+              .authorityTuple()
+              .tenantBillingCutoff()
+              .map(cutoffs -> cutoffs.get(current.tenantId()))
+              .orElseThrow(AccountTenantCapacityRepository::unavailable);
+      if (Long.parseLong(billing.tenantBillingSequence())
+          > Long.parseLong((String) fields.get("tenantBillingSequence")))
+        throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+      throw unavailable();
+    }
     if (!(fields.get("sourceReferences") instanceof Map<?, ?> source)) throw unavailable();
     var issuance =
-        issuances
-            .readCurrentCommittedCandidateByJti(
-                UUID.fromString((String) source.get("callerTokenJti")))
+        qualifiedSource(
+                () ->
+                    issuances.readCurrentCommittedCandidateByJti(
+                        UUID.fromString((String) source.get("callerTokenJti"))))
             .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!issuance.identity().accountId().equals(player.accountId())
         || !issuance.identity().callerWorkload().equals(request.evidence().callerWorkload())
@@ -205,8 +221,8 @@ public final class AccountTenantCapacityOwner {
         || now.getEpochSecond() >= issuance.identity().expiresAtEpochSecond()) throw unavailable();
     String connect = (String) fields.get("verifiedConnectScopeId");
     var scope =
-        scopes
-            .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(connect))
+        qualifiedSource(
+                () -> scopes.findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(connect)))
             .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!scope.accountUuid().equals(player.accountId())
         || !scope.tenantUuid().equals(player.tenantId())
@@ -216,6 +232,14 @@ public final class AccountTenantCapacityOwner {
         || !scope.realmId().equals(player.realmId())
         || !scope.playableStateScope().equals(player.playableStateScope())
         || !now.isBefore(Instant.parse(scope.connectScopeExpiresAt()))) throw unavailable();
+  }
+
+  private static <T> T qualifiedSource(Supplier<T> read) {
+    try {
+      return read.get();
+    } catch (IllegalArgumentException | IllegalStateException unqualifiedSource) {
+      throw unavailable();
+    }
   }
 
   private static void requireSupportedShape(Request request) {
