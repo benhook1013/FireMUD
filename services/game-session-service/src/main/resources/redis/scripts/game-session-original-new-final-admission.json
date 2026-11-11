@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.original-new-final-admission.v1",
   "resourcePath": "redis/lua/game-session-original-new-final-admission.lua",
-  "sha256": "224ffb4457c1c6113b1c76b0b9ac1e42c5016b3d51a9c1b1ac51688d2731acbc",
+  "sha256": "a9c4f5505d12ed4a06cc96f4ab29c5738889ebb5c9321536b084fa82faa273d4",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -124,6 +124,11 @@
       "effect": "MUTATING"
     },
     {
+      "code": "CAPACITY_EXECUTION_FENCED_INDETERMINATE",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
       "code": "CURRENT_PHYSICAL_STATE_REFUSED",
       "category": "STALE",
       "effect": "NON_MUTATING"
@@ -136,7 +141,7 @@
   ],
   "resetSensitivity": "CLUSTER",
   "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
-  "tailLossBehavior": "Missing capacity execution remains indeterminate and cannot be reinstalled by retry. CLOSED is irreversible and fences every delayed same-attempt FINAL. Account alone consumes exact terminal evidence to mutate capacity. A missing or changed candidate, tenant index, OPEN barrier, or Redis state fails closed. Exact retry is read-only and preserves the first Redis TIME values; the script never repairs indexes, recreates barriers, transfers a controller, or claims that the supplied OPEN sources establish the complete admission flow. The owner returns evidence only after independent exact physical readback. Reset-sensitive state requires its owning recovery before the final consumer can proceed.",
+  "tailLossBehavior": "Missing capacity execution remains historically indeterminate and cannot be reinstalled as AUTHORIZED by retry. Under separately qualified current-incarnation normal owner handoff only, FENCE creates or retains an exact persistent FENCED_INDETERMINATE deny, excluding delayed INSTALL/FINAL without claiming no earlier execution, permitting reset adoption, or authorizing Account release/rearm. FENCE preserves exact COMMITTED and CLOSED outcomes; first mutation must meet the frozen Redis TIME deadline and completed exact replay is read-only. CLOSED is irreversible and fences every delayed same-attempt FINAL. Account alone consumes exact terminal evidence to mutate capacity. A missing or changed candidate, tenant index, OPEN barrier, or Redis state fails closed for admission. Exact final retry is read-only and preserves the first Redis TIME values; the script never repairs indexes, recreates barriers, transfers a controller, or claims that the supplied OPEN sources establish the complete admission flow. The owner returns evidence only after independent exact physical readback. Reset-sensitive state requires its owning recovery before the final consumer can proceed.",
   "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
   "supportedCoexistence": [
     {

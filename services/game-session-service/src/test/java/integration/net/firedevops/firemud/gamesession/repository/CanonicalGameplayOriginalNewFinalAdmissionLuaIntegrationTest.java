@@ -12,14 +12,17 @@ import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.zip.GZIPInputStream;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
@@ -57,6 +60,68 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   private static final long DURATION_MILLIS = 120_000L;
   private static final byte[] ISSUER_PAYLOAD = new byte[] {0, 1, 2, 0, (byte) 0xff, 13, 10};
   private static final JsonMapper JSON = JsonMapper.builder().build();
+  // Immutable pre-FENCE production source, gzip/base64 encoded to keep the pinned fixture compact.
+  // Decode and verify its original descriptor digest before loading it into actual Redis.
+  private static final String PRE_FENCE_LUA_SHA256 =
+      "224ffb4457c1c6113b1c76b0b9ac1e42c5016b3d51a9c1b1ac51688d2731acbc";
+  private static final String PRE_FENCE_LUA_GZIP_BASE64 =
+      """
+      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
+      """;
+
 
   @Container
   private static final GenericContainer<?> REDIS =
@@ -69,6 +134,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   private RedisCommands<byte[], byte[]> admin;
   private RedisCommands<byte[], byte[]> owner;
   private String scriptSha;
+  private String preFenceScriptSha;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -121,8 +187,23 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     }
     assertThat(HexFormatHolder.sha256(script)).isEqualTo(descriptor.sha256());
     scriptSha = owner.scriptLoad(script);
+    byte[] preFenceScript = predecessorLuaForOwnerProof();
+    preFenceScriptSha = owner.scriptLoad(preFenceScript);
+    assertThat(HexFormatHolder.sha1(preFenceScript)).isEqualTo(preFenceScriptSha);
     assertThat(HexFormatHolder.sha1(script)).isEqualTo(scriptSha);
     assertThat(owner.aclWhoami()).isEqualTo(PRINCIPAL);
+  }
+
+  static byte[] predecessorLuaForOwnerProof() throws Exception {
+    byte[] preFenceScript;
+    try (var input =
+        new GZIPInputStream(
+            new ByteArrayInputStream(
+                Base64.getMimeDecoder().decode(PRE_FENCE_LUA_GZIP_BASE64)))) {
+      preFenceScript = input.readAllBytes();
+    }
+    assertThat(HexFormatHolder.sha256(preFenceScript)).isEqualTo(PRE_FENCE_LUA_SHA256);
+    return preFenceScript;
   }
 
   @AfterEach
@@ -259,7 +340,232 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     }
   }
 
+  @Test
+  void absentExecutionFenceInstallsOnlyTheExactPersistentDenyWithoutRecreatingRuntimeState()
+      throws Exception {
+    ScriptCase original = seed(false);
+    for (int index = 0; index < 6; index++)
+      admin.del(new byte[][] {ascii(original.keys()[index])});
+    Map<String, byte[]> before = physicalImage(original);
+
+    // No credential, template, OPEN barrier, candidate or index is needed to deny future execution.
+    byte[][] arguments = action(original, "FENCE").arguments().clone();
+    arguments[8] = ascii("unavailable-candidate");
+    arguments[10] = ascii("unavailable-template");
+    arguments[12] = ascii("unavailable-account");
+    arguments[13] = ascii("unavailable-issuer");
+    assertThat(eval(new ScriptCase(original.keys(), arguments))).isEqualTo(5L);
+    assertHash(original.keys()[6], capacityPhysicalFields(original, "FENCED_INDETERMINATE"));
+    assertThat(admin.pttl(ascii(original.keys()[6]))).isEqualTo(-1L);
+    assertPhysicalImage(original, before, 6);
+
+    Map<String, byte[]> denied = physicalImage(original);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(5L);
+    assertPhysicalImage(original, denied, 7);
+  }
+
+  @Test
+  void authorizedFenceChangesOnlyStateAndEveryDelayedCurrentOrPinnedOldCallRefuses()
+      throws Exception {
+    ScriptCase original = seed();
+    Map<String, byte[]> before = physicalImage(original);
+
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(5L);
+    assertHash(original.keys()[6], capacityPhysicalFields(original, "FENCED_INDETERMINATE"));
+    assertPhysicalImage(original, before, 6);
+    Map<String, byte[]> denied = physicalImage(original);
+    // These are the actual immutable old production bytes, not a reconstruction of its guards.
+    assertThat(eval(preFenceScriptSha, action(original, "INSTALL"))).isEqualTo(-1L);
+    assertThat(eval(preFenceScriptSha, original)).isEqualTo(-1L);
+    assertThat(eval(preFenceScriptSha, action(original, "CLOSE"))).isEqualTo(-1L);
+    assertThat(eval(action(original, "INSTALL"))).isEqualTo(-1L);
+    assertThat(eval(original)).isEqualTo(-1L);
+    assertThat(eval(action(original, "CLOSE"))).isEqualTo(-1L);
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(5L);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(5L);
+    assertPhysicalImage(original, denied, 7);
+    for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
+  }
+
+  @Test
+  void fenceBeforeDelayedPinnedOldInstallationPreventsItFromInstallingAuthorization()
+      throws Exception {
+    ScriptCase original = seed(false);
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(5L);
+    Map<String, byte[]> denied = physicalImage(original);
+
+    assertThat(eval(preFenceScriptSha, action(original, "INSTALL"))).isEqualTo(-1L);
+    assertThat(eval(preFenceScriptSha, original)).isEqualTo(-1L);
+    assertPhysicalImage(original, denied, 7);
+  }
+
+  @Test
+  void finalBeforeFencePreservesEveryCommittedByteHashAndControllerTimeIncludingExpiredReplay()
+      throws Exception {
+    ScriptCase original = seed();
+    assertThat(eval(original)).isEqualTo(1L);
+    Map<String, byte[]> committed = physicalImage(original);
+
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(2L);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(2L);
+    byte[][] credentialFree = action(original, "FENCE").arguments().clone();
+    credentialFree[11] = ascii("1");
+    assertThat(eval(new ScriptCase(original.keys(), credentialFree))).isEqualTo(2L);
+    assertThat(eval(expired(new ScriptCase(original.keys(), credentialFree)))).isEqualTo(2L);
+    assertThat(eval(preFenceScriptSha, original)).isEqualTo(2L);
+    assertPhysicalImage(original, committed, 7);
+    assertThat(admin.hlen(ascii(original.keys()[6]))).isEqualTo(6L);
+    for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
+  }
+
+  @Test
+  void alreadyClosedFenceIsReadOnlyAndNeverReclassifiesTheHistoricalOutcome() throws Exception {
+    ScriptCase original = seed();
+    assertThat(eval(action(original, "CLOSE"))).isEqualTo(4L);
+    Map<String, byte[]> closed = physicalImage(original);
+
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(4L);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(4L);
+    assertPhysicalImage(original, closed, 7);
+    assertHash(original.keys()[6], capacityPhysicalFields(original, "CLOSED"));
+  }
+
+  @Test
+  void expiredFirstFenceRefusesBothAbsentAndAuthorizedWithoutAnyMutation() throws Exception {
+    for (boolean install : new boolean[] {false, true}) {
+      admin.flushdb();
+      ScriptCase original = seed(install);
+      Map<String, byte[]> before = physicalImage(original);
+
+      assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(-1L);
+      assertPhysicalImage(original, before, 7);
+      assertThat(admin.pttl(ascii(original.keys()[6]))).isEqualTo(install ? -1L : -2L);
+    }
+  }
+
+  @Test
+  void fenceRefusesWrongTypeTtlIdentityAndEveryUnexpectedPhysicalShapeWithoutMutation()
+      throws Exception {
+    for (String fault :
+        List.of(
+            "type",
+            "ttl",
+            "binding",
+            "digest",
+            "extra-field",
+            "missing-state",
+            "unknown-state",
+            "fenced-extra-field",
+            "closed-extra-field",
+            "committed-missing-fields",
+            "committed-foreign-field",
+            "committed-invalid-hash",
+            "committed-invalid-time")) {
+      admin.flushdb();
+      ScriptCase original = seed();
+      byte[] key = ascii(original.keys()[6]);
+      switch (fault) {
+        case "type" -> {
+          admin.del(new byte[][] {key});
+          admin.set(key, ascii("foreign-type"));
+        }
+        case "ttl" -> admin.pexpire(key, 60_000L);
+        case "binding" -> admin.hset(key, ascii("binding"), ascii("different-envelope"));
+        case "digest" -> admin.hset(key, ascii("digest"), ascii("sha256:" + "0".repeat(64)));
+        case "extra-field" -> admin.hset(key, ascii("unexpected"), ascii("foreign"));
+        case "missing-state" -> admin.hdel(key, ascii("state"));
+        case "unknown-state" -> admin.hset(key, ascii("state"), ascii("FOREIGN"));
+        case "fenced-extra-field", "closed-extra-field" -> {
+          admin.hset(
+              key,
+              ascii("state"),
+              ascii(fault.equals("fenced-extra-field") ? "FENCED_INDETERMINATE" : "CLOSED"));
+          admin.hset(key, ascii("unexpected"), ascii("foreign"));
+        }
+        case "committed-missing-fields" -> admin.hset(key, ascii("state"), ascii("COMMITTED"));
+        case "committed-foreign-field", "committed-invalid-hash", "committed-invalid-time" -> {
+          assertThat(eval(original)).isEqualTo(1L);
+          if (fault.equals("committed-foreign-field")) {
+            byte[] value = admin.hget(key, ascii("sessionSha1"));
+            admin.hdel(key, ascii("sessionSha1"));
+            admin.hset(key, ascii("foreignSha1"), value);
+          } else if (fault.equals("committed-invalid-hash")) {
+            admin.hset(key, ascii("sessionSha1"), ascii("invalid"));
+          } else {
+            admin.hset(key, ascii("continuityExpiresAt"), ascii("1"));
+          }
+        }
+        default -> throw new IllegalStateException("Unknown fixture fault: " + fault);
+      }
+      Map<String, byte[]> before = physicalImage(original);
+
+      assertThat(eval(action(original, "FENCE"))).as(fault).isEqualTo(-1L);
+      assertPhysicalImage(original, before, 7);
+      if (fault.equals("ttl")) assertThat(admin.pttl(key)).isPositive();
+      else assertThat(admin.pttl(key)).isEqualTo(-1L);
+    }
+  }
+
+  @Test
+  void fenceRequiresTheExactCompleteEnvelopeAndCanonicalKeyIdentityBeforeWriting() throws Exception {
+    for (String fault :
+        List.of("missing-field", "extra-field", "wrong-tenant", "invalid-fence", "wrong-key")) {
+      admin.flushdb();
+      ScriptCase original = seed(false);
+      byte[][] arguments = action(original, "FENCE").arguments().clone();
+      String[] keys = original.keys().clone();
+      var envelope = (tools.jackson.databind.node.ObjectNode) JSON.readTree(arguments[16]);
+      switch (fault) {
+        case "missing-field" -> envelope.remove("reservationId");
+        case "extra-field" -> envelope.put("unexpected", "foreign");
+        case "wrong-tenant" -> envelope.put("tenantId", ACCOUNT);
+        case "invalid-fence" -> envelope.put("selectedOwnerFence", "0");
+        case "wrong-key" -> keys[6] = keys[6] + ":foreign";
+        default -> throw new IllegalStateException("Unknown fixture fault: " + fault);
+      }
+      arguments[16] = canonicalBytes(envelope);
+      arguments[18] = ascii("sha256:" + HexFormatHolder.sha256(arguments[16]));
+      Map<String, byte[]> before = physicalImage(original);
+
+      assertThat(eval(new ScriptCase(keys, arguments))).as(fault).isEqualTo(-2L);
+      assertPhysicalImage(original, before, 7);
+      assertThat(admin.type(ascii(keys[6]))).isEqualTo("none");
+    }
+  }
+
+  private Map<String, byte[]> physicalImage(ScriptCase original) {
+    Map<String, byte[]> image = new LinkedHashMap<>();
+    for (String key : original.keys()) image.put(key, admin.dump(ascii(key)));
+    return image;
+  }
+
+  private void assertPhysicalImage(
+      ScriptCase original, Map<String, byte[]> expected, int keyCount) {
+    for (int index = 0; index < keyCount; index++) {
+      String key = original.keys()[index];
+      if (expected.get(key) == null) assertThat(admin.dump(ascii(key))).as(key).isNull();
+      else assertThat(admin.dump(ascii(key))).as(key).containsExactly(expected.get(key));
+    }
+  }
+
+  private static Map<String, byte[]> capacityPhysicalFields(ScriptCase original, String state) {
+    return Map.of(
+        "binding", original.arguments()[16],
+        "digest", original.arguments()[18],
+        "state", ascii(state));
+  }
+
+  private static ScriptCase expired(ScriptCase original) {
+    byte[][] arguments = original.arguments().clone();
+    arguments[14] = ascii("1");
+    return new ScriptCase(original.keys(), arguments);
+  }
+
   private ScriptCase seed() throws Exception {
+    return seed(true);
+  }
+
+  private ScriptCase seed(boolean install) throws Exception {
     String sessionKey = "session:game:{" + TAG + "}:" + INSTANCE + ":" + SESSION;
     String characterKey =
         "session:game:index:character:{" + TAG + "}:" + NAMESPACE + ":" + CHARACTER;
@@ -340,7 +646,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     issuerPhysical.put("payloadDigest", ascii("sha256:" + "f".repeat(64)));
     admin.hset(ascii(issuerBarrierKey), encodedBytes(issuerPhysical));
     ScriptCase result = new ScriptCase(keys, arguments);
-    assertThat(eval(action(result, "INSTALL"))).isEqualTo(3L);
+    if (install) assertThat(eval(action(result, "INSTALL"))).isEqualTo(3L);
     return result;
   }
 
@@ -630,10 +936,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   private long eval(ScriptCase testCase) {
+    return eval(scriptSha, testCase);
+  }
+
+  private long eval(String sha, ScriptCase testCase) {
     byte[][] keyBytes = new byte[testCase.keys().length][];
     for (int index = 0; index < keyBytes.length; index++)
       keyBytes[index] = ascii(testCase.keys()[index]);
-    return owner.evalsha(scriptSha, ScriptOutputType.INTEGER, keyBytes, testCase.arguments());
+    return owner.evalsha(sha, ScriptOutputType.INTEGER, keyBytes, testCase.arguments());
   }
 
   private RedisClient createClient(String username, String password) {

@@ -41,8 +41,18 @@ class AccountTenantCapacityWorkloadGuardTest {
   @Test
   void onlyExactTlsGameSessionAndMethodCanInstallPrivateAssertion() throws Exception {
     var method = AccountServiceGrpc.getCommitTenantCapacityAdmissionMethod();
-    assertThat(invoke(method, tls("firemud", "game-session-service"))).isNull();
-    assertThat(invoke(method, tls("firemud", "world-management-service"))).isNull();
+    assertThat(
+            invoke(
+                method,
+                tls("firemud", "game-session-service"),
+                "spiffe://firemud/ns/firemud/sa/game-session-service"))
+        .isNull();
+    assertThat(
+            invoke(
+                method,
+                tls("firemud", "world-management-service"),
+                "spiffe://firemud/ns/firemud/sa/world-management-service"))
+        .isNull();
     assertThatThrownBy(guard::requireAuthenticatedCaller)
         .isInstanceOf(StatusRuntimeException.class);
     assertThat(invoke(method, tls("other", "game-session-service")).getCode())
@@ -80,8 +90,12 @@ class AccountTenantCapacityWorkloadGuardTest {
     }
   }
 
+  private Status invoke(MethodDescriptor<?, ?> method, SSLSession ssl) {
+    return invoke(method, ssl, null);
+  }
+
   @SuppressWarnings({"unchecked", "rawtypes"})
-  private Status invoke(MethodDescriptor method, SSLSession ssl) {
+  private Status invoke(MethodDescriptor method, SSLSession ssl, String expectedCallerUri) {
     ServerCall call = mock(ServerCall.class);
     when(call.getMethodDescriptor()).thenReturn(method);
     when(call.getAttributes())
@@ -92,10 +106,7 @@ class AccountTenantCapacityWorkloadGuardTest {
     AtomicInteger starts = new AtomicInteger();
     ServerCallHandler next =
         (ignored, headers) -> {
-          assertThat(guard.requireAuthenticatedCaller())
-              .isIn(
-                  "spiffe://firemud/ns/firemud/sa/game-session-service",
-                  "spiffe://firemud/ns/firemud/sa/world-management-service");
+          assertThat(guard.requireAuthenticatedCaller()).isEqualTo(expectedCallerUri);
           starts.incrementAndGet();
           return new ServerCall.Listener() {};
         };
