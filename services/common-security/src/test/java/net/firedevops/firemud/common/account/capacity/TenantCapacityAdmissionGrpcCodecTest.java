@@ -3,15 +3,39 @@ package net.firedevops.firemud.common.account.capacity;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.Any;
 import com.google.protobuf.UnknownFieldSet;
+import io.grpc.Status;
+import io.grpc.protobuf.StatusProto;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 
 class TenantCapacityAdmissionGrpcCodecTest {
+  @Test
+  void onlyCanonicalFailureDetailsSurviveWithoutChangingTransportStatus() {
+    for (var failure : Failure.values()) {
+      var canonical = failure.toStatusException();
+      assertThat(TenantCapacityAdmissionGrpcCodec.validateFailure(canonical)).isSameAs(canonical);
+    }
+    var deadline = Status.DEADLINE_EXCEEDED.asRuntimeException();
+    assertThat(TenantCapacityAdmissionGrpcCodec.validateFailure(deadline)).isSameAs(deadline);
+    var claimedFence =
+        StatusProto.toStatusRuntimeException(
+            com.google.rpc.Status.newBuilder()
+                .setCode(Status.Code.UNAVAILABLE.value())
+                .addDetails(Any.pack(ErrorDetail.newBuilder().setCode("FENCE_REJECTED").build()))
+                .build());
+    var verified = TenantCapacityAdmissionGrpcCodec.validateFailure(claimedFence);
+    assertThat(verified.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(StatusProto.fromThrowable(verified).getDetailsList()).isEmpty();
+  }
+
   @Test
   void exactBothAlternativesRoundTripWithCompleteBundleAndReservationBinding() {
     for (Request request :

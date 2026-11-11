@@ -1,7 +1,12 @@
 package net.firedevops.firemud.common.account.capacity;
 
+import com.google.protobuf.Any;
 import com.google.protobuf.ByteString;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.protobuf.StatusProto;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -22,6 +27,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Shape;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.WorldContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 
 /** Strict bounded content mapping. TLS identity and source authority are never codec inputs. */
 public final class TenantCapacityAdmissionGrpcCodec {
@@ -29,7 +35,66 @@ public final class TenantCapacityAdmissionGrpcCodec {
   public static final int MAX_RESPONSE_WIRE_BYTES = 4096;
   public static final long CALL_DEADLINE_SECONDS = 5;
 
+  private static final String FAILURE_MESSAGE = "Tenant capacity commitment did not complete";
+
   private TenantCapacityAdmissionGrpcCodec() {}
+
+  public enum Failure {
+    INVALID_ARGUMENT(Status.Code.INVALID_ARGUMENT),
+    AUTH_UNAVAILABLE(Status.Code.UNAUTHENTICATED),
+    PERMISSION_DENIED(Status.Code.PERMISSION_DENIED),
+    IDEMPOTENCY_CONFLICT(Status.Code.ALREADY_EXISTS),
+    CAPACITY_ADMISSION_STALE(Status.Code.UNAVAILABLE),
+    ENTITLEMENT_UNAVAILABLE(Status.Code.UNAVAILABLE),
+    TENANT_BILLING_BLOCKED(Status.Code.RESOURCE_EXHAUSTED),
+    CAPACITY_QUOTA_EXCEEDED(Status.Code.RESOURCE_EXHAUSTED);
+
+    private final Status.Code code;
+
+    Failure(Status.Code code) {
+      this.code = code;
+    }
+
+    public StatusRuntimeException toStatusException() {
+      return toStatusException(code);
+    }
+
+    public StatusRuntimeException toStatusException(Status.Code status) {
+      if (!matches(status)) throw invalid();
+      return StatusProto.toStatusRuntimeException(
+          com.google.rpc.Status.newBuilder()
+              .setCode(status.value())
+              .setMessage(FAILURE_MESSAGE)
+              .addDetails(Any.pack(detail()))
+              .build());
+    }
+
+    private ErrorDetail detail() {
+      return ErrorDetail.newBuilder().setCode(name()).setMessage(FAILURE_MESSAGE).build();
+    }
+
+    private boolean matches(Status.Code status) {
+      return status == code
+          || (this == ENTITLEMENT_UNAVAILABLE && status == Status.Code.FAILED_PRECONDITION);
+    }
+  }
+
+  /** Preserve the transport outcome. Accept semantic details only in the closed owner format. */
+  public static StatusRuntimeException validateFailure(StatusRuntimeException failure) {
+    try {
+      var status = StatusProto.fromThrowable(failure);
+      if (status == null || status.getDetailsCount() == 0) return failure;
+      if (status.getDetailsCount() == 1 && status.getSerializedSize() <= MAX_RESPONSE_WIRE_BYTES) {
+        var detail = status.getDetails(0).unpack(ErrorDetail.class);
+        var error = Failure.valueOf(detail.getCode());
+        if (error.matches(failure.getStatus().getCode()) && error.detail().equals(detail))
+          return failure;
+      }
+    } catch (InvalidProtocolBufferException | IllegalArgumentException invalidDetail) {
+      // A malformed detail supplies no owner decision or execution proof.
+    }
+    return failure.getStatus().asRuntimeException();
+  }
 
   public static CommitTenantCapacityAdmissionRequest toRequest(Request value) {
     value.requireStructurallyValid();
