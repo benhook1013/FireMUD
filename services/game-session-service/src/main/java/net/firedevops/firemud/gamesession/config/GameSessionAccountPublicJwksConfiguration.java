@@ -53,7 +53,12 @@ public class GameSessionAccountPublicJwksConfiguration {
           long maximumAge) {
     Duration age = requiredMaximumAge(maximumAge);
     var cache = new AccountPublicJwksCache(source, source.sourceIdentity(), Clock.systemUTC(), age);
-    cache.refresh();
+    try {
+      cache.refresh();
+    } catch (AccountPublicJwksCache.SourcePreparedDenyException denied) {
+      // The verified source and cache already retain the deny. Start empty so the existing
+      // lifecycle task can later consume exact committed and protected-mount recovery proof.
+    }
     return cache;
   }
 
@@ -104,6 +109,8 @@ public class GameSessionAccountPublicJwksConfiguration {
           () -> {
             try {
               cache.refresh();
+            } catch (AccountPublicJwksCache.SourcePreparedDenyException denied) {
+              LOG.warn("Account public JWKS refresh denied: PREPARED_DENY");
             } catch (SourceUnavailableException unavailable) {
               LOG.warn("Account public JWKS refresh unavailable: SOURCE_UNAVAILABLE");
             } catch (InvalidJwksException rejected) {

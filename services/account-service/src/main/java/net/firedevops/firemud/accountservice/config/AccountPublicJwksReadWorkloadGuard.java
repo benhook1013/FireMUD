@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding.Binding;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 
@@ -78,7 +79,7 @@ public final class AccountPublicJwksReadWorkloadGuard {
           || !api.configRevision().equals(source.bindingRevision())
           || !api.apiServer().toString().equals(source.apiServerOrigin())
           || !api.servingCaSha256().equals(source.servingCaSha256())) {
-        throw new ReadDeniedException();
+        throw new InvalidJwksException();
       }
     }
   }

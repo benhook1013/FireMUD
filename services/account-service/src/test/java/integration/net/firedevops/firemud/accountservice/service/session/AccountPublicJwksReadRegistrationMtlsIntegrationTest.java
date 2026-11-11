@@ -58,9 +58,9 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
-import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -176,9 +176,9 @@ class AccountPublicJwksReadRegistrationMtlsIntegrationTest {
       throws Exception {
     var protectedBinding = new ControlledProtectedBinding();
     var source = mock(AccountJwtJwksTrustedSource.class);
-    var snapshot = new PublicJwksSnapshot(sourceIdentity(), publicJwks);
+    var snapshot = new ReadResult(sourceIdentity(), publicJwks, false, false);
     when(source.sourceIdentity()).thenReturn(snapshot.sourceIdentity());
-    when(source.load())
+    when(source.currentPublicRead())
         .thenAnswer(
             ignored -> {
               assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(GAME_SESSION_URI);
@@ -217,7 +217,8 @@ class AccountPublicJwksReadRegistrationMtlsIntegrationTest {
                     .isEqualTo(publicJwks);
                 assertThat(response.getSourceIdentity().getAllFields()).hasSize(9);
                 // A valid privileged bearer is ignored for this exact method. The actual guard
-                // still sees empty SessionContext in source.load(), not the bearer claims.
+                // still sees empty SessionContext in source.currentPublicRead(), not the bearer
+                // claims.
                 assertThat(
                         client
                             .withBearer(token)
@@ -272,7 +273,7 @@ class AccountPublicJwksReadRegistrationMtlsIntegrationTest {
                     List.of(
                         GetCurrentAccountPublicJwksRequest.getDefaultInstance(),
                         AccountPublicJwksReadCodec.request().toBuilder()
-                            .setSchemaVersion(2)
+                            .setSchemaVersion(1)
                             .build(),
                         AccountPublicJwksReadCodec.request().toBuilder()
                             .setUnknownFields(
@@ -288,33 +289,51 @@ class AccountPublicJwksReadRegistrationMtlsIntegrationTest {
                 }
                 doThrow(new IllegalStateException("private internal handler fault"))
                     .when(source)
-                    .load();
+                    .currentPublicRead();
                 assertCode(
                     Status.Code.UNAVAILABLE,
                     () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
-                doReturn(
-                        new PublicJwksSnapshot(
-                            sourceIdentity(), new byte[AccountPublicJwksCache.MAX_JWKS_BYTES + 1]))
+                doThrow(new AccountPublicJwksReadCodec.InvalidFrameException())
                     .when(source)
-                    .load();
+                    .currentPublicRead();
                 assertCode(
                     Status.Code.FAILED_PRECONDITION,
                     () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
-                doReturn(snapshot).when(source).load();
+                var deny = new ReadResult(sourceIdentity(), new byte[0], true, false);
+                doReturn(deny).when(source).currentPublicRead();
+                assertThat(
+                        AccountPublicJwksReadCodec.result(
+                                client
+                                    .stub()
+                                    .getCurrentPublicJwks(AccountPublicJwksReadCodec.request()))
+                            .preparedDeny())
+                    .isTrue();
+                var committed = new ReadResult(sourceIdentity(), publicJwks, false, true);
+                doReturn(committed).when(source).currentPublicRead();
+                assertThat(
+                        AccountPublicJwksReadCodec.result(
+                                client
+                                    .stub()
+                                    .getCurrentPublicJwks(AccountPublicJwksReadCodec.request()))
+                            .committedRecoveryEligible())
+                    .isTrue();
+                doReturn(snapshot).when(source).currentPublicRead();
                 assertThat(client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()))
                     .isEqualTo(AccountPublicJwksReadCodec.response(snapshot));
-                doThrow(new AccountPublicJwksCache.InvalidJwksException()).when(source).load();
+                doThrow(new AccountPublicJwksCache.InvalidJwksException())
+                    .when(source)
+                    .currentPublicRead();
                 assertCode(
                     Status.Code.FAILED_PRECONDITION,
                     () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
                 doThrow(new AccountPublicJwksCache.SourceUnavailableException())
                     .when(source)
-                    .load();
+                    .currentPublicRead();
                 assertCode(
                     Status.Code.UNAVAILABLE,
                     () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
                 doReturn(
-                        new PublicJwksSnapshot(
+                        new ReadResult(
                             new SourceIdentity(
                                 "test",
                                 "cluster-a",
@@ -325,19 +344,46 @@ class AccountPublicJwksReadRegistrationMtlsIntegrationTest {
                                 "api-r1",
                                 "https://kubernetes.test:6443",
                                 "b".repeat(64)),
-                            publicJwks))
+                            publicJwks,
+                            false,
+                            false))
                     .when(source)
-                    .load();
+                    .currentPublicRead();
                 assertCode(
                     Status.Code.FAILED_PRECONDITION,
                     () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
+                for (String mismatch : List.of("api-origin", "binding-revision")) {
+                  var expected = sourceIdentity();
+                  var changed =
+                      new SourceIdentity(
+                          expected.environmentId(),
+                          expected.clusterId(),
+                          expected.clusterIncarnationUid(),
+                          expected.namespace(),
+                          expected.namespaceUid(),
+                          expected.configMapUid(),
+                          mismatch.equals("binding-revision")
+                              ? "api-r2"
+                              : expected.bindingRevision(),
+                          mismatch.equals("api-origin")
+                              ? "https://different-api.test:6443"
+                              : expected.apiServerOrigin(),
+                          expected.servingCaSha256());
+                  doReturn(new ReadResult(changed, publicJwks, false, false))
+                      .when(source)
+                      .currentPublicRead();
+                  assertCode(
+                      Status.Code.FAILED_PRECONDITION,
+                      () ->
+                          client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));
+                }
                 doAnswer(
                         ignored -> {
                           protectedBinding.trust.set(Optional.empty());
                           return snapshot;
                         })
                     .when(source)
-                    .load();
+                    .currentPublicRead();
                 assertCode(
                     Status.Code.PERMISSION_DENIED,
                     () -> client.stub().getCurrentPublicJwks(AccountPublicJwksReadCodec.request()));

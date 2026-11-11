@@ -12,6 +12,7 @@ import net.firedevops.firemud.account.v1.GetCurrentAccountPublicJwksRequest;
 import net.firedevops.firemud.accountservice.config.AccountPublicJwksReadWorkloadGuard;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -46,17 +47,36 @@ class AccountPublicJwksReadServiceTest {
   void returnsExactCurrentSnapshotBetweenProtectedGuardReadsWithNoReadinessPlan() {
     when(guard.requireCaller()).thenReturn(caller);
     when(source.sourceIdentity()).thenReturn(PIN);
-    when(source.load())
-        .thenReturn(new AccountPublicJwksCache.PublicJwksSnapshot(PIN, new byte[] {1, 2, 3}));
+    when(source.currentPublicRead())
+        .thenReturn(new ReadResult(PIN, new byte[] {1, 2, 3}, false, false));
     var response = owner.read(AccountPublicJwksReadCodec.request());
     assertThat(AccountPublicJwksReadCodec.snapshot(response).sourceIdentity()).isEqualTo(PIN);
     assertThat(response.getPublicJwks().toByteArray())
         .containsExactly((byte) 1, (byte) 2, (byte) 3);
     var order = inOrder(guard, source, caller);
     order.verify(guard).requireCaller();
-    order.verify(source).sourceIdentity();
+    order.verify(source).currentPublicRead();
     order.verify(caller).requireSource(PIN);
-    order.verify(source).load();
+    order.verify(source).sourceIdentity();
+    order.verify(guard).requireCaller();
+  }
+
+  @Test
+  void authenticatesPreparedDenyAndReturnsNoKeysOrRecoveryAuthority() {
+    when(guard.requireCaller()).thenReturn(caller);
+    when(source.sourceIdentity()).thenReturn(PIN);
+    var deny = new ReadResult(PIN, new byte[0], true, false);
+    when(source.currentPublicRead()).thenReturn(deny);
+    var result =
+        AccountPublicJwksReadCodec.result(owner.read(AccountPublicJwksReadCodec.request()));
+    assertThat(result.sourceIdentity()).isEqualTo(PIN);
+    assertThat(result.preparedDeny()).isTrue();
+    assertThat(result.jwksBytes()).isEmpty();
+    assertThat(result.committedRecoveryEligible()).isFalse();
+    var order = inOrder(guard, source, caller);
+    order.verify(guard).requireCaller();
+    order.verify(source).currentPublicRead();
+    order.verify(caller).requireSource(PIN);
     order.verify(source).sourceIdentity();
     order.verify(guard).requireCaller();
   }
@@ -87,12 +107,15 @@ class AccountPublicJwksReadServiceTest {
     when(source.sourceIdentity()).thenReturn(PIN);
     for (byte[] bytes :
         new byte[][] {new byte[0], new byte[AccountPublicJwksCache.MAX_JWKS_BYTES + 1]}) {
-      when(source.load()).thenReturn(new AccountPublicJwksCache.PublicJwksSnapshot(PIN, bytes));
+      var invalid = mock(ReadResult.class);
+      when(invalid.sourceIdentity()).thenReturn(PIN);
+      when(invalid.jwksBytes()).thenReturn(bytes);
+      when(source.currentPublicRead()).thenReturn(invalid);
       assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
           .isExactlyInstanceOf(AccountPublicJwksCache.InvalidJwksException.class)
           .hasNoCause();
     }
-    when(source.load()).thenReturn(null);
+    when(source.currentPublicRead()).thenReturn(null);
     assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
         .isExactlyInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
   }
@@ -101,7 +124,7 @@ class AccountPublicJwksReadServiceTest {
   void preservesUnclassifiedHandlerFaultForReceiverAvailabilityMapping() {
     when(guard.requireCaller()).thenReturn(caller);
     var fault = new IllegalStateException("unclassified internal fault");
-    when(source.sourceIdentity()).thenThrow(fault);
+    when(source.currentPublicRead()).thenThrow(fault);
     assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request())).isSameAs(fault);
   }
 
@@ -109,7 +132,8 @@ class AccountPublicJwksReadServiceTest {
   void refusesChangedSourceOrProtectedGuardAndPreservesTemporaryOutageType() {
     when(guard.requireCaller()).thenReturn(caller);
     when(source.sourceIdentity()).thenReturn(PIN);
-    when(source.load()).thenThrow(new AccountPublicJwksCache.SourceUnavailableException());
+    when(source.currentPublicRead())
+        .thenThrow(new AccountPublicJwksCache.SourceUnavailableException());
     assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
         .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
     var changed =
@@ -123,13 +147,12 @@ class AccountPublicJwksReadServiceTest {
             PIN.bindingRevision(),
             PIN.apiServerOrigin(),
             PIN.servingCaSha256());
-    doReturn(new AccountPublicJwksCache.PublicJwksSnapshot(changed, new byte[] {1}))
+    doReturn(new ReadResult(changed, new byte[] {1}, false, false))
         .when(source)
-        .load();
+        .currentPublicRead();
     assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))
         .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
-    when(source.load())
-        .thenReturn(new AccountPublicJwksCache.PublicJwksSnapshot(PIN, new byte[] {1}));
+    when(source.currentPublicRead()).thenReturn(new ReadResult(PIN, new byte[] {1}, false, false));
     when(guard.requireCaller())
         .thenReturn(caller, mock(AccountPublicJwksReadWorkloadGuard.ProtectedCaller.class));
     assertThatThrownBy(() -> owner.read(AccountPublicJwksReadCodec.request()))

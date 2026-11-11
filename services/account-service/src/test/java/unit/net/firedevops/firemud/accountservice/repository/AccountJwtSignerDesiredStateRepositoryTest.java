@@ -75,9 +75,50 @@ class AccountJwtSignerDesiredStateRepositoryTest {
   }
 
   @Test
+  void activeReceiptDigestRetainsFrozenGrammarAndWriterSuppliedObservation() {
+    var promotion = mock(AccountJwtSignerDesiredStateRepository.PromotionOperationEvidence.class);
+    when(promotion.operationId())
+        .thenReturn(UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+    when(promotion.requestDigest()).thenReturn("1".repeat(64));
+    when(promotion.generationOperationId())
+        .thenReturn(UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
+    when(promotion.generationOperationDigest()).thenReturn("2".repeat(64));
+    when(promotion.generationReceiptDigest()).thenReturn("3".repeat(64));
+    // Different owner fields must not replace the writer's explicitly supplied observation.
+    when(promotion.publicConfigMapUid()).thenReturn("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    when(promotion.expectedPublicResourceVersion()).thenReturn("owner-prior");
+    when(promotion.activeJwksObservedResourceVersion())
+        .thenReturn(java.util.Optional.of("owner-observed"));
+    String uid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    String original =
+        AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+            promotion, uid, "opaque-prior", "opaque-observed", "4".repeat(64));
+    // Frozen pre-extraction RFC 8785 preimage hash, independent of the production helper.
+    assertThat(original)
+        .isEqualTo("c7b924b789f0c7f140b12074c02862ec3056969b64b242174ac039bb27437251");
+    assertThat(
+            AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+                promotion,
+                "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                "opaque-prior",
+                "opaque-observed",
+                "4".repeat(64)))
+        .isNotEqualTo(original);
+    assertThat(
+            AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+                promotion, uid, "different-prior", "opaque-observed", "4".repeat(64)))
+        .isNotEqualTo(original);
+    assertThat(
+            AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+                promotion, uid, "opaque-prior", "different-observed", "4".repeat(64)))
+        .isNotEqualTo(original);
+  }
+
+  @Test
   void durableGenerationEntryPointsRequireAnAccountTransaction() throws Exception {
     assertMandatory("initialize", Binding.class, EnrollmentIdentity.class);
     assertMandatory("read", Binding.class);
+    assertMandatoryWritable("readLockedEnrollmentState", Binding.class);
     assertMandatory("ensureCurrentGenerationRequest", Binding.class, TrustFence.class);
     assertMandatoryWritable(
         "abortUnpreparedGeneration", Binding.class, TrustFence.class, GenerationResult.class);
@@ -101,6 +142,8 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         String.class,
         String.class);
     assertMandatoryWritable("readPreparedGenerationForRecovery", Binding.class, TrustFence.class);
+    assertMandatoryWritable(
+        "readPreparedPrivatePromotionReceiptForRecovery", Binding.class, TrustFence.class);
     assertMandatoryWritable(
         "readAndMarkPreparedPromotionDispatched", Binding.class, TrustFence.class);
     assertMandatoryWritable(
@@ -147,7 +190,14 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
     try {
+      assertThatThrownBy(() -> repository.readLockedEnrollmentState(BINDING))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Writable Account transaction");
       assertThatThrownBy(() -> repository.readPreparedGenerationForRecovery(BINDING, TRUST))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Writable Account transaction");
+      assertThatThrownBy(
+              () -> repository.readPreparedPrivatePromotionReceiptForRecovery(BINDING, TRUST))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Writable Account transaction");
       assertThatThrownBy(() -> repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST))
@@ -432,7 +482,29 @@ class AccountJwtSignerDesiredStateRepositoryTest {
 
     String exactPrivateReceiptDigest =
         (String) conversation.preparedPromotionValues.get("private_promotion_receipt_digest");
+    var exactPrivateRecovery =
+        inWritableTransaction(
+            () ->
+                conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(
+                    BINDING, TRUST));
+    assertThat(exactPrivateRecovery.promotionOperationId())
+        .isEqualTo(conversation.preparedPromotionId);
+    assertThat(exactPrivateRecovery.generationOperationId()).isEqualTo(result.operationId());
+    assertThat(exactPrivateRecovery.receiptDigest()).isEqualTo(exactPrivateReceiptDigest);
+    int statementsBeforeRecovery = conversation.executedStatements.size();
     conversation.preparedPromotionValues.put("private_promotion_receipt_digest", "0".repeat(64));
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.readPreparedPrivatePromotionReceiptForRecovery(
+                            BINDING, TRUST)))
+        .isExactlyInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+        .hasMessageContaining("private promotion receipt digest is invalid");
+    assertThat(
+            conversation.executedStatements.subList(
+                statementsBeforeRecovery, conversation.executedStatements.size()))
+        .noneMatch(sql -> sql.contains("UPDATE ") || sql.contains("INSERT "));
     assertThatThrownBy(
             () ->
                 inWritableTransaction(
@@ -461,6 +533,30 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         .contains("readiness_evidence_preimage")
         .contains("entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds")
         .doesNotContain("plan.expires_at_epoch_seconds", "CURRENT_TIMESTAMP", "clock_timestamp");
+  }
+
+  @Test
+  void lockedEnrollmentRecoveryReadPinsOwnerRowWithoutChangingAnyEvidence() {
+    DSLContext dsl = mock(DSLContext.class);
+    var repository = new AccountJwtSignerDesiredStateRepository(dsl);
+    Record enrolledRow = stateRow(BINDING, 1, null, null, null, null, null);
+    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(enrolledRow, null);
+    var enrolled =
+        inWritableTransaction(() -> repository.readLockedEnrollmentState(BINDING)).orElseThrow();
+    assertThat(enrolled.enrollmentIdentity()).contains(ENROLLMENT);
+    assertThat(enrolled.recordVersion()).isEqualTo(1);
+    assertThat(inWritableTransaction(() -> repository.readLockedEnrollmentState(BINDING)))
+        .isEmpty();
+    ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
+    verify(dsl, times(2)).fetchOne(queries.capture(), any(Object[].class));
+    assertThat(queries.getAllValues())
+        .allSatisfy(
+            sql -> {
+              assertThat(sql)
+                  .contains("FROM account_jwt_signer_desired_states")
+                  .endsWith(" FOR UPDATE");
+            });
+    verify(dsl, never()).execute(anyString(), any(Object[].class));
   }
 
   @Test

@@ -33,6 +33,202 @@ class AccountPublicJwksCacheTest {
           "a".repeat(64));
 
   @Test
+  void preparedDenyBlocksWarmKeysAcrossOutageAndOnlyEligibleRecoveryRenewsAge() throws Exception {
+    KeyPair key = rsa3072();
+    String json = jwks(jwk("known", (RSAPublicKey) key.getPublic()));
+    AtomicReference<RuntimeException> failure = new AtomicReference<>();
+    AtomicReference<AccountPublicJwksCache.PublicJwksSnapshot> next =
+        new AtomicReference<>(snapshot(json));
+    MutableClock clock = new MutableClock(INITIAL);
+    var cache =
+        cache(
+            clock,
+            () -> {
+              if (failure.get() != null) throw failure.get();
+              return next.get();
+            });
+    cache.refresh();
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    failure.set(new AccountPublicJwksCache.SourcePreparedDenyException());
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    failure.set(new AccountPublicJwksCache.SourceUnavailableException());
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    clock.advance(Duration.ofSeconds(11));
+    failure.set(null);
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    next.set(
+        new AccountPublicJwksCache.PublicJwksSnapshot(
+            PIN, json.getBytes(java.nio.charset.StandardCharsets.UTF_8), true));
+    cache.refresh();
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    failure.set(new AccountPublicJwksCache.SourceUnavailableException());
+    clock.advance(Duration.ofSeconds(11));
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourceUnavailableException.class);
+  }
+
+  @Test
+  void separateDenyObservationPreventsOlderFlightInstallWithoutBlockingInvalidation()
+      throws Exception {
+    KeyPair key = rsa3072();
+    String json =
+        jwks(
+            jwk("known", (RSAPublicKey) key.getPublic())
+                + ","
+                + jwk("cut", (RSAPublicKey) key.getPublic()));
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var denied = new java.util.concurrent.atomic.AtomicBoolean();
+    var epoch = new java.util.concurrent.atomic.AtomicLong();
+    AtomicInteger loads = new AtomicInteger();
+    var source =
+        new AccountPublicJwksCache.TrustedPublicJwksSource() {
+          @Override
+          public AccountPublicJwksCache.PublicJwksSnapshot load() {
+            long snapshotEpoch = epoch.get();
+            if (loads.incrementAndGet() == 2) {
+              entered.countDown();
+              try {
+                if (!release.await(5, TimeUnit.SECONDS))
+                  throw new AssertionError("Release timed out");
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+              }
+            }
+            return new AccountPublicJwksCache.PublicJwksSnapshot(
+                PIN, json.getBytes(java.nio.charset.StandardCharsets.UTF_8), true, snapshotEpoch);
+          }
+
+          @Override
+          public boolean isPreparedDenied() {
+            return denied.get();
+          }
+
+          @Override
+          public long preparedDenyEpoch() {
+            return epoch.get();
+          }
+        };
+    var cache = cache(new MutableClock(INITIAL), source);
+    cache.refresh();
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var refresh = executor.submit(cache::refresh);
+      try {
+        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+        epoch.incrementAndGet();
+        denied.set(true);
+        var invalidate =
+            executor.submit(
+                () -> {
+                  assertThatThrownBy(() -> cache.keyFor("known"))
+                      .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+                  cache.invalidateKid("cut");
+                });
+        invalidate.get(5, TimeUnit.SECONDS);
+        // A full source recovery cannot authorize the older cache flight's pre-deny bytes.
+        denied.set(false);
+      } finally {
+        release.countDown();
+      }
+      assertThatThrownBy(() -> refresh.get(5, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    }
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    denied.set(false);
+    cache.refresh();
+    assertThat(cache.keyFor("known")).isEqualTo(key.getPublic());
+    assertThatThrownBy(() -> cache.keyFor("cut"))
+        .isInstanceOf(AccountPublicJwksCache.UnknownKeyException.class);
+  }
+
+  @Test
+  void separateCustodyObservationPreventsOlderFlightInstallAndCachedReads() throws Exception {
+    KeyPair key = rsa3072();
+    String json = jwks(jwk("known", (RSAPublicKey) key.getPublic()));
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var terminal = new java.util.concurrent.atomic.AtomicBoolean();
+    AtomicInteger loads = new AtomicInteger();
+    var source =
+        new AccountPublicJwksCache.TrustedPublicJwksSource() {
+          @Override
+          public AccountPublicJwksCache.PublicJwksSnapshot load() {
+            if (loads.incrementAndGet() == 2) {
+              entered.countDown();
+              try {
+                if (!release.await(5, TimeUnit.SECONDS))
+                  throw new AssertionError("Release timed out");
+              } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+              }
+            }
+            return snapshot(json);
+          }
+
+          @Override
+          public boolean isCustodyRejected() {
+            return terminal.get();
+          }
+        };
+    var cache = cache(new MutableClock(INITIAL), source);
+    cache.refresh();
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var refresh = executor.submit(cache::refresh);
+      try {
+        assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+        terminal.set(true);
+        assertThatThrownBy(() -> cache.keyFor("known"))
+            .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+      } finally {
+        release.countDown();
+      }
+      assertThatThrownBy(() -> refresh.get(5, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    }
+    terminal.set(false);
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+  }
+
+  @Test
+  void terminalCustodyFailureDuringPreparedDenyCannotRecover() throws Exception {
+    KeyPair key = rsa3072();
+    String json = jwks(jwk("known", (RSAPublicKey) key.getPublic()));
+    AtomicReference<RuntimeException> failure =
+        new AtomicReference<>(new AccountPublicJwksCache.SourcePreparedDenyException());
+    var cache =
+        cache(
+            new MutableClock(INITIAL),
+            () -> {
+              if (failure.get() != null) throw failure.get();
+              return new AccountPublicJwksCache.PublicJwksSnapshot(
+                  PIN, json.getBytes(java.nio.charset.StandardCharsets.UTF_8), true);
+            });
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.SourcePreparedDenyException.class);
+    failure.set(new AccountPublicJwksCache.SourceCustodyRejectedException());
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    failure.set(null);
+    assertThatThrownBy(cache::refresh)
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+    assertThatThrownBy(() -> cache.keyFor("known"))
+        .isInstanceOf(AccountPublicJwksCache.InvalidJwksException.class);
+  }
+
+  @Test
   void blockedProactiveLoadAllowsFreshBoundReadsAndImmediateInvalidation() throws Exception {
     KeyPair key = rsa3072();
     String first = jwks(jwk("known", (RSAPublicKey) key.getPublic()));

@@ -24,6 +24,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredS
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.EnrollmentIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationRequest;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.GenerationResult;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PrivatePromotionReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.PromotionOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository.TrustFence;
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksConfigMapClient.BindingIdentity;
@@ -33,6 +34,7 @@ import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException;
+import net.firedevops.firemud.common.security.AccountPublicJwksReadCodec.ReadResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -60,6 +62,7 @@ public final class AccountJwtJwksTrustedSource
   private static final String ACCOUNT_SERVICE_USERNAME_PREFIX = "system:serviceaccount:";
   private static final String ACCOUNT_SERVICE_NAME = "account-service";
   private static final int MAX_KEYS = 64;
+  private static final int MAX_PUBLIC_READ_TRIALS = 3;
   private static final java.util.Set<String> JWKS_FIELDS = java.util.Set.of("keys");
   private static final java.util.Set<String> REQUIRED_JWK_FIELDS =
       java.util.Set.of("kty", "use", "alg", "kid", "n", "e");
@@ -154,64 +157,199 @@ public final class AccountJwtJwksTrustedSource
     return new PublicJwksSnapshot(expected.sourceIdentity(), verified.jwksBytes());
   }
 
-  private VerifiedSource readVerifiedSource() {
-    Binding materializerBefore = currentMaterializerBinding();
-    BindingIdentity apiBefore = currentApiIdentity();
-    requireBindingsAgree(materializerBefore, apiBefore);
-    TrustedPin alreadyPinned = trustedPin;
-    if (alreadyPinned != null
-        && (!alreadyPinned.materializerBinding().equals(materializerBefore)
-            || !alreadyPinned.apiIdentity().equals(apiBefore))) {
-      throw rejected();
-    }
-
-    OwnerProjection ownerBefore = currentOwnerProjection(materializerBefore, apiBefore);
-    SourceIdentity pinnedIdentity =
-        sourceIdentity(materializerBefore, apiBefore, ownerBefore.projection().configMapUid());
-    if (alreadyPinned != null && !alreadyPinned.sourceIdentity().equals(pinnedIdentity)) {
-      throw rejected();
-    }
-
-    ConfigMapSnapshot live;
-    try {
-      live = configMapClient.observe();
-    } catch (AccountJwtJwksConfigMapClient.ResourceMissingException unavailable) {
-      requireUnchangedProtectedTrust(materializerBefore, apiBefore);
-      throw unavailable();
-    } catch (AccountJwtJwksConfigMapClient.ApiFailureException failure) {
-      requireUnchangedProtectedTrust(materializerBefore, apiBefore);
-      if (isTemporaryApiFailure(failure.statusCode())) {
-        throw unavailable();
+  /** Reads the public-only disposition; PREPARED denial grants no cached-key authority. */
+  public ReadResult currentPublicRead() {
+    io.grpc.Context incoming = io.grpc.Context.current();
+    TrustedPin expected = trustedPin;
+    if (expected == null) {
+      synchronized (pinMonitor) {
+        expected = trustedPin;
+        if (expected == null) {
+          VerifiedSource verified = readVerifiedSource(true, incoming);
+          requirePublicReadActive(true, incoming, verified.ownerMovementObserved());
+          trustedPin = verified.pin();
+          return publicReadResult(verified.pin(), verified, incoming);
+        }
       }
-      throw rejected();
-    } catch (AccountJwtJwksConfigMapClient.BindingRejectedException trustRejected) {
-      throw rejected();
-    } catch (RuntimeException unexpected) {
-      throw rejected();
     }
+    return publicReadResult(expected, readVerifiedSource(true, incoming), incoming);
+  }
 
-    Binding materializerAfter = currentMaterializerBinding();
-    BindingIdentity apiAfter = currentApiIdentity();
-    if (!materializerBefore.equals(materializerAfter) || !apiBefore.equals(apiAfter)) {
-      throw rejected();
+  private static ReadResult publicReadResult(
+      TrustedPin expected, VerifiedSource verified, io.grpc.Context incoming) {
+    requirePublicReadActive(true, incoming, verified.ownerMovementObserved());
+    if (!expected.equals(verified.pin())) throw rejected();
+    return new ReadResult(
+        verified.pin().sourceIdentity(),
+        verified.jwksBytes(),
+        verified.preparedDeny(),
+        verified.committedRecoveryEligible());
+  }
+
+  private VerifiedSource readVerifiedSource() {
+    return readVerifiedSource(false);
+  }
+
+  private VerifiedSource readVerifiedSource(boolean allowPreparedDeny) {
+    return readVerifiedSource(allowPreparedDeny, io.grpc.Context.current());
+  }
+
+  private VerifiedSource readVerifiedSource(boolean allowPreparedDeny, io.grpc.Context incoming) {
+    TrustedPin anchor = trustedPin;
+    boolean ownerMovementObserved = false;
+    int totalTrials = allowPreparedDeny ? MAX_PUBLIC_READ_TRIALS : 1;
+    for (int trial = 0; trial < totalTrials; trial++) {
+      try {
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        Binding materializerBefore = currentMaterializerBinding();
+        BindingIdentity apiBefore = currentApiIdentity();
+        requireBindingsAgree(materializerBefore, apiBefore);
+        if (anchor != null
+            && (!anchor.materializerBinding().equals(materializerBefore)
+                || !anchor.apiIdentity().equals(apiBefore))) {
+          throw rejected();
+        }
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        OwnerProjection ownerBefore =
+            currentOwnerProjection(materializerBefore, apiBefore, allowPreparedDeny);
+        SourceIdentity identity =
+            sourceIdentity(materializerBefore, apiBefore, ownerBefore.projection().configMapUid());
+        if (anchor == null) anchor = new TrustedPin(materializerBefore, apiBefore, identity);
+        if (!anchor.sourceIdentity().equals(identity)) throw rejected();
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+
+        ConfigMapSnapshot live;
+        try {
+          live = configMapClient.observe();
+        } catch (AccountJwtJwksConfigMapClient.ResourceMissingException unavailable) {
+          requireUnchangedProtectedTrust(materializerBefore, apiBefore);
+          throw unavailable();
+        } catch (AccountJwtJwksConfigMapClient.ApiFailureException failure) {
+          requireUnchangedProtectedTrust(materializerBefore, apiBefore);
+          if (isTemporaryApiFailure(failure.statusCode())) throw unavailable();
+          throw rejected();
+        } catch (AccountJwtJwksConfigMapClient.BindingRejectedException trustRejected) {
+          throw rejected();
+        } catch (RuntimeException unexpected) {
+          throw rejected();
+        }
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        Binding materializerAfter = currentMaterializerBinding();
+        BindingIdentity apiAfter = currentApiIdentity();
+        if (!materializerBefore.equals(materializerAfter) || !apiBefore.equals(apiAfter)) {
+          throw rejected();
+        }
+        if (allowPreparedDeny && !anchor.sourceIdentity().configMapUid().equals(live.uid())) {
+          throw rejected();
+        }
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        OwnerProjection ownerAfter =
+            currentOwnerProjection(materializerAfter, apiAfter, allowPreparedDeny);
+        boolean ownerMoved = !ownerBefore.equals(ownerAfter);
+        if (allowPreparedDeny && ownerMoved) ownerMovementObserved = true;
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        if (allowPreparedDeny
+            && !anchor
+                .sourceIdentity()
+                .equals(
+                    sourceIdentity(
+                        materializerAfter, apiAfter, ownerAfter.projection().configMapUid()))) {
+          throw rejected();
+        }
+        if (ownerMoved) {
+          if (!allowPreparedDeny) throw unavailable();
+          // Movement alone cannot qualify the intervening API bytes. Requalify the complete read
+          // only when at least one coherent bracket proves those exact bytes at the original pin.
+          if ((!qualifiesMovingProjection(ownerBefore, live)
+                  && !qualifiesMovingProjection(ownerAfter, live))
+              || trial + 1 == totalTrials) {
+            throw rejected();
+          }
+          continue;
+        }
+        PublishedProjection projection = qualifiedProjection(ownerAfter, live);
+        if (projection == null) {
+          // This complete stable trial qualified prepublication without serving unreceipted keys.
+          throw new QualifiedTemporaryRead();
+        }
+        byte[] jwks =
+            live.data()
+                .get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY)
+                .getBytes(StandardCharsets.UTF_8);
+        if (jwks.length == 0 || jwks.length > MAX_JWKS_BYTES) throw rejected();
+        boolean preparedDeny = ownerAfter.preparedPromotion() != null;
+        boolean committedRecoveryEligible =
+            !preparedDeny
+                && ownerAfter.committedSigner() != null
+                && projection.equals(committedProjection(ownerAfter.committedSigner()));
+        return new VerifiedSource(
+            anchor,
+            preparedDeny ? new byte[0] : jwks,
+            preparedDeny,
+            committedRecoveryEligible,
+            ownerMovementObserved);
+      } catch (QualifiedTemporaryRead qualifiedTemporary) {
+        // Only complete local qualification resolves movement; dependency failure never does.
+        requirePublicReadActive(allowPreparedDeny, incoming, ownerMovementObserved);
+        throw unavailable();
+      } catch (SourceUnavailableException unavailableAfterObservation) {
+        if (ownerMovementObserved) throw rejected();
+        throw unavailableAfterObservation;
+      }
     }
+    throw rejected();
+  }
 
-    OwnerProjection ownerAfter = currentOwnerProjection(materializerAfter, apiAfter);
-    if (!ownerBefore.equals(ownerAfter)) {
-      // A concurrent Account lifecycle/publication change is not a coherent source snapshot.
+  private static void requirePublicReadActive(
+      boolean publicRead, io.grpc.Context incoming, boolean ownerMovementObserved) {
+    if (publicRead
+        && (Thread.currentThread().isInterrupted()
+            || incoming.isCancelled()
+            || (incoming.getDeadline() != null && incoming.getDeadline().isExpired()))) {
+      if (ownerMovementObserved) throw rejected();
       throw unavailable();
     }
-    requireExactReadback(ownerAfter.projection(), live);
+  }
 
-    byte[] jwks =
-        live.data()
-            .get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY)
-            .getBytes(StandardCharsets.UTF_8);
-    if (jwks.length == 0 || jwks.length > MAX_JWKS_BYTES) {
-      throw rejected();
+  private boolean qualifiesMovingProjection(OwnerProjection owner, ConfigMapSnapshot live) {
+    try {
+      qualifiedProjection(owner, live);
+      return true;
+    } catch (QualifiedTemporaryRead qualifiedVersionOnly) {
+      // Exact UID and complete owned bytes qualify another trial, never a moving-bracket response.
+      return true;
+    } catch (SourceRejectedException | SourceUnavailableException unqualified) {
+      return false;
     }
-    TrustedPin pin = new TrustedPin(materializerBefore, apiBefore, pinnedIdentity);
-    return new VerifiedSource(pin, jwks);
+  }
+
+  private PublishedProjection qualifiedProjection(OwnerProjection owner, ConfigMapSnapshot live) {
+    PublishedProjection projection = owner.projection();
+    if (owner.pendingPrepublication() != null) {
+      try {
+        requireUnreceiptedPrepublicationReadback(owner, live);
+      } catch (RuntimeException malformedOrUnproven) {
+        throw rejected();
+      }
+      return null;
+    }
+    if (owner.preparedPromotion() != null
+        && owner
+            .preparedPromotion()
+            .expectedActiveMarkerJson()
+            .equals(
+                live.data().get(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY))) {
+      PromotionOperationEvidence promotion = owner.preparedPromotion();
+      if (promotion.activeJwksObservedResourceVersion().isEmpty()
+          && promotion.activeJwksPublicDataDigest().isEmpty()
+          && promotion.activeJwksReceiptDigest().isEmpty()) {
+        projection = unreceiptedPreparedActiveProjection(owner, live);
+      } else {
+        projection = preparedActiveProjection(promotion);
+      }
+    }
+    requireExactReadback(projection, live);
+    return projection;
   }
 
   private Binding currentMaterializerBinding() {
@@ -226,7 +364,8 @@ public final class AccountJwtJwksTrustedSource
     }
   }
 
-  private OwnerProjection currentOwnerProjection(Binding binding, BindingIdentity api) {
+  private OwnerProjection currentOwnerProjection(
+      Binding binding, BindingIdentity api, boolean allowPreparedDeny) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw rejected();
     }
@@ -234,12 +373,17 @@ public final class AccountJwtJwksTrustedSource
       OwnerProjection result =
           accountTransaction.execute(
               status -> {
+                Optional<DesiredState> enrollment =
+                    allowPreparedDeny
+                        ? desiredStateRepository.readLockedEnrollmentState(binding.accountBinding())
+                        : desiredStateRepository.readEnrollmentState(binding.accountBinding());
                 DesiredState enrolled =
-                    desiredStateRepository
-                        .readEnrollmentState(binding.accountBinding())
-                        .orElseThrow(AccountJwtJwksTrustedSource::unavailable);
+                    enrollment.orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
+                if (allowPreparedDeny && enrolled.preparedOperationId().isPresent()) {
+                  return preparedProjection(enrolled, binding, api);
+                }
                 if (enrolled.durableActive().isEmpty() && enrolled.publishedActive().isEmpty()) {
-                  return initialPrepublicationProjection(enrolled, binding, api);
+                  return initialPrepublicationProjection(enrolled, binding, api, allowPreparedDeny);
                 }
                 CommittedSignerEvidence committed =
                     desiredStateRepository
@@ -248,7 +392,7 @@ public final class AccountJwtJwksTrustedSource
                             trustFence(binding),
                             api.bindingDigest(),
                             api.configRevision())
-                        .orElseThrow(AccountJwtJwksTrustedSource::unavailable);
+                        .orElseThrow(() -> allowPreparedDeny ? rejected() : unavailable());
                 ActiveSigner currentActive =
                     new ActiveSigner(
                         committed.promotion().targetGeneration(),
@@ -274,8 +418,8 @@ public final class AccountJwtJwksTrustedSource
                 PublicationEvidence evidence = currentPublication.orElseThrow();
                 requirePublicationBinding(evidence, binding, api);
                 PrepublicationIntent intent = evidence.intent();
-                var receipt =
-                    evidence.receipt().orElseThrow(AccountJwtJwksTrustedSource::unavailable);
+                PublicationReceipt receipt = evidence.receipt().orElse(null);
+                if (receipt == null && !allowPreparedDeny) throw unavailable();
                 if (!intent.operationId().equals(request.operationId())
                     || !intent.operationDigest().equals(request.operationDigest())
                     || !intent.generationRequestDigest().equals(request.generationRequestDigest())
@@ -286,12 +430,22 @@ public final class AccountJwtJwksTrustedSource
                     || !intent.expectedDurableActive().equals(Optional.of(currentActive))
                     || !intent.expectedPublishedActive().equals(Optional.of(currentActive))
                     || !intent.configMapUid().equals(committed.promotion().publicConfigMapUid())
-                    || !receipt.configMapUid().equals(committed.promotion().publicConfigMapUid())
+                    || (receipt != null
+                        && !receipt
+                            .configMapUid()
+                            .equals(committed.promotion().publicConfigMapUid()))
                     || !intent.apiBindingDigest().equals(api.bindingDigest())
                     || !intent.apiConfigRevision().equals(api.configRevision())) {
                   throw rejected();
                 }
                 requireRetainedPublicKeySet(committed, intent);
+                if (receipt == null) {
+                  requirePrepublicationMarker(intent, binding, api);
+                  if (!intent.expectedResourceVersion().equals(projection.resourceVersion())) {
+                    throw rejected();
+                  }
+                  return new OwnerProjection(committed, projection, null, null, intent);
+                }
                 return new OwnerProjection(
                     committed,
                     new PublishedProjection(
@@ -320,13 +474,176 @@ public final class AccountJwtJwksTrustedSource
     }
   }
 
+  private OwnerProjection preparedProjection(
+      DesiredState enrolled, Binding binding, BindingIdentity api) {
+    var prepared =
+        desiredStateRepository.readPreparedGenerationForRecovery(
+            binding.accountBinding(), trustFence(binding));
+    var publication =
+        publicationRepository.readPreparedPublicationForRecovery(
+            binding.accountBinding(), trustFence(binding));
+    PromotionOperationEvidence promotion = prepared.promotion();
+    GenerationResult generation = prepared.generationResult();
+    PrepublicationIntent intent = publication.intent();
+    PublicationReceipt receipt = publication.receipt();
+    var mount = publication.mountedCorrespondence();
+    requirePublicationBinding(
+        new PublicationEvidence(intent, Optional.of(receipt), Optional.of(mount)), binding, api);
+    EnrollmentIdentity enrollment = enrolled.enrollmentIdentity().orElseThrow();
+    if (!enrolled.equals(prepared.desiredState())
+        || !enrolled.binding().equals(binding.accountBinding())
+        || !enrolled.preparedOperationId().equals(Optional.of(promotion.operationId()))
+        || enrolled.generationOperationId().isPresent()
+        || promotion.expectedRecordVersion() == Long.MAX_VALUE
+        || enrolled.recordVersion() != promotion.expectedRecordVersion() + 1
+        || !enrolled.durableActive().equals(promotion.expectedPreviousActive())
+        || !enrolled.publishedActive().equals(promotion.expectedPublishedActive())
+        || !enrollment
+            .expectedClusterIncarnationUid()
+            .equals(binding.expectedClusterIncarnationUid())
+        || !enrollment.expectedNamespaceUid().equals(binding.expectedNamespaceUid())
+        || !enrollment.materializerTrustBindingDigest().equals(binding.bindingDigest())
+        || !enrollment.materializerTrustConfigRevision().equals(binding.configRevision())
+        || !enrollment.apiBindingDigest().equals(api.bindingDigest())
+        || !enrollment.apiConfigRevision().equals(api.configRevision())
+        || !enrollment.publicConfigMapUid().equals(intent.configMapUid())
+        || !"PREPARED".equals(promotion.status())
+        || !promotion.binding().equals(binding.accountBinding())
+        || !promotion.trustFence().equals(trustFence(binding))
+        || !promotion.apiBindingDigest().equals(api.bindingDigest())
+        || !promotion.apiConfigRevision().equals(api.configRevision())
+        || !promotion.generationOperationId().equals(generation.operationId())
+        || !generation.operationId().equals(intent.operationId())
+        || !generation.binding().equals(binding.accountBinding())
+        || !generation.trustFence().equals(trustFence(binding))
+        || !promotion.generationOperationDigest().equals(generation.operationDigest())
+        || !generation.operationDigest().equals(intent.operationDigest())
+        || !generation.generationRequestDigest().equals(intent.generationRequestDigest())
+        || !promotion.generationReceiptDigest().equals(generation.receiptDigest())
+        || !generation.receiptDigest().equals(intent.generationReceiptDigest())
+        || !promotion.targetGeneration().equals(generation.targetGeneration())
+        || !promotion.targetGeneration().equals(intent.targetGeneration())
+        || !promotion.targetKid().equals(generation.targetKid())
+        || !promotion.targetKid().equals(intent.targetKid())
+        || !"RS256".equals(promotion.targetAlgorithm())
+        || !"RS256".equals(generation.targetAlgorithm())
+        || !promotion.targetPublicKeyFingerprint().equals(generation.publicKeyFingerprint())
+        || !promotion.targetPublicKeyFingerprint().equals(intent.publicKeyFingerprint())
+        || !promotion.publicConfigMapUid().equals(intent.configMapUid())
+        || !promotion.expectedPublicResourceVersion().equals(receipt.observedResourceVersion())
+        || !promotion.expectedPublicJwksJson().equals(intent.jwksJson())
+        || !promotion.expectedPreviousActive().equals(intent.expectedDurableActive())
+        || !promotion.expectedPublishedActive().equals(intent.expectedPublishedActive())
+        || !promotion.prepublicationIntentDigest().equals(intent.intentDigest())
+        || !promotion.prepublicationReceiptDigest().equals(receipt.receiptDigest())
+        || !promotion.mountedObservationDigest().equals(mount.observationDigest())
+        || !mount.operationId().equals(intent.operationId())
+        || !mount.intentDigest().equals(intent.intentDigest())
+        || !mount.publicationReceiptDigest().equals(receipt.receiptDigest())
+        || !mount.generationMarkerDigest().equals(intent.generationMarkerDigest())
+        || !mount.publicDataDigest().equals(intent.publicDataDigest())
+        || !mount.publicKeyFingerprint().equals(intent.publicKeyFingerprint())
+        || !promotion
+            .targetPublicKeyFingerprint()
+            .equals(publicKeyFingerprints(intent.jwksJson()).get(promotion.targetKid()))) {
+      throw rejected();
+    }
+    PrivatePromotionReceipt privateReceipt = null;
+    if (promotion.privatePromotionObservedResourceVersion().isPresent()
+        || promotion.privatePromotionReceiptDigest().isPresent()) {
+      privateReceipt =
+          desiredStateRepository.readPreparedPrivatePromotionReceiptForRecovery(
+              binding.accountBinding(), trustFence(binding));
+      if (privateReceipt == null
+          || !privateReceipt.promotionOperationId().equals(promotion.operationId())
+          || !privateReceipt.generationOperationId().equals(promotion.generationOperationId())
+          || !promotion
+              .privatePromotionObservedResourceVersion()
+              .equals(Optional.of(privateReceipt.observedResourceVersion()))
+          || !promotion
+              .privatePromotionReceiptDigest()
+              .equals(Optional.of(privateReceipt.receiptDigest()))) {
+        throw rejected();
+      }
+    }
+    return new OwnerProjection(
+        null,
+        new PublishedProjection(
+            intent.configMapUid(),
+            receipt.observedResourceVersion(),
+            intent.jwksJson(),
+            intent.generationMarkerJson(),
+            receipt.publicDataDigest()),
+        promotion,
+        privateReceipt,
+        null);
+  }
+
+  /** Exact writer intent/private proof can deny keys while its ACTIVE receipt is not committed. */
+  private static PublishedProjection unreceiptedPreparedActiveProjection(
+      OwnerProjection owner, ConfigMapSnapshot live) {
+    PromotionOperationEvidence promotion = owner.preparedPromotion();
+    if (owner.preparedPrivateReceipt() == null
+        || !promotion.privatePromotionDispatched()
+        || !validResourceVersion(live.resourceVersion())
+        || live.resourceVersion().equals(promotion.expectedPublicResourceVersion())) {
+      throw rejected();
+    }
+    return new PublishedProjection(
+        promotion.publicConfigMapUid(),
+        live.resourceVersion(),
+        promotion.expectedPublicJwksJson(),
+        promotion.expectedActiveMarkerJson(),
+        AccountJwtJwksPublicationRepository.publicDataDigest(
+            promotion.expectedPublicJwksJson(), promotion.expectedActiveMarkerJson()));
+  }
+
+  private static boolean validResourceVersion(String value) {
+    return value != null && value.matches("[!-~]{1,256}");
+  }
+
+  /** Reconstructs the exact owner-bound ACTIVE receipt without mutating lifecycle state. */
+  private static PublishedProjection preparedActiveProjection(
+      PromotionOperationEvidence promotion) {
+    String resourceVersion =
+        promotion
+            .activeJwksObservedResourceVersion()
+            .orElseThrow(AccountJwtJwksTrustedSource::rejected);
+    String dataDigest =
+        AccountJwtJwksPublicationRepository.publicDataDigest(
+            promotion.expectedPublicJwksJson(), promotion.expectedActiveMarkerJson());
+    String digest;
+    try {
+      digest =
+          AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+              promotion,
+              promotion.publicConfigMapUid(),
+              promotion.expectedPublicResourceVersion(),
+              resourceVersion,
+              dataDigest);
+    } catch (IllegalStateException malformed) {
+      throw rejected();
+    }
+    if (resourceVersion.equals(promotion.expectedPublicResourceVersion())
+        || !promotion.activeJwksPublicDataDigest().equals(Optional.of(dataDigest))
+        || !promotion.activeJwksReceiptDigest().equals(Optional.of(digest))) {
+      throw rejected();
+    }
+    return new PublishedProjection(
+        promotion.publicConfigMapUid(),
+        resourceVersion,
+        promotion.expectedPublicJwksJson(),
+        promotion.expectedActiveMarkerJson(),
+        dataDigest);
+  }
+
   /**
    * The first exact Account-receipted PREPUBLISHED set is visible to validator probes before any
    * signer is committed. It is never represented as an active signer and remains unavailable during
    * PREPARED or after any active fence appears.
    */
   private OwnerProjection initialPrepublicationProjection(
-      DesiredState enrolled, Binding binding, BindingIdentity api) {
+      DesiredState enrolled, Binding binding, BindingIdentity api, boolean publicRead) {
     if (!enrolled.binding().equals(binding.accountBinding())
         || enrolled.preparedOperationId().isPresent()
         || enrolled.generationOperationId().isEmpty()
@@ -373,10 +690,11 @@ public final class AccountJwtJwksTrustedSource
     PublicationEvidence evidence =
         publicationRepository
             .readCurrentPublication(binding.accountBinding(), trustFence(binding))
-            .orElseThrow(AccountJwtJwksTrustedSource::unavailable);
+            .orElseThrow(() -> publicRead ? rejected() : unavailable());
     requirePublicationBinding(evidence, binding, api);
     PrepublicationIntent intent = evidence.intent();
-    var receipt = evidence.receipt().orElseThrow(AccountJwtJwksTrustedSource::unavailable);
+    PublicationReceipt receipt = evidence.receipt().orElse(null);
+    if (receipt == null && !publicRead) throw unavailable();
     if (!intent.operationId().equals(result.operationId())
         || !intent.operationDigest().equals(result.operationDigest())
         || !intent.generationRequestDigest().equals(result.generationRequestDigest())
@@ -385,7 +703,7 @@ public final class AccountJwtJwksTrustedSource
         || !intent.expectedDurableActive().isEmpty()
         || !intent.expectedPublishedActive().isEmpty()
         || !intent.configMapUid().equals(enrollment.publicConfigMapUid())
-        || !receipt.configMapUid().equals(enrollment.publicConfigMapUid())
+        || (receipt != null && !receipt.configMapUid().equals(enrollment.publicConfigMapUid()))
         || !intent.apiBindingDigest().equals(enrollment.apiBindingDigest())
         || !intent.apiConfigRevision().equals(enrollment.apiConfigRevision())
         || !intent.targetGeneration().equals(result.targetGeneration())
@@ -398,7 +716,24 @@ public final class AccountJwtJwksTrustedSource
         || !result.publicKeyFingerprint().equals(publicKeys.get(result.targetKid()))) {
       throw rejected();
     }
-    requireInitialPrepublicationMarker(intent, result, binding, api);
+    requirePrepublicationMarker(intent, binding, api);
+    if (receipt == null) {
+      if (!intent.expectedResourceVersion().equals(enrollment.publicConfigMapResourceVersion())
+          || !intent.expectedSnapshotDigest().equals(enrollment.publicConfigMapSnapshotDigest())) {
+        throw rejected();
+      }
+      return new OwnerProjection(
+          null,
+          new PublishedProjection(
+              intent.configMapUid(),
+              intent.expectedResourceVersion(),
+              intent.jwksJson(),
+              intent.generationMarkerJson(),
+              intent.publicDataDigest()),
+          null,
+          null,
+          intent);
+    }
     return new OwnerProjection(
         null,
         new PublishedProjection(
@@ -409,8 +744,70 @@ public final class AccountJwtJwksTrustedSource
             receipt.publicDataDigest()));
   }
 
-  private static void requireInitialPrepublicationMarker(
-      PrepublicationIntent intent, GenerationResult result, Binding binding, BindingIdentity api) {
+  /** Qualifies only an exact prior projection or this operation's exact additive intended set. */
+  private static void requireUnreceiptedPrepublicationReadback(
+      OwnerProjection owner, ConfigMapSnapshot live) {
+    PrepublicationIntent intent = owner.pendingPrepublication();
+    if (!intent.configMapUid().equals(live.uid())
+        || !validResourceVersion(live.resourceVersion())) {
+      throw rejected();
+    }
+    String jwks = live.data().get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY);
+    String marker = live.data().get(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY);
+    boolean prior =
+        intent.expectedResourceVersion().equals(live.resourceVersion())
+            && intent
+                .expectedSnapshotDigest()
+                .equals(AccountJwtJwksPublicationRepository.snapshotDigest(live.data()));
+    boolean intended =
+        !intent.expectedResourceVersion().equals(live.resourceVersion())
+            && intent.jwksJson().equals(jwks)
+            && intent.generationMarkerJson().equals(marker)
+            && intent
+                .publicDataDigest()
+                .equals(AccountJwtJwksPublicationRepository.publicDataDigest(jwks, marker));
+    if (!prior && !intended) throw rejected();
+    if (owner.committedSigner() != null) {
+      PublishedProjection previous = committedProjection(owner.committedSigner());
+      Map<String, String> previousKeys = publicKeyFingerprints(previous.jwksJson());
+      Map<String, String> intendedKeys = publicKeyFingerprints(intent.jwksJson());
+      if (previousKeys.containsKey(intent.targetKid())
+          || intendedKeys.size() != previousKeys.size() + 1) throw rejected();
+      Map<String, String> previousData = new LinkedHashMap<>(live.data());
+      previousData.put(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY, previous.jwksJson());
+      previousData.put(
+          AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY, previous.markerJson());
+      if (!intent
+          .expectedSnapshotDigest()
+          .equals(AccountJwtJwksPublicationRepository.snapshotDigest(previousData)))
+        throw rejected();
+      if (prior) requireExactReadback(previous, live);
+      return;
+    }
+    // Initial serving supports the first generated key only. Reconstruct the known empty
+    // predecessor from unchanged unowned data and prove it against enrollment's exact digest.
+    if (prior) {
+      if (marker != null || jwks == null || jwks.isBlank()) throw rejected();
+      try {
+        JsonNode empty = STRICT_JSON.readTree(jwks);
+        if (!hasExactFields(empty, JWKS_FIELDS)
+            || !empty.get("keys").isArray()
+            || !empty.get("keys").isEmpty()) throw rejected();
+      } catch (RuntimeException malformed) {
+        throw rejected();
+      }
+      return;
+    }
+    Map<String, String> previousData = new LinkedHashMap<>(live.data());
+    previousData.remove(AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY);
+    previousData.put(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY, "{\"keys\":[]}");
+    if (!intent
+        .expectedSnapshotDigest()
+        .equals(AccountJwtJwksPublicationRepository.snapshotDigest(previousData))) throw rejected();
+  }
+
+  private static void requirePrepublicationMarker(
+      PrepublicationIntent intent, Binding binding, BindingIdentity api) {
     try {
       JsonNode marker = STRICT_JSON.readTree(intent.generationMarkerJson());
       JsonNode markerBinding = marker == null ? null : marker.get("binding");
@@ -475,17 +872,26 @@ public final class AccountJwtJwksTrustedSource
               requiredText(publicConfigMap, "name"))
           || !hasExactFields(
               pending, java.util.Set.of("generation", "kid", "algorithm", "publicKeyFingerprint"))
-          || !result.targetGeneration().equals(requiredText(pending, "generation"))
-          || !result.targetKid().equals(requiredText(pending, "kid"))
+          || !intent.targetGeneration().equals(requiredText(pending, "generation"))
+          || !intent.targetKid().equals(requiredText(pending, "kid"))
           || !"RS256".equals(requiredText(pending, "algorithm"))
-          || !result.publicKeyFingerprint().equals(requiredText(pending, "publicKeyFingerprint"))
-          || !inactiveMarker(durable)
-          || !inactiveMarker(published)) {
+          || !intent.publicKeyFingerprint().equals(requiredText(pending, "publicKeyFingerprint"))
+          || !activeMarkerMatches(durable, intent.expectedDurableActive())
+          || !activeMarkerMatches(published, intent.expectedPublishedActive())) {
         throw rejected();
       }
     } catch (RuntimeException malformed) {
       throw rejected();
     }
+  }
+
+  private static boolean activeMarkerMatches(JsonNode marker, Optional<ActiveSigner> expected) {
+    if (expected.isEmpty()) return inactiveMarker(marker);
+    return hasExactFields(marker, java.util.Set.of("present", "generation", "kid"))
+        && marker.get("present").isBoolean()
+        && marker.get("present").booleanValue()
+        && expected.orElseThrow().generation().equals(requiredText(marker, "generation"))
+        && expected.orElseThrow().kid().equals(requiredText(marker, "kid"));
   }
 
   private static boolean inactiveMarker(JsonNode marker) {
@@ -719,8 +1125,8 @@ public final class AccountJwtJwksTrustedSource
     }
     if (!projection.resourceVersion().equals(live.resourceVersion())) {
       // Exact owned bytes and UID do not authorize serving a different, unreceipted version.
-      // Preserve bounded outage handling until a later exact owner-receipted publication.
-      throw unavailable();
+      // The stable caller distinguishes this exact local result from dependency unavailability.
+      throw new QualifiedTemporaryRead();
     }
   }
 
@@ -775,6 +1181,11 @@ public final class AccountJwtJwksTrustedSource
     return new SourceRejectedException();
   }
 
+  /** Internal control flow for the two fully qualified, no-snapshot temporary windows only. */
+  private static final class QualifiedTemporaryRead extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+  }
+
   private static final class SourceRejectedException extends IllegalStateException {
     private SourceRejectedException() {
       super("Account trusted public JWKS source was rejected");
@@ -785,7 +1196,16 @@ public final class AccountJwtJwksTrustedSource
       Binding materializerBinding, BindingIdentity apiIdentity, SourceIdentity sourceIdentity) {}
 
   private record OwnerProjection(
-      CommittedSignerEvidence committedSigner, PublishedProjection projection) {}
+      CommittedSignerEvidence committedSigner,
+      PublishedProjection projection,
+      PromotionOperationEvidence preparedPromotion,
+      PrivatePromotionReceipt preparedPrivateReceipt,
+      PrepublicationIntent pendingPrepublication) {
+    private OwnerProjection(
+        CommittedSignerEvidence committedSigner, PublishedProjection projection) {
+      this(committedSigner, projection, null, null, null);
+    }
+  }
 
   private record PublishedProjection(
       String configMapUid,
@@ -794,5 +1214,10 @@ public final class AccountJwtJwksTrustedSource
       String markerJson,
       String publicDataDigest) {}
 
-  private record VerifiedSource(TrustedPin pin, byte[] jwksBytes) {}
+  private record VerifiedSource(
+      TrustedPin pin,
+      byte[] jwksBytes,
+      boolean preparedDeny,
+      boolean committedRecoveryEligible,
+      boolean ownerMovementObserved) {}
 }
