@@ -233,6 +233,20 @@ paths:
           in: header
           required: true
           schema: {type: string, maxLength: 4096}
+      requestBody:
+        required: true
+        description: >-
+          Exact raw UTF-8 JSON provider event authenticated by Stripe-Signature.
+          The raw request body must not exceed 262144 bytes (256 KiB), enforced
+          before forwarding. This is a byte limit, not a JSON character limit.
+          Forward the original bytes unchanged without parsing or reserialization,
+          automatic retries, or redirects.
+        x-max-body-bytes: 262144
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
       responses:
         '200': {description: No-store Account completion state}
         '400': {description: Invalid signed event}

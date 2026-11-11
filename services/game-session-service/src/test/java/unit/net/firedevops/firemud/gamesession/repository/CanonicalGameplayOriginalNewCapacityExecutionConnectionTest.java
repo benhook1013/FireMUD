@@ -108,13 +108,20 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
   void nonInterruptibleConnectsSaturateFourSharedSlotsWithoutQueuingAnotherAttempt()
       throws Exception {
     RedisClient redis = mock();
-    StatefulRedisConnection<byte[], byte[]> late = mock();
-    when(late.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
     int maximum = CanonicalGameplayOriginalNewCapacityExecutionOwner.MAX_IN_FLIGHT_CONNECTS;
+    var lateConnections = new java.util.ArrayList<StatefulRedisConnection<byte[], byte[]>>();
+    for (int index = 0; index < maximum; index++) {
+      StatefulRedisConnection<byte[], byte[]> late = mock();
+      when(late.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+      lateConnections.add(late);
+    }
+    var nextConnection = new java.util.concurrent.atomic.AtomicInteger();
+    CountDownLatch ready = new CountDownLatch(maximum), start = new CountDownLatch(1);
     CountDownLatch entered = new CountDownLatch(maximum), release = new CountDownLatch(1);
     when(redis.connect(ByteArrayCodec.INSTANCE))
         .thenAnswer(
             invocation -> {
+              var late = lateConnections.get(nextConnection.getAndIncrement());
               entered.countDown();
               for (; ; ) {
                 try {
@@ -126,32 +133,76 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
               }
               return late;
             });
+    ThreadPoolExecutor connectors =
+        (ThreadPoolExecutor)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionOwner.class, "CONNECTS"));
+    Semaphore permits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int operationMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    long completedBefore = connectors.getCompletedTaskCount();
     var owner = owner(mock(), redis, mock());
     var scheduler = Executors.newSingleThreadScheduledExecutor();
-    var callers = new java.util.ArrayList<CompletableFuture<Void>>();
+    var callerThreads = Executors.newFixedThreadPool(maximum);
+    var callers = new java.util.ArrayList<java.util.concurrent.Future<Void>>();
     try {
       for (int index = 0; index < maximum; index++)
         callers.add(
-            CompletableFuture.runAsync(
+            callerThreads.submit(
                 () -> {
-                  assertThatThrownBy(
-                          () ->
-                              Context.current()
-                                  .withDeadlineAfter(200, TimeUnit.MILLISECONDS, scheduler)
-                                  .call(owner::connectForRead))
-                      .isInstanceOf(IllegalStateException.class);
+                  ready.countDown();
+                  start.await();
+                  // Construct deadlines only after all dedicated callers are ready. Common-pool
+                  // startup and mock preparation must not consume the controlled deadline.
+                  try (var context =
+                      Context.current().withDeadlineAfter(1, TimeUnit.SECONDS, scheduler)) {
+                    assertThatThrownBy(() -> context.call(owner::connectForRead))
+                        .isInstanceOf(IllegalStateException.class);
+                  }
+                  return null;
                 }));
+      assertThat(ready.await(2, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-      CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
-      // All four call deadlines have returned, but their blocked connects still occupy the cap.
+      for (var caller : callers) caller.get(3, TimeUnit.SECONDS);
+      // Caller return can precede resource-worker abandonment. Prove operation permits have
+      // recovered before testing connector saturation, so that the fifth refusal cannot be
+      // explained by the independent operation cap.
+      Awaitility.await()
+          .atMost(2, TimeUnit.SECONDS)
+          .untilAsserted(() -> assertThat(permits.availablePermits()).isEqualTo(operationMaximum));
+      assertThat(connectors.getActiveCount()).isEqualTo(maximum);
+      assertThat(connectors.getQueue()).isEmpty();
+      assertThat(connectors.getTaskCount()).isEqualTo(completedBefore + maximum);
       assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
       verify(redis, org.mockito.Mockito.times(maximum)).connect(ByteArrayCodec.INSTANCE);
-      verifyNoInteractions(late);
+      assertThat(connectors.getActiveCount()).isEqualTo(maximum);
+      assertThat(connectors.getQueue()).isEmpty();
+      assertThat(connectors.getTaskCount()).isEqualTo(completedBefore + maximum);
+      lateConnections.forEach(org.mockito.Mockito::verifyNoInteractions);
     } finally {
+      // Cleanup never verifies: a failed barrier/deadline assertion must remain the primary error.
+      start.countDown();
       release.countDown();
       scheduler.shutdownNow();
-      verify(late, timeout(2000).times(maximum)).closeAsync();
+      callerThreads.shutdownNow();
     }
+    Awaitility.await()
+        .atMost(2, TimeUnit.SECONDS)
+        .untilAsserted(
+            () -> {
+              assertThat(connectors.getActiveCount()).isZero();
+              assertThat(connectors.getQueue()).isEmpty();
+              assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
+            });
+    for (var late : lateConnections) verify(late).closeAsync();
+    assertThat(permits.availablePermits()).isEqualTo(operationMaximum);
+    assertThat(callerThreads.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
   }
 
   @Test

@@ -541,7 +541,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     byte[] key = ascii(capacityKey(tags.assignmentForTransition(fixture.transitionId())));
     if (fault.equals("ttl")) admin.pexpire(key, 10000);
     else if (fault.equals("type")) {
-      admin.del(key);
+      byte[][] keysToDelete = {key};
+      admin.del(keysToDelete);
       admin.set(key, ascii("wrong-type"));
     } else admin.hset(key, ascii("binding"), ascii("{}"));
     byte[] physical = admin.dump(key);
@@ -958,6 +959,49 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   public static final class StopAfterAuthorizationCommit {
     private StopAfterAuthorizationCommit() {}
 
+    // The returned proxy owns actual: close delegates to it, including normal jOOQ cleanup.
+    private static java.sql.Connection stopAfterCommit(
+        java.sql.Connection actual, javax.sql.DataSource raw, String executionDigest)
+        throws java.sql.SQLException {
+      try {
+        return (java.sql.Connection)
+            java.lang.reflect.Proxy.newProxyInstance(
+                java.sql.Connection.class.getClassLoader(),
+                new Class<?>[] {java.sql.Connection.class},
+                (proxy, method, values) -> {
+                  Object result;
+                  try {
+                    result = method.invoke(actual, values);
+                  } catch (java.lang.reflect.InvocationTargetException failure) {
+                    throw failure.getCause();
+                  }
+                  if (method.getName().equals("commit")) {
+                    try (var independent = raw.getConnection();
+                        var check =
+                            independent.prepareStatement(
+                                "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?")) {
+                      check.setString(1, executionDigest);
+                      try (var rows = check.executeQuery()) {
+                        if (rows.next() && "INSTALL_DISPATCHED".equals(rows.getString(1))) {
+                          System.out.println("INDEPENDENT_INSTALL_DISPATCHED_COMMIT");
+                          System.out.flush();
+                          Runtime.getRuntime().halt(72);
+                        }
+                      }
+                    }
+                  }
+                  return result;
+                });
+      } catch (RuntimeException | Error failure) {
+        try {
+          actual.close();
+        } catch (java.sql.SQLException closeFailure) {
+          failure.addSuppressed(closeFailure);
+        }
+        throw failure;
+      }
+    }
+
     public static void main(String[] args) throws Exception {
       var raw = new DriverManagerDataSource(args[0], args[1], args[2]);
       var execution =
@@ -967,35 +1011,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
           new org.springframework.jdbc.datasource.DelegatingDataSource(raw) {
             @Override
             public java.sql.Connection getConnection() throws java.sql.SQLException {
-              var actual = raw.getConnection();
-              return (java.sql.Connection)
-                  java.lang.reflect.Proxy.newProxyInstance(
-                      java.sql.Connection.class.getClassLoader(),
-                      new Class<?>[] {java.sql.Connection.class},
-                      (proxy, method, values) -> {
-                        Object result;
-                        try {
-                          result = method.invoke(actual, values);
-                        } catch (java.lang.reflect.InvocationTargetException failure) {
-                          throw failure.getCause();
-                        }
-                        if (method.getName().equals("commit")) {
-                          try (var independent = raw.getConnection();
-                              var check =
-                                  independent.prepareStatement(
-                                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?")) {
-                            check.setString(1, execution.digest());
-                            try (var rows = check.executeQuery()) {
-                              if (rows.next() && "INSTALL_DISPATCHED".equals(rows.getString(1))) {
-                                System.out.println("INDEPENDENT_INSTALL_DISPATCHED_COMMIT");
-                                System.out.flush();
-                                Runtime.getRuntime().halt(72);
-                              }
-                            }
-                          }
-                        }
-                        return result;
-                      });
+              return stopAfterCommit(raw.getConnection(), raw, execution.digest());
             }
           };
       var sql = org.jooq.impl.DSL.using(stopping, org.jooq.SQLDialect.POSTGRES);

@@ -520,6 +520,9 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     assertThat(observed.operationId).isEqualTo(original.operationId);
     assertThat(observed.requestId).isEqualTo(original.requestId);
     assertThat(observed.jti).isEqualTo(original.jti);
+    assertThat(observed.accountId).isEqualTo(original.accountId);
+    assertThat(observed.tenantId).isEqualTo(original.tenantId);
+    assertThat(observed.scopeKind).isEqualTo(original.scopeKind);
     assertThat(observed.claims).isEqualTo(original.claims);
     assertThat(observed.sources).isEqualTo(original.sources);
     assertThat(observed.bundle).isEqualTo(original.bundle);
