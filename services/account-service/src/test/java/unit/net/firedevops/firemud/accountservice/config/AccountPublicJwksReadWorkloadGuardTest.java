@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.AccountPublicJwksCache.InvalidJwksException;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -79,20 +80,33 @@ class AccountPublicJwksReadWorkloadGuardTest {
                   api.apiServer().toString(),
                   api.servingCaSha256());
           caller.requireSource(pin);
-          assertThatThrownBy(
-                  () ->
-                      caller.requireSource(
-                          new SourceIdentity(
-                              pin.environmentId(),
-                              pin.clusterId(),
-                              pin.clusterIncarnationUid(),
-                              pin.namespace(),
-                              pin.namespaceUid(),
-                              pin.configMapUid(),
-                              "different-api-revision",
-                              pin.apiServerOrigin(),
-                              pin.servingCaSha256())))
-              .isInstanceOf(AccountPublicJwksReadWorkloadGuard.ReadDeniedException.class);
+          assertThatThrownBy(() -> caller.requireSource(null))
+              .isExactlyInstanceOf(InvalidJwksException.class);
+          for (SourceIdentity changed :
+              List.of(
+                  new SourceIdentity(
+                      pin.environmentId(),
+                      pin.clusterId(),
+                      pin.clusterIncarnationUid(),
+                      pin.namespace(),
+                      pin.namespaceUid(),
+                      pin.configMapUid(),
+                      "different-api-revision",
+                      pin.apiServerOrigin(),
+                      pin.servingCaSha256()),
+                  new SourceIdentity(
+                      pin.environmentId(),
+                      pin.clusterId(),
+                      pin.clusterIncarnationUid(),
+                      pin.namespace(),
+                      pin.namespaceUid(),
+                      pin.configMapUid(),
+                      pin.bindingRevision(),
+                      "https://different-api.test:6443",
+                      pin.servingCaSha256()))) {
+            assertThatThrownBy(() -> caller.requireSource(changed))
+                .isExactlyInstanceOf(InvalidJwksException.class);
+          }
         });
   }
 

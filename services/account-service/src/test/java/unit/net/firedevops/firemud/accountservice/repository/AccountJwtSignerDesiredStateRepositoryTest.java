@@ -75,6 +75,46 @@ class AccountJwtSignerDesiredStateRepositoryTest {
   }
 
   @Test
+  void activeReceiptDigestRetainsFrozenGrammarAndWriterSuppliedObservation() {
+    var promotion = mock(AccountJwtSignerDesiredStateRepository.PromotionOperationEvidence.class);
+    when(promotion.operationId())
+        .thenReturn(UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+    when(promotion.requestDigest()).thenReturn("1".repeat(64));
+    when(promotion.generationOperationId())
+        .thenReturn(UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"));
+    when(promotion.generationOperationDigest()).thenReturn("2".repeat(64));
+    when(promotion.generationReceiptDigest()).thenReturn("3".repeat(64));
+    // Different owner fields must not replace the writer's explicitly supplied observation.
+    when(promotion.publicConfigMapUid()).thenReturn("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    when(promotion.expectedPublicResourceVersion()).thenReturn("owner-prior");
+    when(promotion.activeJwksObservedResourceVersion())
+        .thenReturn(java.util.Optional.of("owner-observed"));
+    String uid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    String original =
+        AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+            promotion, uid, "opaque-prior", "opaque-observed", "4".repeat(64));
+    // Frozen pre-extraction RFC 8785 preimage hash, independent of the production helper.
+    assertThat(original)
+        .isEqualTo("c7b924b789f0c7f140b12074c02862ec3056969b64b242174ac039bb27437251");
+    assertThat(
+            AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+                promotion,
+                "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                "opaque-prior",
+                "opaque-observed",
+                "4".repeat(64)))
+        .isNotEqualTo(original);
+    assertThat(
+            AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+                promotion, uid, "different-prior", "opaque-observed", "4".repeat(64)))
+        .isNotEqualTo(original);
+    assertThat(
+            AccountJwtSignerDesiredStateRepository.activeJwksPromotionReceiptDigest(
+                promotion, uid, "opaque-prior", "different-observed", "4".repeat(64)))
+        .isNotEqualTo(original);
+  }
+
+  @Test
   void durableGenerationEntryPointsRequireAnAccountTransaction() throws Exception {
     assertMandatory("initialize", Binding.class, EnrollmentIdentity.class);
     assertMandatory("read", Binding.class);
