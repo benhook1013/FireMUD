@@ -87,11 +87,44 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       Request request,
       Result result,
       long deadline) {
+    return bind(source, request, result, deadline, null);
+  }
+
+  OriginalNewCapacityExecution bind(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      Result result,
+      long deadline,
+      CurrentOwner expectedOwner) {
     if (budget == null)
-      return within(deadline, owner -> owner.bind(source, request, result, deadline));
+      return within(
+          deadline, owner -> owner.bind(source, request, result, deadline, expectedOwner));
     budget.check();
     request.requireCommittable();
     result.requireBinding(request);
+    CurrentOwner selected = requireRequestBinding(source, request, deadline);
+    if (expectedOwner != null && !expectedOwner.equals(selected)) throw unavailable();
+    var candidate = source.candidate();
+    return new OriginalNewCapacityExecution(
+        request,
+        result,
+        candidate.bindingDecisionId(),
+        source.candidateDigest(),
+        selected.instanceId(),
+        selected.fence());
+  }
+
+  /** Qualifies deterministic candidate binding before Account commits a reservation. */
+  CurrentOwner requireRequestBinding(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      Request request,
+      long deadline) {
+    noSql();
+    if (budget == null)
+      return within(deadline, owner -> owner.requireRequestBinding(source, request, deadline));
+    budget.check();
+    // Account owns fresh policy denial; coherent non-creating evidence must reach that owner.
+    request.requireStructurallyValid();
     var candidate = source.candidate();
     var binding = candidate.bindingIdentity();
     var target = candidate.targetEvidence();
@@ -114,16 +147,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         || !Objects.equals(
             request.evidence().fields().get("authorityTuple"),
             candidate.leaseEvidence().carrier().get("authorityTuple"))) throw unavailable();
-    var region = source.regionAcknowledgement();
     CurrentOwner selected = currentOwner(candidate);
-    if (selected.fence() != region.executorFence().longValueExact()) throw unavailable();
-    return new OriginalNewCapacityExecution(
-        request,
-        result,
-        candidate.bindingDecisionId(),
-        source.candidateDigest(),
-        selected.instanceId(),
-        region.executorFence().longValueExact());
+    if (selected.fence() != source.regionAcknowledgement().executorFence().longValueExact())
+      throw unavailable();
+    return selected;
   }
 
   /** Returns only after independently reading the already-installed exact execution record. */
@@ -491,7 +518,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return new CurrentOwner(instance, fence);
   }
 
-  private record CurrentOwner(String instanceId, long fence) {}
+  record CurrentOwner(String instanceId, long fence) {}
 
   private String candidateDigest(Record row) {
     Record transition =

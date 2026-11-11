@@ -691,6 +691,68 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return administration.sync().get(ascii(candidateInstallation.sessionKey()));
   }
 
+  /** Actual Account commit followed by a controlled selected-owner movement before GS binding. */
+  public OwnerMovementFault commitThenMoveSelectedOwnerForFault(
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient client,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      long deadline) {
+    var source =
+        new CanonicalGameplayBindingInventoryRepository(binding.dsl())
+            .readOriginalNewFinalAdmissionSource(decision);
+    var executionOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            binding.dsl(), coordination, scripts, CLOCK, tags);
+    var selected = executionOwner.requireRequestBinding(source, request, deadline);
+    var result = client.commit(request);
+    var identity = source.candidate().bindingIdentity();
+    if (binding
+            .dsl()
+            .execute(
+                "UPDATE game_session_region_runtime_status SET executor_fence = executor_fence + 1 WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
+                identity.tenantId(),
+                identity.gameInstanceId(),
+                identity.regionId())
+        != 1)
+      throw new IllegalStateException("Controlled owner movement did not affect the selected row");
+    return new OwnerMovementFault(
+        result, () -> executionOwner.bind(source, request, result, deadline, selected));
+  }
+
+  public record OwnerMovementFault(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result reservation,
+      Runnable bindOriginal) {}
+
+  /** Read-only images of the isolated fixture's actual admission SQL and Redis state. */
+  public java.util.Map<String, String> capacityStateImage() {
+    var result = new java.util.TreeMap<String, String>();
+    for (String table :
+        java.util.List.of(
+            "game_session_canonical_binding_transition",
+            "game_session_original_new_capacity_execution")) {
+      String rows =
+          binding
+              .dsl()
+              .fetch(
+                  "SELECT (to_jsonb(t) || jsonb_build_object('_xmin', t.xmin::text))::text AS image FROM "
+                      + table
+                      + " t ORDER BY 1")
+              .getValues("image", String.class)
+              .toString();
+      result.put(
+          "sql:" + table,
+          net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+              rows.getBytes(StandardCharsets.UTF_8)));
+    }
+    var commands = administration.sync();
+    for (byte[] key : commands.keys("*")) {
+      result.put(
+          "redis:" + new String(key, StandardCharsets.UTF_8),
+          net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+              commands.dump(key)));
+    }
+    return java.util.Map.copyOf(result);
+  }
+
   /** Controlled post-retention serving loss only, not proof of actual runtime teardown ordering. */
   public void removeServingIndexesAfterCapacityRetentionForFault() {
     String state =

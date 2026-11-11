@@ -99,21 +99,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       String originalLoginJwt,
       CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation,
       long canonicalSessionDurationMillis,
-      long absoluteDeadlineMillis) {
-    throw unavailable();
-  }
-
-  FinalAdmissionResult completeOriginalNew(
-      CanonicalGameplayAdmissionDecision originalDecision,
-      String originalLoginJwt,
-      CanonicalGameplayRegionLeaseOwner.Installation privateRegionInstallation,
-      long canonicalSessionDurationMillis,
       long absoluteDeadlineMillis,
       TenantCapacityAdmission.Request capacityRequest) {
     requireNoAmbientSql();
     if (capacityClient == null || capacityExecution == null) throw unavailable();
     if (capacityRequest == null) throw unavailable();
-    capacityRequest.requireCommittable();
+    capacityRequest.requireStructurallyValid();
     Objects.requireNonNull(originalDecision, "Original Account decision is required");
     Objects.requireNonNull(
         privateRegionInstallation, "This owner's private region grant is required");
@@ -139,6 +130,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source =
           inventory.readOriginalNewFinalAdmissionSource(originalDecision);
       requireOriginalSource(source, originalDecision);
+      var selectedOwner =
+          capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
       Currentness beforeEffects = currentness(source, privateRegionInstallation);
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource currentSource =
           readSameSource(source, originalDecision, false);
@@ -178,9 +171,13 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
 
           // This is the actual final owner boundary, after all original player evidence and
           // credential/currentness checks. The Account commitment is never a quota preflight.
+          if (!selectedOwner.equals(
+              capacityExecution.requireRequestBinding(
+                  source, capacityRequest, absoluteDeadlineMillis))) throw unavailable();
           var reservation = capacityClient.commit(capacityRequest);
           var execution =
-              capacityExecution.bind(source, capacityRequest, reservation, absoluteDeadlineMillis);
+              capacityExecution.bind(
+                  source, capacityRequest, reservation, absoluteDeadlineMillis, selectedOwner);
           try (var boundTemplate = template.bindCapacityExecution(execution)) {
             capacityExecution.authorize(
                 source,
