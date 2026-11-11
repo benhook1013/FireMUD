@@ -33,6 +33,13 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   static final int PAGE_SIZE = 32;
   private static final String TRANSFER = "game_session_region_owner_transfer";
   private static final String ITEM = "game_session_region_owner_transfer_item";
+  // Join predicates prove the four shared identity fields equal; project them only once.
+  private static final String CURRENT_PROJECTION =
+      "SELECT t.*,r.canonical_region_id,r.tenant_region_tag,r.lifecycle_epoch,"
+          + "r.lifecycle_row_version,r.lifecycle_request_bytes,r.capture_id,r.graph_sha256,"
+          + "r.preparation_input_digest,r.executor_fence,r.lease_token_correlation,"
+          + "r.owner_service,r.owner_instance_id,r.paused,r.last_committed_tick_batch_id,"
+          + "r.last_committed_tick_id,r.updated_at FROM ";
   private static final String PENDING =
       " FROM game_session_original_new_capacity_execution e"
           + " JOIN game_session_canonical_binding_region_bridge_obligation b ON b.transition_id=e.transition_id"
@@ -526,7 +533,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   private static Record observationCurrent(DSLContext tx, UUID id) {
     Record row =
         tx.fetchOne(
-            "SELECT t.*,r.* FROM "
+            CURRENT_PROJECTION
                 + TRANSFER
                 + " t JOIN game_session_region_runtime_status r ON r.tenant_id=t.tenant_id AND r.game_instance_id=t.game_instance_id AND r.region_id=t.region_id WHERE t.transfer_id=? AND r.region_epoch=t.region_epoch AND ((t.state='FROZEN' AND r.owner_instance_id=t.old_owner_id AND r.executor_fence=t.old_owner_fence) OR (t.state='COMPLETED' AND r.owner_instance_id=t.new_owner_id AND r.executor_fence=t.new_owner_fence AND r.lease_token_correlation=t.new_lease_correlation))",
             id);
@@ -615,7 +622,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   private static Record current(DSLContext tx, UUID id, boolean lock) {
     Record row =
         tx.fetchOne(
-            "SELECT t.*,r.* FROM "
+            CURRENT_PROJECTION
                 + TRANSFER
                 + " t JOIN game_session_region_runtime_status r ON r.tenant_id=t.tenant_id AND r.game_instance_id=t.game_instance_id AND r.region_id=t.region_id WHERE t.transfer_id=? AND t.state='FROZEN' AND r.owner_instance_id=t.old_owner_id AND r.executor_fence=t.old_owner_fence AND r.region_epoch=t.region_epoch"
                 + (lock ? " FOR UPDATE OF r,t" : ""),

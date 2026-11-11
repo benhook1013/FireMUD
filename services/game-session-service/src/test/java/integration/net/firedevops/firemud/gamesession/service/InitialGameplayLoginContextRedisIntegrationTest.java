@@ -709,6 +709,7 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     ownedKeys.add(InitialGameplayLoginContextRedisKeys.contextKey(original.callerContextId()));
 
     assertThat(outcome.status())
+        .as("physical original composition observations: %s", provider.traces)
         .isEqualTo(InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING);
     assertThat(original.expectedAttemptFence()).isEqualTo(1L);
     assertThat(original.requestId().version()).isEqualTo(4);
