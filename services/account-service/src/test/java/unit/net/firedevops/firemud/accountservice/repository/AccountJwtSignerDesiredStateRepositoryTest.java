@@ -78,6 +78,7 @@ class AccountJwtSignerDesiredStateRepositoryTest {
   void durableGenerationEntryPointsRequireAnAccountTransaction() throws Exception {
     assertMandatory("initialize", Binding.class, EnrollmentIdentity.class);
     assertMandatory("read", Binding.class);
+    assertMandatoryWritable("readLockedEnrollmentState", Binding.class);
     assertMandatory("ensureCurrentGenerationRequest", Binding.class, TrustFence.class);
     assertMandatoryWritable(
         "abortUnpreparedGeneration", Binding.class, TrustFence.class, GenerationResult.class);
@@ -149,6 +150,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
     try {
+      assertThatThrownBy(() -> repository.readLockedEnrollmentState(BINDING))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("Writable Account transaction");
       assertThatThrownBy(() -> repository.readPreparedGenerationForRecovery(BINDING, TRUST))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("Writable Account transaction");
@@ -489,6 +493,30 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         .contains("readiness_evidence_preimage")
         .contains("entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds")
         .doesNotContain("plan.expires_at_epoch_seconds", "CURRENT_TIMESTAMP", "clock_timestamp");
+  }
+
+  @Test
+  void lockedEnrollmentRecoveryReadPinsOwnerRowWithoutChangingAnyEvidence() {
+    DSLContext dsl = mock(DSLContext.class);
+    var repository = new AccountJwtSignerDesiredStateRepository(dsl);
+    Record enrolledRow = stateRow(BINDING, 1, null, null, null, null, null);
+    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(enrolledRow, null);
+    var enrolled =
+        inWritableTransaction(() -> repository.readLockedEnrollmentState(BINDING)).orElseThrow();
+    assertThat(enrolled.enrollmentIdentity()).contains(ENROLLMENT);
+    assertThat(enrolled.recordVersion()).isEqualTo(1);
+    assertThat(inWritableTransaction(() -> repository.readLockedEnrollmentState(BINDING)))
+        .isEmpty();
+    ArgumentCaptor<String> queries = ArgumentCaptor.forClass(String.class);
+    verify(dsl, times(2)).fetchOne(queries.capture(), any(Object[].class));
+    assertThat(queries.getAllValues())
+        .allSatisfy(
+            sql -> {
+              assertThat(sql)
+                  .contains("FROM account_jwt_signer_desired_states")
+                  .endsWith(" FOR UPDATE");
+            });
+    verify(dsl, never()).execute(anyString(), any(Object[].class));
   }
 
   @Test
