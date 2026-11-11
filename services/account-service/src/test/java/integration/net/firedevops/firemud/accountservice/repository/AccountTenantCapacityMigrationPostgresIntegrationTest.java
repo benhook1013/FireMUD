@@ -147,7 +147,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     }
   }
 
-  private static Flyway configureFlyway(javax.sql.DataSource data, String schema, String target) {
+  static Flyway configureFlyway(javax.sql.DataSource data, String schema, String target) {
     return Flyway.configure()
         .dataSource(data)
         .schemas(schema)
@@ -181,7 +181,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             .get(0, Integer.class));
   }
 
-  private static List<String> capacityTableImages(DSLContext dsl) {
+  static List<String> capacityTableImages(DSLContext dsl) {
     List<String> images = new ArrayList<>();
     for (String table :
         List.of(
@@ -268,7 +268,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     }
   }
 
-  private static CapacityFixture populateCapacity(DSLContext dsl, TransactionTemplate transaction) {
+  static CapacityFixture populateCapacity(DSLContext dsl, TransactionTemplate transaction) {
     UUID accountUuid =
         Objects.requireNonNull(
             transaction.execute(
@@ -531,7 +531,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
             "Capacity usage differs from its complete durable reservation inventory");
   }
 
-  private static String sqlState(Throwable failure) {
+  static String sqlState(Throwable failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof SQLException sqlException) {
         return sqlException.getSQLState();
@@ -544,7 +544,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     return "sha256:" + String.valueOf(digit).repeat(64);
   }
 
-  private static String hex(char digit) {
+  static String hex(char digit) {
     return String.valueOf(digit).repeat(64);
   }
 
@@ -555,7 +555,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       List<String> otherTriggerImages,
       String exactUsageFunctionImage) {}
 
-  private record CapacityFixture(
+  record CapacityFixture(
       UUID tenantUuid,
       UUID requestId,
       UUID admissionId,
