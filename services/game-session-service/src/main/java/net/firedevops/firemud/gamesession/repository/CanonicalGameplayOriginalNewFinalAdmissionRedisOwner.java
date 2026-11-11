@@ -361,6 +361,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
+    if (!candidate.bindingDecisionId().equals(execution.transitionId())
+        || !candidate.bindingIdentity().tenantId().equals(execution.request().identity().tenantId())
+        || !execution
+            .candidateDigest()
+            .equals(CanonicalGameplayIssuerMemberV2Codec.sha256(candidate.canonicalBytes())))
+      throw unavailable();
     String accountKey =
         ACCOUNT_PREFIX
             + "{"
