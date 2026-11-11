@@ -158,16 +158,6 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
    * read-only physical inspection. Only independently verified postimages produce a private
    * readback capability.
    */
-  /** Unqualified historical compositions have no capacity authority and cannot admit. */
-  Readback finalizeOriginalNewOnce(
-      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
-      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
-      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
-      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
-      long absoluteDeadlineMillis) {
-    throw unavailable();
-  }
-
   Readback finalizeOriginalNewOnce(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       CanonicalGameplayOriginalNewAuthenticatedSession.Template template,

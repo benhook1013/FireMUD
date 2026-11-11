@@ -271,6 +271,89 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void mismatchedCapacityRequestRefusesBeforeAccountCommit() throws Exception {
+    try (Session session = session()) {
+      var original = session.capacityRequest;
+      var mismatched =
+          new TenantCapacityAdmission.Request(
+                  new TenantCapacityAdmission.Identity(
+                      original.identity().tenantId(),
+                      original.identity().requestId(),
+                      UUID.randomUUID()),
+                  original.admissionAttemptId(),
+                  original.capacityRearmFence(),
+                  original.targetNamespace(),
+                  original.context(),
+                  original.operation(),
+                  original.priorShape(),
+                  original.requestedShape(),
+                  original.evidence(),
+                  original.capacityDelta(),
+                  null)
+              .withDigest();
+      mismatched.requireStructurallyValid();
+      String capacityBefore = session.capacityImage();
+      var gsBefore = session.gs.capacityStateImage();
+      for (int attempt = 0; attempt < 2; attempt++) {
+        assertThatThrownBy(
+                () ->
+                    session.gs.complete(
+                        session.client,
+                        session.jwks,
+                        session.jwt,
+                        System.currentTimeMillis() + 10_000L,
+                        session.capacityClient,
+                        mismatched))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+        assertThat(session.gs.capacityStateImage()).isEqualTo(gsBefore);
+        assertThat(session.gs.finalReadCalls()).isZero();
+      }
+
+      // A structurally valid non-creating observation reaches the real Account policy owner.
+      var denied = session.retainControlledEvaluation(false, null);
+      denied.requireStructurallyValid();
+      String beforeDenial = session.capacityImage();
+      byte[] candidate = session.gs.physicalSession();
+      assertThatThrownBy(
+              () ->
+                  session.gs.complete(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      System.currentTimeMillis() + 10_000L,
+                      session.capacityClient,
+                      denied))
+          .isInstanceOf(IllegalStateException.class)
+          .hasCauseInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertCapacityFailure(
+                      (StatusRuntimeException) failure.getCause(),
+                      Status.Code.RESOURCE_EXHAUSTED,
+                      "TENANT_BILLING_BLOCKED"));
+      assertThat(session.capacityImage()).isEqualTo(beforeDenial);
+      assertProvisionalUnchanged(session, candidate);
+    }
+    try (Session session = session()) {
+      var request = session.capacityRequest;
+      byte[] candidate = session.gs.physicalSession();
+      var fault =
+          session.gs.commitThenMoveSelectedOwnerForFault(
+              session.capacityClient, request, System.currentTimeMillis() + 10_000L);
+      fault.reservation().requireBinding(request);
+      assertThat(fault.reservation().state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      String committedCapacity = session.capacityImage();
+      var movedGs = session.gs.capacityStateImage();
+      assertThatThrownBy(fault.bindOriginal()::run).isInstanceOf(IllegalStateException.class);
+      assertThat(session.capacityImage()).isEqualTo(committedCapacity);
+      assertThat(session.gs.capacityStateImage()).isEqualTo(movedGs);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(session.gs.finalReadCalls()).isZero();
+    }
+  }
+
+  @Test
   void actualPostActiveSqlConfirmationLossRecoversThroughFreshProtectedFinalRead()
       throws Exception {
     try (Session session = session();
