@@ -548,25 +548,21 @@ public final class CanonicalHostingSubscriptionTestFixture {
               AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose
                   .INITIAL_CONFIRMATION);
       var evidence =
-          reauthentication
-              .reauthenticate(
-                  new AccountRecentReauthenticationService.Request(
-                      UUID.randomUUID(),
-                      invoice.ownerAccountId(),
-                      AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
-                      requestId,
-                      billingContext,
-                      account.getEmail(),
-                      password));
+          reauthentication.reauthenticate(
+              new AccountRecentReauthenticationService.Request(
+                  UUID.randomUUID(),
+                  invoice.ownerAccountId(),
+                  AccountRecentReauthenticationPolicy.BILLING_PURPOSE,
+                  requestId,
+                  billingContext,
+                  account.getEmail(),
+                  password));
       var prepared =
           in(
               transaction,
               () -> {
                 payments.bindReauthenticationContext(
-                    invoice.ownerAccountId(),
-                    invoice.subscriptionId(),
-                    billingContext,
-                    evidence);
+                    invoice.ownerAccountId(), invoice.subscriptionId(), billingContext, evidence);
                 reauthentication.validateAndConsumeLocked(
                     evidence,
                     invoice.ownerAccountId(),

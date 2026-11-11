@@ -18,6 +18,15 @@ export interface FirstInvoice {
 export interface BillingReauthentication {
   requestId: string;
   confirmationRequestId: string;
+  billingBinding: {
+    originalRequestId: string;
+    expectedRowVersion: number;
+    expectedAuthorizationVersion: number;
+    acceptedTupleDigest: string;
+    invoiceExpiresAt: string;
+    authorizationPurpose:
+      'INITIAL_CONFIRMATION' | 'PRE_ROW_RENEWAL' | 'FOLLOWUP_RENEWAL';
+  };
   email: string;
   secret: string;
 }

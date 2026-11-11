@@ -138,8 +138,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               issued.sources().manager);
       var renewalGate = new OwnerEntryGate("/first-invoice/renew");
       try (var https =
-          new HttpsReceiver(
-              temporary, new AccountHostingFirstInvoiceController(payments), renewalGate);
+              new HttpsReceiver(
+                  temporary, new AccountHostingFirstInvoiceController(payments), renewalGate);
           var requestExecutor = new TestRequestExecutor();
           var releaseRenewalGate = renewalGate) {
         String path =
@@ -177,7 +177,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         assertThat(unboundProof.statusCode()).isEqualTo(409);
         assertThat(count(hosting, "SELECT count(*) FROM account_recent_reauthentication_evidence"))
             .isZero();
-        assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_operation_fences"))
+        assertThat(
+                count(hosting, "SELECT count(*) FROM subscription_first_invoice_operation_fences"))
             .isZero();
         var proof =
             https.request(
@@ -278,16 +279,21 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                     + "subscription_first_invoice_authorizations FOR EACH ROW "
                     + "EXECUTE FUNCTION reject_first_invoice_authorization()");
         try {
-          assertThat(https.request("POST", path + "/confirm", issued.compact(), consent).statusCode())
+          assertThat(
+                  https.request("POST", path + "/confirm", issued.compact(), consent).statusCode())
               .isEqualTo(500);
           assertThat(consumptionCount(hosting, evidence)).isZero();
-          assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_confirmations"))
+          assertThat(
+                  count(hosting, "SELECT count(*) FROM subscription_first_invoice_confirmations"))
               .isZero();
           assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_dispatches"))
               .isZero();
-          assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
+          assertThat(
+                  count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
               .isZero();
-          assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_operation_fences"))
+          assertThat(
+                  count(
+                      hosting, "SELECT count(*) FROM subscription_first_invoice_operation_fences"))
               .isOne();
           assertNoReceipt(hosting);
           assertThat(
@@ -316,10 +322,22 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         var retryStart = new CountDownLatch(1);
         var exactRetryOne =
             asyncRequest(
-                https, "POST", path + "/confirm", issued.compact(), consent, retryStart, requestExecutor);
+                https,
+                "POST",
+                path + "/confirm",
+                issued.compact(),
+                consent,
+                retryStart,
+                requestExecutor);
         var exactRetryTwo =
             asyncRequest(
-                https, "POST", path + "/confirm", issued.compact(), consent, retryStart, requestExecutor);
+                https,
+                "POST",
+                path + "/confirm",
+                issued.compact(),
+                consent,
+                retryStart,
+                requestExecutor);
         retryStart.countDown();
         var handoff = exactRetryOne.get(60, TimeUnit.SECONDS);
         var duplicateHandoff = exactRetryTwo.get(60, TimeUnit.SECONDS);
@@ -526,8 +544,7 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               issued.sources().manager,
               hosting.clock(),
               new AccountControlUiResponseCryptography(
-                  new AccountControlUiKeyring(temporary.resolve("pre-row-custody")),
-                  hosting.clock()));
+                  new AccountControlUiKeyring(temporary.resolve("custody")), hosting.clock()));
       var payments =
           new AccountHostingFirstInvoicePaymentService(
               issued.actors(),
@@ -541,8 +558,11 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
       var gate = new OwnerEntryGate("/first-invoice/confirm");
       var renewalGate = new OwnerEntryGate("/first-invoice/renew", 2, false);
       try (var https =
-          new HttpsReceiver(
-              temporary, new AccountHostingFirstInvoiceController(payments), gate, renewalGate);
+              new HttpsReceiver(
+                  temporary,
+                  new AccountHostingFirstInvoiceController(payments),
+                  gate,
+                  renewalGate);
           var requestExecutor = new TestRequestExecutor();
           var releaseConfirmationGate = gate;
           var releaseRenewalGate = renewalGate) {
@@ -656,7 +676,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         var changedRenewal = new java.util.HashMap<>(renewal);
         changedRenewal.put("acceptedTupleDigest", "sha256:" + "c".repeat(64));
         assertThat(
-                https.request("POST", path + "/renew", issued.compact(), changedRenewal)
+                https
+                    .request("POST", path + "/renew", issued.compact(), changedRenewal)
                     .statusCode())
             .isEqualTo(409);
         assertThat(consumptionCount(hosting, winningEvidence)).isZero();
@@ -684,7 +705,13 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         renewalGate.arm();
         var firstRenewal =
             asyncRequest(
-                https, "POST", path + "/renew", issued.compact(), renewal, renewalStart, requestExecutor);
+                https,
+                "POST",
+                path + "/renew",
+                issued.compact(),
+                renewal,
+                renewalStart,
+                requestExecutor);
         var secondRenewal =
             asyncRequest(
                 https,
@@ -705,7 +732,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         var renewalWinner = firstRenewalWon ? firstRenewalResponse : secondRenewalResponse;
         Map<String, Object> winningRenewal = firstRenewalWon ? renewal : competingRenewal;
         Map<String, Object> losingRenewal = firstRenewalWon ? competingRenewal : renewal;
-        UUID winnerAuthorizationId = firstRenewalWon ? winningAuthorization : competingAuthorization;
+        UUID winnerAuthorizationId =
+            firstRenewalWon ? winningAuthorization : competingAuthorization;
         UUID winnerEvidenceId = firstRenewalWon ? winningEvidence : competingEvidence;
         UUID losingEvidenceId = firstRenewalWon ? competingEvidence : winningEvidence;
         assertThat(renewalWinner.statusCode()).isEqualTo(200);
@@ -773,11 +801,17 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                     .toString())
             .isEqualTo(hosting.lastFirstInvoiceConfirmationIdempotencyKey());
 
-        assertThat(https.request("POST", path + "/renew", issued.compact(), losingRenewal).statusCode())
+        assertThat(
+                https
+                    .request("POST", path + "/renew", issued.compact(), losingRenewal)
+                    .statusCode())
             .isEqualTo(409);
         assertThat(consumptionCount(hosting, losingEvidenceId)).isZero();
 
-        assertThat(https.request("POST", path + "/renew", issued.compact(), winningRenewal).statusCode())
+        assertThat(
+                https
+                    .request("POST", path + "/renew", issued.compact(), winningRenewal)
+                    .statusCode())
             .isEqualTo(200);
         assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
         assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
@@ -797,7 +831,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                         openingEvidence))
             .isEqualTo(evidenceBefore);
         JsonNode after = JSON.readTree(https.request("GET", path, issued.compact(), null).body());
-        assertThat(after.path("confirmationRequestId").asText()).isEqualTo(originalRequestId.toString());
+        assertThat(after.path("confirmationRequestId").asText())
+            .isEqualTo(originalRequestId.toString());
         assertThat(after.path("authorizationVersion").asLong()).isEqualTo(1L);
         assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
         UUID expiredAuthorization = UUID.randomUUID();
@@ -842,7 +877,10 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 tuple.path("tupleDigest").asText(),
                 "acceptCharge",
                 true);
-        assertThat(https.request("POST", path + "/renew", issued.compact(), expiredRenewal).statusCode())
+        assertThat(
+                https
+                    .request("POST", path + "/renew", issued.compact(), expiredRenewal)
+                    .statusCode())
             .isEqualTo(409);
         assertThat(consumptionCount(hosting, expiredEvidence)).isZero();
         assertThat(count(hosting, "SELECT count(*) FROM subscription_first_invoice_authorizations"))
@@ -954,9 +992,7 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
     }
 
     private HttpsReceiver(
-        Path directory,
-        AccountHostingFirstInvoiceController controller,
-        OwnerEntryGate... gates)
+        Path directory, AccountHostingFirstInvoiceController controller, OwnerEntryGate... gates)
         throws Exception {
       Path tls = Files.createDirectory(directory.resolve("https"));
       var pki =

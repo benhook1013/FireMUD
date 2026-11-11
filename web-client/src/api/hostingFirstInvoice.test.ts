@@ -104,6 +104,14 @@ describe('first-invoice owner API', () => {
     const reauth = {
       requestId: '44444444-4444-4444-8444-444444444444',
       confirmationRequestId: '55555555-5555-4555-8555-555555555555',
+      billingBinding: {
+        originalRequestId: '55555555-5555-4555-8555-555555555555',
+        expectedRowVersion: invoice.expectedRowVersion,
+        expectedAuthorizationVersion: 0,
+        acceptedTupleDigest: invoice.tupleDigest,
+        invoiceExpiresAt: invoice.expiresAt,
+        authorizationPurpose: 'INITIAL_CONFIRMATION' as const,
+      },
       email: 'owner@example.com',
       secret: 'primary-secret',
     };

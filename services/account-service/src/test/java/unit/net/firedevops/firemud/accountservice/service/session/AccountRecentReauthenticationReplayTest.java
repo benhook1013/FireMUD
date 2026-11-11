@@ -183,15 +183,13 @@ class AccountRecentReauthenticationReplayTest {
     Instant expiry = Instant.parse("2026-11-02T01:02:03.123400Z");
     var context = billingContext(bound, expiry);
     when(bound.evidence.billingContext()).thenReturn(context);
+    when(bound.crypto.recentReauthenticationRequestMac(eq("prior-key"), any()))
+        .thenReturn("a".repeat(64));
     when(bound.evidence.requestDigest())
         .thenReturn(
             AccountRecentReauthenticationRepository.digest(
                 AccountRecentReauthenticationRepository.requestPayload(
-                    bound.requestId,
-                    bound.account,
-                    bound.purpose,
-                    bound.operation,
-                    context)));
+                    bound.requestId, bound.account, bound.purpose, bound.operation, context)));
     var exactRequest =
         new AccountRecentReauthenticationService.Request(
             bound.requestId,

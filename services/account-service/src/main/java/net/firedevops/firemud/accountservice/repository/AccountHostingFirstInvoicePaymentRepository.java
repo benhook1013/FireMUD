@@ -199,8 +199,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
 
   /**
    * Stores the original reauthentication as a durable, exact operation fence, or validates a
-   * separately bound renewal attempt against that fence or an already retained confirmation.
-   * The caller holds the current authenticated Account and exact reauthentication evidence locks.
+   * separately bound renewal attempt against that fence or an already retained confirmation. The
+   * caller holds the current authenticated Account and exact reauthentication evidence locks.
    */
   public void bindReauthenticationContext(
       UUID actor,
@@ -247,19 +247,22 @@ public final class AccountHostingFirstInvoicePaymentRepository {
       if (context.expectedAuthorizationVersion() != 0L) throw refused();
       if (original == null) {
         if (currentAuthorizationVersion != 0L
-            || dsl.fetchExists(
-                "SELECT 1 FROM subscription_first_invoice_dispatches WHERE subscription_id = ?",
-                subscriptionId)
-            || dsl.fetchExists(
-                "SELECT 1 FROM subscription_first_invoice_command_claims WHERE subscription_id = ?",
-                subscriptionId)) throw refused();
+            || dsl.fetchOne(
+                    "SELECT 1 FROM subscription_first_invoice_dispatches WHERE subscription_id = ? LIMIT 1",
+                    subscriptionId)
+                != null
+            || dsl.fetchOne(
+                    "SELECT 1 FROM subscription_first_invoice_command_claims WHERE subscription_id = ? LIMIT 1",
+                    subscriptionId)
+                != null) throw refused();
       } else {
         Record winner = authorization(context.authorizationRequestId());
         if (!context.originalRequestId().equals(original.get("request_id", UUID.class))
             || winner == null
             || winner.get("authorization_version", Long.class) != 1L
-            || !evidence.evidenceId().equals(
-                winner.get("reauthentication_evidence_id", UUID.class))) throw refused();
+            || !evidence
+                .evidenceId()
+                .equals(winner.get("reauthentication_evidence_id", UUID.class))) throw refused();
       }
       return;
     }
@@ -273,8 +276,10 @@ public final class AccountHostingFirstInvoicePaymentRepository {
     if (priorAttempt != null) {
       if (priorAttempt.get("authorization_version", Long.class)
               != context.expectedAuthorizationVersion() + 1L
-          || !evidence.evidenceId().equals(
-              priorAttempt.get("reauthentication_evidence_id", UUID.class))) throw refused();
+          || !evidence
+              .evidenceId()
+              .equals(priorAttempt.get("reauthentication_evidence_id", UUID.class)))
+        throw refused();
     } else if (currentAuthorizationVersion != context.expectedAuthorizationVersion()) {
       throw refused();
     }
@@ -419,8 +424,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
             || (expectedAuthorizationVersion == 0L
                 && context.authorizationPurpose() != BillingAuthorizationPurpose.PRE_ROW_RENEWAL)
             || (expectedAuthorizationVersion > 0L
-                && context.authorizationPurpose()
-                    != BillingAuthorizationPurpose.FOLLOWUP_RENEWAL)) throw refused();
+                && context.authorizationPurpose() != BillingAuthorizationPurpose.FOLLOWUP_RENEWAL))
+          throw refused();
         if (context.authorizationPurpose() == BillingAuthorizationPurpose.PRE_ROW_RENEWAL
             || fence != null) {
           requireFenceMatches(fence, invoice, actor, context, null);
@@ -544,8 +549,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || (expectedEvidenceId != null
             && !context.digest().equals(fence.get("binding_digest", String.class)))
         || (expectedEvidenceId != null
-            && !expectedEvidenceId.equals(
-                fence.get("reauthentication_evidence_id", UUID.class)))) throw refused();
+            && !expectedEvidenceId.equals(fence.get("reauthentication_evidence_id", UUID.class))))
+      throw refused();
   }
 
   private void retainAuthorization(

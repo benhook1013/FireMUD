@@ -305,7 +305,9 @@ public final class AccountRecentReauthenticationRepository {
       AccountRecentReauthenticationEvidence.BillingContext billingContext) {
     String version = billingContext == null ? "v1" : "v2";
     String payload =
-        "account-recent-reauthentication-request/" + version + "\n"
+        "account-recent-reauthentication-request/"
+            + version
+            + "\n"
             + "requestId="
             + requestId
             + "\naccountId="
@@ -347,8 +349,7 @@ public final class AccountRecentReauthenticationRepository {
       UUID operationId = required(row, "creation_operation_id", UUID.class);
       byte[] payload = required(row, "request_payload", byte[].class);
       String requestDigest = required(row, "request_digest", String.class);
-      AccountRecentReauthenticationEvidence.BillingContext context =
-          billingContext(row, accountId);
+      AccountRecentReauthenticationEvidence.BillingContext context = billingContext(row, accountId);
       if (!requestDigest.equals(digest(payload))
           || !java.util.Arrays.equals(
               payload, requestPayload(requestId, accountId, purpose, operationId, context))) {
@@ -413,12 +414,10 @@ public final class AccountRecentReauthenticationRepository {
     String tupleDigest = row.get("billing_context_tuple_digest", String.class);
     Long expectedRowVersion = row.get("billing_context_expected_row_version", Long.class);
     OffsetDateTime expiresAt = row.get("billing_context_invoice_expires_at", OffsetDateTime.class);
-    UUID authorizationRequestId =
-        row.get("billing_context_authorization_request_id", UUID.class);
+    UUID authorizationRequestId = row.get("billing_context_authorization_request_id", UUID.class);
     Long expectedAuthorizationVersion =
         row.get("billing_context_expected_authorization_version", Long.class);
-    String authorizationPurpose =
-        row.get("billing_context_authorization_purpose", String.class);
+    String authorizationPurpose = row.get("billing_context_authorization_purpose", String.class);
     String digest = row.get("billing_context_digest", String.class);
     Object[] fields = {
       subscriptionId,
@@ -463,7 +462,8 @@ public final class AccountRecentReauthenticationRepository {
       case ORIGINAL_REQUEST_ID -> context.originalRequestId();
       case TUPLE_DIGEST -> context.tupleDigest();
       case EXPECTED_ROW_VERSION -> context.expectedRowVersion();
-      case INVOICE_EXPIRES_AT -> OffsetDateTime.ofInstant(context.invoiceExpiresAt(), ZoneOffset.UTC);
+      case INVOICE_EXPIRES_AT ->
+          OffsetDateTime.ofInstant(context.invoiceExpiresAt(), ZoneOffset.UTC);
       case AUTHORIZATION_REQUEST_ID -> context.authorizationRequestId();
       case EXPECTED_AUTHORIZATION_VERSION -> context.expectedAuthorizationVersion();
       case AUTHORIZATION_PURPOSE -> context.authorizationPurpose().name();

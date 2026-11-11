@@ -114,6 +114,9 @@ describe('owner first-invoice checkout', () => {
     const { client, stripe } = setup();
     await screen.findByText('in_existing');
     expect(
+      screen.queryByRole('button', { name: 'Renew exact authorization' })
+    ).toBeNull();
+    expect(
       (
         screen.getByRole('button', {
           name: 'Authorize first-invoice charge',
@@ -135,6 +138,14 @@ describe('owner first-invoice checkout', () => {
       email: 'owner@example.com',
       secret: 'primary-secret',
       confirmationRequestId: request.requestId,
+      billingBinding: {
+        originalRequestId: request.requestId,
+        expectedRowVersion: initial.expectedRowVersion,
+        expectedAuthorizationVersion: 0,
+        acceptedTupleDigest: initial.tupleDigest,
+        invoiceExpiresAt: initial.expiresAt,
+        authorizationPurpose: 'INITIAL_CONFIRMATION',
+      },
     });
     expect(reauth.requestId).not.toBe(request.requestId);
     expect(request).toMatchObject({
@@ -226,7 +237,7 @@ describe('owner first-invoice checkout', () => {
   });
 
   it.each([409, 410])(
-    'keeps an uncertain original request held after status %i and a null confirmation ID',
+    'explicitly renews the same original operation after status %i and no confirmation row',
     async (status) => {
       const { client, stripe, setCurrent } = setup();
       client.confirm
@@ -241,7 +252,7 @@ describe('owner first-invoice checkout', () => {
         screen.getByRole('button', { name: 'Resume exact confirmation' })
       );
       await screen.findByText(
-        'Your earlier confirmation is unresolved. Check Account status for this same payment. Do not start another payment. Authorization cannot safely be renewed yet.'
+        'Your earlier confirmation is unresolved. You can explicitly renew authorization for this same invoice and original payment operation.'
       );
       expect(client.confirm.mock.calls[1]).toEqual(
         client.confirm.mock.calls[0]
@@ -251,8 +262,8 @@ describe('owner first-invoice checkout', () => {
         screen.queryByLabelText('Primary authentication secret')
       ).toBeNull();
       expect(
-        screen.queryByRole('button', { name: 'Renew exact authorization' })
-      ).toBeNull();
+        screen.getByRole('button', { name: 'Renew exact authorization' })
+      ).toBeTruthy();
 
       for (let count = 0; count < 2; count += 1) {
         const reads = client.read.mock.calls.length;
@@ -280,12 +291,16 @@ describe('owner first-invoice checkout', () => {
         'private uncertain response'
       );
 
-      // A later read of that exact retained operation enables the existing explicit renewal path.
-      setCurrent({
-        ...initial,
-        confirmationRequestId: original.requestId,
-        authorizationVersion: 1,
-      });
+      // A different invoice tuple cannot borrow the original operation's authority.
+      setCurrent({ ...initial, paymentIntentId: 'pi_changed' });
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Check Account status' })
+      );
+      await screen.findByText('pi_changed');
+      expect(
+        screen.queryByRole('button', { name: 'Renew exact authorization' })
+      ).toBeNull();
+      setCurrent(initial);
       fireEvent.click(
         screen.getByRole('button', { name: 'Check Account status' })
       );
@@ -317,9 +332,26 @@ describe('owner first-invoice checkout', () => {
         requestId: original.requestId,
         acceptedTupleDigest: original.acceptedTupleDigest,
         expectedRowVersion: original.expectedRowVersion,
-        expectedAuthorizationVersion: 1,
+        expectedAuthorizationVersion: 0,
         reauthenticationEvidenceId: '55555555-5555-4555-8555-555555555555',
         acceptCharge: true,
+      });
+      const renewRequest = client.renew.mock.calls[0][2];
+      const renewalProof = client.reauthenticate.mock.calls[1][1];
+      expect(renewRequest.authorizationRequestId).not.toBe(original.requestId);
+      expect(renewalProof.confirmationRequestId).toBe(
+        renewRequest.authorizationRequestId
+      );
+      expect(renewalProof.requestId).not.toBe(
+        client.reauthenticate.mock.calls[0][1].requestId
+      );
+      expect(renewalProof.billingBinding).toEqual({
+        originalRequestId: original.requestId,
+        expectedRowVersion: original.expectedRowVersion,
+        expectedAuthorizationVersion: 0,
+        acceptedTupleDigest: original.acceptedTupleDigest,
+        invoiceExpiresAt: initial.expiresAt,
+        authorizationPurpose: 'PRE_ROW_RENEWAL',
       });
       expect(client.confirm).toHaveBeenCalledTimes(2);
       expect(stripe.handleNextAction).not.toHaveBeenCalled();
@@ -459,6 +491,14 @@ describe('owner first-invoice checkout', () => {
     expect(renewed.authorizationRequestId).not.toBe(original);
     expect(client.reauthenticate.mock.calls[0][1]).toMatchObject({
       confirmationRequestId: renewed.authorizationRequestId,
+      billingBinding: {
+        originalRequestId: original,
+        expectedRowVersion: initial.expectedRowVersion,
+        expectedAuthorizationVersion: 2,
+        acceptedTupleDigest: initial.tupleDigest,
+        invoiceExpiresAt: initial.expiresAt,
+        authorizationPurpose: 'FOLLOWUP_RENEWAL',
+      },
       secret: 'fresh-secret',
     });
     expect(client.confirm).not.toHaveBeenCalled();

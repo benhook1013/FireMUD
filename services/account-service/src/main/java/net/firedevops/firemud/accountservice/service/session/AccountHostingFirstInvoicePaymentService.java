@@ -126,7 +126,8 @@ public final class AccountHostingFirstInvoicePaymentService {
     if (expectedRowVersion != snapshot.rowVersion()
         || !Objects.equals(acceptedTupleDigest, snapshot.invoice().digest())
         || !Objects.equals(invoiceExpiresAt, snapshot.invoice().expiresAt())) {
-      throw new IllegalStateException("Exact current first-invoice reauthentication binding refused");
+      throw new IllegalStateException(
+          "Exact current first-invoice reauthentication binding refused");
     }
     var context =
         new AccountRecentReauthenticationEvidence.BillingContext(
@@ -158,8 +159,7 @@ public final class AccountHostingFirstInvoicePaymentService {
           if (!context.equals(current.billingContext())) {
             throw new IllegalStateException("Exact billing evidence context refused");
           }
-          payments.bindReauthenticationContext(
-              actor.accountId(), subscriptionId, context, current);
+          payments.bindReauthenticationContext(actor.accountId(), subscriptionId, context, current);
           return current.evidenceId();
         });
   }

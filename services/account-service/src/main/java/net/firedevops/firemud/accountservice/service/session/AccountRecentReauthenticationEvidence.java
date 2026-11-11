@@ -9,7 +9,6 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
-import net.firedevops.firemud.accountservice.repository.AccountBillingCustomerRecord;
 
 /** Immutable typed handle for one retained Account-authenticated reauthentication operation. */
 public final class AccountRecentReauthenticationEvidence {
@@ -241,14 +240,21 @@ public final class AccountRecentReauthenticationEvidence {
       UUID authorizationRequestId,
       long expectedAuthorizationVersion,
       BillingAuthorizationPurpose authorizationPurpose) {
+    private static final UUID NIL_UUID = new UUID(0L, 0L);
     private static final DateTimeFormatter CANONICAL_MICROSECOND_INSTANT =
         new DateTimeFormatterBuilder().appendInstant(6).toFormatter(Locale.ROOT);
 
+    private static void requireUuid(UUID value) {
+      if (value == null || NIL_UUID.equals(value)) {
+        throw new IllegalArgumentException("Non-nil billing UUID is required");
+      }
+    }
+
     public BillingContext {
-      AccountBillingCustomerRecord.requireUuid(accountId);
-      AccountBillingCustomerRecord.requireUuid(subscriptionId);
-      AccountBillingCustomerRecord.requireUuid(originalRequestId);
-      AccountBillingCustomerRecord.requireUuid(authorizationRequestId);
+      requireUuid(accountId);
+      requireUuid(subscriptionId);
+      requireUuid(originalRequestId);
+      requireUuid(authorizationRequestId);
       Objects.requireNonNull(invoiceExpiresAt);
       Objects.requireNonNull(authorizationPurpose);
       if (tupleDigest == null
@@ -275,7 +281,8 @@ public final class AccountRecentReauthenticationEvidence {
         case FOLLOWUP_RENEWAL -> {
           if (originalRequestId.equals(authorizationRequestId)
               || expectedAuthorizationVersion < 1L) {
-            throw new IllegalArgumentException("Follow-up renewal must name a distinct retained attempt");
+            throw new IllegalArgumentException(
+                "Follow-up renewal must name a distinct retained attempt");
           }
         }
       }
