@@ -798,9 +798,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
           new org.jooq.impl.DefaultExecuteListener() {
             @Override
             public void executeStart(org.jooq.ExecuteContext context) {
-              if (context.sql() == null
-                  || !context.sql().contains("game_session_canonical_binding_inventory_clock")
-                  || !context.sql().contains("FOR UPDATE")) return;
+              String sql = context.sql();
+              if (sql == null
+                  || !sql.contains("game_session_canonical_binding_inventory_clock")
+                  || !sql.contains("FOR UPDATE")) return;
               // This derived observer belongs only to the successor inventory/status context.
               // The independently composed transfer has already retained the positive winner.
               String status =
