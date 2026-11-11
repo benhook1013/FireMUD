@@ -17,6 +17,7 @@ import net.firedevops.firemud.accountservice.service.exception.AuthenticationExc
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceService;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.junit.jupiter.api.Test;
 
@@ -68,8 +69,33 @@ class AccountControlUiAuthenticationGrpcServiceTest {
     assertThat(result.value.getAuthTokenList()).containsExactly("controlled.compact.jwt");
     assertThat(result.value.getExpiresAtEpochSecondsList()).containsExactly(2_000_000_300L);
     assertThat(returned).containsOnly((byte) 0);
+    var signIn =
+        org.mockito.ArgumentCaptor.forClass(
+            AccountControlUiIssuanceService.AccountSignInRequest.class);
+    verify(issuer).issueAccount(signIn.capture());
+    assertThat(signIn.getValue().sourceContext()).isEqualTo(request.sourceContext());
     verify(credential).close();
     verify(actors).authenticateAccount("controlled.compact.jwt");
+  }
+
+  @Test
+  void missingMalformedOrNonHttpSourceRefusesBeforeIssuance() {
+    var issuer = mock(AccountControlUiIssuanceService.class);
+    var actors = mock(AccountControlUiActorService.class);
+    var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
+    var wire = AccountControlUiAuthenticationGrpcCodec.toRequest(request("test"));
+    for (var invalid :
+        java.util.List.of(
+            wire.toBuilder().clearCanonicalClientAddress().build(),
+            wire.toBuilder().setCanonicalClientAddress(0, "untrusted-host.test").build(),
+            wire.toBuilder().addCanonicalClientAddress("192.0.2.11").build(),
+            wire.toBuilder().clearTransportClass().build(),
+            wire.toBuilder().setTransportClassValue(0, 99).build())) {
+      var result = new Result();
+      gateway().run(() -> receiver.authLogin(invalid, result));
+      assertThat(result.failureCode).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    }
+    verifyNoInteractions(issuer, actors);
   }
 
   @Test
@@ -115,6 +141,8 @@ class AccountControlUiAuthenticationGrpcServiceTest {
             .addCallerContextId(UUID.randomUUID().toString())
             .addEmail("owner@example.test")
             .addSecret("s".repeat(1025))
+            .addCanonicalClientAddress("192.0.2.10")
+            .addTransportClassValue(1)
             .build();
     var result = new Result();
 
@@ -169,7 +197,12 @@ class AccountControlUiAuthenticationGrpcServiceTest {
 
   private static AccountControlUiAuthenticationGrpcCodec.Request request(String namespace) {
     return new AccountControlUiAuthenticationGrpcCodec.Request(
-        UUID.randomUUID(), UUID.randomUUID(), namespace, "owner@example.test", "controlled-secret");
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        namespace,
+        "owner@example.test",
+        "controlled-secret",
+        new SourceContext("192.0.2.10"));
   }
 
   private static Context gateway() {

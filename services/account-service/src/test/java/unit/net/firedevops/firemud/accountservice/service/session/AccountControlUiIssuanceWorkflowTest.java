@@ -30,6 +30,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -397,7 +398,14 @@ class AccountControlUiIssuanceWorkflowTest {
         .containsEntry("authorizationScope", "ACCOUNT")
         .doesNotContainKey("canonicalTenantId");
     assertThat(requestFields)
-        .doesNotContainKeys("tenantId", "environmentId", "clusterId", "namespace");
+        .doesNotContainKeys(
+            "tenantId",
+            "environmentId",
+            "clusterId",
+            "namespace",
+            "canonicalClientAddress",
+            "transportClass",
+            "sourceContext");
     Map<String, Object> envelopeFields =
         tools.jackson.databind.json.JsonMapper.builder()
             .build()
@@ -433,6 +441,24 @@ class AccountControlUiIssuanceWorkflowTest {
   }
 
   @Test
+  void accountSignInRequiresSourceBeforeAnyPrimaryOrIssuanceWork() {
+    Fixture fixture = new Fixture(NOW);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .service()
+                    .issueAccount(
+                        new AccountControlUiIssuanceService.AccountSignInRequest(
+                            fixture.requestId,
+                            "creator@example.test",
+                            "test-only-secret",
+                            fixture.context,
+                            null)))
+        .isInstanceOf(IllegalArgumentException.class);
+    org.mockito.Mockito.verifyNoInteractions(fixture.primary, fixture.operations, fixture.signers);
+  }
+
+  @Test
   void accountGlobalReplayReturnsOriginalCredentialAndCrossScopeRetriesConflict() {
     Fixture replay = new Fixture(NOW.plusSeconds(30));
     byte[] exactCredential = "test-only-account-original".getBytes(StandardCharsets.US_ASCII);
@@ -451,8 +477,16 @@ class AccountControlUiIssuanceWorkflowTest {
     when(actor.issuanceOperationId()).thenReturn(replay.operationId);
     when(replay.actors.authenticateAccount("test-only-account-original")).thenReturn(actor);
 
+    var retry = replay.accountRequest();
+    var changedSourceRetry =
+        new AccountControlUiIssuanceService.AccountSignInRequest(
+            retry.requestId(),
+            retry.email(),
+            retry.secret(),
+            retry.callerContextId(),
+            new SourceContext("198.51.100.20"));
     try (var ignored = replay.withPeer(ISSUER)) {
-      try (var issued = replay.service().issueAccount(replay.accountRequest())) {
+      try (var issued = replay.service().issueAccount(changedSourceRetry)) {
         assertThat(issued.compactBytes()).containsExactly(expectedCredential);
       }
     }
@@ -1033,7 +1067,11 @@ class AccountControlUiIssuanceWorkflowTest {
 
     AccountControlUiIssuanceService.AccountSignInRequest accountRequest() {
       return new AccountControlUiIssuanceService.AccountSignInRequest(
-          requestId, "creator@example.test", "test-only-secret", context);
+          requestId,
+          "creator@example.test",
+          "test-only-secret",
+          context,
+          new SourceContext("192.0.2.10"));
     }
 
     PeerScope withPeer(String uri) {

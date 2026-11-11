@@ -52,6 +52,10 @@ import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.HttpAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
+import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
+import net.firedevops.firemud.springcloudgateway.filter.HeaderTrustFilter;
+import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.apache.catalina.startup.Tomcat;
@@ -167,7 +171,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
               source
                   .dsl
                   .fetchSingle(
-                      "SELECT count(*) FROM account_control_ui_issuance_operations WHERE account_uuid = ?",
+                      "SELECT count(*) FROM account_control_ui_issuance_operations WHERE"
+                          + " account_uuid = ?",
                       account.getAccountUuid())
                   .get(0, Long.class))
           .isZero();
@@ -323,7 +328,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
             source
                 .dsl
                 .fetchSingle(
-                    "SELECT consented_at FROM subscription_first_invoice_confirmations WHERE request_id = ?",
+                    "SELECT consented_at FROM subscription_first_invoice_confirmations WHERE"
+                        + " request_id = ?",
                     confirmation)
                 .get(0, OffsetDateTime.class);
         assertThat(JSON.readTree(success.payload()).path("created").asLong())
@@ -343,7 +349,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                 source
                     .dsl
                     .fetchSingle(
-                        "SELECT count(*) FROM subscription_first_invoice_completions WHERE subscription_id = ?",
+                        "SELECT count(*) FROM subscription_first_invoice_completions WHERE"
+                            + " subscription_id = ?",
                         hosting.creation().subscriptionId())
                     .get(0, Long.class))
             .isOne();
@@ -626,6 +633,18 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         gateway.registerBean(ReactiveStringRedisTemplate.class, () -> rateLimitRedis);
         gateway.registerBean(
             RedisRateLimiter.REDIS_SCRIPT_NAME, RedisScript.class, () -> rateLimitScript);
+        var headerTrust = new GatewayHeaderTrustProperties();
+        gateway.registerBean(
+            HeaderTrustFilter.class,
+            () ->
+                new HeaderTrustFilter(
+                    headerTrust,
+                    new TcpProxyTrustPolicy(
+                        new GatewayTcpProxyListenerProperties(),
+                        headerTrust,
+                        8080,
+                        java.time.Clock.systemUTC(),
+                        java.util.Set.of("test"))));
         gateway.register(
             GatewayWebFlux.class,
             net.firedevops.firemud.springcloudgateway.config.AccountCheckoutReceivingConfiguration

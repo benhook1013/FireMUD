@@ -57,6 +57,7 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionOpera
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
 import net.firedevops.firemud.accountservice.testsupport.AccountStartSessionReservationProofPki;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -795,7 +796,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     assertThat(
             f.dsl
                 .fetchSingle(
-                    "SELECT count(*) AS count FROM account_platform_restriction_current_projections WHERE account_uuid = ?",
+                    "SELECT count(*) AS count FROM account_platform_restriction_current_projections"
+                        + " WHERE account_uuid = ?",
                     accountId)
                 .get("count", Long.class))
         .isEqualTo(2L);
@@ -807,7 +809,11 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     int beforeEnvelopes = f.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"));
     var passwordRequest =
         new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(), account.getEmail(), password, UUID.randomUUID());
+            UUID.randomUUID(),
+            account.getEmail(),
+            password,
+            UUID.randomUUID(),
+            new SourceContext("192.0.2.10"));
     String passwordCompact;
     try (var peer =
             AccountControlUiOwnerSourcesFixture.withPeer(
@@ -903,7 +909,11 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     f.installGlobalOtp(account, otp);
     var otpRequest =
         new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(), account.getEmail(), otp, UUID.randomUUID());
+            UUID.randomUUID(),
+            account.getEmail(),
+            otp,
+            UUID.randomUUID(),
+            new SourceContext("192.0.2.10"));
     byte[] originalCompact;
     Instant expiry, recoveryExpiry;
     try (var peer =
@@ -920,10 +930,18 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
     try (var peer =
             AccountControlUiOwnerSourcesFixture.withPeer(
                 AccountControlUiOwnerSourcesFixture.CALLER);
-        var retry = issuance.issueAccount(otpRequest)) {
+        var retry =
+            issuance.issueAccount(
+                new AccountControlUiIssuanceService.AccountSignInRequest(
+                    otpRequest.requestId(),
+                    otpRequest.email(),
+                    otpRequest.secret(),
+                    otpRequest.callerContextId(),
+                    new SourceContext("198.51.100.20")))) {
       assertThat(retry.compactBytes()).isEqualTo(originalCompact);
       assertThat(retry.expiresAt()).isEqualTo(expiry);
       assertThat(retry.recoveryExpiresAt()).isEqualTo(recoveryExpiry);
+      assertThat(f.tx(() -> operations.countReplayFailures(otpOperation))).isZero();
       assertThatThrownBy(
               () ->
                   issuance.issueAccount(
@@ -931,7 +949,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                           otpRequest.requestId(),
                           account.getEmail(),
                           "changed-secret",
-                          otpRequest.callerContextId())))
+                          otpRequest.callerContextId(),
+                          new SourceContext("192.0.2.10"))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
       assertThatThrownBy(
@@ -941,14 +960,19 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                           otpRequest.requestId(),
                           "changed@example.test",
                           otp,
-                          otpRequest.callerContextId())))
+                          otpRequest.callerContextId(),
+                          new SourceContext("192.0.2.10"))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
       assertThatThrownBy(
               () ->
                   issuance.issueAccount(
                       new AccountControlUiIssuanceService.AccountSignInRequest(
-                          otpRequest.requestId(), account.getEmail(), otp, UUID.randomUUID())))
+                          otpRequest.requestId(),
+                          account.getEmail(),
+                          otp,
+                          UUID.randomUUID(),
+                          new SourceContext("192.0.2.10"))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
       assertThatThrownBy(
@@ -974,7 +998,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                             otpRequest.requestId(),
                             account.getEmail(),
                             "wrong-replay-secret",
-                            otpRequest.callerContextId())))
+                            otpRequest.callerContextId(),
+                            new SourceContext("192.0.2.10"))))
             .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
       }
       try (var afterFailures = issuance.issueAccount(otpRequest)) {
@@ -990,7 +1015,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                           otpRequest.requestId(),
                           account.getEmail(),
                           "fifth-wrong-secret",
-                          otpRequest.callerContextId())))
+                          otpRequest.callerContextId(),
+                          new SourceContext("192.0.2.10"))))
           .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
       assertThatThrownBy(() -> issuance.issueAccount(otpRequest))
           .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
@@ -1087,11 +1113,12 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         fixture
             .dsl
             .fetch(
-                "SELECT category, revision::text AS revision, publication_id::text AS publication_id,"
-                    + " policy_id::text AS policy_id, closure_id::text AS closure_id, policy_rule,"
-                    + " closure_rule, source_identity, source_root, publication_digest,"
-                    + " encode(publication_bytes, 'hex') AS publication_bytes_hex"
-                    + " FROM account_fresh_enrollment_policy_publications ORDER BY category, revision")
+                "SELECT category, revision::text AS revision, publication_id::text AS"
+                    + " publication_id, policy_id::text AS policy_id, closure_id::text AS"
+                    + " closure_id, policy_rule, closure_rule, source_identity, source_root,"
+                    + " publication_digest, encode(publication_bytes, 'hex') AS"
+                    + " publication_bytes_hex FROM account_fresh_enrollment_policy_publications"
+                    + " ORDER BY category, revision")
             .stream()
             .map(record -> Arrays.toString(record.intoArray()))
             .toList();
@@ -1099,8 +1126,8 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
         fixture
             .dsl
             .fetch(
-                "SELECT category, publication_id::text AS publication_id, revision::text AS revision"
-                    + " FROM account_fresh_enrollment_policy_current ORDER BY category")
+                "SELECT category, publication_id::text AS publication_id, revision::text AS"
+                    + " revision FROM account_fresh_enrollment_policy_current ORDER BY category")
             .stream()
             .map(record -> Arrays.toString(record.intoArray()))
             .toList();

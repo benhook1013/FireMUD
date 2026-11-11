@@ -1,5 +1,6 @@
 package net.firedevops.firemud.common.account.auth;
 
+import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -11,6 +12,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.account.v1.AccountControlUiAuthLoginStatus;
+import net.firedevops.firemud.account.v1.AccountControlUiCredentialTransportClass;
 import net.firedevops.firemud.account.v1.AuthLoginRequest;
 import net.firedevops.firemud.account.v1.AuthLoginResponse;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -36,18 +38,46 @@ public final class AccountControlUiAuthenticationGrpcCodec {
    * The secret exists only in this transient request and is deliberately redacted in diagnostics.
    */
   public record Request(
-      UUID requestId, UUID callerContextId, String callerNamespace, String email, String secret) {
+      UUID requestId,
+      UUID callerContextId,
+      String callerNamespace,
+      String email,
+      String secret,
+      SourceContext sourceContext) {
     public Request {
       requireUuid(requestId);
       requireUuid(callerContextId);
       requireNamespace(callerNamespace);
       requireEmail(email);
       requireSecret(secret);
+      if (sourceContext == null) throw invalid();
     }
 
     @Override
     public String toString() {
       return "AccountControlUiLoginRequest[redacted]";
+    }
+  }
+
+  /** Transient Gateway-attested HTTP source. Construction validates shape, not provenance. */
+  public record SourceContext(String canonicalClientAddress) {
+    public SourceContext {
+      if (canonicalClientAddress == null
+          || canonicalClientAddress.length() > 64
+          || !canonicalClientAddress.matches("[0-9a-f:.]+")) throw invalid();
+      try {
+        // Literal-only parsing never performs DNS. Match the Gateway's normalized JDK spelling.
+        if (!InetAddress.ofLiteral(canonicalClientAddress)
+            .getHostAddress()
+            .equals(canonicalClientAddress)) throw invalid();
+      } catch (IllegalArgumentException malformed) {
+        throw invalid();
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "AccountControlUiCredentialSource[redacted]";
     }
   }
 
@@ -93,6 +123,10 @@ public final class AccountControlUiAuthenticationGrpcCodec {
             .addCallerContextId(request.callerContextId().toString())
             .addEmail(request.email())
             .addSecret(request.secret())
+            .addCanonicalClientAddress(request.sourceContext().canonicalClientAddress())
+            .addTransportClass(
+                AccountControlUiCredentialTransportClass
+                    .ACCOUNT_CONTROL_UI_CREDENTIAL_TRANSPORT_CLASS_HTTP)
             .build();
     parseRequest(wire);
     return wire;
@@ -103,12 +137,16 @@ public final class AccountControlUiAuthenticationGrpcCodec {
         || wire.getSerializedSize() > MAX_REQUEST_WIRE_BYTES
         || !wire.getUnknownFields().asMap().isEmpty()) throw invalid();
     if (oneInt(wire.getSchemaVersionList()) != SCHEMA_VERSION) throw invalid();
+    if (oneInt(wire.getTransportClassValueList())
+        != AccountControlUiCredentialTransportClass
+            .ACCOUNT_CONTROL_UI_CREDENTIAL_TRANSPORT_CLASS_HTTP_VALUE) throw invalid();
     return new Request(
         uuid(one(wire.getRequestIdList())),
         uuid(one(wire.getCallerContextIdList())),
         one(wire.getTargetNamespaceList()),
         one(wire.getEmailList()),
-        one(wire.getSecretList()));
+        one(wire.getSecretList()),
+        new SourceContext(one(wire.getCanonicalClientAddressList())));
   }
 
   /** Maps only stable request context into the response; the primary secret is never echoed. */

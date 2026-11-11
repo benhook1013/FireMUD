@@ -17,6 +17,10 @@ import net.firedevops.firemud.common.account.auth.AccountControlUiAuthentication
 import net.firedevops.firemud.springcloudgateway.client.AccountCheckoutHttpClient;
 import net.firedevops.firemud.springcloudgateway.client.AccountControlUiAuthenticationClient;
 import net.firedevops.firemud.springcloudgateway.config.AccountCheckoutReceivingProperties;
+import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
+import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
+import net.firedevops.firemud.springcloudgateway.filter.HeaderTrustFilter;
+import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +32,7 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 class AccountCheckoutGatewayControllerTest {
@@ -72,7 +77,69 @@ class AccountCheckoutGatewayControllerTest {
     assertThat(requestCaptor.getValue().callerContextId()).isEqualTo(CALLER_CONTEXT_ID);
     assertThat(requestCaptor.getValue().callerNamespace()).isEqualTo("checkout-test");
     assertThat(requestCaptor.getValue().secret()).isEqualTo(SECRET);
+    assertThat(requestCaptor.getValue().sourceContext().canonicalClientAddress())
+        .isEqualTo("192.0.2.10");
     assertThat(requestCaptor.getValue().toString()).doesNotContain(SECRET);
+    verifyNoCheckoutCalls(checkoutClient);
+  }
+
+  @Test
+  void canonicalSourceComesFromTrustFilterAndNeverFromUntrustedHeaders() {
+    for (boolean trustedForwarder : new boolean[] {false, true}) {
+      var authClient = mock(AccountControlUiAuthenticationClient.class);
+      var checkoutClient = mock(AccountCheckoutHttpClient.class);
+      var controller =
+          new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
+      when(authClient.login(any()))
+          .thenReturn(
+              new AccountControlUiAuthenticationGrpcCodec.Result(
+                  AccountControlUiAuthenticationGrpcCodec.Outcome.DENIED, null));
+      var headers = new GatewayHeaderTrustProperties();
+      if (trustedForwarder)
+        headers.getForwardedClientIp().setTrustedProxyCidrs(java.util.List.of("192.0.2.0/24"));
+      var request =
+          MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+              .sslInfo(mock(SslInfo.class))
+              .remoteAddress(new java.net.InetSocketAddress("192.0.2.10", 443))
+              .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+              .header("X-Client-IP", "203.0.113.99")
+              .header("X-Forwarded-For", "198.51.100.20")
+              .header("X-Proxy-Client-IP", "203.0.113.98")
+              .body(loginJson());
+      var response =
+          controller.login(canonicalized(MockServerWebExchange.from(request), headers)).block();
+      assertThat(response).isNotNull();
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+      var captured = org.mockito.ArgumentCaptor.forClass(Request.class);
+      verify(authClient).login(captured.capture());
+      assertThat(captured.getValue().sourceContext().canonicalClientAddress())
+          .isEqualTo(trustedForwarder ? "198.51.100.20" : "192.0.2.10");
+    }
+  }
+
+  @Test
+  void absentFilterProofOrUnresolvedPeerRefusesBeforeCredentialForwarding() {
+    var authClient = mock(AccountControlUiAuthenticationClient.class);
+    var checkoutClient = mock(AccountCheckoutHttpClient.class);
+    var controller = new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
+    var request =
+        MockServerHttpRequest.post("https://localhost/api/account/auth/login")
+            .sslInfo(mock(SslInfo.class))
+            .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+            .header("X-Client-IP", "192.0.2.10")
+            .header("X-Forwarded-For", "192.0.2.10")
+            .body(loginJson());
+    for (ServerWebExchange exchange :
+        java.util.List.of(
+            MockServerWebExchange.from(request),
+            canonicalized(
+                MockServerWebExchange.from(request), new GatewayHeaderTrustProperties()))) {
+      var response = controller.login(exchange).block();
+      assertThat(response).isNotNull();
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+      assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+    }
+    verify(authClient, never()).login(any());
     verifyNoCheckoutCalls(checkoutClient);
   }
 
@@ -280,13 +347,37 @@ class AccountCheckoutGatewayControllerTest {
         + "\"}";
   }
 
-  private static MockServerWebExchange secureExchange(String path, String body) {
+  private static ServerWebExchange secureExchange(String path, String body) {
     var request =
         MockServerHttpRequest.method(HttpMethod.POST, URI.create("https://localhost" + path))
             .sslInfo(mock(SslInfo.class))
+            .remoteAddress(new java.net.InetSocketAddress("192.0.2.10", 443))
             .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .body(body);
-    return MockServerWebExchange.from(request);
+    return canonicalized(MockServerWebExchange.from(request), new GatewayHeaderTrustProperties());
+  }
+
+  private static ServerWebExchange canonicalized(
+      ServerWebExchange exchange, GatewayHeaderTrustProperties properties) {
+    var filter =
+        new HeaderTrustFilter(
+            properties,
+            new TcpProxyTrustPolicy(
+                new GatewayTcpProxyListenerProperties(),
+                properties,
+                8080,
+                java.time.Clock.systemUTC(),
+                java.util.Set.of("test")));
+    var result = new java.util.concurrent.atomic.AtomicReference<ServerWebExchange>();
+    filter
+        .filter(
+            exchange,
+            canonical -> {
+              result.set(canonical);
+              return Mono.empty();
+            })
+        .block();
+    return result.get();
   }
 
   private static void verifyNoCheckoutCalls(AccountCheckoutHttpClient checkoutClient) {

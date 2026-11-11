@@ -43,6 +43,26 @@ class AccountCheckoutReceivingConfigurationTest {
   }
 
   @Test
+  void productionProfilesNeverRegisterTheIsolatedAuthenticationReceiver() {
+    for (String profile : java.util.List.of("prod", "production")) {
+      context
+          .withPropertyValues(
+              "spring.profiles.active=" + profile,
+              "firemud.account.checkout-receiving.enabled=true")
+          .run(
+              ctx -> {
+                assertThat(ctx).hasNotFailed();
+                assertThat(ctx).doesNotHaveBean(AccountControlUiAuthenticationGrpcService.class);
+              });
+      context
+          .withPropertyValues(
+              "spring.profiles.active=" + profile + ",isolated-checkout-receiving",
+              "firemud.account.checkout-receiving.enabled=true")
+          .run(ctx -> assertThat(ctx).hasFailed());
+    }
+  }
+
+  @Test
   void isolatedModeWithoutDeliveredInputsRefusesStartup() {
     context
         .withPropertyValues(

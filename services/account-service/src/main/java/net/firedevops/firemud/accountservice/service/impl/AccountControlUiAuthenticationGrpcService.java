@@ -52,7 +52,11 @@ public final class AccountControlUiAuthenticationGrpcService
       if (!namespace.equals(request.callerNamespace())) throw new IllegalArgumentException();
       signInRequest =
           new AccountControlUiIssuanceService.AccountSignInRequest(
-              request.requestId(), request.email(), request.secret(), request.callerContextId());
+              request.requestId(),
+              request.email(),
+              request.secret(),
+              request.callerContextId(),
+              request.sourceContext());
     } catch (IllegalArgumentException invalid) {
       response.onError(
           Status.INVALID_ARGUMENT

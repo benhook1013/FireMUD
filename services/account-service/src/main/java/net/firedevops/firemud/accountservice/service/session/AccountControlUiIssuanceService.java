@@ -15,6 +15,7 @@ import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsServi
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.EmailCanonicalization;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -45,7 +46,8 @@ public final class AccountControlUiIssuanceService {
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification =
-          "Injected primary authentication and Draft fence services remain internal Account owner collaborators.")
+          "Injected primary authentication and Draft fence services remain internal Account owner"
+              + " collaborators.")
   public AccountControlUiIssuanceService(
       AccountServiceImpl primaryAuthentication,
       AccountControlUiIssuanceRepository operations,
@@ -92,7 +94,8 @@ public final class AccountControlUiIssuanceService {
             request.callerContextId,
             AccountControlUiAuthority.ScopeKind.TENANT,
             java.util.Optional.of(request.tenantId),
-            java.util.Optional.of(Objects.requireNonNull(environment))));
+            java.util.Optional.of(Objects.requireNonNull(environment)),
+            java.util.Optional.empty()));
   }
 
   /** Account-global sign-in: no tenant, membership, creator or terms selector is accepted. */
@@ -106,7 +109,8 @@ public final class AccountControlUiIssuanceService {
             request.callerContextId,
             AccountControlUiAuthority.ScopeKind.ACCOUNT,
             java.util.Optional.empty(),
-            java.util.Optional.empty()));
+            java.util.Optional.empty(),
+            java.util.Optional.of(request.sourceContext)));
   }
 
   private IssuedCredential issueInternal(Invocation request) {
@@ -121,6 +125,8 @@ public final class AccountControlUiIssuanceService {
     }
     String email = EmailCanonicalization.normalize(request.email);
     Map<String, Object> requestFields = new java.util.LinkedHashMap<>();
+    // Source is transient new-attempt input. Preserve the immutable v1 credential replay MAC;
+    // a source change neither creates a new operation nor resets its retained failure budget.
     requestFields.put("schema", "account-control-ui-request/v1");
     requestFields.put("requestId", request.requestId.toString());
     requestFields.put("email", email);
@@ -428,13 +434,17 @@ public final class AccountControlUiIssuanceService {
       UUID callerContextId,
       AccountControlUiAuthority.ScopeKind scopeKind,
       java.util.Optional<UUID> tenantId,
-      java.util.Optional<CapturedEnvironmentBoundary> environment) {
+      java.util.Optional<CapturedEnvironmentBoundary> environment,
+      java.util.Optional<SourceContext> sourceContext) {
     private Invocation {
       Objects.requireNonNull(scopeKind);
       Objects.requireNonNull(tenantId);
       Objects.requireNonNull(environment);
+      Objects.requireNonNull(sourceContext);
       boolean tenant = scopeKind == AccountControlUiAuthority.ScopeKind.TENANT;
-      if (tenant != tenantId.isPresent() || tenant != environment.isPresent()) {
+      if (tenant != tenantId.isPresent()
+          || tenant != environment.isPresent()
+          || tenant == sourceContext.isPresent()) {
         throw new IllegalArgumentException(
             "Explicit control-ui scope and source selection required");
       }
@@ -447,7 +457,11 @@ public final class AccountControlUiIssuanceService {
   }
 
   public record AccountSignInRequest(
-      UUID requestId, String email, String secret, UUID callerContextId) {
+      UUID requestId,
+      String email,
+      String secret,
+      UUID callerContextId,
+      SourceContext sourceContext) {
     public AccountSignInRequest {
       if (requestId == null
           || requestId.equals(new UUID(0L, 0L))
@@ -458,7 +472,8 @@ public final class AccountControlUiIssuanceService {
           || email.length() > 254
           || secret == null
           || secret.isEmpty()
-          || secret.length() > 1024) {
+          || secret.length() > 1024
+          || sourceContext == null) {
         throw new IllegalArgumentException("Exact bounded account-global sign-in request required");
       }
     }

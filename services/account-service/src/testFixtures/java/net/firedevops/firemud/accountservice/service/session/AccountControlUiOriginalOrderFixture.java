@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalRec
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -484,7 +485,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     var account = f.createCertifiedGlobalAccount(password);
     var request =
         new AccountControlUiIssuanceService.AccountSignInRequest(
-            UUID.randomUUID(), account.getEmail(), password, UUID.randomUUID());
+            UUID.randomUUID(),
+            account.getEmail(),
+            password,
+            UUID.randomUUID(),
+            new SourceContext("192.0.2.10"));
     String compact;
     try (var peer =
             AccountControlUiOwnerSourcesFixture.withPeer(

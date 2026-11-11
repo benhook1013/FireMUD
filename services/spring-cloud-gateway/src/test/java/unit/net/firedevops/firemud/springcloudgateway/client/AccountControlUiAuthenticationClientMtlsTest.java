@@ -26,6 +26,7 @@ import net.firedevops.firemud.common.account.auth.AccountControlUiAuthentication
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Authenticated;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Outcome;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Request;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -241,6 +242,12 @@ class AccountControlUiAuthenticationClientMtlsTest {
   }
 
   private static Request request() {
-    return new Request(REQUEST_ID, CALLER_CONTEXT_ID, NAMESPACE, "operator@example.test", SECRET);
+    return new Request(
+        REQUEST_ID,
+        CALLER_CONTEXT_ID,
+        NAMESPACE,
+        "operator@example.test",
+        SECRET,
+        new SourceContext("192.0.2.10"));
   }
 }

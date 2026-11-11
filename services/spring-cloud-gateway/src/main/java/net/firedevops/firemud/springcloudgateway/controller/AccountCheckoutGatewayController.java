@@ -12,6 +12,7 @@ import net.firedevops.firemud.springcloudgateway.client.AccountCheckoutHttpClien
 import net.firedevops.firemud.springcloudgateway.client.AccountCheckoutHttpClient.ForwardedResponse;
 import net.firedevops.firemud.springcloudgateway.client.AccountControlUiAuthenticationClient;
 import net.firedevops.firemud.springcloudgateway.config.AccountCheckoutReceivingProperties;
+import net.firedevops.firemud.springcloudgateway.filter.VerifiedHttpClientOrigin;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -83,6 +84,10 @@ public final class AccountCheckoutGatewayController {
     if (!isJsonContentType(contentType)) {
       return Mono.just(jsonResponse(HttpStatus.UNSUPPORTED_MEDIA_TYPE, errorJson("ERROR")));
     }
+    VerifiedHttpClientOrigin origin = VerifiedHttpClientOrigin.from(exchange);
+    if (origin == null) {
+      return Mono.just(jsonResponse(HttpStatus.SERVICE_UNAVAILABLE, errorJson("ERROR")));
+    }
     return boundedBody(exchange, MAX_LOGIN_BODY_BYTES)
         .flatMap(
             body -> {
@@ -97,7 +102,8 @@ public final class AccountCheckoutGatewayController {
                         parseUuid(input.callerContextId()),
                         workloadNamespace,
                         input.email(),
-                        input.secret());
+                        input.secret(),
+                        origin.sourceContext());
               } catch (JacksonException | IllegalArgumentException malformed) {
                 return Mono.just(jsonResponse(HttpStatus.BAD_REQUEST, errorJson("ERROR")));
               }

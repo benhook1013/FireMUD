@@ -9,6 +9,7 @@ import net.firedevops.firemud.account.v1.AccountControlUiAuthLoginStatus;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Authenticated;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Outcome;
 import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.Request;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import org.junit.jupiter.api.Test;
 
 class AccountControlUiAuthenticationGrpcCodecTest {
@@ -30,6 +31,8 @@ class AccountControlUiAuthenticationGrpcCodecTest {
     assertThat(parsed).isEqualTo(request);
     assertThat(request.toString()).doesNotContain(SECRET);
     assertThat(wire.getSecretList()).containsExactly(SECRET);
+    assertThat(parsed.sourceContext().canonicalClientAddress()).isEqualTo("192.0.2.10");
+    assertThat(parsed.sourceContext().toString()).doesNotContain("192.0.2.10");
   }
 
   @Test
@@ -40,7 +43,12 @@ class AccountControlUiAuthenticationGrpcCodecTest {
     assertThat(unicodeBoundarySecret).hasSize(1024);
     Request boundary =
         new Request(
-            REQUEST_ID, CALLER_CONTEXT_ID, NAMESPACE, unicodeBoundaryEmail, unicodeBoundarySecret);
+            REQUEST_ID,
+            CALLER_CONTEXT_ID,
+            NAMESPACE,
+            unicodeBoundaryEmail,
+            unicodeBoundarySecret,
+            new SourceContext("192.0.2.10"));
 
     assertThat(
             AccountControlUiAuthenticationGrpcCodec.parseRequest(
@@ -94,6 +102,41 @@ class AccountControlUiAuthenticationGrpcCodecTest {
   }
 
   @Test
+  void rejectsAbsentDuplicateMalformedAndWrongTransportSourceBeforeAuthentication() {
+    var wire = AccountControlUiAuthenticationGrpcCodec.toRequest(request());
+    assertRejected(wire.toBuilder().clearCanonicalClientAddress().build());
+    assertRejected(wire.toBuilder().addCanonicalClientAddress("192.0.2.11").build());
+    assertRejected(wire.toBuilder().clearTransportClass().build());
+    assertRejected(wire.toBuilder().addTransportClassValue(1).build());
+    assertRejected(wire.toBuilder().setTransportClassValue(0, 0).build());
+    assertRejected(wire.toBuilder().setTransportClassValue(0, 99).build());
+    for (String address :
+        java.util.List.of(
+            "",
+            "localhost",
+            "192.0.2.010",
+            "192.0.2.256",
+            "127.1",
+            " 192.0.2.10",
+            "192.0.2.10:443",
+            "2001:DB8:0:0:0:0:0:1",
+            "2001:db8::1",
+            "[::1]",
+            "fe80:0:0:0:0:0:0:1%eth0",
+            "::ffff:192.0.2.10",
+            "a".repeat(65))) {
+      assertRejected(wire.toBuilder().setCanonicalClientAddress(0, address).build());
+    }
+    assertThatThrownBy(() -> new SourceContext(null)).isInstanceOf(IllegalArgumentException.class);
+    assertThat(
+            AccountControlUiAuthenticationGrpcCodec.parseRequest(
+                    wire.toBuilder().setCanonicalClientAddress(0, "2001:db8:0:0:0:0:0:1").build())
+                .sourceContext()
+                .canonicalClientAddress())
+        .isEqualTo("2001:db8:0:0:0:0:0:1");
+  }
+
+  @Test
   void rejectsResponseSubstitutionUnknownDuplicateAndContradictoryOutcomes() {
     Request request = request();
     var success =
@@ -132,7 +175,8 @@ class AccountControlUiAuthenticationGrpcCodecTest {
   }
 
   private static Request request() {
-    return new Request(REQUEST_ID, CALLER_CONTEXT_ID, NAMESPACE, EMAIL, SECRET);
+    return new Request(
+        REQUEST_ID, CALLER_CONTEXT_ID, NAMESPACE, EMAIL, SECRET, new SourceContext("192.0.2.10"));
   }
 
   private static UUID uuid(String value) {

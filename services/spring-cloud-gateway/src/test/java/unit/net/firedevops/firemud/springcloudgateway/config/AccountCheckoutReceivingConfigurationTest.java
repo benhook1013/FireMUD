@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.springcloudgateway.client.AccountCheckoutHttpClient;
 import net.firedevops.firemud.springcloudgateway.client.AccountControlUiAuthenticationClient;
 import net.firedevops.firemud.springcloudgateway.controller.AccountCheckoutGatewayController;
+import net.firedevops.firemud.springcloudgateway.filter.HeaderTrustFilter;
+import net.firedevops.firemud.springcloudgateway.filter.TcpProxyTrustPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.cloud.gateway.filter.ratelimit.RateLimiter;
@@ -134,10 +136,27 @@ class AccountCheckoutReceivingConfigurationTest {
     var request =
         MockServerHttpRequest.post("https://localhost/api/account/auth/login")
             .sslInfo(mock(SslInfo.class))
+            .remoteAddress(new java.net.InetSocketAddress("192.0.2.10", 443))
             .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .body(body);
 
-    var response = controller.login(MockServerWebExchange.from(request)).block();
+    var headerProperties = new GatewayHeaderTrustProperties();
+    var trust =
+        new HeaderTrustFilter(
+            headerProperties,
+            new TcpProxyTrustPolicy(
+                new GatewayTcpProxyListenerProperties(),
+                headerProperties,
+                8080,
+                java.time.Clock.systemUTC(),
+                java.util.Set.of("test")));
+    var responseHolder = new AtomicReference<org.springframework.http.ResponseEntity<byte[]>>();
+    trust
+        .filter(
+            MockServerWebExchange.from(request),
+            exchange -> controller.login(exchange).doOnNext(responseHolder::set).then())
+        .block();
+    var response = responseHolder.get();
 
     assertThat(response).isNotNull();
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
