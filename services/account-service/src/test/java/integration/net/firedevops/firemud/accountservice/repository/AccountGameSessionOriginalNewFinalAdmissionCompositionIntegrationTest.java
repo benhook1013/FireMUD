@@ -15,6 +15,8 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -22,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -180,7 +183,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       throws Exception {
     try (Session session = session()) {
       var admitted = session.complete();
-      var reservation = session.capacityClient.commit(session.capacityRequest);
+      var reservation =
+          session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
       var before =
           session.capacityRead.readExact(
               session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
@@ -263,6 +267,43 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                       null))
           .isInstanceOf(IllegalStateException.class);
       assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
+    }
+  }
+
+  @Test
+  void changedCatalogRevisionRefusesBeforeAccountCapacityCommitment() throws Exception {
+    try (Session session = session()) {
+      var original = session.capacityRequest;
+      var target = (Map<?, ?>) original.evidence().fields().get("target");
+      long revision = Long.parseLong((String) target.get("catalogRevision"));
+      var changed = session.retainControlledEvaluation(true, null, revision + 1L);
+      changed.requireStructurallyValid();
+      assertThat(changed.context()).isEqualTo(original.context());
+      assertThat(changed.evidence().fields().get("authorityTuple"))
+          .isEqualTo(original.evidence().fields().get("authorityTuple"));
+      String capacityBefore = session.capacityImage();
+      var gsBefore = session.gs.capacityStateImage();
+      byte[] candidate = session.gs.physicalSession();
+      assertThatThrownBy(
+              () ->
+                  session.gs.complete(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      System.currentTimeMillis() + 10_000L,
+                      session.capacityClient,
+                      changed))
+          .isInstanceOf(IllegalStateException.class)
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage("Original NEW capacity execution is indeterminate");
+      assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+      assertThat(session.gs.capacityStateImage()).isEqualTo(gsBefore);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(session.gs.finalReadCalls()).isZero();
       assertThat(
               session.dsl.fetchCount(
                   org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
@@ -438,7 +479,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String before = session.capacityImage() + session.durableImage();
       for (int attempt = 0; attempt < 2; attempt++) {
         StatusRuntimeException failure =
-            assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(denied));
+            assertThrows(
+                StatusRuntimeException.class,
+                () -> session.capacityClient.commit(denied, CLOCK.millis() + 5_000L));
         assertCapacityFailure(failure, Status.Code.RESOURCE_EXHAUSTED, "TENANT_BILLING_BLOCKED");
         assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
         assertProvisionalUnchanged(session, candidate);
@@ -465,6 +508,76 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
   }
 
+  @Test
+  void actualUsageLockWaitAcrossExpiryCannotCreateAReservationEvenWithAFrozenOwnerClock()
+      throws Exception {
+    try (Session session = session();
+        var worker = Executors.newSingleThreadExecutor();
+        var lock = session.account.dataSource.getConnection()) {
+      var request = session.retainControlledEvaluation(true, null);
+      // Wait outside the owner transaction so the actual lock wait fits its five-second budget.
+      waitForDatabaseTime(session.dsl, request.evidence().expiresAt().minusSeconds(2));
+      lock.setAutoCommit(false);
+      int blocker;
+      try (var statement = lock.createStatement();
+          var pid = statement.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(pid.next()).isTrue();
+        blocker = pid.getInt(1);
+      }
+      try (var statement =
+          lock.prepareStatement(
+              "SELECT * FROM account_tenant_capacity_usage WHERE tenant_uuid = ? "
+                  + "AND owner_service = 'game-session-service' FOR UPDATE")) {
+        statement.setObject(1, request.identity().tenantId());
+        try (var usage = statement.executeQuery()) {
+          assertThat(usage.next()).isTrue();
+        }
+      }
+      String before = session.capacityImage();
+      var owner =
+          session.account.capacityOwner(
+              Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC));
+      var result = worker.submit(() -> owner.commit(request, GS));
+      try {
+        long waitUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        boolean waiting;
+        do {
+          waiting =
+              session
+                  .dsl
+                  .fetchSingle(
+                      "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE "
+                          + "? = ANY(pg_blocking_pids(pid)) "
+                          + "AND query LIKE 'SELECT * FROM account_tenant_capacity_usage%')",
+                      blocker)
+                  .get(0, boolean.class);
+          if (!waiting) Thread.sleep(10);
+        } while (!waiting && System.nanoTime() < waitUntil);
+        assertThat(waiting).as("the actual owner must wait on the held usage row").isTrue();
+        waitForDatabaseTime(session.dsl, request.evidence().expiresAt());
+      } finally {
+        lock.rollback();
+      }
+      assertThatThrownBy(() -> result.get(3, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(AccountTenantCapacityRepository.CapacityException.class)
+          .hasStackTraceContaining("CAPACITY_ADMISSION_STALE");
+      assertThat(session.capacityImage()).isEqualTo(before);
+      assertThat(session.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
+    }
+  }
+
+  private static void waitForDatabaseTime(DSLContext dsl, Instant target) {
+    dsl.fetchSingle(
+        "SELECT pg_sleep(GREATEST(0, extract(epoch FROM (?::timestamptz - clock_timestamp()))))",
+        AccountTenantCapacityRepository.at(target));
+    assertThat(
+            dsl.fetchSingle("SELECT clock_timestamp()")
+                .get(0, java.time.OffsetDateTime.class)
+                .toInstant())
+        .isAfterOrEqualTo(target.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+  }
+
   private static void assertCapacityRefusalWithoutMutation(
       Session session, TenantCapacityAdmission.Request request, Status.Code status, String code)
       throws Exception {
@@ -472,7 +585,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     assertThat(candidate).isNotNull();
     String before = session.capacityImage() + session.durableImage();
     assertCapacityFailure(
-        assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(request)),
+        assertThrows(
+            StatusRuntimeException.class,
+            () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L)),
         status,
         code);
     assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
@@ -482,15 +597,18 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   @Test
   void retainedOriginalReplaysBeforeChangedNonCreatingEvidenceCanBecomeADenial() throws Exception {
     try (Session session = session()) {
-      var first = session.capacityClient.commit(session.capacityRequest);
+      var first = session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
       var changed = session.retainControlledEvaluation(false, null);
       byte[] candidate = session.gs.physicalSession();
       assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
       StatusRuntimeException failure =
-          assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(changed));
+          assertThrows(
+              StatusRuntimeException.class,
+              () -> session.capacityClient.commit(changed, CLOCK.millis() + 5_000L));
       assertCapacityFailure(failure, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
-      assertThat(session.capacityClient.commit(session.capacityRequest)).isEqualTo(first);
+      assertThat(session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L))
+          .isEqualTo(first);
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
       assertProvisionalUnchanged(session, candidate);
     }
@@ -821,9 +939,16 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     /** Controlled entitlement facts, real current caller/scope and actual immutable retention. */
-    @SuppressWarnings("unchecked")
     private TenantCapacityAdmission.Request retainControlledEvaluation(
         boolean creationAllowed, @org.jspecify.annotations.Nullable String quota) {
+      return retainControlledEvaluation(creationAllowed, quota, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private TenantCapacityAdmission.Request retainControlledEvaluation(
+        boolean creationAllowed,
+        @org.jspecify.annotations.Nullable String quota,
+        @org.jspecify.annotations.Nullable Long catalogRevision) {
       var original = capacityRequest;
       var parsed =
           RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
@@ -851,13 +976,15 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         quotas.put(original.context().owner().quota(), quota);
         facts.put("quotas", quotas);
       }
+      var target = new LinkedHashMap<>((Map<String, Object>) fields.get("target"));
+      if (catalogRevision != null) target.put("catalogRevision", Long.toString(catalogRevision));
       var evaluation =
           RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
               original.identity().requestId(),
               original.evidence().callerWorkload(),
               (String) fields.get("verifiedConnectScopeId"),
               parsed.membershipSource(),
-              (Map<String, Object>) fields.get("target"),
+              target,
               facts,
               (Map<String, Object>) fields.get("sourceReferences"),
               CLOCK.instant());

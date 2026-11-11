@@ -963,6 +963,38 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                       environment))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessage("Control-ui issuance idempotency conflict");
+      // Only the two credential-bearing mismatches above count. Foreign context and scope
+      // conflicts cannot consume the original request's budget or its already-consumed OTP.
+      assertThat(f.<Integer>tx(() -> operations.countReplayFailures(otpOperation))).isEqualTo(2);
+      for (int failure = 3; failure <= 4; failure++) {
+        assertThatThrownBy(
+                () ->
+                    issuance.issueAccount(
+                        new AccountControlUiIssuanceService.AccountSignInRequest(
+                            otpRequest.requestId(),
+                            account.getEmail(),
+                            "wrong-replay-secret",
+                            otpRequest.callerContextId())))
+            .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+      }
+      try (var afterFailures = issuance.issueAccount(otpRequest)) {
+        assertThat(afterFailures.compactBytes()).isEqualTo(originalCompact);
+        assertThat(afterFailures.expiresAt()).isEqualTo(expiry);
+        assertThat(afterFailures.recoveryExpiresAt()).isEqualTo(recoveryExpiry);
+      }
+      assertThat(f.<Integer>tx(() -> operations.countReplayFailures(otpOperation))).isEqualTo(4);
+      assertThatThrownBy(
+              () ->
+                  issuance.issueAccount(
+                      new AccountControlUiIssuanceService.AccountSignInRequest(
+                          otpRequest.requestId(),
+                          account.getEmail(),
+                          "fifth-wrong-secret",
+                          otpRequest.callerContextId())))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+      assertThatThrownBy(() -> issuance.issueAccount(otpRequest))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+      assertThat(f.<Integer>tx(() -> operations.countReplayFailures(otpOperation))).isEqualTo(5);
     }
     assertThat(f.challenges.findByAccountId(account.getId())).isEmpty();
     var retryOperation = f.tx(() -> operations.findRequest(otpRequest.requestId()));

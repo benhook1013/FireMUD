@@ -41,7 +41,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function setup(value: FirstInvoice = initial) {
+function setup(value: FirstInvoice = initial, stripeAvailable = true) {
   let current = value;
   const client = {
     read: vi
@@ -74,18 +74,28 @@ function setup(value: FirstInvoice = initial) {
   const queries = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  render(
+  const view = render(
     <QueryClientProvider client={queries}>
       <HostingFirstInvoiceCheckout
         subscriptionId={initial.subscriptionId}
         client={client}
-        stripe={stripe}
+        stripe={stripeAvailable ? stripe : null}
       />
     </QueryClientProvider>
   );
   return {
     client,
     stripe,
+    replaceStripe: (next: HostingStripe | null) =>
+      view.rerender(
+        <QueryClientProvider client={queries}>
+          <HostingFirstInvoiceCheckout
+            subscriptionId={initial.subscriptionId}
+            client={client}
+            stripe={next}
+          />
+        </QueryClientProvider>
+      ),
     setCurrent: (next: FirstInvoice) => {
       current = next;
     },
@@ -110,6 +120,62 @@ afterEach(() => {
 });
 
 describe('owner first-invoice checkout', () => {
+  it('keeps Account recovery available if Stripe is unavailable for next action', async () => {
+    const { client, stripe } = setup(initial, false);
+    fireEvent.click(await consent());
+    await screen.findByText(
+      /Stripe authentication is unavailable. Check Account status/
+    );
+    expect(client.confirm).toHaveBeenCalledTimes(1);
+    expect(stripe.handleNextAction).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole('button', {
+            name: 'Check Account status',
+          }) as HTMLButtonElement
+        ).disabled
+      ).toBe(false)
+    );
+    const reads = client.read.mock.calls.length;
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Check Account status' })
+    );
+    await waitFor(() => expect(client.read).toHaveBeenCalledTimes(reads + 1));
+    expect(client.confirm).toHaveBeenCalledTimes(1);
+    expect(client.renew).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(
+      'pi_existing_secret_ephemeral'
+    );
+  });
+
+  it('preserves the original confirmation but refuses a replaced Stripe context', async () => {
+    const { client, stripe, replaceStripe } = setup();
+    const confirmation = deferred<{ status: string; clientSecret: string }>();
+    client.confirm.mockReturnValue(confirmation.promise);
+    fireEvent.click(await consent());
+    await waitFor(() => expect(client.confirm).toHaveBeenCalledTimes(1));
+    const original = client.confirm.mock.calls[0][2].requestId;
+    const replacement = {
+      handleNextAction: vi.fn<HostingStripe['handleNextAction']>(),
+    };
+    replaceStripe(replacement);
+    await act(async () =>
+      confirmation.resolve({
+        status: 'requires_action',
+        clientSecret: 'pi_existing_secret_ephemeral',
+      })
+    );
+    await screen.findByText(
+      /Stripe authentication is unavailable. Check Account status/
+    );
+    expect(stripe.handleNextAction).not.toHaveBeenCalled();
+    expect(replacement.handleNextAction).not.toHaveBeenCalled();
+    expect(client.confirm.mock.calls[0][2].requestId).toBe(original);
+    expect(client.confirm).toHaveBeenCalledTimes(1);
+    expect(client.renew).not.toHaveBeenCalled();
+  });
+
   it('requires exact invoice/instrument/amount consent and primary reauth, locking duplicate clicks', async () => {
     const { client, stripe } = setup();
     await screen.findByText('in_existing');

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -13,6 +14,8 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import io.lettuce.core.RedisClient;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.Clock;
@@ -22,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,7 +112,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(provider.acquire()).thenReturn(connection);
     CountDownLatch executing = new CountDownLatch(1), finishExecution = new CountDownLatch(1);
     CountDownLatch cancelling = new CountDownLatch(1), finishCancellation = new CountDownLatch(1);
+    CountDownLatch cancelled = new CountDownLatch(1), released = new CountDownLatch(1);
     AtomicBoolean returned = new AtomicBoolean();
+    AtomicBoolean orderingViolation = new AtomicBoolean();
     when(statement.execute())
         .thenAnswer(
             invocation -> {
@@ -118,10 +124,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             });
     doAnswer(
             invocation -> {
-              assertThat(returned).isFalse();
+              if (returned.get()) orderingViolation.set(true);
               cancelling.countDown();
               awaitUninterruptibly(finishCancellation);
-              assertThat(returned).isFalse();
+              if (returned.get()) orderingViolation.set(true);
+              cancelled.countDown();
               return null;
             })
         .when(statement)
@@ -129,6 +136,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     doAnswer(
             invocation -> {
               returned.set(true);
+              if (cancelled.getCount() != 0) orderingViolation.set(true);
+              released.countDown();
               return null;
             })
         .when(provider)
@@ -148,12 +157,84 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       finishExecution.countDown();
       verify(provider, never()).release(connection);
       finishCancellation.countDown();
+      assertThat(cancelled.await(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(released.await(2, TimeUnit.SECONDS)).isTrue();
+      assertThat(orderingViolation).isFalse();
       verify(provider, timeout(2000)).release(connection);
       verify(statement).cancel();
       verify(statement).setQueryTimeout(anyInt());
     } finally {
       finishExecution.countDown();
       finishCancellation.countDown();
+    }
+  }
+
+  @Test
+  void uncertainProviderReleaseRetainsOnePermitAndExposesItThroughMicrometer() {
+    ConnectionProvider provider = mock();
+    Connection first = mock(), second = mock();
+    when(provider.acquire()).thenReturn(first, second);
+    doThrow(new IllegalStateException("Controlled uncertain pool return"))
+        .when(provider)
+        .release(org.mockito.ArgumentMatchers.any(Connection.class));
+    AtomicReference<CanonicalGameplayOriginalNewCapacityExecutionBudget> captured =
+        new AtomicReference<>();
+    var registry = new SimpleMeterRegistry();
+    try {
+      Metrics.addRegistry(registry);
+      AtomicInteger retained =
+          (AtomicInteger)
+              ReflectionTestUtils.getField(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                  "RELEASE_FAILURE_RETAINED_OPERATIONS");
+      Semaphore permits =
+          (Semaphore)
+              ReflectionTestUtils.getField(
+                  CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS");
+      assertThat(retained).isNotNull();
+      assertThat(permits).isNotNull();
+      int before = retained.get();
+      int available = permits.availablePermits();
+      try {
+        assertThatThrownBy(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+                        CLOCK,
+                        Long.MAX_VALUE,
+                        budget -> {
+                          captured.set(budget);
+                          var scoped =
+                              budget.sql(source(provider)).configuration().connectionProvider();
+                          scoped.acquire();
+                          scoped.acquire();
+                          return true;
+                        }))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(
+                registry
+                    .get("original_new_capacity_sql_release_failure_retained_operations")
+                    .gauge()
+                    .value())
+            .isEqualTo(before + 1);
+        assertThat(permits.availablePermits()).isEqualTo(available - 1);
+        assertThat(ReflectionTestUtils.getField(captured.get(), "released")).isEqualTo(false);
+        assertThat(
+                (AtomicInteger)
+                    ReflectionTestUtils.getField(captured.get(), "outstandingConnections"))
+            .hasValue(2);
+        verify(provider).release(first);
+        verify(provider).release(second);
+      } finally {
+        // Only mocked resources exist here. Restore JVM-wide fixture state after proving that
+        // production code neither retries an uncertain return nor releases its retained permit.
+        if (retained.get() == before + 1) {
+          retained.decrementAndGet();
+        }
+        if (permits.availablePermits() == available - 1) permits.release();
+      }
+    } finally {
+      Metrics.removeRegistry(registry);
+      registry.close();
     }
   }
 

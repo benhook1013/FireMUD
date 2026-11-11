@@ -79,20 +79,6 @@ export default function AccountCheckoutRoute({
     );
   }
 
-  if (!publishableKeyPattern.test(publishableKey)) {
-    return (
-      <Box component="main" sx={{ maxWidth: 680, mx: 'auto', p: 3 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          Hosting checkout
-        </Typography>
-        <Alert severity="error">
-          Checkout is unavailable because the Stripe publishable key is not
-          configured. No checkout request was sent.
-        </Alert>
-      </Box>
-    );
-  }
-
   return (
     <ActiveAccountCheckoutRoute
       subscriptionId={subscriptionId}
@@ -235,6 +221,7 @@ function CheckoutForSession({
 
   useEffect(() => {
     let current = true;
+    if (!publishableKeyPattern.test(stripePublishableKey)) return;
     void Promise.resolve()
       .then(() => loadStripeClient(stripePublishableKey))
       .then(
@@ -272,33 +259,37 @@ function CheckoutForSession({
       ? stripeLoadResult
       : null;
 
-  if (matchingResult?.status === 'unavailable') {
-    return (
-      <Alert severity="error">
-        Stripe authentication is unavailable. Account payment status remains
-        unchanged.
-      </Alert>
-    );
-  }
-  if (matchingResult?.status !== 'ready') {
-    return (
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{ alignItems: 'center' }}
-        role="status"
-      >
-        <CircularProgress size={20} />
-        <Typography>Loading secure payment authentication.</Typography>
-      </Stack>
-    );
-  }
   return (
-    <HostingFirstInvoiceCheckout
-      subscriptionId={subscriptionId}
-      client={client}
-      stripe={matchingResult.stripe}
-    />
+    <Stack spacing={2}>
+      {!publishableKeyPattern.test(stripePublishableKey) ? (
+        <Alert severity="error">
+          Stripe authentication is unavailable because the publishable key is
+          not configured. Account status recovery remains available.
+        </Alert>
+      ) : matchingResult?.status === 'unavailable' ? (
+        <Alert severity="error">
+          Stripe authentication is unavailable. Account status recovery remains
+          available.
+        </Alert>
+      ) : matchingResult?.status !== 'ready' ? (
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{ alignItems: 'center' }}
+          role="status"
+        >
+          <CircularProgress size={20} />
+          <Typography>Loading secure payment authentication.</Typography>
+        </Stack>
+      ) : null}
+      <HostingFirstInvoiceCheckout
+        subscriptionId={subscriptionId}
+        client={client}
+        stripe={
+          matchingResult?.status === 'ready' ? matchingResult.stripe : null
+        }
+      />
+    </Stack>
   );
 }
 

@@ -196,35 +196,58 @@ describe('App-owned first-invoice route', () => {
     ).toBe(false);
   });
 
-  it('fails closed before network or Stripe loading when the Vite key is missing', () => {
-    const queries = new QueryClient();
-    const fetchImpl = vi.fn<typeof fetch>();
-    const api: AccountControlUiApi = { login: vi.fn() };
+  it('keeps Account status recovery available when the Vite key is missing', async () => {
     const loadStripeClient = vi.fn();
-    const sessionStore = createControlUiSessionStore({
-      origin: () => origin,
-      fetchImpl,
-      idFactory: makeIds(),
-      clearQueryCache: () => queries.clear(),
-    });
-    stores.add(sessionStore);
-    window.history.replaceState({}, '', checkoutPath);
-    render(
-      <QueryClientProvider client={queries}>
-        <App
-          accountCheckoutRouteProps={{
-            sessionStore,
-            api,
-            stripePublishableKey: '',
-            loadStripeClient,
-          }}
-        />
-      </QueryClientProvider>
-    );
-    expect(screen.getByText(/No checkout request was sent/)).toBeTruthy();
-    expect(fetchImpl).not.toHaveBeenCalled();
-    expect(api.login).not.toHaveBeenCalled();
+    const { fetchImpl } = setupApp({ key: '', loadStripeClient });
+    await signIn();
+    expect(screen.getByText(/publishable key is not configured/)).toBeTruthy();
     expect(loadStripeClient).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Check Account status' })
+    );
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+    expect(
+      fetchImpl.mock.calls.every(
+        ([, init]) => (init?.method ?? 'GET') === 'GET'
+      )
+    ).toBe(true);
+  });
+
+  it('reads and refreshes Account status while Stripe loading fails', async () => {
+    const loadStripeClient = vi
+      .fn()
+      .mockRejectedValue(new Error('script blocked'));
+    const { fetchImpl } = setupApp({ loadStripeClient });
+    await signIn();
+    await screen.findByText(/Stripe authentication is unavailable/);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Check Account status' })
+    );
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+    expect(
+      fetchImpl.mock.calls.every(
+        ([, init]) => (init?.method ?? 'GET') === 'GET'
+      )
+    ).toBe(true);
+  });
+
+  it('reads and refreshes Account status while Stripe loading is pending', async () => {
+    const loading = deferred<HostingStripe>();
+    const loadStripeClient = vi.fn().mockReturnValue(loading.promise);
+    const { fetchImpl } = setupApp({ loadStripeClient });
+    await signIn();
+    expect(
+      screen.getByText('Loading secure payment authentication.')
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Check Account status' })
+    );
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+    expect(
+      fetchImpl.mock.calls.every(
+        ([, init]) => (init?.method ?? 'GET') === 'GET'
+      )
+    ).toBe(true);
   });
 
   it.each([0, 429, 502, 503])(
@@ -279,7 +302,7 @@ describe('App-owned first-invoice route', () => {
     ).toBe(false);
   });
 
-  it('hides replaced Stripe context and ignores a stale loader result without confirming', async () => {
+  it('preserves Account recovery and ignores replaced Stripe context without confirming', async () => {
     const stripeA: HostingStripe = { handleNextAction: vi.fn() };
     const stripeB: HostingStripe = { handleNextAction: vi.fn() };
     const stripeC: HostingStripe = { handleNextAction: vi.fn() };
@@ -310,7 +333,7 @@ describe('App-owned first-invoice route', () => {
       );
 
     renderWith('pk_test_replaced', loadB);
-    expect(screen.queryByText('Hosting first invoice')).toBeNull();
+    expect(screen.getByText('Hosting first invoice')).toBeTruthy();
     expect(
       screen.getByText('Loading secure payment authentication.')
     ).toBeTruthy();
@@ -327,7 +350,7 @@ describe('App-owned first-invoice route', () => {
       loadBDeferred.resolve(stripeB);
       await loadBDeferred.promise;
     });
-    expect(screen.queryByText('Hosting first invoice')).toBeNull();
+    expect(screen.getByText('Hosting first invoice')).toBeTruthy();
     expect(
       screen.getByText('Loading secure payment authentication.')
     ).toBeTruthy();

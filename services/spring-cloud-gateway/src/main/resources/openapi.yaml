@@ -114,6 +114,31 @@ paths:
       summary: Reauthenticate the first-invoice billing owner
       x-runtime-status: isolated_only_default_off
       description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result. Account validates the typed billingBinding against the retained invoice and authorization attempt.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, confirmationRequestId, email, secret, billingBinding]
+              properties:
+                requestId: {type: string, format: uuid}
+                confirmationRequestId: {type: string, format: uuid}
+                email: {type: string, format: email}
+                secret: {type: string, format: password, writeOnly: true}
+                billingBinding:
+                  type: object
+                  additionalProperties: false
+                  description: Required for a new billing proof. Bind the exact retained invoice and original operation; unbound historical evidence cannot authorize new consent.
+                  required: [originalRequestId, expectedRowVersion, expectedAuthorizationVersion, acceptedTupleDigest, invoiceExpiresAt, authorizationPurpose]
+                  properties:
+                    originalRequestId: {type: string, format: uuid}
+                    expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                    expectedAuthorizationVersion: {type: integer, format: int64, minimum: 0}
+                    acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                    invoiceExpiresAt: {type: string, format: date-time}
+                    authorizationPurpose: {type: string, enum: [INITIAL_CONFIRMATION, PRE_ROW_RENEWAL, FOLLOWUP_RENEWAL]}
       responses:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}
@@ -135,6 +160,20 @@ paths:
       summary: Confirm the original first-invoice payment
       x-runtime-status: isolated_only_default_off
       description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, expectedRowVersion, reauthenticationEvidenceId, acceptedTupleDigest, acceptCharge]
+              properties:
+                requestId: {type: string, format: uuid}
+                expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                reauthenticationEvidenceId: {type: string, format: uuid}
+                acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                acceptCharge: {type: boolean, enum: [true]}
       responses:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}
@@ -156,6 +195,22 @@ paths:
       summary: Renew authorization for the original first-invoice checkout
       x-runtime-status: isolated_only_default_off
       description: Exact HTTPS Account billing-owner operation. Passes only the necessary authenticated request over verified TLS without retry; Account owns the charge tuple, reauthentication, consent and result.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [requestId, authorizationRequestId, expectedAuthorizationVersion, expectedRowVersion, reauthenticationEvidenceId, acceptedTupleDigest, acceptCharge]
+              properties:
+                requestId: {type: string, format: uuid}
+                authorizationRequestId: {type: string, format: uuid}
+                expectedAuthorizationVersion: {type: integer, format: int64, minimum: 0}
+                expectedRowVersion: {type: integer, format: int64, minimum: 1}
+                reauthenticationEvidenceId: {type: string, format: uuid}
+                acceptedTupleDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+                acceptCharge: {type: boolean, enum: [true]}
       responses:
         '200': {description: No-store Account owner result under the Account first-invoice API contract}
         '400': {description: Malformed request}

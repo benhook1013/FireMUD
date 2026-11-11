@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -20,7 +20,7 @@ import type { HostingStripe } from './hostingStripe';
 interface Props {
   subscriptionId: string;
   client: FirstInvoiceClient;
-  stripe: HostingStripe;
+  stripe: HostingStripe | null;
 }
 
 interface Attempt {
@@ -62,6 +62,11 @@ export default function HostingFirstInvoiceCheckout({
   const attempt = useRef<Attempt | null>(null);
   const locked = useRef(false);
   const operation = useRef(0);
+  const currentStripe = useRef(stripe);
+
+  useLayoutEffect(() => {
+    currentStripe.current = stripe;
+  }, [stripe]);
 
   useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
@@ -280,6 +285,13 @@ export default function HostingFirstInvoiceCheckout({
           'Account retained the authorization, but provider confirmation is unresolved. Only status recovery is available. No replacement charge was requested.'
         );
       } else if (handoff.status === 'requires_action' && handoff.clientSecret) {
+        if (!stripe || currentStripe.current !== stripe) {
+          setMessage(
+            'Stripe authentication is unavailable. Check Account status or explicitly resume this same confirmation when authentication is available.'
+          );
+          await query.refetch();
+          return;
+        }
         setMessage(
           'Complete the Stripe authentication prompt for this invoice.'
         );

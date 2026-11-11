@@ -5,7 +5,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import java.util.regex.Pattern;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -32,6 +31,8 @@ import org.springframework.http.MediaType;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
+import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 import reactor.core.publisher.Mono;
 
 /** Opt-in composition for the isolated checkout/login receiving endpoints. */
@@ -114,9 +115,18 @@ public final class AccountCheckoutReceivingConfiguration {
 
   private static final class AccountCheckoutReceivingRateLimitWebFilter
       implements WebFilter, Ordered {
-    private static final Pattern FIRST_INVOICE_PATH =
-        Pattern.compile(
-            "/api/account/billing/hosting/subscriptions/[^/]+/first-invoice(?:/(?:reauthenticate|confirm|renew))?");
+    private static final PathPattern LOGIN_PATH =
+        PathPatternParser.defaultInstance.parse("/api/account/auth/login");
+    private static final PathPattern WEBHOOK_PATH =
+        PathPatternParser.defaultInstance.parse("/api/account/billing/hosting/webhook");
+    private static final String FIRST_INVOICE =
+        "/api/account/billing/hosting/subscriptions/{subscriptionId}/first-invoice";
+    private static final PathPattern FIRST_INVOICE_PATH =
+        PathPatternParser.defaultInstance.parse(FIRST_INVOICE);
+    private static final List<PathPattern> FIRST_INVOICE_ACTIONS =
+        List.of("reauthenticate", "confirm", "renew").stream()
+            .map(action -> PathPatternParser.defaultInstance.parse(FIRST_INVOICE + "/" + action))
+            .toList();
     private static final String RATE_LIMITED_BODY = "{\"status\":\"ERROR\"}";
 
     private final RateLimiter<?> rateLimiter;
@@ -153,16 +163,17 @@ public final class AccountCheckoutReceivingConfiguration {
     }
 
     private static boolean isReceivingRequest(ServerWebExchange exchange) {
-      String path = exchange.getRequest().getPath().pathWithinApplication().value();
+      // PathPattern uses the same decoded, matrix-parameter-free segments as WebFlux routing.
+      var path = exchange.getRequest().getPath().pathWithinApplication();
       var method = exchange.getRequest().getMethod();
       if (org.springframework.http.HttpMethod.POST.equals(method)) {
-        return "/api/account/auth/login".equals(path)
-            || "/api/account/billing/hosting/webhook".equals(path)
-            || isFirstInvoiceAction(path);
+        return LOGIN_PATH.matches(path)
+            || WEBHOOK_PATH.matches(path)
+            || FIRST_INVOICE_ACTIONS.stream().anyMatch(pattern -> pattern.matches(path));
       }
-      return org.springframework.http.HttpMethod.GET.equals(method)
-          && path.endsWith("/first-invoice")
-          && FIRST_INVOICE_PATH.matcher(path).matches();
+      return (org.springframework.http.HttpMethod.GET.equals(method)
+              || org.springframework.http.HttpMethod.HEAD.equals(method))
+          && FIRST_INVOICE_PATH.matches(path);
     }
 
     private static Mono<Void> reject(ServerWebExchange exchange, HttpStatus status) {
@@ -175,13 +186,6 @@ public final class AccountCheckoutReceivingConfiguration {
       return response.writeWith(
           Mono.just(
               response.bufferFactory().wrap(RATE_LIMITED_BODY.getBytes(StandardCharsets.UTF_8))));
-    }
-
-    private static boolean isFirstInvoiceAction(String path) {
-      return FIRST_INVOICE_PATH.matcher(path).matches()
-          && (path.endsWith("/first-invoice/reauthenticate")
-              || path.endsWith("/first-invoice/confirm")
-              || path.endsWith("/first-invoice/renew"));
     }
 
     @Override

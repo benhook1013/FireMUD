@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Arrays;
@@ -138,7 +139,16 @@ public final class AccountControlUiIssuanceService {
               ignored -> {
                 var existing = operations.findRequest(request.requestId);
                 if (existing != null) {
-                  requireRequest(existing, request, peer.uri(), exactRequest);
+                  requireRequestBinding(existing, request, peer.uri());
+                  operations.lockReplayRequest(existing.requestId);
+                  if (operations.countReplayFailures(existing) >= 5) {
+                    return new InitialPreparation(null, new IdempotencyConflictException());
+                  }
+                  if (!matchesOriginalRequest(existing, exactRequest)) {
+                    operations.recordReplayFailure(existing);
+                    // A value, not a thrown exception, commits the independent failure history.
+                    return new InitialPreparation(null, new IdempotencyConflictException());
+                  }
                   return new InitialPreparation(current(existing, environment), null);
                 }
                 // Preserve canonical tenant -> Account owner order before OTP/advisory
@@ -159,8 +169,7 @@ public final class AccountControlUiIssuanceService {
                 } catch (AuthenticationException denial) {
                   // Only primary denial commits attempt accounting. No signer/issuance work
                   // follows.
-                  return new InitialPreparation(
-                      null, new PrimaryDenial(denial.getCode(), denial.getMessage()));
+                  return new InitialPreparation(null, denial);
                 }
                 var source =
                     tenantSource.orElseGet(
@@ -193,7 +202,7 @@ public final class AccountControlUiIssuanceService {
         throw denied();
       }
       if (initial.denial != null) {
-        throw new AuthenticationException(initial.denial.code, initial.denial.message);
+        throw initial.denial;
       }
       Prepared preparation = Objects.requireNonNull(initial.prepared);
       var original = preparation.stored;
@@ -324,19 +333,29 @@ public final class AccountControlUiIssuanceService {
     }
   }
 
-  private void requireRequest(
-      AccountControlUiIssuanceRepository.Stored stored,
-      Invocation request,
-      String caller,
-      byte[] exactRequest) {
+  private void requireRequestBinding(
+      AccountControlUiIssuanceRepository.Stored stored, Invocation request, String caller) {
     if (!stored.requestId.equals(request.requestId)
         || stored.scopeKind() != request.scopeKind
         || !stored.optionalTenantId().equals(request.tenantId)
         || !stored.caller.equals(caller)
-        || !stored.callerContextId.equals(request.callerContextId)
-        || !stored.requestDigest.equals(
-            cryptography.requestDigest(stored.requestMacKeyId, exactRequest))) {
+        || !stored.callerContextId.equals(request.callerContextId)) {
       throw new IdempotencyConflictException();
+    }
+  }
+
+  private boolean matchesOriginalRequest(
+      AccountControlUiIssuanceRepository.Stored stored, byte[] exactRequest) {
+    byte[] expected = stored.requestDigest.getBytes(StandardCharsets.US_ASCII);
+    byte[] supplied =
+        cryptography
+            .requestDigest(stored.requestMacKeyId, exactRequest)
+            .getBytes(StandardCharsets.US_ASCII);
+    try {
+      return MessageDigest.isEqual(expected, supplied);
+    } finally {
+      Arrays.fill(expected, (byte) 0);
+      Arrays.fill(supplied, (byte) 0);
     }
   }
 
@@ -450,14 +469,7 @@ public final class AccountControlUiIssuanceService {
     }
   }
 
-  private record PrimaryDenial(String code, String message) {
-    private PrimaryDenial {
-      Objects.requireNonNull(code);
-      Objects.requireNonNull(message);
-    }
-  }
-
-  private record InitialPreparation(Prepared prepared, PrimaryDenial denial) {
+  private record InitialPreparation(Prepared prepared, RuntimeException denial) {
     private InitialPreparation {
       if ((prepared == null) == (denial == null)) {
         throw new IllegalArgumentException(

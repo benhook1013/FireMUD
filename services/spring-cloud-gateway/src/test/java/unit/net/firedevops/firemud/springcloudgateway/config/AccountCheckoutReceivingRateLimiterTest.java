@@ -1,17 +1,22 @@
 package net.firedevops.firemud.springcloudgateway.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.net.URI;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
+import net.firedevops.firemud.springcloudgateway.controller.AccountCheckoutGatewayController;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -19,15 +24,18 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.filter.FilterDefinition;
+import org.springframework.cloud.gateway.filter.ratelimit.RateLimiter;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
+import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.server.WebFilter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -64,6 +72,7 @@ class AccountCheckoutReceivingRateLimiterTest {
                     Arguments.of(
                         synchronous, HttpMethod.POST, "/api/account/billing/hosting/webhook"),
                     Arguments.of(synchronous, HttpMethod.GET, firstInvoice),
+                    Arguments.of(synchronous, HttpMethod.HEAD, firstInvoice),
                     Arguments.of(synchronous, HttpMethod.POST, firstInvoice + "/reauthenticate"),
                     Arguments.of(synchronous, HttpMethod.POST, firstInvoice + "/confirm"),
                     Arguments.of(synchronous, HttpMethod.POST, firstInvoice + "/renew")));
@@ -139,6 +148,61 @@ class AccountCheckoutReceivingRateLimiterTest {
     assertThat(forwarded).isTrue();
     assertThat(exchange.getResponse().getStatusCode()).isNull();
     org.mockito.Mockito.verifyNoInteractions(redis);
+  }
+
+  @ParameterizedTest
+  @MethodSource("handlerBoundRequests")
+  void handlerEquivalentPathsAndImplicitHeadCannotSkipTheLimiter(
+      HttpMethod method, String path, int decision) {
+    var controller = mock(AccountCheckoutGatewayController.class);
+    when(controller.login(any())).thenReturn(Mono.just(ResponseEntity.ok(new byte[0])));
+    when(controller.getFirstInvoice(anyString(), any()))
+        .thenReturn(Mono.just(ResponseEntity.ok(new byte[0])));
+    RateLimiter<?> limiter = mock(RateLimiter.class);
+    when(limiter.isAllowed("account-checkout-receiving", "test-client"))
+        .thenReturn(
+            decision < 0
+                ? Mono.error(new IllegalStateException("Redis unavailable"))
+                : Mono.just(new RateLimiter.Response(decision > 0, Map.of())));
+    var client =
+        WebTestClient.bindToController(controller)
+            .webFilter(
+                AccountCheckoutReceivingConfiguration.receivingRateLimitWebFilter(
+                    limiter, ignored -> Mono.just("test-client")))
+            .build();
+
+    client
+        .method(method)
+        .uri(URI.create("https://localhost" + path))
+        .exchange()
+        .expectStatus()
+        .isEqualTo(decision < 0 ? 503 : decision == 0 ? 429 : 200);
+
+    verify(limiter).isAllowed("account-checkout-receiving", "test-client");
+    if (decision > 0) {
+      if (method == HttpMethod.POST) verify(controller).login(any());
+      else verify(controller).getFirstInvoice(anyString(), any());
+    } else {
+      verify(controller, never()).login(any());
+      verify(controller, never()).getFirstInvoice(anyString(), any());
+    }
+  }
+
+  static Stream<Arguments> handlerBoundRequests() {
+    String invoice =
+        "/api/account/billing/hosting/subscriptions/927fb6a8-3975-4cba-8145-c2a8f4a9b0d1/first-invoice";
+    return Stream.of(-1, 0, 1)
+        .flatMap(
+            decision ->
+                Stream.of(
+                    Arguments.of(HttpMethod.POST, "/api/account/auth/%6cogin", decision),
+                    Arguments.of(HttpMethod.POST, "/api/account/auth/login;x=1", decision),
+                    Arguments.of(HttpMethod.GET, invoice + ";x=1", decision),
+                    Arguments.of(HttpMethod.HEAD, invoice, decision),
+                    Arguments.of(
+                        HttpMethod.HEAD,
+                        invoice.replace("first-invoice", "%66irst-invoice"),
+                        decision)));
   }
 
   private static WebFilter configuredFilter(

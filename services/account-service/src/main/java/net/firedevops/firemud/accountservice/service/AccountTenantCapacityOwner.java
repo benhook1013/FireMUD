@@ -92,11 +92,15 @@ public final class AccountTenantCapacityOwner {
           // Replay/conflict is resolved before current-source reads and any usage write.
           if (existing != null) return capacity.exact(request, existing);
           if (request.capacityRearmFence() != 1) throw conflict();
+          capacity.requireRetained(request.evidence());
+          // A contended usage row must not consume the evaluation's remaining lifetime after
+          // the final current-source check. Exact historical replay never takes this lock.
+          Record usage = capacity.usage(request);
           current(request);
           requireSupportedShape(request);
           if (!request.evidence().permitsCreation())
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
-          return capacity.create(request, request.evidence().expiresAt());
+          return capacity.create(request, usage, request.evidence().expiresAt());
         });
   }
 
@@ -132,6 +136,7 @@ public final class AccountTenantCapacityOwner {
               || row.get("owner_readback", byte[].class) == null) throw conflict();
           current(next);
           requireSupportedShape(next);
+          capacity.requireFresh(next.evidence());
           int history =
               dsl.execute(
                   "INSERT INTO account_tenant_capacity_attempt_history "

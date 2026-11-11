@@ -147,8 +147,87 @@ class AccountControlUiIssuanceWorkflowTest {
             .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
       }
       verify(fixture.operations, never()).beginRecoveryFailure(any());
+      if (changed == 1 || changed == 2 || changed == 4) {
+        verify(fixture.operations, never()).lockReplayRequest(any());
+        verify(fixture.operations, never()).recordReplayFailure(any());
+      }
       verifyNoInteractions(fixture.registry, fixture.primary, fixture.signers);
     }
+  }
+
+  @Test
+  void replayCredentialMismatchCommitsFailureBeforeReportingConflictWithoutPrimaryAuthentication() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    var original = fixture.existing();
+    when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
+        .thenReturn("changed-request-digest");
+
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .service()
+                      .issue(
+                          fixture.request(fixture.tenant, fixture.context, "wrong-secret"),
+                          fixture.environment))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+    }
+
+    var order = inOrder(fixture.operations, fixture.cryptography, fixture.transactions);
+    order.verify(fixture.operations).lockReplayRequest(original.requestId);
+    order.verify(fixture.operations).countReplayFailures(original);
+    order.verify(fixture.cryptography).requestDigest(anyString(), any(byte[].class));
+    order.verify(fixture.operations).recordReplayFailure(original);
+    order.verify(fixture.transactions).commit(any());
+    verify(fixture.transactions, never()).rollback(any());
+    verifyNoInteractions(
+        fixture.primary,
+        fixture.authority,
+        fixture.fences,
+        fixture.signers,
+        fixture.registry,
+        fixture.actors);
+    verify(fixture.operations, never()).beginRecoveryFailure(any());
+  }
+
+  @Test
+  void exhaustedReplayBudgetDeniesBeforeCredentialMacOrAccountSourceReads() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    var original = fixture.accountExisting();
+    when(fixture.operations.countReplayFailures(original)).thenReturn(5);
+
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> fixture.service().issueAccount(fixture.accountRequest()))
+          .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
+    }
+
+    verify(fixture.operations).lockReplayRequest(original.requestId);
+    verify(fixture.operations, never()).recordReplayFailure(any());
+    verify(fixture.operations, never()).beginRecoveryFailure(any());
+    verifyNoInteractions(
+        fixture.cryptography,
+        fixture.primary,
+        fixture.authority,
+        fixture.fences,
+        fixture.signers,
+        fixture.registry,
+        fixture.actors);
+  }
+
+  @Test
+  void unavailableReplayCustodyRollsBackWithoutCountingACredentialFailure() {
+    Fixture fixture = new Fixture(NOW.plusSeconds(30));
+    fixture.accountExisting();
+    when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
+        .thenThrow(new IllegalStateException("custody unavailable"));
+    try (var ignored = fixture.withPeer(ISSUER)) {
+      assertThatThrownBy(() -> fixture.service().issueAccount(fixture.accountRequest()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    verify(fixture.operations, never()).recordReplayFailure(any());
+    verify(fixture.transactions).rollback(any());
+    verify(fixture.transactions, never()).commit(any());
+    verifyNoInteractions(fixture.primary, fixture.authority, fixture.registry);
   }
 
   @Test
@@ -361,6 +440,7 @@ class AccountControlUiIssuanceWorkflowTest {
     String tokenHash = AccountControlUiIssuanceRepository.hash(exactCredential);
     var original = replay.useAccountOwnerRepository(tokenHash);
     replay.accountRecoveryInputs();
+    doAnswer(call -> 4).when(replay.operations).countReplayFailures(any());
     var binding = replay.envelopeBinding(original, tokenHash);
     var envelope = new AccountControlUiIssuanceRepository.Envelope(new byte[] {9}, binding);
     doAnswer(call -> envelope).when(replay.operations).envelope(any());
@@ -378,6 +458,7 @@ class AccountControlUiIssuanceWorkflowTest {
     }
     verify(replay.authority, org.mockito.Mockito.atLeastOnce()).captureAccount(replay.account);
     verify(replay.actors).authenticateAccount("test-only-account-original");
+    verify(replay.operations, never()).recordReplayFailure(any());
     verify(replay.primary, never()).authenticateControlUiPrimaryIdentity(anyString(), anyString());
     verify(replay.signers, never()).sign(any(), any(), any());
     assertThat(original.scopeKind()).isEqualTo(AccountControlUiAuthority.ScopeKind.ACCOUNT);
@@ -720,6 +801,7 @@ class AccountControlUiIssuanceWorkflowTest {
           .connection(any(org.jooq.ConnectionRunnable.class));
       when(dsl.fetchOne(anyString(), any(Object[].class))).thenAnswer(call -> ownerRow);
       operations = Mockito.spy(new AccountControlUiIssuanceRepository(dsl));
+      doAnswer(call -> 0).when(operations).countReplayFailures(any());
       doAnswer(call -> stored).when(operations).findRequest(requestId);
       when(cryptography.requestDigest(anyString(), any(byte[].class)))
           .thenReturn("original-request-digest");
