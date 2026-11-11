@@ -1290,12 +1290,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
               return id;
             });
     Record original = c.evidenceRow(evidenceId);
-    String xmin =
-        c.dsl
-            .fetchOne(
-                "SELECT xmin::text FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
-                evidenceId)
-            .get(0, String.class);
+    String xmin = c.evidenceXmin(evidenceId);
     c.migrateToLatest();
     assertHistoricalEvidence(c, evidenceId, original);
     var repository = new AccountRecentReauthenticationRepository(c.dsl);
@@ -1326,13 +1321,7 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
     assertThatThrownBy(() -> c.service.reauthenticate(changed))
         .isInstanceOf(AccountRecentReauthenticationService.IdempotencyConflictException.class);
     assertHistoricalEvidence(c, evidenceId, original);
-    assertThat(
-            c.dsl
-                .fetchOne(
-                    "SELECT xmin::text FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
-                    evidenceId)
-                .get(0, String.class))
-        .isEqualTo(xmin);
+    assertThat(c.evidenceXmin(evidenceId)).isEqualTo(xmin);
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_evidence")).isOne();
     assertThat(c.count("SELECT count(*) FROM account_recent_reauthentication_consumptions"))
         .isZero();
@@ -2286,6 +2275,14 @@ class AccountRecentReauthenticationPostgresIntegrationTest {
           dsl.fetchOne(
               "SELECT * FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
               evidenceId));
+    }
+
+    String evidenceXmin(UUID evidenceId) {
+      return Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT xmin::text FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                  evidenceId))
+          .get(0, String.class);
     }
 
     long count(String query, Object... parameters) {
