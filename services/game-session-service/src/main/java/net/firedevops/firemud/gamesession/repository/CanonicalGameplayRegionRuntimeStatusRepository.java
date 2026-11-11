@@ -678,13 +678,25 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       String ownerService,
       String ownerInstanceId,
       Instant now) {
-    return installOwner(source, expectedRegionEpoch, prior, leaseTokenCorrelation,
-        ownerService, ownerInstanceId, now, null);
+    return installOwner(
+        source,
+        expectedRegionEpoch,
+        prior,
+        leaseTokenCorrelation,
+        ownerService,
+        ownerInstanceId,
+        now,
+        null);
   }
 
   CanonicalGameplayRegionRuntimeStatus installOwner(
-      Source source, long expectedRegionEpoch, CanonicalGameplayRegionRuntimeStatus prior,
-      String leaseTokenCorrelation, String ownerService, String ownerInstanceId, Instant now,
+      Source source,
+      long expectedRegionEpoch,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String leaseTokenCorrelation,
+      String ownerService,
+      String ownerInstanceId,
+      Instant now,
       CanonicalGameplayRegionOwnerTransferRepository.Completion transferProof) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(source, "source");
@@ -740,19 +752,21 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
               // Lease expiry alone cannot satisfy either condition.
               // Capacity authorization takes this same row lock before creating that custody.
               if (transaction.fetchExists(
-                  DSL.selectOne()
-                      .from(
-                          DSL.table("game_session_original_new_capacity_execution").as("execution"))
-                      .join(
-                          DSL.table("game_session_canonical_binding_region_bridge_obligation")
-                              .as("binding"))
-                      .on(
-                          DSL.field("binding.transition_id")
-                              .eq(DSL.field("execution.transition_id")))
-                      .where(DSL.field("binding.tenant_id").eq(source.tenantId()))
-                      .and(DSL.field("binding.game_instance_id").eq(source.gameInstanceId()))
-                      .and(DSL.field("binding.region_id").eq(source.regionId()))
-                      .and(DSL.field("execution.status").in("INSTALL_DISPATCHED", "AUTHORIZED")))
+                      DSL.selectOne()
+                          .from(
+                              DSL.table("game_session_original_new_capacity_execution")
+                                  .as("execution"))
+                          .join(
+                              DSL.table("game_session_canonical_binding_region_bridge_obligation")
+                                  .as("binding"))
+                          .on(
+                              DSL.field("binding.transition_id")
+                                  .eq(DSL.field("execution.transition_id")))
+                          .where(DSL.field("binding.tenant_id").eq(source.tenantId()))
+                          .and(DSL.field("binding.game_instance_id").eq(source.gameInstanceId()))
+                          .and(DSL.field("binding.region_id").eq(source.regionId()))
+                          .and(
+                              DSL.field("execution.status").in("INSTALL_DISPATCHED", "AUTHORIZED")))
                   && transferProof == null) {
                 throw unavailable();
               }
@@ -767,12 +781,22 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
             if (transferProof != null) {
               if (current == null) throw unavailable();
               CanonicalGameplayRegionOwnerTransferRepository.requireAndComplete(
-                  transaction, transferProof, source, current, ownerInstanceId, fence,
-                  leaseTokenCorrelation, now);
-            } else if(current!=null && CanonicalGameplayRegionOwnerTransferRepository.frozen(
-                transaction,current.tenantId(),current.gameInstanceId(),current.regionId())) {
+                  transaction,
+                  transferProof,
+                  source,
+                  current,
+                  ownerInstanceId,
+                  fence,
+                  leaseTokenCorrelation,
+                  now);
+            } else if (current != null
+                && CanonicalGameplayRegionOwnerTransferRepository.frozen(
+                    transaction,
+                    current.tenantId(),
+                    current.gameInstanceId(),
+                    current.regionId())) {
               CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
-                  transaction,current,ownerInstanceId,fence,leaseTokenCorrelation);
+                  transaction, current, ownerInstanceId, fence, leaseTokenCorrelation);
             }
             Record installed;
             if (current == null) {

@@ -45,8 +45,8 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -231,7 +231,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     assertThatThrownBy(
             () ->
                 repository.find(
-                    source(source.gameInstanceId(), new UUID(0x6666666666666666L, 0x8666666666666666L))))
+                    source(
+                        source.gameInstanceId(),
+                        new UUID(0x6666666666666666L, 0x8666666666666666L))))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -367,7 +369,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       Future<?> authorization =
           executor.submit(
               () ->
-                  proof.capacity(gate.attach(proof.sql))
+                  proof
+                      .capacity(gate.attach(proof.sql))
                       .authorize(
                           proof.admission,
                           template,
@@ -380,7 +383,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           executor.submit(
               () ->
                   proof.transfers.within(
-                      transferDeadline(), ignored -> proof.transfers.begin(proof.scope, proof.prior)));
+                      transferDeadline(),
+                      ignored -> proof.transfers.begin(proof.scope, proof.prior)));
       try {
         assertDatabaseWaitsFor(proof.sql, gate.backendPid());
         assertThat(freeze.isDone()).isFalse();
@@ -391,8 +395,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       UUID id = freeze.get(10, TimeUnit.SECONDS);
       assertThat(id).isNotNull();
       assertThat(proof.executionState(proof.execution)).isEqualTo("AUTHORIZED");
-      assertThat(
-              proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id)))
+      List<CanonicalGameplayRegionOwnerTransferRepository.Item> captured =
+          proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
+      assertThat(captured)
           .extracting(item -> item.execution().digest())
           .containsExactly(proof.execution.digest());
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
@@ -400,7 +405,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
-  void freezeHoldingRegionRowMakesActualAuthorizationWaitThenRefuseBeforeDispatch() throws Exception {
+  void freezeHoldingRegionRowMakesActualAuthorizationWaitThenRefuseBeforeDispatch()
+      throws Exception {
     try (var proof = new TransferSqlProof();
         var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
@@ -424,7 +430,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           executor.submit(
               () -> {
                 try {
-                  proof.capacity(proof.sql)
+                  proof
+                      .capacity(proof.sql)
                       .authorize(
                           proof.admission,
                           template,
@@ -450,8 +457,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
       // The INSERT trigger independently takes the same row lock and rejects raw late dispatch.
       assertSqlGuard(() -> proof.seedUndeliveredDispatch(proof.execution));
-      assertThat(
-              proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id)))
+      List<CanonicalGameplayRegionOwnerTransferRepository.Item> captured =
+          proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
+      assertThat(captured)
           .extracting(item -> item.execution().digest())
           .containsExactly(seeded.digest());
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
@@ -468,8 +476,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var other = proof.transfers(proof.sql);
       Future<UUID> first =
           executor.submit(() -> beginAfterBarrier(proof, proof.transfers, ready, start));
-      Future<UUID> second =
-          executor.submit(() -> beginAfterBarrier(proof, other, ready, start));
+      Future<UUID> second = executor.submit(() -> beginAfterBarrier(proof, other, ready, start));
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       UUID retained = first.get(10, TimeUnit.SECONDS);
@@ -477,26 +484,29 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       String original = proof.transferImage(retained);
       assertThatThrownBy(
               () -> {
-                other.within(
-                    transferDeadline(), ignored -> other.begin(proof.scope, proof.prior));
-                throw new IllegalStateException("Controlled lost begin reply after committed readback");
+                other.within(transferDeadline(), ignored -> other.begin(proof.scope, proof.prior));
+                throw new IllegalStateException(
+                    "Controlled lost begin reply after committed readback");
               })
           .hasMessage("Controlled lost begin reply after committed readback");
       var recreated = proof.transfers(proof.sql);
-      assertThat(
-              recreated.within(
-                  transferDeadline(), ignored -> recreated.begin(proof.scope, proof.prior)))
-          .isEqualTo(retained);
+      UUID replayed =
+          recreated.within(
+              transferDeadline(), ignored -> recreated.begin(proof.scope, proof.prior));
+      assertThat(replayed).isEqualTo(retained);
       assertThat(proof.transferImage(retained)).isEqualTo(original);
       assertThat(
-              proof.sql.fetchSingle("SELECT count(*) FROM game_session_region_owner_transfer")
+              proof
+                  .sql
+                  .fetchSingle("SELECT count(*) FROM game_session_region_owner_transfer")
                   .get(0, Long.class))
           .isEqualTo(1L);
     }
   }
 
   @Test
-  void boundedCensusAndVerificationResumeBeyondThirtyTwoWithoutLosingAnyOriginal() throws Exception {
+  void boundedCensusAndVerificationResumeBeyondThirtyTwoWithoutLosingAnyOriginal()
+      throws Exception {
     try (var proof = new TransferSqlProof()) {
       // Controlled reservation envelopes seed SQL custody, not Account-authorized multiattempt
       // behavior. Every candidate, bridge, mapping and owner source is retained by its real owner.
@@ -531,8 +541,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       for (int size : List.of(32, 32, 1)) {
         long after = cursor;
         var page =
-            proof.transfers.within(
-                transferDeadline(), ignored -> proof.transfers.page(id, after));
+            proof.transfers.within(transferDeadline(), ignored -> proof.transfers.page(id, after));
         assertThat(page).hasSize(size);
         captured.addAll(page.stream().map(item -> item.execution().digest()).toList());
         cursor = page.getLast().ordinal();
@@ -541,45 +550,49 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           .containsExactlyInAnyOrderElementsOf(
               originals.stream().map(OriginalNewCapacityExecution::digest).toList());
       assertThat(cursor).isEqualTo(64L);
-      assertThat(
-              proof.transfers.within(
-                  transferDeadline(), ignored -> proof.transfers.verificationCursor(id)))
-          .isEqualTo(-1L);
+      long initialVerificationCursor =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.verificationCursor(id));
+      assertThat(initialVerificationCursor).isEqualTo(-1L);
       proof.verifyPage(id);
-      assertThat(
-              proof.transfers.within(
-                  transferDeadline(), ignored -> proof.transfers.finishVerification(id)))
-          .isFalse();
+      boolean firstPageComplete =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(firstPageComplete).isFalse();
       assertThatThrownBy(() -> proof.install(id)).isInstanceOf(IllegalStateException.class);
       proof.recreateTransferOwners();
-      assertThat(
-              proof.transfers.within(
-                  transferDeadline(), ignored -> proof.transfers.verificationCursor(id)))
-          .isEqualTo(31L);
+      long resumedVerificationCursor =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.verificationCursor(id));
+      assertThat(resumedVerificationCursor).isEqualTo(31L);
       proof.verifyPage(id);
-      assertThat(
-              proof.transfers.within(
-                  transferDeadline(), ignored -> proof.transfers.finishVerification(id)))
-          .isFalse();
+      boolean secondPageComplete =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(secondPageComplete).isFalse();
       proof.recreateTransferOwners();
       proof.verifyPage(id);
-      assertThat(
-              proof.transfers.within(
-                  transferDeadline(), ignored -> proof.transfers.finishVerification(id)))
-          .isTrue();
+      boolean allPagesComplete =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(allPagesComplete).isTrue();
       var installed = proof.install(id);
       assertThat(installed.executorFence()).isGreaterThan(proof.prior.executorFence());
       assertThat(proof.currentOwner()).isEqualTo(installed);
       assertThat(proof.transfers.readCurrent(id, 64).controlState()).isEqualTo("COMPLETED");
       assertThat(
-              proof.sql.fetchSingle(
+              proof
+                  .sql
+                  .fetchSingle(
                       "SELECT count(*) FROM game_session_region_owner_transfer_item"
                           + " WHERE transfer_id=? AND fence_readback IS NOT NULL AND verified_round IS NOT NULL",
                       id)
                   .get(0, Long.class))
           .isEqualTo(65L);
       assertThat(
-              proof.sql.fetch("SELECT status FROM game_session_original_new_capacity_execution")
+              proof
+                  .sql
+                  .fetch("SELECT status FROM game_session_original_new_capacity_execution")
                   .getValues("status", String.class))
           .containsOnly("INSTALL_DISPATCHED");
     }
@@ -597,10 +610,10 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       proof.verifyPage(id);
       proof.recreateTransferOwners();
       proof.verifyPage(id);
-      assertThat(
-              proof.transfers.within(
-                  transferDeadline(), ignored -> proof.transfers.finishVerification(id)))
-          .isTrue();
+      boolean allPagesComplete =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      assertThat(allPagesComplete).isTrue();
       var last =
           proof.transfers.within(
               transferDeadline(), ignored -> proof.transfers.page(id, 31).getFirst());
@@ -643,8 +656,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       proof.captureAndFence(id);
       proof.verifyPage(id);
-      proof.transfers.within(
-          transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      proof.transfers.within(transferDeadline(), ignored -> proof.transfers.finishVerification(id));
       var installed = proof.install(id);
       String completed = proof.transferImage(id);
       assertSqlGuard(() -> proof.rawReplaceOwner("different-successor", "f".repeat(64)));
@@ -676,7 +688,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var replay =
           proof.transfers.within(
               transferDeadline(), ignored -> proof.transfers.page(id, -1).getFirst());
-      assertThat(replay.execution().canonicalBytes()).containsExactly(item.execution().canonicalBytes());
+      assertThat(replay.execution().canonicalBytes())
+          .containsExactly(item.execution().canonicalBytes());
       proof.fence(replay);
       assertThat(proof.itemImage(id)).isEqualTo(receipt);
       assertSqlGuard(
@@ -713,8 +726,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       assertThat(proof.originalImage()).isEqualTo(original);
       assertThat(proof.itemImage(id)).isEqualTo(receipt);
       proof.verifyPage(id);
-      proof.transfers.within(
-          transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      proof.transfers.within(transferDeadline(), ignored -> proof.transfers.finishVerification(id));
       var installed = proof.install(id);
       String completion = proof.transferImage(id);
       proof.recreateTransferOwners();
@@ -790,8 +802,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private final CountDownLatch resume = new CountDownLatch(1);
 
     DSLContext attach(DSLContext sql) {
-      return DSL.using(
-          sql.configuration().derive(new DefaultExecuteListenerProvider(this)));
+      return DSL.using(sql.configuration().derive(new DefaultExecuteListenerProvider(this)));
     }
 
     @Override
@@ -845,11 +856,13 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private final Clock clock = Clock.systemUTC();
     private final RedisClient redis;
     private final CanonicalGameplayAdmissionAbortCompositionFixture fixture;
-    private final CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources upstream;
+    private final CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources
+        upstream;
     private final DSLContext sql;
     private final CanonicalGameplayTenantGameplayTagRepository tags;
     private final RedisScriptCatalog scripts;
-    private final CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource admission;
+    private final CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+        admission;
     private final CanonicalGameplayRegionRuntimeStatusRepository.Source scope;
     private final CanonicalGameplayRegionRuntimeStatus prior;
     private final OriginalNewCapacityExecution execution;
@@ -874,20 +887,35 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       dataSource.setPassword(POSTGRES.getPassword());
       var candidate =
           new Candidate(
-              UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-              "SHARED", UUID.randomUUID(), 1L, UUID.randomUUID(), UUID.randomUUID(),
-              BigInteger.ONE, GameSessionAccountDelegationProfile.ISSUER, BigInteger.ONE,
-              BigInteger.ONE, BigInteger.ONE, BigInteger.valueOf(64));
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              "SHARED",
+              UUID.randomUUID(),
+              1L,
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              BigInteger.ONE,
+              GameSessionAccountDelegationProfile.ISSUER,
+              BigInteger.ONE,
+              BigInteger.ONE,
+              BigInteger.ONE,
+              BigInteger.valueOf(64));
       fixture = new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis);
       sql = fixture.dsl();
       tags = new CanonicalGameplayTenantGameplayTagRepository(sql, "test", 1);
       scripts =
           RedisScriptCatalog.fromContributions(
               List.of(
-                  new net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
-                  new net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
-                  new net.firedevops.firemud.gamesession.service.CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
-                  new net.firedevops.firemud.gamesession.service.CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
       upstream =
           new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
               sql, fixture.originalPreparedDecisionWithControlledAccountLease(), directory);
@@ -900,7 +928,12 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           .repair(fixture.transitionId());
       var region =
           CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
-              sql, redis, fixture.transitionId(), upstream.request, upstream.resolver, upstream.entity);
+              sql,
+              redis,
+              fixture.transitionId(),
+              upstream.request,
+              upstream.resolver,
+              upstream.entity);
       admission = inventory.readOriginalNewFinalAdmissionSource(decision);
       scope = region.installation().source;
       prior = new CanonicalGameplayRegionRuntimeStatusRepository(sql).find(scope).orElseThrow();
@@ -910,10 +943,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
 
     private OriginalNewCapacityExecution newControlledExecution() {
       var controlled =
-          CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacity(admission, clock);
+          CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacity(
+              admission, clock);
       return new OriginalNewCapacityExecution(
-          controlled.request(), controlled.reservation(), controlled.transitionId(),
-          controlled.candidateDigest(), prior.ownerInstanceId(), prior.executorFence().longValueExact());
+          controlled.request(),
+          controlled.reservation(),
+          controlled.transitionId(),
+          controlled.candidateDigest(),
+          prior.ownerInstanceId(),
+          prior.executorFence().longValueExact());
     }
 
     private CanonicalGameplayRegionOwnerTransferRepository transfers(DSLContext context) {
@@ -921,13 +959,18 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private CanonicalGameplayOriginalNewCapacityExecutionOwner capacity(DSLContext context) {
-      return new CanonicalGameplayOriginalNewCapacityExecutionOwner(context, redis, scripts, clock, tags);
+      return new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+          context, redis, scripts, clock, tags);
     }
 
     private void recreateTransferOwners() throws Exception {
       transfers = transfers(sql);
-      receiver = new CanonicalGameplayControlledRegionTransferObservationFixture(clock).receiver(transfers, tags);
-      coordinator = new CanonicalGameplayRegionOwnerTransferCoordinator(sql, clock, transfers, capacity(sql), receiver);
+      receiver =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(clock)
+              .receiver(transfers, tags);
+      coordinator =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              sql, clock, transfers, capacity(sql), receiver);
     }
 
     private UUID begin() {
@@ -943,12 +986,19 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
               + " reservation_id,reservation_fence,mutation_digest,execution_digest,canonical_execution,"
               + " selected_owner_id,selected_owner_fence,tenant_gameplay_tag,status)"
               + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'INSTALL_DISPATCHED')",
-          original.request().identity().tenantId(), original.request().identity().requestId(),
-          original.request().identity().admissionId(), original.request().admissionAttemptId(),
-          original.transitionId(), original.request().capacityRearmFence(),
-          original.reservation().reservationId(), original.reservation().reservationFence(),
-          original.request().mutationDigest(), original.digest(), original.canonicalBytes(),
-          original.selectedOwnerId(), original.selectedOwnerFence(),
+          original.request().identity().tenantId(),
+          original.request().identity().requestId(),
+          original.request().identity().admissionId(),
+          original.request().admissionAttemptId(),
+          original.transitionId(),
+          original.request().capacityRearmFence(),
+          original.reservation().reservationId(),
+          original.reservation().reservationFence(),
+          original.request().mutationDigest(),
+          original.digest(),
+          original.canonicalBytes(),
+          original.selectedOwnerId(),
+          original.selectedOwnerFence(),
           tags.assignmentForTransition(original.transitionId()).tenantGameplayTag());
     }
 
@@ -960,9 +1010,13 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private void fence(CanonicalGameplayRegionOwnerTransferRepository.Item item) {
-      var before = receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), transferDeadline());
+      var before =
+          receiver.observeForRegionOwnerTransfer(
+              item.transferId(), item.ordinal(), transferDeadline());
       var actual = capacity(sql).fenceForTransfer(item, transferDeadline());
-      var after = receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), transferDeadline());
+      var after =
+          receiver.observeForRegionOwnerTransfer(
+              item.transferId(), item.ordinal(), transferDeadline());
       transfers.within(
           transferDeadline(),
           ignored -> {
@@ -972,7 +1026,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private void verifyPage(UUID id) {
-      long cursor = transfers.within(transferDeadline(), ignored -> transfers.verificationCursor(id));
+      long cursor =
+          transfers.within(transferDeadline(), ignored -> transfers.verificationCursor(id));
       var page = transfers.within(transferDeadline(), ignored -> transfers.page(id, cursor));
       assertThat(page.size()).isLessThanOrEqualTo(32);
       for (var item : page) {
@@ -989,12 +1044,22 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private CanonicalGameplayRegionRuntimeStatus install(UUID id) {
-      return coordinator.install(id, scope, prior, "e".repeat(64), "game-session-service", "sql-proof-successor", transferDeadline());
+      return coordinator.install(
+          id,
+          scope,
+          prior,
+          "e".repeat(64),
+          "game-session-service",
+          "sql-proof-successor",
+          transferDeadline());
     }
 
     private CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
-      var repository = new CanonicalGameplayIssuerAdmissionBarrierRepository(sql, tags, fixture.currentIssuerSource());
-      return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(redis, scripts, repository, fixture.currentIssuerSource())
+      var repository =
+          new CanonicalGameplayIssuerAdmissionBarrierRepository(
+              sql, tags, fixture.currentIssuerSource());
+      return new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
+              redis, scripts, repository, fixture.currentIssuerSource())
           .initializeAndRead(fixture.originalOperationId());
     }
 
@@ -1003,22 +1068,55 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var assignment = tags.assignmentForTransition(fixture.transitionId());
       UUID initializer = UUID.randomUUID();
       String incarnation = "sha256:" + "a".repeat(64);
-      String key = "session:game:account-admission:{" + assignment.tenantGameplayTag() + "}:"
-          + binding.accountId() + ":" + binding.playableStateNamespaceId();
-      Map<String, String> fields = Map.of(
-          "schema", CanonicalGameplayAccountInitialBarrierValue.SCHEMA, "state", "OPEN",
-          "accountId", binding.accountId().toString(), "tenantId", binding.tenantId().toString(),
-          "playableStateNamespaceId", binding.playableStateNamespaceId().toString(),
-          "tenantGameplayTag", assignment.tenantGameplayTag(), "ownerOperationId", initializer.toString(),
-          "ownerFenceEpoch", "1", "incarnationDigest", incarnation);
+      String key =
+          "session:game:account-admission:{"
+              + assignment.tenantGameplayTag()
+              + "}:"
+              + binding.accountId()
+              + ":"
+              + binding.playableStateNamespaceId();
+      Map<String, String> fields =
+          Map.of(
+              "schema",
+              CanonicalGameplayAccountInitialBarrierValue.SCHEMA,
+              "state",
+              "OPEN",
+              "accountId",
+              binding.accountId().toString(),
+              "tenantId",
+              binding.tenantId().toString(),
+              "playableStateNamespaceId",
+              binding.playableStateNamespaceId().toString(),
+              "tenantGameplayTag",
+              assignment.tenantGameplayTag(),
+              "ownerOperationId",
+              initializer.toString(),
+              "ownerFenceEpoch",
+              "1",
+              "incarnationDigest",
+              incarnation);
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
-        fields.forEach((field, value) -> connection.sync().hset(ascii(key), ascii(field), ascii(value)));
+        fields.forEach(
+            (field, value) -> connection.sync().hset(ascii(key), ascii(field), ascii(value)));
       }
       long now = clock.millis();
       return new CanonicalGameplayAccountInitialOpenProof.CurrentOpen(
-          initializer, UUID.randomUUID(), UUID.randomUUID(), 1L, binding.accountId(), binding.tenantId(),
-          binding.playableStateNamespaceId(), key, BigInteger.ONE, BigInteger.ONE, incarnation,
-          incarnation, incarnation, now, now + 60_000L, fields);
+          initializer,
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          1L,
+          binding.accountId(),
+          binding.tenantId(),
+          binding.playableStateNamespaceId(),
+          key,
+          BigInteger.ONE,
+          BigInteger.ONE,
+          incarnation,
+          incarnation,
+          incarnation,
+          now,
+          now + 60_000L,
+          fields);
     }
 
     private CanonicalGameplayRegionRuntimeStatus currentOwner() {
@@ -1026,14 +1124,25 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private String executionState(OriginalNewCapacityExecution original) {
-      Record row = sql.fetchOne("SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?", original.digest());
+      Record row =
+          sql.fetchOne(
+              "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+              original.digest());
       return row == null ? null : row.get(0, String.class);
     }
 
     private boolean physicalExecutionExists(OriginalNewCapacityExecution original) {
       String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
-        return connection.sync().exists(ascii("session:game:capacity-execution:{" + tag + "}:" + original.request().admissionAttemptId())) != 0;
+        return connection
+                .sync()
+                .exists(
+                    ascii(
+                        "session:game:capacity-execution:{"
+                            + tag
+                            + "}:"
+                            + original.request().admissionAttemptId()))
+            != 0;
       }
     }
 
@@ -1041,9 +1150,14 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
         assertThat(
-                connection.sync().del(
-                    ascii("session:game:capacity-execution:{" + tag + "}:"
-                        + original.request().admissionAttemptId())))
+                connection
+                    .sync()
+                    .del(
+                        ascii(
+                            "session:game:capacity-execution:{"
+                                + tag
+                                + "}:"
+                                + original.request().admissionAttemptId())))
             .isEqualTo(1L);
       }
     }
@@ -1051,21 +1165,33 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private void rawReplaceOwner(String owner, String correlation) {
       sql.execute(
           "UPDATE game_session_region_runtime_status SET owner_instance_id=?,executor_fence=nextval('game_session_region_executor_fence_seq'),lease_token_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
-          owner, correlation, scope.tenantId(), scope.gameInstanceId(), scope.regionId());
+          owner,
+          correlation,
+          scope.tenantId(),
+          scope.gameInstanceId(),
+          scope.regionId());
     }
 
     private String originalImage() {
-      return sql.fetch("SELECT to_jsonb(e)::text FROM game_session_original_new_capacity_execution e ORDER BY execution_digest")
-          .getValues(0, String.class).toString();
+      return sql.fetch(
+              "SELECT to_jsonb(e)::text FROM game_session_original_new_capacity_execution e ORDER BY execution_digest")
+          .getValues(0, String.class)
+          .toString();
     }
 
     private String transferImage(UUID id) {
-      return sql.fetchSingle("SELECT to_jsonb(t)::text FROM game_session_region_owner_transfer t WHERE transfer_id=?", id).get(0, String.class);
+      return sql.fetchSingle(
+              "SELECT to_jsonb(t)::text FROM game_session_region_owner_transfer t WHERE transfer_id=?",
+              id)
+          .get(0, String.class);
     }
 
     private String itemImage(UUID id) {
-      return sql.fetch("SELECT to_jsonb(i)::text FROM game_session_region_owner_transfer_item i WHERE transfer_id=? ORDER BY target_ordinal", id)
-          .getValues(0, String.class).toString();
+      return sql.fetch(
+              "SELECT to_jsonb(i)::text FROM game_session_region_owner_transfer_item i WHERE transfer_id=? ORDER BY target_ordinal",
+              id)
+          .getValues(0, String.class)
+          .toString();
     }
 
     @Override

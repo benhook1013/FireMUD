@@ -122,7 +122,6 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
       Wxs2cbVLKG33dmmvG6TFL/+s3wbWL2LN5mxvpjYUg8ve3/ofBzgikHM9AAA=
       """;
 
-
   @Container
   private static final GenericContainer<?> REDIS =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(PORT);
@@ -198,8 +197,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     byte[] preFenceScript;
     try (var input =
         new GZIPInputStream(
-            new ByteArrayInputStream(
-                Base64.getMimeDecoder().decode(PRE_FENCE_LUA_GZIP_BASE64)))) {
+            new ByteArrayInputStream(Base64.getMimeDecoder().decode(PRE_FENCE_LUA_GZIP_BASE64)))) {
       preFenceScript = input.readAllBytes();
     }
     assertThat(HexFormatHolder.sha256(preFenceScript)).isEqualTo(PRE_FENCE_LUA_SHA256);
@@ -344,8 +342,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   void absentExecutionFenceInstallsOnlyTheExactPersistentDenyWithoutRecreatingRuntimeState()
       throws Exception {
     ScriptCase original = seed(false);
-    for (int index = 0; index < 6; index++)
-      admin.del(new byte[][] {ascii(original.keys()[index])});
+    for (int index = 0; index < 6; index++) admin.del(new byte[][] {ascii(original.keys()[index])});
     Map<String, byte[]> before = physicalImage(original);
 
     // No credential, template, OPEN barrier, candidate or index is needed to deny future execution.
@@ -507,7 +504,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   @Test
-  void fenceRequiresTheExactCompleteEnvelopeAndCanonicalKeyIdentityBeforeWriting() throws Exception {
+  void fenceRequiresTheExactCompleteEnvelopeAndCanonicalKeyIdentityBeforeWriting()
+      throws Exception {
     for (String fault :
         List.of("missing-field", "extra-field", "wrong-tenant", "invalid-fence", "wrong-key")) {
       admin.flushdb();

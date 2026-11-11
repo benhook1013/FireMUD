@@ -18,8 +18,8 @@ interface CanonicalGameplayRegionOwnerTransferObservationSource {
   /**
    * One frozen item and its original owner, with its exact current control phase. A COMPLETED
    * context requires independently current sealed successor evidence and is read-only currentness,
-   * never permission for mutation. Mutable per-item progress is deliberately excluded: completing
-   * a different item must not change this item's observation identity.
+   * never permission for mutation. Mutable per-item progress is deliberately excluded: completing a
+   * different item must not change this item's observation identity.
    */
   record Context(
       UUID transferId,
@@ -57,7 +57,8 @@ interface CanonicalGameplayRegionOwnerTransferObservationSource {
       requireDigest(executionDigest, "executionDigest");
       requireDigest(candidateDigest, "candidateDigest");
       if (targetOrdinal < 0L || oldRegionOwnerFence <= 0L || regionEpoch <= 0L) {
-        throw new IllegalArgumentException("Transfer ordinal, owner fence or region epoch is invalid");
+        throw new IllegalArgumentException(
+            "Transfer ordinal, owner fence or region epoch is invalid");
       }
       if (oldRegionOwnerId == null
           || oldRegionOwnerId.isBlank()

@@ -119,7 +119,9 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
         .thenReturn(
             List.of(
                 CanonicalGameplayAccountAdmissionFenceIntent.barrierTarget(
-                    context.targetOrdinal(), context.tenantId(), context.playableStateNamespaceId())));
+                    context.targetOrdinal(),
+                    context.tenantId(),
+                    context.playableStateNamespaceId())));
     when(fixture.assignment.isBindingTransition()).thenReturn(false);
     when(fixture.assignment.admissionFenceIntentOperationId()).thenReturn(context.transferId());
     when(fixture.assignment.barrierTargetOrdinal()).thenReturn(context.targetOrdinal());
@@ -130,7 +132,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
             repository, fixture.tags, fixture::signed, fixture.trust(), fixture.clock);
     assertThatThrownBy(
             () -> receiver.observeForFenceTarget(context.transferId(), context.targetOrdinal()))
-        .isInstanceOf(CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
   }
 
   @Test
@@ -164,15 +167,28 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
         new CanonicalGameplayProtectedIncarnationReceiver(
             repository, fixture.tags, fixture::signed, fixture.trust(), fixture.clock);
     assertThatThrownBy(() -> receiver.observeForInitialAccountBarrier(context.requestId()))
-        .isInstanceOf(CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
   }
 
   @ParameterizedTest
   @ValueSource(
       strings = {
-        "transferId", "transferIntentDigest", "frozenSourceDigest", "oldRegionOwnerId",
-        "oldRegionOwnerFence", "gameInstanceId", "regionId", "regionEpoch", "transitionId",
-        "requestId", "accountId", "executionDigest", "candidateDigest", "controlState", "completionDigest"
+        "transferId",
+        "transferIntentDigest",
+        "frozenSourceDigest",
+        "oldRegionOwnerId",
+        "oldRegionOwnerFence",
+        "gameInstanceId",
+        "regionId",
+        "regionEpoch",
+        "transitionId",
+        "requestId",
+        "accountId",
+        "executionDigest",
+        "candidateDigest",
+        "controlState",
+        "completionDigest"
       })
   void everySignedTransferOwnerTupleMutationRefuses(String field) {
     var fixture = new Fixture();
@@ -183,8 +199,12 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
-        "targetOrdinal", "tenantId", "playableStateNamespaceId", "tenantGameplayTag",
-        "workloadNamespace", "allocationVersion"
+        "targetOrdinal",
+        "tenantId",
+        "playableStateNamespaceId",
+        "tenantGameplayTag",
+        "workloadNamespace",
+        "allocationVersion"
       })
   void everySignedTargetTupleMutationRefuses(String field) {
     var fixture = new Fixture();
@@ -208,8 +228,12 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
-        "attestorBinding", "attestorKeyId", "acceptedAttestationDigest", "observationNonce",
-        "coordOpsRoAclDigest", "coordRedisConfigObservedDigest"
+        "attestorBinding",
+        "attestorKeyId",
+        "acceptedAttestationDigest",
+        "observationNonce",
+        "coordOpsRoAclDigest",
+        "coordRedisConfigObservedDigest"
       })
   void signedTrustAndCorrelationMutationRefuses(String field) {
     var fixture = new Fixture();
@@ -220,8 +244,15 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
-        "isBindingTransition", "transitionId", "accountId", "tenantId", "gameInstanceId",
-        "playableStateNamespaceId", "tenantGameplayTag", "workloadNamespace", "allocationVersion"
+        "isBindingTransition",
+        "transitionId",
+        "accountId",
+        "tenantId",
+        "gameInstanceId",
+        "playableStateNamespaceId",
+        "tenantGameplayTag",
+        "workloadNamespace",
+        "allocationVersion"
       })
   void independentlyResolvedAssignmentMustMatchBeforeRemoteCall(String field) {
     var fixture = new Fixture();
@@ -242,8 +273,13 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
-        "transferIntentDigest", "frozenSourceDigest", "oldRegionOwnerId", "oldRegionOwnerFence",
-        "regionEpoch", "executionDigest", "candidateDigest"
+        "transferIntentDigest",
+        "frozenSourceDigest",
+        "oldRegionOwnerId",
+        "oldRegionOwnerFence",
+        "regionEpoch",
+        "executionDigest",
+        "candidateDigest"
       })
   void frozenSourceMutationDuringSignedReadRefuses(String field) {
     var fixture = new Fixture();
@@ -265,7 +301,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     var fixture = new Fixture();
     fixture.afterSign = () -> fixture.sourceUnavailable = true;
     assertThatThrownBy(() -> fixture.observe(NOW + 1_000L))
-        .isInstanceOf(CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
     assertThat(fixture.sourceReads).hasValue(2);
   }
 
@@ -300,7 +337,10 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   @ValueSource(strings = {"FROZEN", "COMPLETED"})
   void signedProofCannotSubstituteTheOtherControlPhase(String currentPhase) {
     var fixture =
-        new Fixture("game-session-original", currentPhase, "COMPLETED".equals(currentPhase) ? DIGEST : null);
+        new Fixture(
+            "game-session-original",
+            currentPhase,
+            "COMPLETED".equals(currentPhase) ? DIGEST : null);
     fixture.mutation =
         root -> {
           var owner = object(root, "owner");
@@ -330,11 +370,16 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   @Test
   void sourceContextRejectsUnsupportedOrMismatchedControlPhaseAndCompletion() {
     var context = new Fixture().original;
-    assertThatThrownBy(() -> withPhase(context, "UNKNOWN", null)).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> withPhase(context, null, null)).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> withPhase(context, "FROZEN", DIGEST)).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> withPhase(context, "COMPLETED", null)).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> withPhase(context, "COMPLETED", "not-a-digest")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> withPhase(context, "UNKNOWN", null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> withPhase(context, null, null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> withPhase(context, "FROZEN", DIGEST))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> withPhase(context, "COMPLETED", null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> withPhase(context, "COMPLETED", "not-a-digest"))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -362,7 +407,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   void timeWindowMismatchOrDeadlineExpiryRefuses(String mode) {
     var fixture = new Fixture();
     switch (mode) {
-      case "issued" -> fixture.mutation = root -> root.put("observationIssuedAtEpochMillis", NOW - 1L);
+      case "issued" ->
+          fixture.mutation = root -> root.put("observationIssuedAtEpochMillis", NOW - 1L);
       case "observed-before" ->
           fixture.mutation = root -> root.put("observationObservedAtEpochMillis", NOW - 1L);
       case "observed-after" ->
@@ -380,7 +426,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   void expiredOperationNeverReadsSourceOrCallsChannel() {
     var fixture = new Fixture();
     assertThatThrownBy(() -> fixture.observe(NOW))
-        .isInstanceOf(CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
     assertThat(fixture.sourceReads).hasValue(0);
     assertThat(fixture.channelCalls).hasValue(0);
   }
@@ -390,7 +437,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     var fixture = new Fixture();
     fixture.onSourceRead = () -> fixture.now.set(NOW + 1_000L);
     assertThatThrownBy(() -> fixture.observe(NOW + 1_000L))
-        .isInstanceOf(CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
     assertThat(fixture.channelCalls).hasValue(0);
   }
 
@@ -404,7 +452,15 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"operationId", "operationFence", "initializerId", "originalAttemptFence", "progressCursor", "completedCount"})
+  @ValueSource(
+      strings = {
+        "operationId",
+        "operationFence",
+        "initializerId",
+        "originalAttemptFence",
+        "progressCursor",
+        "completedCount"
+      })
   void accountInitialAndMutableProgressFieldsAreNotTransferOwnerFields(String field) {
     var fixture = new Fixture();
     fixture.mutation = root -> object(root, "owner").put(field, "unexpected");
@@ -412,7 +468,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"signature", "unpinned", "noncanonical", "duplicate", "oversized", "utf8"})
+  @ValueSource(
+      strings = {"signature", "unpinned", "noncanonical", "duplicate", "oversized", "utf8"})
   void cryptographicCanonicalParsingAndSizeFailuresRefuse(String mode) {
     var fixture = new Fixture();
     fixture.encodingFailure = mode;
@@ -437,40 +494,83 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   void sourceContextRejectsInvalidUuidFenceEpochDigestAndBoundedIdentifiers() {
     var context = new Fixture().original;
     for (String field :
-        List.of("nil-transfer", "negative-ordinal", "zero-fence", "zero-epoch", "digest", "owner", "owner-null", "owner-blank", "owner-untrimmed", "workload", "allocation")) {
-      assertThatThrownBy(() -> invalid(context, field)).isInstanceOf(IllegalArgumentException.class);
+        List.of(
+            "nil-transfer",
+            "negative-ordinal",
+            "zero-fence",
+            "zero-epoch",
+            "digest",
+            "owner",
+            "owner-null",
+            "owner-blank",
+            "owner-untrimmed",
+            "workload",
+            "allocation")) {
+      assertThatThrownBy(() -> invalid(context, field))
+          .isInstanceOf(IllegalArgumentException.class);
     }
   }
 
   private static void assertRejected(Fixture fixture) {
     assertThatThrownBy(() -> fixture.observe(NOW + 1_000L))
-        .isInstanceOf(CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
   }
 
   private static CanonicalGameplayRegionOwnerTransferObservationSource.Context changed(
       CanonicalGameplayRegionOwnerTransferObservationSource.Context c, String field) {
     return new CanonicalGameplayRegionOwnerTransferObservationSource.Context(
-        c.transferId(), c.targetOrdinal(),
+        c.transferId(),
+        c.targetOrdinal(),
         "transferIntentDigest".equals(field) ? OTHER_DIGEST : c.transferIntentDigest(),
         "frozenSourceDigest".equals(field) ? OTHER_DIGEST : c.frozenSourceDigest(),
         "oldRegionOwnerId".equals(field) ? "different-owner" : c.oldRegionOwnerId(),
-        "oldRegionOwnerFence".equals(field) ? c.oldRegionOwnerFence() + 1L : c.oldRegionOwnerFence(),
-        c.tenantId(), c.gameInstanceId(), c.regionId(),
+        "oldRegionOwnerFence".equals(field)
+            ? c.oldRegionOwnerFence() + 1L
+            : c.oldRegionOwnerFence(),
+        c.tenantId(),
+        c.gameInstanceId(),
+        c.regionId(),
         "regionEpoch".equals(field) ? c.regionEpoch() + 1L : c.regionEpoch(),
-        c.transitionId(), c.requestId(), c.accountId(), c.playableStateNamespaceId(),
+        c.transitionId(),
+        c.requestId(),
+        c.accountId(),
+        c.playableStateNamespaceId(),
         "executionDigest".equals(field) ? OTHER_DIGEST : c.executionDigest(),
         "candidateDigest".equals(field) ? OTHER_DIGEST : c.candidateDigest(),
-        c.tenantGameplayTag(), c.workloadNamespace(), c.allocationVersion(), c.controlState(), c.completionDigest());
+        c.tenantGameplayTag(),
+        c.workloadNamespace(),
+        c.allocationVersion(),
+        c.controlState(),
+        c.completionDigest());
   }
 
   private static CanonicalGameplayRegionOwnerTransferObservationSource.Context withPhase(
-      CanonicalGameplayRegionOwnerTransferObservationSource.Context c, String phase, String completionDigest) {
+      CanonicalGameplayRegionOwnerTransferObservationSource.Context c,
+      String phase,
+      String completionDigest) {
     return new CanonicalGameplayRegionOwnerTransferObservationSource.Context(
-        c.transferId(), c.targetOrdinal(), c.transferIntentDigest(), c.frozenSourceDigest(),
-        c.oldRegionOwnerId(), c.oldRegionOwnerFence(), c.tenantId(), c.gameInstanceId(), c.regionId(),
-        c.regionEpoch(), c.transitionId(), c.requestId(), c.accountId(), c.playableStateNamespaceId(),
-        c.executionDigest(), c.candidateDigest(), c.tenantGameplayTag(), c.workloadNamespace(),
-        c.allocationVersion(), phase, completionDigest);
+        c.transferId(),
+        c.targetOrdinal(),
+        c.transferIntentDigest(),
+        c.frozenSourceDigest(),
+        c.oldRegionOwnerId(),
+        c.oldRegionOwnerFence(),
+        c.tenantId(),
+        c.gameInstanceId(),
+        c.regionId(),
+        c.regionEpoch(),
+        c.transitionId(),
+        c.requestId(),
+        c.accountId(),
+        c.playableStateNamespaceId(),
+        c.executionDigest(),
+        c.candidateDigest(),
+        c.tenantGameplayTag(),
+        c.workloadNamespace(),
+        c.allocationVersion(),
+        phase,
+        completionDigest);
   }
 
   private static CanonicalGameplayRegionOwnerTransferObservationSource.Context invalid(
@@ -487,14 +587,24 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
         "nil-transfer".equals(field) ? new UUID(0L, 0L) : c.transferId(),
         "negative-ordinal".equals(field) ? -1L : c.targetOrdinal(),
         "digest".equals(field) ? "sha256:" + "A".repeat(64) : c.transferIntentDigest(),
-        c.frozenSourceDigest(), owner,
+        c.frozenSourceDigest(),
+        owner,
         "zero-fence".equals(field) ? 0L : c.oldRegionOwnerFence(),
-        c.tenantId(), c.gameInstanceId(), c.regionId(),
+        c.tenantId(),
+        c.gameInstanceId(),
+        c.regionId(),
         "zero-epoch".equals(field) ? 0L : c.regionEpoch(),
-        c.transitionId(), c.requestId(), c.accountId(), c.playableStateNamespaceId(),
-        c.executionDigest(), c.candidateDigest(), c.tenantGameplayTag(),
+        c.transitionId(),
+        c.requestId(),
+        c.accountId(),
+        c.playableStateNamespaceId(),
+        c.executionDigest(),
+        c.candidateDigest(),
+        c.tenantGameplayTag(),
         "workload".equals(field) ? "INVALID_NAMESPACE" : c.workloadNamespace(),
-        "allocation".equals(field) ? 0 : c.allocationVersion(), c.controlState(), c.completionDigest());
+        "allocation".equals(field) ? 0 : c.allocationVersion(),
+        c.controlState(),
+        c.completionDigest());
   }
 
   @SuppressWarnings("unchecked")
@@ -533,7 +643,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     private final AtomicInteger sourceReads = new AtomicInteger();
     private final AtomicInteger channelCalls = new AtomicInteger();
     private final CanonicalGameplayRegionOwnerTransferObservationSource.Context original;
-    private final AtomicReference<CanonicalGameplayRegionOwnerTransferObservationSource.Context> current;
+    private final AtomicReference<CanonicalGameplayRegionOwnerTransferObservationSource.Context>
+        current;
     private final CanonicalGameplayTenantGameplayTagRepository tags =
         mock(CanonicalGameplayTenantGameplayTagRepository.class);
     private final CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
@@ -552,10 +663,27 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
       UUID tenant = UUID.randomUUID();
       original =
           new CanonicalGameplayRegionOwnerTransferObservationSource.Context(
-              UUID.randomUUID(), 3L, DIGEST, DIGEST, ownerId, 7L,
-              tenant, UUID.randomUUID(), UUID.randomUUID(), 11L, UUID.randomUUID(),
-              UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), DIGEST, DIGEST,
-              "g1-" + tenant.toString().replace("-", ""), "test-workload", 1, controlState, completionDigest);
+              UUID.randomUUID(),
+              3L,
+              DIGEST,
+              DIGEST,
+              ownerId,
+              7L,
+              tenant,
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              11L,
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              DIGEST,
+              DIGEST,
+              "g1-" + tenant.toString().replace("-", ""),
+              "test-workload",
+              1,
+              controlState,
+              completionDigest);
       current = new AtomicReference<>(original);
       when(clock.millis()).thenAnswer(invocation -> now.get());
       when(tags.assignmentForTransition(original.transitionId())).thenReturn(assignment);
@@ -570,18 +698,23 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
       when(assignment.allocationVersion()).thenReturn(original.allocationVersion());
     }
 
-    private CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation observe(long deadline) {
+    private CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation observe(
+        long deadline) {
       return CanonicalGameplayProtectedIncarnationReceiver.forRegionOwnerTransfer(
               (transferId, ordinal) -> {
                 sourceReads.incrementAndGet();
                 onSourceRead.run();
                 if (sourceUnavailable) {
-                  throw new CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException(
+                  throw new CanonicalGameplayProtectedIncarnationReceiver
+                      .ObservationUnavailableException(
                       "Controlled current SQL transfer source became unavailable");
                 }
                 return current.get();
               },
-              tags, this::signed, trust(), clock)
+              tags,
+              this::signed,
+              trust(),
+              clock)
           .observeForRegionOwnerTransfer(original.transferId(), original.targetOrdinal(), deadline);
     }
 
@@ -594,8 +727,10 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
         case "gameInstanceId" -> when(assignment.gameInstanceId()).thenReturn(UUID.randomUUID());
         case "playableStateNamespaceId" ->
             when(assignment.playableStateNamespaceId()).thenReturn(UUID.randomUUID());
-        case "tenantGameplayTag" -> when(assignment.tenantGameplayTag()).thenReturn("g1-" + "f".repeat(32));
-        case "workloadNamespace" -> when(assignment.workloadNamespace()).thenReturn("different-workload");
+        case "tenantGameplayTag" ->
+            when(assignment.tenantGameplayTag()).thenReturn("g1-" + "f".repeat(32));
+        case "workloadNamespace" ->
+            when(assignment.workloadNamespace()).thenReturn("different-workload");
         case "allocationVersion" -> when(assignment.allocationVersion()).thenReturn(2);
         default -> throw new IllegalArgumentException(field);
       }
@@ -604,12 +739,27 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     private CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration trust() {
       var evidence =
           new CanonicalGameplayProtectedIncarnationReceiver.ExpectedTargetDeploymentEvidence(
-              "controlled-target", "generation-1", List.of("redis-a", "redis-b"),
-              "redis-build", "registry-1", DIGEST, "READY", "boot-1", "startup-1",
-              "storage-1", "aof-1");
+              "controlled-target",
+              "generation-1",
+              List.of("redis-a", "redis-b"),
+              "redis-build",
+              "registry-1",
+              DIGEST,
+              "READY",
+              "boot-1",
+              "startup-1",
+              "storage-1",
+              "aof-1");
       return new CanonicalGameplayProtectedIncarnationReceiver.TrustedConfiguration(
-          "controlled-transfer-binding", DIGEST, Map.of(KEY_ID, (RSAPublicKey) KEYS.getPublic()),
-          evidence, DIGEST, DIGEST, 16 * 1024, 2, Duration.ofSeconds(30));
+          "controlled-transfer-binding",
+          DIGEST,
+          Map.of(KEY_ID, (RSAPublicKey) KEYS.getPublic()),
+          evidence,
+          DIGEST,
+          DIGEST,
+          16 * 1024,
+          2,
+          Duration.ofSeconds(30));
     }
 
     private CanonicalGameplayProtectedIncarnationReceiver.SignedObservation signed(
@@ -620,11 +770,18 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
       try {
         byte[] bytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(root));
         switch (encodingFailure) {
-          case "noncanonical" -> bytes = (new String(bytes, StandardCharsets.UTF_8) + " ").getBytes(StandardCharsets.UTF_8);
-          case "duplicate" -> bytes = ("{\"schema\":\"duplicate\"," + new String(bytes, StandardCharsets.UTF_8).substring(1)).getBytes(StandardCharsets.UTF_8);
+          case "noncanonical" ->
+              bytes =
+                  (new String(bytes, StandardCharsets.UTF_8) + " ")
+                      .getBytes(StandardCharsets.UTF_8);
+          case "duplicate" ->
+              bytes =
+                  ("{\"schema\":\"duplicate\","
+                          + new String(bytes, StandardCharsets.UTF_8).substring(1))
+                      .getBytes(StandardCharsets.UTF_8);
           case "oversized" -> bytes = new byte[17 * 1024];
           case "utf8" -> bytes = new byte[] {(byte) 0xc3, (byte) 0x28};
-          default -> { }
+          default -> {}
         }
         Signature signer = Signature.getInstance("SHA256withRSA");
         signer.initSign(KEYS.getPrivate());

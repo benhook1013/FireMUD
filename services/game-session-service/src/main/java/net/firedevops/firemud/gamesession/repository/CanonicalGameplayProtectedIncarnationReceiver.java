@@ -290,7 +290,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
               issuedAt,
               before.ownerKind() == OwnerKind.REGION_OWNER_TRANSFER
                   ? Math.min(
-                      trustedConfiguration.observationTtlMillis(), absoluteDeadlineMillis - issuedAt)
+                      trustedConfiguration.observationTtlMillis(),
+                      absoluteDeadlineMillis - issuedAt)
                   : trustedConfiguration.observationTtlMillis());
     } catch (ArithmeticException overflow) {
       throw new ObservationUnavailableException("Protected observation time window is invalid");
@@ -465,7 +466,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
         null);
   }
 
-  private CurrentContext loadRegionOwnerTransferCurrentContext(UUID transferId, long targetOrdinal) {
+  private CurrentContext loadRegionOwnerTransferCurrentContext(
+      UUID transferId, long targetOrdinal) {
     requireNoAmbientTransaction();
     CanonicalGameplayRegionOwnerTransferObservationSource.Context context =
         regionOwnerTransferSource.readCurrent(transferId, targetOrdinal);
@@ -1158,7 +1160,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
             || !accountId.equals(regionOwnerTransferContext.accountId())
             || targetOrdinal != regionOwnerTransferContext.targetOrdinal()
             || !tenantId.equals(regionOwnerTransferContext.tenantId())
-            || !playableStateNamespaceId.equals(regionOwnerTransferContext.playableStateNamespaceId())
+            || !playableStateNamespaceId.equals(
+                regionOwnerTransferContext.playableStateNamespaceId())
             || !tenantGameplayTag.equals(regionOwnerTransferContext.tenantGameplayTag())
             || !workloadNamespace.equals(regionOwnerTransferContext.workloadNamespace())
             || allocationVersion != regionOwnerTransferContext.allocationVersion()
@@ -1173,7 +1176,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
             || sourceControlEpoch != null
             || accountLoginEvidenceDigest != null
             || sourceControlDigest != null) {
-          throw new IllegalArgumentException("Transfer context must use its separate typed owner arm");
+          throw new IllegalArgumentException(
+              "Transfer context must use its separate typed owner arm");
         }
       }
       if (ownerKind != OwnerKind.REGION_OWNER_TRANSFER && regionOwnerTransferContext != null) {
@@ -1231,7 +1235,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
 
     CanonicalGameplayRegionOwnerTransferObservationSource.Context regionOwnerTransferContext() {
       if (context.ownerKind() != OwnerKind.REGION_OWNER_TRANSFER) {
-        throw new ObservationRejectedException("Protected observation is not a region-owner transfer");
+        throw new ObservationRejectedException(
+            "Protected observation is not a region-owner transfer");
       }
       return context.regionOwnerTransferContext();
     }

@@ -118,17 +118,38 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalGameplayRegionLeaseOwner.Installation installation,
       CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement acknowledgement) {}
 
-  /** Actual acquire/install/revalidate path; only upstream placement/incarnation remain controlled. */
+  /**
+   * Actual acquire/install/revalidate path; only upstream placement/incarnation remain controlled.
+   */
   static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
-      DSLContext dsl, RedisClient coordinationRedis, RedisScriptCatalog catalog,
+      DSLContext dsl,
+      RedisClient coordinationRedis,
+      RedisScriptCatalog catalog,
       CanonicalGameplayRegionLeaseOwner.Installation original,
       CanonicalInitialPlayerLocationRegionResolver resolver,
-      CanonicalGameplayRegionOwnerTransferCoordinator transfer,long deadline) {
-    var identity=new RuntimeIdentity("game-session-service","final-owner-handoff",
-        "localhost",Instant.now(),"test","test","controlled-test-image");
-    var successor=CanonicalGameplayRegionLeaseOwnerFactory.compose(dsl,coordinationRedis,catalog,
-        new ControlledStableIncarnationSource(),resolver,identity,Duration.ofSeconds(30),Clock.systemUTC());
-    return successor.installForTransition(null,original.transitionId,original.worldRequest,transfer,deadline);
+      CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+      long deadline) {
+    var identity =
+        new RuntimeIdentity(
+            "game-session-service",
+            "final-owner-handoff",
+            "localhost",
+            Instant.now(),
+            "test",
+            "test",
+            "controlled-test-image");
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            dsl,
+            coordinationRedis,
+            catalog,
+            new ControlledStableIncarnationSource(),
+            resolver,
+            identity,
+            Duration.ofSeconds(30),
+            Clock.systemUTC());
+    return successor.installForTransition(
+        null, original.transitionId, original.worldRequest, transfer, deadline);
   }
 
   /**

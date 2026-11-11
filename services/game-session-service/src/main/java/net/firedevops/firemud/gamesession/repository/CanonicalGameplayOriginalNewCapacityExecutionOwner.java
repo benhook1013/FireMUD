@@ -588,7 +588,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             .equals(java.math.BigInteger.valueOf(current.get("region_epoch", Long.class)))
         || !Boolean.FALSE.equals(current.get("paused", Boolean.class))
         || CanonicalGameplayRegionOwnerTransferRepository.frozen(
-            tx, binding.tenantId(), binding.gameInstanceId(), binding.regionId())) throw unavailable();
+            tx, binding.tenantId(), binding.gameInstanceId(), binding.regionId()))
+      throw unavailable();
   }
 
   CanonicalGameplayOriginalNewCapacityExecutionOwner forTransferBudget(
@@ -598,15 +599,18 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   /** Fences future work without resolving the retained original or its Account capacity hold. */
-  TransferFence fenceForTransfer(CanonicalGameplayRegionOwnerTransferRepository.Item item, long deadline) {
+  TransferFence fenceForTransfer(
+      CanonicalGameplayRegionOwnerTransferRepository.Item item, long deadline) {
     if (budget == null) return within(deadline, owner -> owner.fenceForTransfer(item, deadline));
     budget.check();
     var execution = item.execution();
     Record row = find(sql(), execution);
     if (row == null) throw unavailable();
     exact(row, execution);
-    long result = scopedFinalOwner().fenceCapacityExecutionOnce(
-        execution, item.candidate(), item.assignment(), budget.absoluteDeadlineMillis());
+    long result =
+        scopedFinalOwner()
+            .fenceCapacityExecutionOnce(
+                execution, item.candidate(), item.assignment(), budget.absoluteDeadlineMillis());
     if (result == 2) {
       // Merely seeing a COMMITTED hash must not release old-generation custody.
       retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
@@ -617,31 +621,38 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   /** Read only. In particular, a lost/reset denying hash is never recreated by verification. */
-  TransferFence readTransferFence(CanonicalGameplayRegionOwnerTransferRepository.Item item, long deadline) {
+  TransferFence readTransferFence(
+      CanonicalGameplayRegionOwnerTransferRepository.Item item, long deadline) {
     if (budget == null) return within(deadline, owner -> owner.readTransferFence(item, deadline));
     budget.check();
     var execution = item.execution();
-    Map<String,byte[]> physical = readExecution(execution, item.assignment().tenantGameplayTag());
+    Map<String, byte[]> physical = readExecution(execution, item.assignment().tenantGameplayTag());
     String state = text(physical.get("state"));
     if ("FENCED_INDETERMINATE".equals(state)) {
-      if (physical.size() != 3 || !Arrays.equals(execution.canonicalBytes(),physical.get("binding"))
+      if (physical.size() != 3
+          || !Arrays.equals(execution.canonicalBytes(), physical.get("binding"))
           || !execution.digest().equals(text(physical.get("digest")))) throw unavailable();
     } else {
       if (!"COMMITTED".equals(state) && !"CLOSED".equals(state)) throw unavailable();
       exactPhysicalBinding(physical, execution, state);
       Record retained = find(sql(), execution);
-      if (retained == null || !state.equals(retained.get("status",String.class))) throw unavailable();
-      // The immutable terminal reader independently proves the full retained positive/negative result.
+      if (retained == null || !state.equals(retained.get("status", String.class)))
+        throw unavailable();
+      // The immutable terminal reader independently proves the full retained positive/negative
+      // result.
       readExact(execution.request(), execution.reservation(), false);
     }
     var output = new java.io.ByteArrayOutputStream();
-    physical.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
-      for (byte[] value : new byte[][] {bytes(entry.getKey()), entry.getValue()}) {
-        output.writeBytes(bytes(Integer.toString(value.length)));
-        output.write(':');
-        output.writeBytes(value);
-      }
-    });
+    physical.entrySet().stream()
+        .sorted(Map.Entry.comparingByKey())
+        .forEach(
+            entry -> {
+              for (byte[] value : new byte[][] {bytes(entry.getKey()), entry.getValue()}) {
+                output.writeBytes(bytes(Integer.toString(value.length)));
+                output.write(':');
+                output.writeBytes(value);
+              }
+            });
     return new TransferFence(execution.digest(), output.toByteArray());
   }
 
@@ -649,12 +660,19 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   static final class TransferFence {
     private final String executionDigest;
     private final byte[] canonicalReadback;
+
     private TransferFence(String executionDigest, byte[] canonicalReadback) {
-      this.executionDigest=executionDigest;
-      this.canonicalReadback=canonicalReadback.clone();
+      this.executionDigest = executionDigest;
+      this.canonicalReadback = canonicalReadback.clone();
     }
-    String executionDigest() { return executionDigest; }
-    byte[] canonicalReadback() { return canonicalReadback.clone(); }
+
+    String executionDigest() {
+      return executionDigest;
+    }
+
+    byte[] canonicalReadback() {
+      return canonicalReadback.clone();
+    }
   }
 
   private CurrentOwner currentOwner(CanonicalGameplayOriginalNewCandidate candidate) {

@@ -361,14 +361,32 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
-    String accountKey = ACCOUNT_PREFIX + "{" + assignment.tenantGameplayTag() + "}:"
-        + assignment.accountId() + ":" + assignment.playableStateNamespaceId();
+    String accountKey =
+        ACCOUNT_PREFIX
+            + "{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + assignment.accountId()
+            + ":"
+            + assignment.playableStateNamespaceId();
     var keys = requireKeys(candidate, assignment, accountKey, execution);
     byte[] script = scriptSource(requireDescriptor());
     try {
-      return execute(script, keys, candidate, assignment, candidate.canonicalBytes(),
-          characterProjection(candidate), ascii("{}"), 1, ascii("{}"), ascii("{}"),
-          absoluteDeadlineMillis, ascii("transfer-fence"), execution, "FENCE");
+      return execute(
+          script,
+          keys,
+          candidate,
+          assignment,
+          candidate.canonicalBytes(),
+          characterProjection(candidate),
+          ascii("{}"),
+          1,
+          ascii("{}"),
+          ascii("{}"),
+          absoluteDeadlineMillis,
+          ascii("transfer-fence"),
+          execution,
+          "FENCE");
     } finally {
       wipe(script);
     }
