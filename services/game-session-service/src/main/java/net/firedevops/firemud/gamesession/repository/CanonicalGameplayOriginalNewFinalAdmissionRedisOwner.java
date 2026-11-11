@@ -111,6 +111,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
               RedisScriptDescriptor.OutcomeCategory.SUCCESS,
               RedisScriptDescriptor.MutationEffect.MUTATING),
           outcome(
+              "CAPACITY_EXECUTION_FENCED_INDETERMINATE",
+              RedisScriptDescriptor.OutcomeCategory.SUCCESS,
+              RedisScriptDescriptor.MutationEffect.MUTATING),
+          outcome(
               "CURRENT_PHYSICAL_STATE_REFUSED",
               RedisScriptDescriptor.OutcomeCategory.STALE,
               RedisScriptDescriptor.MutationEffect.NON_MUTATING),
@@ -347,6 +351,45 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {
     return closeCapacityExecutionOnce(
         execution, candidate, assignment, Math.addExact(clock.millis(), COMMAND_TIMEOUT_MILLIS));
+  }
+
+  /** Normal-handoff future exclusion only. A result is not an execution outcome. */
+  long fenceCapacityExecutionOnce(
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      long absoluteDeadlineMillis) {
+    requireNoAmbientTransaction();
+    requireAssignment(assignment, candidate);
+    String accountKey =
+        ACCOUNT_PREFIX
+            + "{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + assignment.accountId()
+            + ":"
+            + assignment.playableStateNamespaceId();
+    var keys = requireKeys(candidate, assignment, accountKey, execution);
+    byte[] script = scriptSource(requireDescriptor());
+    try {
+      return execute(
+          script,
+          keys,
+          candidate,
+          assignment,
+          candidate.canonicalBytes(),
+          characterProjection(candidate),
+          ascii("{}"),
+          1,
+          ascii("{}"),
+          ascii("{}"),
+          absoluteDeadlineMillis,
+          ascii("transfer-fence"),
+          execution,
+          "FENCE");
+    } finally {
+      wipe(script);
+    }
   }
 
   long closeCapacityExecutionOnce(

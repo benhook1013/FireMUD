@@ -217,6 +217,63 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void actualNormalHandoffKeepsUnknownCapacityHeldAndBoundedRecoveryQuarantinesSameReservation()
+      throws Exception {
+    try (Session session = session()) {
+      var reservation =
+          session.gs.authorizeThenFenceAndHandoffWithoutFinal(
+              session.client,
+              session.jwks,
+              session.jwt,
+              session.capacityClient,
+              session.capacityRequest,
+              System.currentTimeMillis() + 5000L);
+      assertThatThrownBy(
+              () ->
+                  session.capacityRead.readExact(
+                      session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5)))
+          .isInstanceOf(RuntimeException.class);
+      TenantCapacityAdmission.Result result = reservation;
+      for (int attempt = 0; attempt < 12; attempt++) {
+        var recovery =
+            new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+                session.capacityOwner,
+                session.dsl,
+                session.capacityRead,
+                Clock.offset(CLOCK, Duration.ofSeconds(attempt * 20L)));
+        result =
+            recovery.reconcile(
+                session.capacityRequest,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RELEASE);
+        assertThat(result.reservationId()).isEqualTo(reservation.reservationId());
+        assertThat(result.reservationFence()).isEqualTo(reservation.reservationFence());
+        assertThat(result.admissionAttemptId()).isEqualTo(reservation.admissionAttemptId());
+      }
+      assertThat(result.state())
+          .isEqualTo(TenantCapacityAdmission.State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION);
+      var usage =
+          session.dsl.fetchSingle(
+              "SELECT held_units,used_units FROM account_tenant_capacity_usage WHERE tenant_uuid=? AND owner_service='game-session-service'",
+              reservation.identity().tenantId());
+      assertThat(usage.get("held_units", Long.class)).isOne();
+      assertThat(usage.get("used_units", Long.class)).isZero();
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isOne();
+      assertThat(
+              session
+                  .dsl
+                  .fetchSingle(
+                      "SELECT execution_status FROM account_tenant_capacity_reservations WHERE reservation_id=?",
+                      reservation.reservationId())
+                  .get(0, String.class))
+          .isEqualTo("OWNER_EXECUTION_PENDING");
+    }
+  }
+
+  @Test
   void targetResolutionRefusesChangedRetainedSelectorsWithoutMutatingOwners() throws Exception {
     try (Session session = session()) {
       var before = session.durableImage();

@@ -18,14 +18,48 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
+import org.awaitility.Awaitility;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /** Controlled connect behavior only, never source or execution authority. */
 class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
+  @AfterEach
+  void awaitConnectorAndBudgetWorkerCleanup() throws InterruptedException {
+    Semaphore permits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    int maximum = CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    assertThat(permits.tryAcquire(maximum, 2, TimeUnit.SECONDS))
+        .as("resource and cancellation workers restore all operation permits")
+        .isTrue();
+    permits.release(maximum);
+
+    ThreadPoolExecutor connectors =
+        (ThreadPoolExecutor)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionOwner.class, "CONNECTS"));
+    // closeAsync() is observed before the connector task returns. Wait for executor task
+    // completion as well, including after failed assertions in either timeout test.
+    Awaitility.await()
+        .atMost(2, TimeUnit.SECONDS)
+        .untilAsserted(
+            () -> {
+              assertThat(connectors.getActiveCount()).isZero();
+              assertThat(connectors.getCompletedTaskCount()).isEqualTo(connectors.getTaskCount());
+            });
+  }
+
   @Test
   void expiredCallDoesNotWaitForConnectionAndDisposesTheLateConnection() throws Exception {
     RedisClient redis = mock();
