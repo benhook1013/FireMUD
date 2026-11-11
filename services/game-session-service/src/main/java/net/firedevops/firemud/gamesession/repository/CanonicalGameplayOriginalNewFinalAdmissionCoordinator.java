@@ -174,7 +174,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           if (!selectedOwner.equals(
               capacityExecution.requireRequestBinding(
                   source, capacityRequest, absoluteDeadlineMillis))) throw unavailable();
-          var reservation = capacityClient.commit(capacityRequest);
+          var reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
           var execution =
               capacityExecution.bind(
                   source, capacityRequest, reservation, absoluteDeadlineMillis, selectedOwner);

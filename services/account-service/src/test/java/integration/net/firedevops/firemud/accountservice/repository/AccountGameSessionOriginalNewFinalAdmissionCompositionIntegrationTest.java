@@ -183,7 +183,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       throws Exception {
     try (Session session = session()) {
       var admitted = session.complete();
-      var reservation = session.capacityClient.commit(session.capacityRequest);
+      var reservation =
+          session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
       var before =
           session.capacityRead.readExact(
               session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
@@ -266,6 +267,43 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                       null))
           .isInstanceOf(IllegalStateException.class);
       assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
+    }
+  }
+
+  @Test
+  void changedCatalogRevisionRefusesBeforeAccountCapacityCommitment() throws Exception {
+    try (Session session = session()) {
+      var original = session.capacityRequest;
+      var target = (Map<?, ?>) original.evidence().fields().get("target");
+      long revision = Long.parseLong((String) target.get("catalogRevision"));
+      var changed = session.retainControlledEvaluation(true, null, revision + 1L);
+      changed.requireStructurallyValid();
+      assertThat(changed.context()).isEqualTo(original.context());
+      assertThat(changed.evidence().fields().get("authorityTuple"))
+          .isEqualTo(original.evidence().fields().get("authorityTuple"));
+      String capacityBefore = session.capacityImage();
+      var gsBefore = session.gs.capacityStateImage();
+      byte[] candidate = session.gs.physicalSession();
+      assertThatThrownBy(
+              () ->
+                  session.gs.complete(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      System.currentTimeMillis() + 10_000L,
+                      session.capacityClient,
+                      changed))
+          .isInstanceOf(IllegalStateException.class)
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage("Original NEW capacity execution is indeterminate");
+      assertThat(session.capacityImage()).isEqualTo(capacityBefore);
+      assertThat(session.gs.capacityStateImage()).isEqualTo(gsBefore);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(session.gs.finalReadCalls()).isZero();
       assertThat(
               session.dsl.fetchCount(
                   org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
@@ -441,7 +479,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       String before = session.capacityImage() + session.durableImage();
       for (int attempt = 0; attempt < 2; attempt++) {
         StatusRuntimeException failure =
-            assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(denied));
+            assertThrows(
+                StatusRuntimeException.class,
+                () -> session.capacityClient.commit(denied, CLOCK.millis() + 5_000L));
         assertCapacityFailure(failure, Status.Code.RESOURCE_EXHAUSTED, "TENANT_BILLING_BLOCKED");
         assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
         assertProvisionalUnchanged(session, candidate);
@@ -545,7 +585,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     assertThat(candidate).isNotNull();
     String before = session.capacityImage() + session.durableImage();
     assertCapacityFailure(
-        assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(request)),
+        assertThrows(
+            StatusRuntimeException.class,
+            () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L)),
         status,
         code);
     assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
@@ -555,15 +597,18 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   @Test
   void retainedOriginalReplaysBeforeChangedNonCreatingEvidenceCanBecomeADenial() throws Exception {
     try (Session session = session()) {
-      var first = session.capacityClient.commit(session.capacityRequest);
+      var first = session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
       var changed = session.retainControlledEvaluation(false, null);
       byte[] candidate = session.gs.physicalSession();
       assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
       StatusRuntimeException failure =
-          assertThrows(StatusRuntimeException.class, () -> session.capacityClient.commit(changed));
+          assertThrows(
+              StatusRuntimeException.class,
+              () -> session.capacityClient.commit(changed, CLOCK.millis() + 5_000L));
       assertCapacityFailure(failure, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
-      assertThat(session.capacityClient.commit(session.capacityRequest)).isEqualTo(first);
+      assertThat(session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L))
+          .isEqualTo(first);
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
       assertProvisionalUnchanged(session, candidate);
     }
@@ -894,9 +939,16 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     }
 
     /** Controlled entitlement facts, real current caller/scope and actual immutable retention. */
-    @SuppressWarnings("unchecked")
     private TenantCapacityAdmission.Request retainControlledEvaluation(
         boolean creationAllowed, @org.jspecify.annotations.Nullable String quota) {
+      return retainControlledEvaluation(creationAllowed, quota, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private TenantCapacityAdmission.Request retainControlledEvaluation(
+        boolean creationAllowed,
+        @org.jspecify.annotations.Nullable String quota,
+        @org.jspecify.annotations.Nullable Long catalogRevision) {
       var original = capacityRequest;
       var parsed =
           RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
@@ -924,13 +976,15 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
         quotas.put(original.context().owner().quota(), quota);
         facts.put("quotas", quotas);
       }
+      var target = new LinkedHashMap<>((Map<String, Object>) fields.get("target"));
+      if (catalogRevision != null) target.put("catalogRevision", Long.toString(catalogRevision));
       var evaluation =
           RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
               original.identity().requestId(),
               original.evidence().callerWorkload(),
               (String) fields.get("verifiedConnectScopeId"),
               parsed.membershipSource(),
-              (Map<String, Object>) fields.get("target"),
+              target,
               facts,
               (Map<String, Object>) fields.get("sourceReferences"),
               CLOCK.instant());

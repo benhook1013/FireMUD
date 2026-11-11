@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.Any;
+import io.grpc.Context;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -20,8 +21,11 @@ import java.time.Clock;
 import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
@@ -66,8 +70,8 @@ class AccountTenantCapacityClientMtlsTest {
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
-      var first = client.commit(request);
-      assertThat(client.commit(request)).isEqualTo(first);
+      var first = client.commit(request, deadline());
+      assertThat(client.commit(request, deadline())).isEqualTo(first);
       assertThat(first.identity()).isEqualTo(request.identity());
       assertThat(calls).hasValue(2);
     } finally {
@@ -83,7 +87,7 @@ class AccountTenantCapacityClientMtlsTest {
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest(false);
-      assertThatThrownBy(() -> client.commit(request))
+      assertThatThrownBy(() -> client.commit(request, deadline()))
           .isInstanceOf(StatusRuntimeException.class)
           .satisfies(
               failure -> {
@@ -110,7 +114,8 @@ class AccountTenantCapacityClientMtlsTest {
     Server server = server("wrong", calls, false);
     try (var client = client(server)) {
       client.init();
-      assertThatThrownBy(() -> client.commit(CapacityAdmissionTestFixture.playerRequest()))
+      assertThatThrownBy(
+              () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
           .isInstanceOf(StatusRuntimeException.class);
       assertThat(calls).hasValue(0);
     } finally {
@@ -124,11 +129,104 @@ class AccountTenantCapacityClientMtlsTest {
     Server server = server("account", calls, true);
     try (var client = client(server)) {
       client.init();
-      assertThatThrownBy(() -> client.commit(CapacityAdmissionTestFixture.playerRequest()))
+      assertThatThrownBy(
+              () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
           .isInstanceOf(IllegalArgumentException.class);
     } finally {
       stop(server);
     }
+  }
+
+  @Test
+  void explicitRemainingBudgetBoundsAStalledAccountCallAndExactRetryStillReplays()
+      throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    AtomicLong observedNanos = new AtomicLong();
+    AtomicBoolean respond = new AtomicBoolean(true);
+    Server server = server("account", calls, false, observedNanos, respond);
+    try (var client = client(server)) {
+      client.init();
+      var request = CapacityAdmissionTestFixture.playerRequest();
+      var first = client.commit(request, deadline());
+      respond.set(false);
+      long started = System.nanoTime();
+      assertThatThrownBy(
+              () -> client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 200L))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
+      assertThat(observedNanos.get())
+          .isPositive()
+          .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(200));
+      respond.set(true);
+      assertThat(client.commit(request, deadline())).isEqualTo(first);
+      assertThat(calls).hasValue(3);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void incomingDeadlineAndFiveSecondMaximumAlsoCapTheAccountCall() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    AtomicLong observedNanos = new AtomicLong();
+    AtomicBoolean respond = new AtomicBoolean(true);
+    Server server = server("account", calls, false, observedNanos, respond);
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    try (var client = client(server)) {
+      client.init();
+      var request = CapacityAdmissionTestFixture.playerRequest();
+      client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 60_000L);
+      assertThat(observedNanos.get()).isPositive().isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(5));
+      respond.set(false);
+      long started = System.nanoTime();
+      assertThatThrownBy(
+              () ->
+                  Context.current()
+                      .withDeadlineAfter(200, TimeUnit.MILLISECONDS, scheduler)
+                      .call(() -> client.commit(request, deadline())))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
+      assertThat(observedNanos.get())
+          .isPositive()
+          .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(200));
+    } finally {
+      scheduler.shutdownNow();
+      stop(server);
+    }
+  }
+
+  @Test
+  void expiredExplicitBudgetSendsNoAccountRequest() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    Server server = server("account", calls, false);
+    try (var client = client(server)) {
+      client.init();
+      assertThatThrownBy(
+              () ->
+                  client.commit(
+                      CapacityAdmissionTestFixture.playerRequest(),
+                      CapacityAdmissionTestFixture.NOW.toEpochMilli() - 1L))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
+      assertThat(calls).hasValue(0);
+    } finally {
+      stop(server);
+    }
+  }
+
+  private static long deadline() {
+    return CapacityAdmissionTestFixture.NOW.toEpochMilli() + 5_000L;
   }
 
   private static AccountTenantCapacityClient client(Server server) throws Exception {
@@ -144,6 +242,16 @@ class AccountTenantCapacityClientMtlsTest {
 
   private static Server server(String identity, AtomicInteger calls, boolean wrongFence)
       throws Exception {
+    return server(identity, calls, wrongFence, new AtomicLong(), new AtomicBoolean(true));
+  }
+
+  private static Server server(
+      String identity,
+      AtomicInteger calls,
+      boolean wrongFence,
+      AtomicLong observedNanos,
+      AtomicBoolean respond)
+      throws Exception {
     UUID reservationId = UUID.randomUUID();
     var service =
         new AccountServiceGrpc.AccountServiceImplBase() {
@@ -152,6 +260,10 @@ class AccountTenantCapacityClientMtlsTest {
               CommitTenantCapacityAdmissionRequest wire,
               StreamObserver<CommitTenantCapacityAdmissionResponse> observer) {
             calls.incrementAndGet();
+            observedNanos.set(
+                Objects.requireNonNull(Context.current().getDeadline())
+                    .timeRemaining(TimeUnit.NANOSECONDS));
+            if (!respond.get()) return;
             assertThat(GrpcPeerIdentity.current().uri())
                 .isEqualTo("spiffe://firemud/ns/prod/sa/game-session-service");
             var request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);

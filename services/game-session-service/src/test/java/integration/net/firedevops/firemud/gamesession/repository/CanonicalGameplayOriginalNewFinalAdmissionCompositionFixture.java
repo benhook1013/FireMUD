@@ -703,7 +703,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         new CanonicalGameplayOriginalNewCapacityExecutionOwner(
             binding.dsl(), coordination, scripts, CLOCK, tags);
     var selected = executionOwner.requireRequestBinding(source, request, deadline);
-    var result = client.commit(request);
+    var result = client.commit(request, deadline);
     var identity = source.candidate().bindingIdentity();
     if (binding
             .dsl()
