@@ -740,6 +740,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             scripts,
             regionInstallation,
             sources.resolver,
+            CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
+                ::controlledRegionIncarnation,
             transfer,
             deadline);
     return reservation;
