@@ -163,6 +163,30 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void missingCapacityExecutionRefusesTheCanonicalFinalPathWithoutMutation() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    String rows = sqlImage();
+    var physical = physicalImage();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template()) {
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                          ownerClient, catalog, CLOCK, tags)
+                      .finalizeOriginalNewOnce(source, template, account, issuer, null, deadline()))
+          .isExactlyInstanceOf(NullPointerException.class)
+          .hasMessage("Exact Account capacity execution is required");
+    }
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @Test
   void missingExecutionCannotBeReinstalledFromTheRetainedSqlDispatchOrUsedAsNoCommit()
       throws Exception {
     repairAccountMember();
@@ -283,7 +307,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          source, template, controlledAccountOpen(), issuerOpen(), deadline()))
+                          source,
+                          template,
+                          controlledAccountOpen(),
+                          issuerOpen(),
+                          controlledCapacity,
+                          deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     var assignment = tags.assignmentForTransition(fixture.transitionId());
@@ -329,7 +358,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       assertThatThrownBy(
               () ->
                   finalOwner()
-                      .finalizeOriginalNewOnce(source, template, account, issuer, deadline()))
+                      .finalizeOriginalNewOnce(
+                          source, template, account, issuer, controlledCapacity, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(admin.hget(ascii(capacityKey(assignment)), ascii("state")))
@@ -525,7 +555,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       String retainedReceiptQuery =
           "SELECT xmin::text || '/' || to_jsonb(transition)::text"
@@ -644,7 +675,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       assertThat(credential.boundJti().toString()).isNotEqualTo(credential.initialLoginJti());
       assertThat(new String(template.finalCasTemplateBytes(), StandardCharsets.UTF_8))
           .doesNotContain(credential.jwt())
@@ -658,6 +690,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   template,
                   accountOpen,
                   issuerOpen,
+                  controlledCapacity,
                   deadline())) {
         assertThat(provisionalReplay.exactCanonicalBytes())
             .containsExactly(actual.exactCanonicalBytes());
@@ -1025,7 +1058,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       try (var replay =
           finalOwner()
               .finalizeOriginalNewOnce(
-                  recoveredSource, template, accountOpen, issuerOpen, deadline())) {
+                  recoveredSource,
+                  template,
+                  accountOpen,
+                  issuerOpen,
+                  controlledCapacity,
+                  deadline())) {
         assertThat(replay.exactCanonicalBytes()).containsExactly(actual.exactCanonicalBytes());
         assertThat(recoveredInventory.commitOriginalNewFinalAdmission(replay).status())
             .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
@@ -1070,7 +1108,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       var committed = inventory.readOriginalNewFinalAdmissionSource(decision);
       byte[] finalBytes = actual.exactCanonicalBytes();
@@ -1088,7 +1127,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 () ->
                     finalOwner()
                         .finalizeOriginalNewOnce(
-                            committed, template, accountOpen, issuerOpen, deadline()))
+                            committed,
+                            template,
+                            accountOpen,
+                            issuerOpen,
+                            controlledCapacity,
+                            deadline()))
             .isExactlyInstanceOf(IllegalStateException.class)
             .hasMessage("Original NEW final admission Redis readback is unavailable");
         assertThat(admin.exists(ascii(key))).isZero();
@@ -1101,7 +1145,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          committed, template, accountOpen, issuerOpen, deadline()))
+                          committed,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThat(admin.hget(ascii(accountOpen.key()), ascii("state")))
@@ -1113,7 +1162,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          committed, template, accountOpen, issuerOpen, deadline()))
+                          committed,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThatThrownBy(
@@ -1151,7 +1205,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 () ->
                     finalOwner()
                         .finalizeOriginalNewOnce(
-                            source, template, accountOpen, issuerOpen, deadline()))
+                            source,
+                            template,
+                            accountOpen,
+                            issuerOpen,
+                            controlledCapacity,
+                            deadline()))
             .isExactlyInstanceOf(IllegalStateException.class)
             .hasMessage("Original NEW final admission Redis readback is unavailable");
         assertThat(admin.exists(ascii(key))).isZero();
@@ -1164,7 +1223,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          source, template, accountOpen, issuerOpen, deadline()))
+                          source,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThat(admin.hget(ascii(issuerKey(issuerOpen)), ascii("state")))
@@ -1195,7 +1259,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       var assignment = tags.assignmentForTransition(fixture.transitionId());
       CanonicalGameplayTenantGameplayTagRepository racingTags = mock();
@@ -1264,7 +1329,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         var template = credential.template();
         var actual =
             finalOwner()
-                .finalizeOriginalNewOnce(source, template, accountOpen, issuerOpen, deadline())) {
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
       inventory.commitOriginalNewFinalAdmission(actual);
       var committed =
           new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
@@ -1285,7 +1351,12 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               () ->
                   finalOwner()
                       .finalizeOriginalNewOnce(
-                          committed, template, accountOpen, issuerOpen, deadline()))
+                          committed,
+                          template,
+                          accountOpen,
+                          issuerOpen,
+                          controlledCapacity,
+                          deadline()))
           .isExactlyInstanceOf(IllegalStateException.class)
           .hasMessage("Original NEW final admission Redis readback is unavailable");
       assertThatThrownBy(
@@ -1520,14 +1591,15 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
         CanonicalGameplayAccountInitialOpenProof.CurrentOpen account,
         CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuer,
+        net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution execution,
         long deadline) {
-      if (controlledCapacity == null)
+      if (execution == null)
         throw new IllegalStateException(
             "Controlled capacity must be prepared by the native bridge fixture");
-      try (var bound = template.bindCapacityExecution(controlledCapacity)) {
+      try (var bound = template.bindCapacityExecution(execution)) {
         return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                 ownerClient, catalog, CLOCK, tags)
-            .finalizeOriginalNewOnce(source, bound, account, issuer, controlledCapacity, deadline);
+            .finalizeOriginalNewOnce(source, bound, account, issuer, execution, deadline);
       }
     }
   }
