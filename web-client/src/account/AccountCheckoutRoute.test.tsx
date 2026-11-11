@@ -250,6 +250,138 @@ describe('App-owned first-invoice route', () => {
     ).toBe(true);
   });
 
+  it.each(['unchanged', 'replaced key', 'replaced loader'])(
+    'binds an in-flight confirmation to its %s Stripe loading context',
+    async (contextChange) => {
+      const loading = deferred<HostingStripe>();
+      const replacementLoading = deferred<HostingStripe>();
+      const confirmation = deferred<Response>();
+      const stripe: HostingStripe = {
+        handleNextAction: vi.fn().mockResolvedValue({}),
+      };
+      const replacement: HostingStripe = {
+        handleNextAction: vi.fn().mockResolvedValue({}),
+      };
+      const loader = vi
+        .fn()
+        .mockReturnValueOnce(loading.promise)
+        .mockReturnValue(replacementLoading.promise);
+      const replacementLoader = vi
+        .fn()
+        .mockReturnValue(replacementLoading.promise);
+      const { api, fetchImpl, queries, rerender, sessionStore } = setupApp({
+        loadStripeClient: loader,
+      });
+      const read = fetchImpl.getMockImplementation()!;
+      fetchImpl.mockImplementation(async (input, init) => {
+        if (String(input).endsWith('/reauthenticate')) {
+          return new Response(
+            JSON.stringify({
+              evidenceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            }),
+            { status: 200 }
+          );
+        }
+        if (String(input).endsWith('/confirm')) return confirmation.promise;
+        return read(input, init);
+      });
+      await signIn();
+      fireEvent.change(screen.getByLabelText('Account email'), {
+        target: { value: 'owner@example.com' },
+      });
+      fireEvent.change(screen.getByLabelText('Primary authentication secret'), {
+        target: { value: 'primary-secret' },
+      });
+      fireEvent.click(screen.getByRole('checkbox'));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Authorize first-invoice charge' })
+      );
+      await waitFor(() =>
+        expect(
+          fetchImpl.mock.calls.filter(([input]) =>
+            String(input).endsWith('/confirm')
+          )
+        ).toHaveLength(1)
+      );
+
+      if (contextChange !== 'unchanged') {
+        rerender(
+          <QueryClientProvider client={queries}>
+            <App
+              accountCheckoutRouteProps={{
+                sessionStore,
+                api,
+                stripePublishableKey:
+                  contextChange === 'replaced key'
+                    ? 'pk_test_replaced'
+                    : 'pk_test_firemud',
+                loadStripeClient:
+                  contextChange === 'replaced loader'
+                    ? replacementLoader
+                    : loader,
+              }}
+            />
+          </QueryClientProvider>
+        );
+      }
+      await act(async () => {
+        loading.resolve(stripe);
+        await loading.promise;
+      });
+      if (contextChange !== 'unchanged') {
+        expect(
+          screen.getByText('Loading secure payment authentication.')
+        ).toBeTruthy();
+        await act(async () => {
+          replacementLoading.resolve(replacement);
+          await replacementLoading.promise;
+        });
+      }
+      await waitFor(() =>
+        expect(
+          screen.queryByText('Loading secure payment authentication.')
+        ).toBeNull()
+      );
+      await act(async () => {
+        confirmation.resolve(
+          new Response(
+            JSON.stringify({
+              status: 'requires_action',
+              clientSecret: 'pi_existing_secret_ephemeral',
+            }),
+            { status: 200 }
+          )
+        );
+        await confirmation.promise;
+      });
+      if (contextChange === 'unchanged') {
+        await waitFor(() =>
+          expect(stripe.handleNextAction).toHaveBeenCalledExactlyOnceWith({
+            clientSecret: 'pi_existing_secret_ephemeral',
+          })
+        );
+      } else {
+        await screen.findByText(
+          /Stripe authentication is unavailable. Check Account status/
+        );
+        expect(stripe.handleNextAction).not.toHaveBeenCalled();
+      }
+      expect(replacement.handleNextAction).not.toHaveBeenCalled();
+      expect(
+        fetchImpl.mock.calls.filter(([input]) =>
+          String(input).endsWith('/confirm')
+        )
+      ).toHaveLength(1);
+      expect(
+        fetchImpl.mock.calls.some(([input]) => String(input).endsWith('/renew'))
+      ).toBe(false);
+      expect(screen.queryByText(/Account confirmed and committed/)).toBeNull();
+      expect(document.body.textContent).not.toContain(
+        'pi_existing_secret_ephemeral'
+      );
+    }
+  );
+
   it.each([0, 429, 502, 503])(
     'shows safe temporary feedback for sign-in status %i without retrying',
     async (status) => {

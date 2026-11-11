@@ -20,6 +20,7 @@ import type { HostingStripe } from './hostingStripe';
 interface Props {
   subscriptionId: string;
   client: FirstInvoiceClient;
+  stripeContext: object;
   stripe: HostingStripe | null;
 }
 
@@ -41,6 +42,7 @@ interface Attempt {
 export default function HostingFirstInvoiceCheckout({
   subscriptionId,
   client,
+  stripeContext,
   stripe,
 }: Props) {
   const queryId = useId();
@@ -62,11 +64,21 @@ export default function HostingFirstInvoiceCheckout({
   const attempt = useRef<Attempt | null>(null);
   const locked = useRef(false);
   const operation = useRef(0);
-  const currentStripe = useRef(stripe);
+  const currentStripe = useRef({ context: stripeContext, stripe });
 
   useLayoutEffect(() => {
-    currentStripe.current = stripe;
-  }, [stripe]);
+    const current = currentStripe.current;
+    if (
+      current.context !== stripeContext ||
+      (current.stripe !== null && current.stripe !== stripe)
+    ) {
+      currentStripe.current = { context: stripeContext, stripe };
+    } else {
+      // A first load may finish in flight; replacing its context or handle
+      // invalidates the old binding even if that context or handle returns.
+      current.stripe = stripe;
+    }
+  }, [stripeContext, stripe]);
 
   useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
@@ -159,6 +171,7 @@ export default function HostingFirstInvoiceCheckout({
     setBusy(true);
     const currentOperation = ++operation.current;
     const active = () => operation.current === currentOperation;
+    const submittedStripe = currentStripe.current;
     const credentials = { email, secret };
     setSecret('');
     setMessage('Checking the current Account invoice before confirmation.');
@@ -285,7 +298,8 @@ export default function HostingFirstInvoiceCheckout({
           'Account retained the authorization, but provider confirmation is unresolved. Only status recovery is available. No replacement charge was requested.'
         );
       } else if (handoff.status === 'requires_action' && handoff.clientSecret) {
-        if (!stripe || currentStripe.current !== stripe) {
+        const loadedStripe = submittedStripe.stripe;
+        if (!loadedStripe || currentStripe.current !== submittedStripe) {
           setMessage(
             'Stripe authentication is unavailable. Check Account status or explicitly resume this same confirmation when authentication is available.'
           );
@@ -296,7 +310,7 @@ export default function HostingFirstInvoiceCheckout({
           'Complete the Stripe authentication prompt for this invoice.'
         );
         // The server already confirmed this exact intent. Never confirm/create another.
-        const result = await stripe.handleNextAction({
+        const result = await loadedStripe.handleNextAction({
           clientSecret: handoff.clientSecret,
         });
         if (!active()) return;

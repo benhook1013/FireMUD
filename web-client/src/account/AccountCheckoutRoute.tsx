@@ -210,6 +210,14 @@ function CheckoutForSession({
 }: CheckoutProps) {
   const [stripeLoadResult, setStripeLoadResult] =
     useState<StripeLoadResult | null>(null);
+  const stripeContext = useMemo(
+    () => ({
+      sessionIdentity,
+      publishableKey: stripePublishableKey,
+      loader: loadStripeClient,
+    }),
+    [sessionIdentity, stripePublishableKey, loadStripeClient]
+  );
   const client = useMemo(
     () =>
       createFirstInvoiceClient(
@@ -285,6 +293,7 @@ function CheckoutForSession({
       <HostingFirstInvoiceCheckout
         subscriptionId={subscriptionId}
         client={client}
+        stripeContext={stripeContext}
         stripe={
           matchingResult?.status === 'ready' ? matchingResult.stripe : null
         }

@@ -43,6 +43,7 @@ function deferred<T>() {
 
 function setup(value: FirstInvoice = initial, stripeAvailable = true) {
   let current = value;
+  let stripeContext = {};
   const client = {
     read: vi
       .fn<FirstInvoiceClient['read']>()
@@ -79,6 +80,7 @@ function setup(value: FirstInvoice = initial, stripeAvailable = true) {
       <HostingFirstInvoiceCheckout
         subscriptionId={initial.subscriptionId}
         client={client}
+        stripeContext={stripeContext}
         stripe={stripeAvailable ? stripe : null}
       />
     </QueryClientProvider>
@@ -86,16 +88,19 @@ function setup(value: FirstInvoice = initial, stripeAvailable = true) {
   return {
     client,
     stripe,
-    replaceStripe: (next: HostingStripe | null) =>
+    replaceStripe: (next: HostingStripe | null, context = stripeContext) => {
+      stripeContext = context;
       view.rerender(
         <QueryClientProvider client={queries}>
           <HostingFirstInvoiceCheckout
             subscriptionId={initial.subscriptionId}
             client={client}
+            stripeContext={stripeContext}
             stripe={next}
           />
         </QueryClientProvider>
-      ),
+      );
+    },
     setCurrent: (next: FirstInvoice) => {
       current = next;
     },
@@ -149,7 +154,68 @@ describe('owner first-invoice checkout', () => {
     );
   });
 
-  it('preserves the original confirmation but refuses a replaced Stripe context', async () => {
+  it('uses the first Stripe handle loaded while the original confirmation is in flight', async () => {
+    const { client, stripe, replaceStripe } = setup(initial, false);
+    const confirmation = deferred<{ status: string; clientSecret: string }>();
+    client.confirm.mockReturnValue(confirmation.promise);
+    fireEvent.click(await consent());
+    await waitFor(() => expect(client.confirm).toHaveBeenCalledTimes(1));
+    replaceStripe(stripe);
+    await act(async () =>
+      confirmation.resolve({
+        status: 'requires_action',
+        clientSecret: 'pi_existing_secret_ephemeral',
+      })
+    );
+    await waitFor(() =>
+      expect(stripe.handleNextAction).toHaveBeenCalledExactlyOnceWith({
+        clientSecret: 'pi_existing_secret_ephemeral',
+      })
+    );
+    expect(client.confirm).toHaveBeenCalledTimes(1);
+    expect(client.reauthenticate).toHaveBeenCalledTimes(1);
+    expect(client.renew).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Account confirmed and committed/)).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      'pi_existing_secret_ephemeral'
+    );
+  });
+
+  it.each(['handle', 'context'])(
+    'refuses a replaced Stripe %s after its first handle loads in flight',
+    async (replacementKind) => {
+      const { client, stripe, replaceStripe } = setup(initial, false);
+      const confirmation = deferred<{ status: string; clientSecret: string }>();
+      client.confirm.mockReturnValue(confirmation.promise);
+      fireEvent.click(await consent());
+      await waitFor(() => expect(client.confirm).toHaveBeenCalledTimes(1));
+      replaceStripe(stripe);
+      const replacement = {
+        handleNextAction: vi.fn<HostingStripe['handleNextAction']>(),
+      };
+      if (replacementKind === 'handle') {
+        replaceStripe(replacement);
+        replaceStripe(stripe);
+      } else {
+        replaceStripe(stripe, {});
+      }
+      await act(async () =>
+        confirmation.resolve({
+          status: 'requires_action',
+          clientSecret: 'pi_existing_secret_ephemeral',
+        })
+      );
+      await screen.findByText(
+        /Stripe authentication is unavailable. Check Account status/
+      );
+      expect(stripe.handleNextAction).not.toHaveBeenCalled();
+      expect(replacement.handleNextAction).not.toHaveBeenCalled();
+      expect(client.confirm).toHaveBeenCalledTimes(1);
+      expect(client.renew).not.toHaveBeenCalled();
+    }
+  );
+
+  it('preserves the original confirmation but refuses a replaced Stripe handle', async () => {
     const { client, stripe, replaceStripe } = setup();
     const confirmation = deferred<{ status: string; clientSecret: string }>();
     client.confirm.mockReturnValue(confirmation.promise);
