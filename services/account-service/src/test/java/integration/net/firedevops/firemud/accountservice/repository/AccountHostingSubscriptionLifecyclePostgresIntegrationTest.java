@@ -82,7 +82,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void actualSdkReadCommitsExactMappingReceiptCanonicalStreamsAndConsistentReaderThenReplays() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = paidClaim(f);
     UUID request = claim.lifecycleRequestId();
@@ -190,7 +190,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void confirmedWorkRejectsMissingOrMismatchedFirstInvoiceCompletionAndRollsBackFulfillment() {
     for (String fault : List.of("missing", "tuple", "receipt", "transaction")) {
-      Context c = context("1041");
+      Context c = context("latest");
       Fixture f = fixture(c);
       var claim = paidClaim(f);
       var prepared =
@@ -263,7 +263,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void originalProvisioningClaimStillCannotConfirmWithoutItsExactLifecycleReceipt() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     claim(f);
     List<String> before = firstInvoiceImage(c);
@@ -284,7 +284,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void providerActiveOrTrialingWithoutFirstInvoiceConsentCannotCreateHostingAuthority() {
     for (String status : List.of("active", "trialing")) {
-      Context c = context("1041");
+      Context c = context("latest");
       Fixture f = fixture(c);
       f.transport().json = response(f, status);
       var claim = claim(f);
@@ -323,7 +323,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void lateSignedSuccessCompletesConsumedAuthorizationWithoutAnotherProviderConfirmation() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var checkout =
         CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
@@ -402,7 +402,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void trialUsesRetainedQuoteWithoutTodaysCatalogAndSqlShapedRowsAloneNeverAuthorize() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
@@ -473,7 +473,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void rawSqlActiveMappingWithoutGenuineClaimAndReceiptCannotBecomeAReadOrLifecycleSource() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     c.tx()
         .executeWithoutResult(
@@ -511,7 +511,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void hostingExtendsExistingDemoStreamsWithoutRewritingOrReinterpretingDemoEvidence() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var identity = new FreshTenantIdentityAssociationRepository(c.dsl(), "prod");
     var generations = new AccountAuthorityGenerationRepository(c.dsl());
@@ -592,7 +592,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void concurrentSameRequestObservesOneInflightOwnerAndReplaysOneCommittedTransition()
       throws Exception {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = paidClaim(f);
     UUID request = claim.lifecycleRequestId();
@@ -649,7 +649,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void providerIdMetadataCustomerInstrumentPriceQuantityAndUnknownStatusesCannotBecomeAuthority() {
-    Context c = context("1041");
+    Context c = context("latest");
     for (String mismatch :
         List.of("id", "metadata", "customer", "instrument", "price", "quantity", "unknown")) {
       Fixture f = fixture(c);
@@ -700,7 +700,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void providerExceptionIsNotAbsenceAndSameRequestRecoversWithoutAnotherProviderIdentity() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = paidClaim(f);
     UUID request = claim.lifecycleRequestId();
@@ -743,7 +743,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void walletDisplayAdvanceDuringSdkReadPreservesBindingAndStaleRowOwnerInputsRejectBeforeRead() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = paidClaim(f);
     assertThatThrownBy(
@@ -816,7 +816,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void
       deferredSqlFailureRollsBackMappingObservationReceiptGenerationAndBothEventsThenRetryRecovers() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = paidClaim(f);
     UUID request = claim.lifecycleRequestId();
@@ -916,7 +916,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void databaseGuardRejectsUnauditedOwnerUpdateDuringSdkTransport() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = claim(f);
     // The actual database refuses an unaudited transfer. Preserve that guard rather than
@@ -979,7 +979,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void realInitialCanceledEvidenceRetiresOnlyItsHoldAndCommittedReceiptCannotBeDetached() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     f.transport().json = response(f, "canceled");
     var claim = claim(f);
@@ -1016,7 +1016,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void freshReadsBeyondObservationAgePreserveCommittedReceiptAndAuthorityUntilRealPeriodEnd() {
     for (String status : List.of("active", "trialing")) {
-      Context c = context("1041");
+      Context c = context("latest");
       Fixture f = fixture(c);
       activate(f);
       long checkpoints = 1;
@@ -1081,7 +1081,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   @Test
   void canceledReceiptsReturnFreshNegativeProjectionAfterOriginalObservationAgeWithoutMutation() {
     for (boolean providerCanceled : new boolean[] {true, false}) {
-      Context c = context("1041");
+      Context c = context("latest");
       Fixture f = fixture(c);
       f.transport().json =
           providerCanceled
@@ -1142,7 +1142,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void inFlightAndStaleObservationOrChangedSdkFactsNeverRefreshAnOldPositiveSnapshot() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     activate(f);
     var fence = in(c, () -> f.owner().prepareCurrentRead(f.creation().tenantId()));
@@ -1184,7 +1184,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void unchangedInvalidEvidenceExhaustsFrozenStallBudgetOnceAndNeverReleasesBillingWork() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = claim(f);
     UUID request = UUID.randomUUID();
@@ -1220,7 +1220,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void firstPastDueObservationWithoutRetainedRecoveryOriginStaysUnresolvedAndHoldsReservation() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     activate(f);
     var receipt =
@@ -1296,7 +1296,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
 
   @Test
   void effectiveCancellationAdvancesMonotonicCutoffWithoutPrematureReservationRelease() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     activate(f);
     Instant cancellation =
@@ -1901,7 +1901,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   private static FailedResolution failedResolution() {
-    Context c = context("1041");
+    Context c = context("latest");
     Fixture f = fixture(c);
     var claim = claim(f);
     UUID failed = UUID.randomUUID();
@@ -2256,6 +2256,7 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
             f.creation().planQuote().providerPriceId());
   }
 
+  // Runtime fixtures use the latest schema; upgrade witnesses pin their historical targets.
   private static Context context(String target) {
     String schema = "hosting_lifecycle_" + UUID.randomUUID().toString().replace("-", "");
     var source =
