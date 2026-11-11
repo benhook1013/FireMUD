@@ -3208,7 +3208,7 @@ routes:
     implementation_status:
       known_drift:
         - unregistered_bounded_Account_only_read_and_client_prepared; deployed_PKI_source_custody_and_registration_unqualified
-        - missing_interrupted_or_ambiguous_evidence_returns_RPC_UNAVAILABLE_and_Account_recovery_records_INDETERMINATE; absence_or_expiry_never_proves_no_execution
+        - missing_interrupted_or_ambiguous_evidence_returns_RPC_UNAVAILABLE; Account_recovery_treats_failed_reads_as_indeterminate_and_records_SOURCE_UNAVAILABLE_before_exhaustion_or_QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION_on_exhaustion; absence_or_expiry_never_proves_no_execution
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant

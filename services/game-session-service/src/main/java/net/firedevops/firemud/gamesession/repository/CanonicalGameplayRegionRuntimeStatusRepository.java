@@ -727,6 +727,25 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                 throw unavailable();
               }
               if (prior == null || !current.equals(prior)) throw unavailable();
+              // The old generation owns any dispatched original effect until exact COMMITTED
+              // retention or irreversible CLOSED proof. Lease expiry alone cannot release it.
+              // Capacity authorization takes this same row lock before creating that custody.
+              if (transaction.fetchExists(
+                  DSL.selectOne()
+                      .from(
+                          DSL.table("game_session_original_new_capacity_execution").as("execution"))
+                      .join(
+                          DSL.table("game_session_canonical_binding_region_bridge_obligation")
+                              .as("binding"))
+                      .on(
+                          DSL.field("binding.transition_id")
+                              .eq(DSL.field("execution.transition_id")))
+                      .where(DSL.field("binding.tenant_id").eq(source.tenantId()))
+                      .and(DSL.field("binding.game_instance_id").eq(source.gameInstanceId()))
+                      .and(DSL.field("binding.region_id").eq(source.regionId()))
+                      .and(DSL.field("execution.status").in("INSTALL_DISPATCHED", "AUTHORIZED")))) {
+                throw unavailable();
+              }
             } else if (prior != null || expectedRegionEpoch != 1L) {
               throw unavailable();
             }

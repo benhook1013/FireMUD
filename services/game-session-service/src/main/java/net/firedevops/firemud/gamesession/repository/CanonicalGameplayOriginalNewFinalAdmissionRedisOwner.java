@@ -295,6 +295,52 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     }
   }
 
+  /**
+   * Recovers only an already-applied original effect for durable SQL receipt/retention. Unlike
+   * admission, recovery requires no fresh OPEN barrier, credential, or live private region grant.
+   * It cannot submit Lua or make the recovered session newly admissible.
+   */
+  Readback readCommittedForRetention(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      OriginalNewCapacityExecution execution) {
+    requireNoAmbientTransaction();
+    var candidate = requireSource(source);
+    if (!candidate.transition().transitionId().equals(execution.transitionId())
+        || !source.candidateDigest().equals(execution.candidateDigest())
+        || execution.selectedOwnerFence()
+            != source.regionAcknowledgement().executorFence().longValueExact()) throw unavailable();
+    var assignment = tenantTags.assignmentForTransition(execution.transitionId());
+    requireAssignment(assignment, candidate);
+    String accountKey =
+        ACCOUNT_PREFIX
+            + "{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + assignment.accountId()
+            + ":"
+            + assignment.playableStateNamespaceId();
+    var keys = requireKeys(candidate, assignment, accountKey, execution);
+    byte[] bytes =
+        readExactPostimages(keys, candidate, null, null, characterProjection(candidate), execution);
+    CanonicalGameplayOriginalNewAuthenticatedSession.Finalized finalized = null;
+    try {
+      finalized = CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(bytes, clock);
+      if (!candidate.equals(finalized.candidate())
+          || !execution
+              .digest()
+              .equals(JSON.readTree(bytes).get("capacityExecutionDigest").textValue()))
+        throw unavailable();
+      Readback readback = new Readback(source, finalized, execution);
+      finalized = null;
+      return readback;
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    } finally {
+      if (finalized != null) finalized.close();
+      wipe(bytes);
+    }
+  }
+
   long closeCapacityExecutionOnce(
       OriginalNewCapacityExecution execution,
       CanonicalGameplayOriginalNewCandidate candidate,
@@ -776,51 +822,58 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     byte[] sessionBytes = null;
     Map<String, byte[]> issuerFields = null;
     Map<String, byte[]> accountFields = new HashMap<>();
-    for (Map.Entry<String, String> entry : accountOpen.exactFields().entrySet()) {
-      accountFields.put(entry.getKey(), ascii(entry.getValue()));
-    }
+    if ((accountOpen == null) != (issuerOpen == null)) throw unavailable();
+    if (accountOpen != null)
+      for (Map.Entry<String, String> entry : accountOpen.exactFields().entrySet()) {
+        accountFields.put(entry.getKey(), ascii(entry.getValue()));
+      }
+    StatefulRedisConnection<byte[], byte[]> connection = null;
     try {
-      issuerFields = CanonicalGameplayIssuerAdmissionBarrierRedisOwner.physicalFields(issuerOpen);
-      try (StatefulRedisConnection<byte[], byte[]> connection =
-          redisClient.connect(ByteArrayCodec.INSTANCE)) {
-        RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
-        requirePrincipal(await(commands.aclWhoami()));
-        if (!persistentString(commands, sessionKey)
-            || !persistentString(commands, characterKey)
-            || !Arrays.equals(expectedCharacter, await(commands.get(characterKey)))
-            || !persistentMember(
-                commands, accountTenantKey, ascii(candidate.bindingIdentity().sessionId()))
-            || !persistentMember(
-                commands, tenantKey, ascii(candidate.bindingIdentity().sessionId()))) {
-          throw unavailable();
-        }
-        sessionBytes = await(commands.get(sessionKey));
-        Map<String, byte[]> capacityFields = new LinkedHashMap<>();
-        capacityFields.put("binding", execution.canonicalBytes());
-        capacityFields.put("digest", ascii(execution.digest()));
-        capacityFields.put("state", ascii("COMMITTED"));
-        capacityFields.put("sessionSha1", ascii(digest("SHA-1", sessionBytes)));
-        try (var parsed =
-            CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(sessionBytes, clock)) {
-          capacityFields.put("admissionAt", ascii(Long.toString(parsed.admissionAtMillis())));
-          capacityFields.put(
-              "continuityExpiresAt", ascii(Long.toString(parsed.continuityExpiresAtMillis())));
-        }
-        try {
-          requireExactHash(commands, ascii(keys.capacityExecution()), capacityFields);
-        } finally {
-          wipe(capacityFields);
-        }
+      if (issuerOpen != null)
+        issuerFields = CanonicalGameplayIssuerAdmissionBarrierRedisOwner.physicalFields(issuerOpen);
+      connection =
+          scopedConnection == null
+              ? redisClient.connect(ByteArrayCodec.INSTANCE)
+              : scopedConnection.get();
+      RedisAsyncCommands<byte[], byte[]> commands = requireCommands(connection);
+      requirePrincipal(awaitCommand(commands::aclWhoami));
+      if (!persistentString(commands, sessionKey)
+          || !persistentString(commands, characterKey)
+          || !Arrays.equals(expectedCharacter, awaitCommand(() -> commands.get(characterKey)))
+          || !persistentMember(
+              commands, accountTenantKey, ascii(candidate.bindingIdentity().sessionId()))
+          || !persistentMember(
+              commands, tenantKey, ascii(candidate.bindingIdentity().sessionId()))) {
+        throw unavailable();
+      }
+      sessionBytes = awaitCommand(() -> commands.get(sessionKey));
+      Map<String, byte[]> capacityFields = new LinkedHashMap<>();
+      capacityFields.put("binding", execution.canonicalBytes());
+      capacityFields.put("digest", ascii(execution.digest()));
+      capacityFields.put("state", ascii("COMMITTED"));
+      capacityFields.put("sessionSha1", ascii(digest("SHA-1", sessionBytes)));
+      try (var parsed =
+          CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(sessionBytes, clock)) {
+        capacityFields.put("admissionAt", ascii(Long.toString(parsed.admissionAtMillis())));
+        capacityFields.put(
+            "continuityExpiresAt", ascii(Long.toString(parsed.continuityExpiresAtMillis())));
+      }
+      try {
+        requireExactHash(commands, ascii(keys.capacityExecution()), capacityFields);
+      } finally {
+        wipe(capacityFields);
+      }
+      if (accountOpen != null) {
         requireExactHash(commands, accountBarrierKey, accountFields);
         requireExactHash(commands, issuerBarrierKey, issuerFields);
-        if (sessionBytes == null
-            || sessionBytes.length == 0
-            || sessionBytes.length
-                > CanonicalGameplayOriginalNewAuthenticatedSession.MAX_SESSION_BYTES) {
-          throw unavailable();
-        }
-        return sessionBytes.clone();
       }
+      if (sessionBytes == null
+          || sessionBytes.length == 0
+          || sessionBytes.length
+              > CanonicalGameplayOriginalNewAuthenticatedSession.MAX_SESSION_BYTES) {
+        throw unavailable();
+      }
+      return sessionBytes.clone();
     } catch (RuntimeException failure) {
       throw unavailable();
     } finally {
@@ -833,30 +886,34 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(tenantKey);
       wipe(accountBarrierKey);
       wipe(issuerBarrierKey);
+      if (connection != null) {
+        if (scopedConnection == null) connection.close();
+        else connection.closeAsync();
+      }
     }
   }
 
-  private static boolean persistentString(RedisAsyncCommands<byte[], byte[]> commands, byte[] key) {
-    return "string".equals(await(commands.type(key)))
-        && Long.valueOf(-1L).equals(await(commands.pttl(key)));
+  private boolean persistentString(RedisAsyncCommands<byte[], byte[]> commands, byte[] key) {
+    return "string".equals(awaitCommand(() -> commands.type(key)))
+        && Long.valueOf(-1L).equals(awaitCommand(() -> commands.pttl(key)));
   }
 
-  private static boolean persistentMember(
+  private boolean persistentMember(
       RedisAsyncCommands<byte[], byte[]> commands, byte[] key, byte[] member) {
-    return "set".equals(await(commands.type(key)))
-        && Long.valueOf(-1L).equals(await(commands.pttl(key)))
-        && Boolean.TRUE.equals(await(commands.sismember(key, member)));
+    return "set".equals(awaitCommand(() -> commands.type(key)))
+        && Long.valueOf(-1L).equals(awaitCommand(() -> commands.pttl(key)))
+        && Boolean.TRUE.equals(awaitCommand(() -> commands.sismember(key, member)));
   }
 
-  private static void requireExactHash(
+  private void requireExactHash(
       RedisAsyncCommands<byte[], byte[]> commands, byte[] key, Map<String, byte[]> expected) {
-    if (!"hash".equals(await(commands.type(key)))
-        || !Long.valueOf(-1L).equals(await(commands.pttl(key)))) {
+    if (!"hash".equals(awaitCommand(() -> commands.type(key)))
+        || !Long.valueOf(-1L).equals(awaitCommand(() -> commands.pttl(key)))) {
       throw unavailable();
     }
-    Long length = await(commands.hlen(key));
+    Long length = awaitCommand(() -> commands.hlen(key));
     if (length == null || length != expected.size()) throw unavailable();
-    Map<byte[], byte[]> raw = await(commands.hgetall(key));
+    Map<byte[], byte[]> raw = awaitCommand(() -> commands.hgetall(key));
     if (raw == null || raw.size() != expected.size()) throw unavailable();
     Map<String, byte[]> actual = new HashMap<>();
     try {

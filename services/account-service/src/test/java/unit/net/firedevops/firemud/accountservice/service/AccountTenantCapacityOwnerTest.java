@@ -31,6 +31,7 @@ import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import org.jooq.ConnectionRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -171,7 +172,13 @@ class AccountTenantCapacityOwnerTest {
     var f = new Fixture(false);
     assertThatThrownBy(
             () -> f.owner.commit(f.request, "spiffe://firemud/ns/prod/sa/world-management-service"))
-        .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> {
+              assertThat(failure.code()).isEqualTo(Failure.PERMISSION_DENIED);
+              assertThat(failure.code().toStatusException().getStatus().getCode())
+                  .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED);
+            });
     var absent =
         new Request(
                 f.request.identity(),
@@ -188,6 +195,39 @@ class AccountTenantCapacityOwnerTest {
             .withDigest();
     assertThatThrownBy(() -> f.owner.commit(absent, absent.evidence().callerWorkload()))
         .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes);
+  }
+
+  @Test
+  void authenticatedGameSessionCannotSelectWorldOwnerBeforeAccountWork() throws Exception {
+    var f = new Fixture(false, CapacityAdmissionTestFixture.worldRequest(1L));
+    assertThatThrownBy(() -> f.owner.commit(f.request, CapacityAdmissionTestFixture.PEER))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.PERMISSION_DENIED));
+    verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes);
+  }
+
+  @Test
+  void wrongTargetNamespaceOrMissingRequestIsInvalidBeforeAccountWork() throws Exception {
+    var f = new Fixture(false, CapacityAdmissionTestFixture.playerRequest(), "staging");
+    for (String peer :
+        java.util.List.of(
+            CapacityAdmissionTestFixture.PEER,
+            "spiffe://firemud/ns/staging/sa/game-session-service")) {
+      assertThatThrownBy(() -> f.owner.commit(f.request, peer))
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityRepository.CapacityException.class,
+              failure -> {
+                assertThat(failure.code()).isEqualTo(Failure.INVALID_ARGUMENT);
+                assertThat(failure.code().toStatusException().getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.INVALID_ARGUMENT);
+              });
+    }
+    assertThatThrownBy(() -> f.owner.commit(null, CapacityAdmissionTestFixture.PEER))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.INVALID_ARGUMENT));
     verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes);
   }
 
@@ -312,6 +352,10 @@ class AccountTenantCapacityOwnerTest {
     }
 
     private Fixture(boolean expired, Request request) throws Exception {
+      this(expired, request, "prod");
+    }
+
+    private Fixture(boolean expired, Request request, String namespace) throws Exception {
       this.request = request;
       when(accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
           .thenReturn(Optional.of(new Account()));
@@ -380,7 +424,7 @@ class AccountTenantCapacityOwnerTest {
               new ControlledTransactions(),
               Clock.fixed(
                   CapacityAdmissionTestFixture.NOW.plusSeconds(expired ? 60 : 1), ZoneOffset.UTC),
-              "prod");
+              namespace);
     }
   }
 
