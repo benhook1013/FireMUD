@@ -81,6 +81,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   private RedisScriptCatalog catalog;
   private net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution
       controlledCapacity;
+  private CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding regionBinding;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -487,6 +488,226 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     controlledCapacity.digest())
                 .get(0, String.class))
         .isEqualTo("AUTHORIZED");
+  }
+
+  @Test
+  void recreatedCapacityOwnerRetainsCommittedSqlBeforeServingCleanup() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    String finalDigest;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      inventory.commitOriginalNewFinalAdmission(actual);
+      finalDigest = actual.finalSessionSha256();
+    }
+    // Stop after final SQL commit, before the original coordinator retained terminal evidence.
+    String rows = sqlImage();
+    var physical = physicalImage();
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
+    // The existing closure/lifecycle entry point must recover positive custody before refusing
+    // a negative outcome; no original coordinator or credential is available here.
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    var retained =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(retained.disposition()).isEqualTo("COMMITTED");
+    assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    controlledRemoveServingKeys(source, assignment);
+    var replay =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(replay.canonicalReadback()).containsExactly(retained.canonicalReadback());
+    assertThat(
+            capacityOwner()
+                .retainCommittedBeforeCleanup(
+                    controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
+  }
+
+  @Test
+  void recreatedCapacityOwnerRecoversCommittedRedisWithoutOriginalCredentialOrGrant()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    String finalDigest;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source, template, account, issuer, controlledCapacity, deadline())) {
+      finalDigest = actual.finalSessionSha256();
+    }
+    // Stop before the final SQL receipt. The original private credential is disposed, the grant
+    // expires, and fresh OPEN barriers are unavailable. None may erase the actual positive effect.
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    admin.pexpire(ascii(regionBinding.installation().grant.key()), 0);
+    admin.del(
+        ascii(account.key()),
+        ascii(
+            CanonicalGameplayIssuerAdmissionBarrierKey.forTarget(
+                source.candidate().bindingIdentity().issuerId(), assignment)));
+    assertThatThrownBy(() -> replaceRegionOwner("successor-before-reconciliation"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    var retained =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(retained.disposition()).isEqualTo("COMMITTED");
+    assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
+    assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).transitionStatus())
+        .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+    var successor = replaceRegionOwner("successor-after-reconciliation");
+    assertThat(successor.executorFence().longValueExact())
+        .isGreaterThan(controlledCapacity.selectedOwnerFence());
+    controlledRemoveServingKeys(source, assignment);
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
+  }
+
+  @Test
+  void missingCommittedServingEvidenceCannotReleaseOriginalOwnerCustody() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      inventory.commitOriginalNewFinalAdmission(actual);
+    }
+    admin.del(ascii(installation.sessionKey()));
+    String rows = sqlImage();
+    var physical = physicalImage();
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .retainCommittedBeforeCleanup(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> replaceRegionOwner("successor-with-missing-committed-evidence"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @Test
+  void ownerMovementBeforeCapacityAuthorizationRefusesOriginalDispatchWithoutMutation()
+      throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    replaceRegionOwner("successor-before-capacity-dispatch");
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    String rows = sqlImage();
+    var physical = physicalImage();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var raw = credential.template();
+        var bound = raw.bindCapacityExecution(controlledCapacity)) {
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .authorize(source, bound, account, issuer, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @Test
+  void unresolvedOriginalExecutionBlocksOwnerMovementUntilExactClosure() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    admin.pexpire(ascii(regionBinding.installation().grant.key()), 0);
+    String rows = sqlImage();
+    var physical = physicalImage();
+    assertThatThrownBy(
+            () ->
+                regionBinding
+                    .owner()
+                    .revalidateOriginalNewFinalBinding(regionBinding.installation(), source))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> replaceRegionOwner("successor-before-closure"))
+        .isInstanceOf(IllegalStateException.class);
+    // The positive continuation cannot turn an unexecuted/missing final result into proof.
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .retainCommittedBeforeCleanup(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
+    capacityOwner()
+        .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var successor = replaceRegionOwner("successor-after-closure");
+    assertThat(successor.executorFence().longValueExact())
+        .isGreaterThan(controlledCapacity.selectedOwnerFence());
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .disposition())
+        .isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
   }
 
   @Test
@@ -1420,7 +1641,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   private void bridge(boolean authorizeCapacity) {
-    var region =
+    regionBinding =
         CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
             fixture.dsl(),
             ownerClient,
@@ -1428,8 +1649,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             sources.request,
             sources.resolver,
             sources.entity);
-    assertThat(region.owner().bridge(region.installation()).obligation())
-        .isEqualTo(region.acknowledgement().obligation());
+    assertThat(regionBinding.owner().bridge(regionBinding.installation()).obligation())
+        .isEqualTo(regionBinding.acknowledgement().obligation());
     // Explicit controlled Account content for this native owner component proof. The separate
     // Account composition traverses actual evaluation/commit and is the complete capacity path.
     if (controlledCapacity == null) {
@@ -1551,6 +1772,23 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       CanonicalGameplayBindingInventoryRepository repository) {
     return CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
         ownerClient, catalog, repository, tags);
+  }
+
+  private net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
+      replaceRegionOwner(String successor) {
+    var original = regionBinding.installation();
+    var repository = new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl());
+    var current = repository.find(original.source).orElseThrow();
+    // Exercise the actual serialized persistence boundary. The caller's replacement Redis grant
+    // is controlled here; this is not a proof of production handoff or external source custody.
+    return repository.installOwner(
+        original.source,
+        current.regionEpoch(),
+        current,
+        "a".repeat(64),
+        "game-session-service",
+        successor,
+        CLOCK.instant());
   }
 
   private CanonicalGameplayOriginalNewCapacityExecutionOwner capacityOwner() {
