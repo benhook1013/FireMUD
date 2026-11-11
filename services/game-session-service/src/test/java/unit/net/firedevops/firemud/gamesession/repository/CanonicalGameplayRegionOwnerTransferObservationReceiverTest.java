@@ -134,6 +134,7 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
             () -> receiver.observeForFenceTarget(context.transferId(), context.targetOrdinal()))
         .isInstanceOf(
             CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
+    assertThat(fixture.channelCalls).hasValue(1);
   }
 
   @Test
@@ -169,6 +170,7 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     assertThatThrownBy(() -> receiver.observeForInitialAccountBarrier(context.requestId()))
         .isInstanceOf(
             CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class);
+    assertThat(fixture.channelCalls).hasValue(1);
   }
 
   @ParameterizedTest

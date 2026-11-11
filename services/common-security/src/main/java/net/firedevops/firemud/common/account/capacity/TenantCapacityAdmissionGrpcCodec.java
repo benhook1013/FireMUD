@@ -183,7 +183,12 @@ public final class TenantCapacityAdmissionGrpcCodec {
     var result = one(wire.getCommitmentList());
     clean(result, MAX_RESPONSE_WIRE_BYTES);
     String expires = one(result.getExpiresAtList());
-    Instant instant = Instant.parse(expires);
+    Instant instant;
+    try {
+      instant = Instant.parse(expires);
+    } catch (java.time.format.DateTimeParseException malformed) {
+      throw invalid();
+    }
     if (!instant.toString().equals(expires)) throw invalid();
     var parsed =
         new Result(

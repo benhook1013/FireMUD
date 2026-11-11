@@ -60,7 +60,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       long deadline, Function<CanonicalGameplayOriginalNewCapacityExecutionBudget, T> work) {
     noSql();
     if (admitted.get() != null) return work.apply(admitted.get());
-    return CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
         clock,
         deadline,
         budget -> {

@@ -438,7 +438,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   /** Authenticated transport calls this read-only method. Absence and contradictions throw. */
   public Snapshot readExact(Request request, Result reservation) {
     noSql();
-    return within(Long.MAX_VALUE, owner -> owner.readExact(request, reservation, false));
+    if (budget != null) return readExact(request, reservation, false);
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+        clock,
+        Long.MAX_VALUE,
+        scoped ->
+            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                    dsl, redis, scripts, clock, tags, scoped)
+                .readExact(request, reservation, false));
   }
 
   private Snapshot readExact(Request request, Result reservation, boolean verifyForRetention) {
