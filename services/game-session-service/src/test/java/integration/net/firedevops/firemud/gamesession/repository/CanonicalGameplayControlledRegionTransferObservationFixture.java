@@ -38,8 +38,8 @@ final class CanonicalGameplayControlledRegionTransferObservationFixture {
     this(clock, Duration.ofSeconds(30));
   }
 
-  CanonicalGameplayControlledRegionTransferObservationFixture(
-      Clock clock, Duration observationTtl) throws Exception {
+  CanonicalGameplayControlledRegionTransferObservationFixture(Clock clock, Duration observationTtl)
+      throws Exception {
     this(clock, observationTtl, Duration.ZERO);
   }
 
