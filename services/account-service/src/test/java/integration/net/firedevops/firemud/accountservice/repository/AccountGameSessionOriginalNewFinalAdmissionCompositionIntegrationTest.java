@@ -232,7 +232,10 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               () ->
                   session.capacityRead.readExact(
                       session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5)))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
       TenantCapacityAdmission.Result result = reservation;
       var recovery =
           new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(

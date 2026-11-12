@@ -894,6 +894,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
       long handoffDeadline) {
     if (transferSource == null) {
+      if (original == null) throw unavailable();
       return resolveExactSource(
           request,
           readInstallationInventory(
