@@ -226,10 +226,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var budget = session.gs.originBudgetImage();
       assertThat(budget.get("recovery_observations")).isEqualTo(1);
       assertThat(budget.get("reservation_policy_applied")).isEqualTo(true);
-      assertThat(budget.get("recovery_deadline"))
-          .isEqualTo(
-              java.time.OffsetDateTime.ofInstant(
-                  resolution.continuationPolicy().deadline(), java.time.ZoneOffset.UTC));
+      assertThat(((java.time.OffsetDateTime) budget.get("recovery_deadline")).toInstant())
+          .isEqualTo(resolution.continuationPolicy().deadline());
       assertThat(
               session
                   .gs
