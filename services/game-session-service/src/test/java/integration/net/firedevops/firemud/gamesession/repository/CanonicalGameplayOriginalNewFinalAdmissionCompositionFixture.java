@@ -262,10 +262,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             trust,
             TlsServerCredentials.ClientAuth.REQUIRE,
             GrpcRequestBytePolicy.ordinary(),
-            Math.max(
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES,
-                net.firedevops.firemud.common.account.capacity
-                    .OriginalNewCapacityExecutionReadGrpcCodec.MAX_REQUEST_BYTES));
+            CanonicalGameplayAdmissionDecisionReadGrpcCodec.MAX_REQUEST_WIRE_BYTES);
     var decisionGuard = new CanonicalGameplayAdmissionDecisionReadWorkloadGuard("test");
     var actualDecisionReceiver =
         new CanonicalGameplayAdmissionDecisionReadGrpcService(
@@ -284,42 +281,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                           .GetCanonicalGameplayAdmissionDecisionResponse>
                   observer) {
             actualDecisionReceiver.getCanonicalGameplayAdmissionDecision(request, observer);
-          }
-
-          @Override
-          public void resolvePublishedRealmAdmissionTarget(
-              net.firedevops.firemud.gamesession.v1.ResolvePublishedRealmAdmissionTargetRequest
-                  request,
-              io.grpc.stub.StreamObserver<
-                      net.firedevops.firemud.gamesession.v1
-                          .ResolvePublishedRealmAdmissionTargetResponse>
-                  observer) {
-            decisionGuard.requireAccountCaller();
-            final CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector parsed;
-            try {
-              parsed =
-                  CanonicalGameplayAdmissionDecisionReadGrpcCodec.parseTargetResolutionRequest(
-                      request);
-            } catch (IllegalArgumentException malformed) {
-              observer.onError(io.grpc.Status.INVALID_ARGUMENT.asRuntimeException());
-              return;
-            }
-            if (!requestId.equals(parsed.readRequestId())
-                || !candidate().accountId().equals(parsed.accountId())) {
-              observer.onError(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
-              return;
-            }
-            try {
-              CanonicalGameplayAdmissionDecisionReadGrpcCodec.requireRetainedTargetMatches(
-                  parsed, target());
-            } catch (IllegalArgumentException changedTarget) {
-              observer.onError(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
-              return;
-            }
-            observer.onNext(
-                CanonicalGameplayAdmissionDecisionReadGrpcCodec.toTargetResolutionResponse(
-                    parsed, target()));
-            observer.onCompleted();
           }
 
           @Override
@@ -347,7 +308,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             observer.onCompleted();
           }
         };
-    // Every handler authenticates first. The upstream publication and World lifecycle captures
+    // Both handlers authenticate first. The upstream publication and World lifecycle captures
     // remain explicitly controlled; the actual retained-decision receiver is unchanged.
     factory.addService(
         ServerInterceptors.interceptForward(
@@ -363,19 +324,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             new GrpcPeerIdentityInterceptor(),
             finalGuard,
             new FinalReadCounter()));
-    var capacityGuard =
-        new net.firedevops.firemud.gamesession.security
-            .CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard("test");
-    factory.addService(
-        ServerInterceptors.interceptForward(
-            new net.firedevops.firemud.gamesession.service.impl
-                .CanonicalGameplayOriginalNewCapacityExecutionReadGrpcService(
-                new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                    binding.dsl(), coordination, scripts, CLOCK, tags),
-                capacityGuard,
-                "test"),
-            new GrpcPeerIdentityInterceptor(),
-            capacityGuard));
     server = factory.createServer().start();
     return server;
   }
@@ -625,10 +573,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       AccountGameplayAdmissionLeaseClient account,
       AccountPublicJwksCache jwks,
       String originalLoginJwt,
-      long deadline,
-      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
-      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
-          capacityRequest) {
+      long deadline) {
     // Recreate the coordinator and its SQL/INITIAL/issuer/final owners on every invocation.
     var issuerSource = binding.currentIssuerSource();
     var issuer =
@@ -648,13 +593,10 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             new CanonicalGameplayOriginalNewBoundCredentialVerifier(jwks, CLOCK),
             new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                 coordination, scripts, CLOCK, tags),
-            CLOCK,
-            capacityClient,
-            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                binding.dsl(), coordination, scripts, CLOCK, tags));
+            CLOCK);
     var result =
         coordinator.completeOriginalNew(
-            decision, originalLoginJwt, regionInstallation, 120_000L, deadline, capacityRequest);
+            decision, originalLoginJwt, regionInstallation, 120_000L, deadline);
     return new Receipt(
         result.transitionId(),
         result.admissionAtMillis(),
@@ -665,86 +607,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
 
   public Candidate candidate() {
     return binding.candidate();
-  }
-
-  /** Real Account hold/credential and GS authorization, intentionally stopped before FINAL. */
-  public net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result
-      authorizeThenFenceAndHandoffWithoutFinal(
-          AccountGameplayAdmissionLeaseClient account,
-          AccountPublicJwksCache jwks,
-          String originalLoginJwt,
-          net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
-          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
-          long deadline)
-          throws Exception {
-    var inventory = new CanonicalGameplayBindingInventoryRepository(binding.dsl());
-    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-    var executionOwner =
-        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-            binding.dsl(), coordination, scripts, CLOCK, tags);
-    var reservation = capacityClient.commit(request, deadline);
-    var execution = executionOwner.bind(source, request, reservation, deadline);
-    var issuerSource = binding.currentIssuerSource();
-    var issuer =
-        new CanonicalGameplayIssuerAdmissionBarrierRedisOwner(
-            coordination,
-            scripts,
-            new CanonicalGameplayIssuerAdmissionBarrierRepository(
-                binding.dsl(), tags, issuerSource),
-            issuerSource);
-    try (var credential =
-            account.issueOriginalNewBoundGameplayCredential(
-                originalLoginJwt,
-                decision.leaseEvidence().canonicalJson().getBytes(StandardCharsets.UTF_8));
-        var raw =
-            CanonicalGameplayOriginalNewAuthenticatedSession.template(
-                source.candidate(),
-                credential,
-                new CanonicalGameplayOriginalNewBoundCredentialVerifier(jwks, CLOCK),
-                120_000L);
-        var template = raw.bindCapacityExecution(execution)) {
-      var current =
-          initialOwner()
-              .verifyCurrentOpenForTarget(
-                  request.context()
-                          instanceof
-                          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission
-                                  .PlayerContext
-                              player
-                      ? player.accountId()
-                      : null,
-                  request.identity().tenantId(),
-                  source.candidate().bindingIdentity().playableStateNamespaceId());
-      if (!(current instanceof CanonicalGameplayAccountInitialOpenProof.CurrentOpen open))
-        throw new IllegalStateException("Actual INITIAL source is not OPEN");
-      executionOwner.authorize(
-          source,
-          template,
-          open,
-          issuer.initializeAndRead(source.issuerAcknowledgement().operationId()),
-          execution,
-          deadline);
-    }
-    var repository = new CanonicalGameplayRegionOwnerTransferRepository(binding.dsl(), CLOCK, tags);
-    var receiver =
-        new CanonicalGameplayControlledRegionTransferObservationFixture()
-            .receiver(repository, tags);
-    var transfer =
-        new CanonicalGameplayRegionOwnerTransferCoordinator(
-            binding.dsl(), CLOCK, repository, executionOwner, receiver);
-    administration.sync().pexpire(ascii(regionInstallation.grant.key()), 0);
-    regionInstallation =
-        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-            binding.dsl(),
-            coordination,
-            scripts,
-            regionInstallation,
-            sources.resolver,
-            CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
-                ::controlledRegionIncarnation,
-            transfer,
-            deadline);
-    return reservation;
   }
 
   public Target target() {
@@ -769,103 +631,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
 
   public byte[] physicalSession() {
     return administration.sync().get(ascii(candidateInstallation.sessionKey()));
-  }
-
-  /** Actual Account commit followed by a controlled selected-owner movement before GS binding. */
-  public OwnerMovementFault commitThenMoveSelectedOwnerForFault(
-      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient client,
-      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
-      long deadline) {
-    var source =
-        new CanonicalGameplayBindingInventoryRepository(binding.dsl())
-            .readOriginalNewFinalAdmissionSource(decision);
-    var executionOwner =
-        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-            binding.dsl(), coordination, scripts, CLOCK, tags);
-    var selected = executionOwner.requireRequestBinding(source, request, deadline);
-    var result = client.commit(request, deadline);
-    var identity = source.candidate().bindingIdentity();
-    if (binding
-            .dsl()
-            .execute(
-                "UPDATE game_session_region_runtime_status SET executor_fence = executor_fence + 1 WHERE tenant_id = ? AND game_instance_id = ? AND region_id = ?",
-                identity.tenantId(),
-                identity.gameInstanceId(),
-                identity.regionId())
-        != 1)
-      throw new IllegalStateException("Controlled owner movement did not affect the selected row");
-    return new OwnerMovementFault(
-        result, () -> executionOwner.bind(source, request, result, deadline, selected));
-  }
-
-  public record OwnerMovementFault(
-      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result reservation,
-      Runnable bindOriginal) {}
-
-  /** Read-only images of the isolated fixture's actual admission SQL and Redis state. */
-  public java.util.Map<String, String> capacityStateImage() {
-    var result = new java.util.TreeMap<String, String>();
-    for (String table :
-        java.util.List.of(
-            "game_session_canonical_binding_transition",
-            "game_session_original_new_capacity_execution")) {
-      String rows =
-          binding
-              .dsl()
-              .fetch(
-                  "SELECT (to_jsonb(t) || jsonb_build_object('_xmin', t.xmin::text))::text AS image FROM "
-                      + table
-                      + " t ORDER BY 1")
-              .getValues("image", String.class)
-              .toString();
-      result.put(
-          "sql:" + table,
-          net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
-              rows.getBytes(StandardCharsets.UTF_8)));
-    }
-    var commands = administration.sync();
-    for (byte[] key : commands.keys("*")) {
-      result.put(
-          "redis:" + new String(key, StandardCharsets.UTF_8),
-          net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
-              CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(commands, key)));
-    }
-    return java.util.Map.copyOf(result);
-  }
-
-  /** Controlled TTL-only fault used to prove the composition image observes absolute expiry. */
-  public String setPhysicalSessionExpiryForFault() {
-    var commands = administration.sync();
-    byte[] key = ascii(candidateInstallation.sessionKey());
-    long expiresAt = Math.addExact(CLOCK.millis(), 60_000L);
-    if (commands.pexpiretime(key) != -1L
-        || !commands.pexpireat(key, expiresAt)
-        || commands.pexpiretime(key) != expiresAt)
-      throw new IllegalStateException(
-          "Expected a persistent candidate with only its expiry changed");
-    return "redis:" + candidateInstallation.sessionKey();
-  }
-
-  /** Controlled post-retention serving loss only, not proof of actual runtime teardown ordering. */
-  public void removeServingIndexesAfterCapacityRetentionForFault() {
-    String state =
-        binding
-            .dsl()
-            .fetchSingle(
-                "SELECT status FROM game_session_original_new_capacity_execution WHERE transition_id = ?",
-                decisionId())
-            .get(0, String.class);
-    if (!"COMMITTED".equals(state))
-      throw new IllegalStateException("Immutable actual outcome must precede this fixture fault");
-    administration
-        .sync()
-        .del(
-            new byte[][] {
-              ascii(candidateInstallation.sessionKey()),
-                  ascii(candidateInstallation.characterIndexKey()),
-              ascii(candidateInstallation.accountTenantIndexKey()),
-                  ascii(candidateInstallation.tenantIndexKey())
-            });
   }
 
   public void removeInitialBarrierForFault() {

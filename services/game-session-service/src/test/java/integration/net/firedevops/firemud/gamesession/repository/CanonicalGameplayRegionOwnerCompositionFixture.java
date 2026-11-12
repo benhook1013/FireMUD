@@ -119,61 +119,6 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
       CanonicalGameplayBindingInventoryRepository.RegionBridgeAcknowledgement acknowledgement) {}
 
   /**
-   * Actual acquire/install/revalidate path; only upstream placement/incarnation remain controlled.
-   */
-  static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
-      DSLContext dsl,
-      RedisClient coordinationRedis,
-      RedisScriptCatalog catalog,
-      CanonicalGameplayRegionLeaseOwner.Installation original,
-      CanonicalInitialPlayerLocationRegionResolver resolver,
-      CanonicalGameplayRegionOwnerTransferCoordinator transfer,
-      long deadline) {
-    return handoffExistingOriginal(
-        dsl,
-        coordinationRedis,
-        catalog,
-        original,
-        resolver,
-        new ControlledStableIncarnationSource(),
-        transfer,
-        deadline);
-  }
-
-  /** Rechecks the same explicit current incarnation source used by the original installation. */
-  static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
-      DSLContext dsl,
-      RedisClient coordinationRedis,
-      RedisScriptCatalog catalog,
-      CanonicalGameplayRegionLeaseOwner.Installation original,
-      CanonicalInitialPlayerLocationRegionResolver resolver,
-      CanonicalGameplayRegionIncarnationSource incarnationSource,
-      CanonicalGameplayRegionOwnerTransferCoordinator transfer,
-      long deadline) {
-    var identity =
-        new RuntimeIdentity(
-            "game-session-service",
-            "final-owner-handoff",
-            "localhost",
-            Instant.now(),
-            "test",
-            "test",
-            "controlled-test-image");
-    var successor =
-        CanonicalGameplayRegionLeaseOwnerFactory.compose(
-            dsl,
-            coordinationRedis,
-            catalog,
-            incarnationSource,
-            resolver,
-            identity,
-            Duration.ofSeconds(30),
-            Clock.systemUTC());
-    return successor.installForTransition(
-        null, original.transitionId, original.worldRequest, transfer, deadline);
-  }
-
-  /**
    * Creates one real first-NEW provisional candidate from the exact placement selector, installs
    * the first region timeline and SQL fence, then retries the same binding bridge as a lost reply.
    */

@@ -77,8 +77,7 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
           "membershipBaseline",
           "authorityTuple",
           "outboxCheckpoints",
-          "canonicalSessionDurationMillis",
-          "capacityExecutionDigest");
+          "canonicalSessionDurationMillis");
   private static final Set<String> AUTHENTICATION_FIELDS =
       Set.of(
           "authTokenHash",
@@ -162,8 +161,6 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       String issuanceFence = requiredText(root, "issuanceFence");
       String encodedHandle = requiredText(root, "rebindHandle");
       String duration = requiredText(root, "canonicalSessionDurationMillis");
-      if (!requiredText(root, "capacityExecutionDigest").matches("sha256:[0-9a-f]{64}"))
-        throw invalid();
 
       if (!SHA256.matcher(tokenHash).matches()) throw invalid();
       long admissionAtMillis = positiveDecimal(admissionAt);
@@ -251,7 +248,6 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       root.set("authorityTuple", JSON.valueToTree(lease.get("authorityTuple")));
       root.set("outboxCheckpoints", JSON.valueToTree(lease.get("outboxCheckpoints")));
       root.put("canonicalSessionDurationMillis", Long.toString(canonicalSessionDurationMillis));
-      root.put("capacityExecutionDigest", "UNBOUND");
       return canonicalNode(root);
     } catch (IOException | RuntimeException malformed) {
       throw invalid();
@@ -430,29 +426,6 @@ public final class CanonicalGameplayOriginalNewAuthenticatedSession {
       this.canonicalTemplateBytes = canonicalTemplateBytes.clone();
       this.clock = Objects.requireNonNull(clock);
       this.canonicalSessionDurationMillis = canonicalSessionDurationMillis;
-    }
-
-    /**
-     * The final owner binds only its exact retained capacity execution, never an arbitrary hash.
-     */
-    Template bindCapacityExecution(
-        net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution execution) {
-      if (canonicalTemplateBytes == null)
-        throw new IllegalStateException("Session template is closed");
-      try {
-        ObjectNode root = (ObjectNode) JSON.readTree(canonicalTemplateBytes);
-        String prior = requiredText(root, "capacityExecutionDigest");
-        if (!"UNBOUND".equals(prior) && !execution.digest().equals(prior)) throw invalid();
-        root.put("capacityExecutionDigest", execution.digest());
-        byte[] bound = canonicalNode(root);
-        try {
-          return new Template(bound, clock, canonicalSessionDurationMillis);
-        } finally {
-          wipe(bound);
-        }
-      } catch (IOException | RuntimeException malformed) {
-        throw invalid();
-      }
     }
 
     public long canonicalSessionDurationMillis() {

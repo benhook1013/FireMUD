@@ -2439,13 +2439,6 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               + " 'original_new_abandonment_closure_digest',"
               + " 'original_new_abandonment_orphan_cleanup_id', 'original_new_abandonment_resolution_id']"
               + " ELSE ARRAY[]::text[] END";
-      // V1063 null receipt pointer is absent-equivalent; keep any populated execution digest.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_capacity_execution_digest'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_capacity_execution_digest']"
-              + " ELSE ARRAY[]::text[] END";
     } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
       // V1036's null release link is absent-equivalent; an actual release UUID stays significant.
       image =
@@ -2497,13 +2490,6 @@ class CanonicalGameplayIssuerPartitionBuildRepositoryIntegrationTest {
               + " THEN ARRAY['original_new_abandonment_id', 'original_new_abandonment_state',"
               + " 'original_new_abandonment_closure_digest',"
               + " 'original_new_abandonment_orphan_cleanup_id', 'original_new_abandonment_resolution_id']"
-              + " ELSE ARRAY[]::text[] END";
-      // V1063 null receipt pointer is absent-equivalent; keep any populated execution digest.
-      image =
-          "("
-              + image
-              + ") - CASE WHEN to_jsonb(retained_row)->'original_new_capacity_execution_digest'"
-              + " = 'null'::jsonb THEN ARRAY['original_new_capacity_execution_digest']"
               + " ELSE ARRAY[]::text[] END";
     } else if (tableName.equals("game_session_canonical_binding_issuer_index_obligation")) {
       // V1036's null release link is absent-equivalent; an actual release UUID stays significant.

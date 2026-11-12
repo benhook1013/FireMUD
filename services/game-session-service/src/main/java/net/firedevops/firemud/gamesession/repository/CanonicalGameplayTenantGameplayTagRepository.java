@@ -42,12 +42,6 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
     this.allocationVersion = allocationVersion;
   }
 
-  /** Same canonical owner and configuration, with only this operation's SQL resource boundary. */
-  CanonicalGameplayTenantGameplayTagRepository withCapacityExecutionDsl(DSLContext operationDsl) {
-    return new CanonicalGameplayTenantGameplayTagRepository(
-        operationDsl, workloadNamespace, allocationVersion);
-  }
-
   /** Loads or allocates a mapping only for the persisted candidate of this exact transition. */
   public Assignment assignmentForTransition(UUID transitionId) {
     requireNonNil(transitionId, "transitionId");
@@ -62,60 +56,6 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
           return resolveMapping(
               transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
         });
-  }
-
-  /** Retained topology for capacity handoff; never grants provisional admission authority. */
-  Assignment assignmentForRetainedCapacityExecution(UUID transitionId) {
-    requireNonNil(transitionId, "transitionId");
-    return dsl.transactionResult(
-        configuration -> {
-          DSLContext transaction = DSL.using(configuration);
-          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
-          Record transition =
-              transaction.fetchOne(
-                  "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id=?",
-                  transitionId);
-          boolean aborted =
-              transition != null && "ABORTED".equals(transition.get("status", String.class));
-          if (aborted) {
-            var retained =
-                CanonicalGameplayBindingInventoryRepository
-                    .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
-                        transaction, transitionId, false);
-            if (!retained.isAccountAborted())
-              throw conflict("Exact retained Account abort required");
-          }
-          BindingTarget source = loadBindingTarget(transaction, transitionId, null, aborted);
-          requireTenantClaim(transaction, source.tenantId());
-          // A retained execution cannot allocate replacement topology after loss of its mapping.
-          if (transaction.fetchOne(
-                  "SELECT 1 FROM " + MAPPING + " WHERE tenant_id=?", source.tenantId())
-              == null) throw conflict("Retained capacity execution mapping is unavailable");
-          return resolveMapping(
-              transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
-        });
-  }
-
-  /** Reads the immutable allocation without changing the transfer's region-lock order. */
-  int requireRetainedAllocation(
-      DSLContext transaction, UUID tenantId, String expectedTag, String expectedNamespace) {
-    if (!workloadNamespace.equals(expectedNamespace)) {
-      throw conflict("Retained capacity execution workload namespace differs");
-    }
-    Record mapping =
-        transaction.fetchOne(
-            "SELECT allocation_version, tenant_gameplay_tag FROM "
-                + MAPPING
-                + " WHERE tenant_id = ?",
-            tenantId);
-    if (mapping == null || !expectedTag.equals(mapping.get("tenant_gameplay_tag", String.class))) {
-      throw conflict("Retained capacity execution mapping is unavailable");
-    }
-    Integer version = mapping.get("allocation_version", Integer.class);
-    if (version == null || !tagFor(tenantId, version).equals(expectedTag)) {
-      throw conflict("Retained capacity execution allocation differs");
-    }
-    return version;
   }
 
   /** Topology-only retained lookup for one irreversibly selected original negative continuation. */
@@ -318,11 +258,6 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
 
   private BindingTarget loadBindingTarget(
       DSLContext transaction, UUID transitionId, UUID abandonmentId) {
-    return loadBindingTarget(transaction, transitionId, abandonmentId, false);
-  }
-
-  private BindingTarget loadBindingTarget(
-      DSLContext transaction, UUID transitionId, UUID abandonmentId, boolean retainedAbort) {
     boolean negative = abandonmentId != null;
     String negativeSelector =
         negative
@@ -382,15 +317,10 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
             .equals(requiredUuid(row, "account_index_fence"))
         || !requiredUuid(row, "transition_reservation_id")
             .equals(requiredUuid(row, "inventory_reservation_id"))
-        || !(retainedAbort
-                ? Set.of("ABORTED")
-                : negative ? Set.of("PREPARED", "ABORTED") : TRANSITION_STATES)
-            .contains(transitionState)
-        || !(retainedAbort
-                ? Set.of("TERMINAL_UNRESOLVED", "TERMINAL")
-                : negative
-                    ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
-                    : INVENTORY_STATES)
+        || !(negative ? Set.of("PREPARED", "ABORTED") : TRANSITION_STATES).contains(transitionState)
+        || !(negative
+                ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
+                : INVENTORY_STATES)
             .contains(inventoryState)
         || !transitionRefMatches(
             transitionRefBytes, inventoryRefBytes, tenantId, gameInstanceId, sessionId)

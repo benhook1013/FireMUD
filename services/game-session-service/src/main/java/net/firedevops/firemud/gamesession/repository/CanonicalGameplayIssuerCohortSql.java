@@ -34,10 +34,6 @@ final class CanonicalGameplayIssuerCohortSql {
           + " THEN ARRAY['original_new_abandonment_id', 'original_new_abandonment_state',"
           + " 'original_new_abandonment_closure_digest', 'original_new_abandonment_orphan_cleanup_id',"
           + " 'original_new_abandonment_resolution_id']"
-          + " ELSE ARRAY[]::text[] END"
-          // V1063 leaves old cohorts unchanged until an actual capacity receipt exists.
-          + " - CASE WHEN to_jsonb(t)->'original_new_capacity_execution_digest' = 'null'::jsonb"
-          + " THEN ARRAY['original_new_capacity_execution_digest']"
           + " ELSE ARRAY[]::text[] END)::text AS source_row_json"
           + " FROM game_session_canonical_binding_transition t WHERE t.inventory_revision <= ?"
           + " UNION ALL SELECT CASE WHEN r.issuer_id = ? THEN 'RESERVATION'"

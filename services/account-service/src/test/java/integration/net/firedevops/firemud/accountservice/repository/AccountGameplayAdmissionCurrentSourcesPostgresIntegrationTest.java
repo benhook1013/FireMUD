@@ -1444,24 +1444,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return newFixture(redisClient, migrationTarget, false);
   }
 
-  Fixture newCapacityPlayerEntitlementFixture(AccountGameplayDelegationRedisClient redisClient)
-      throws Exception {
-    return newFixture(redisClient, "latest", true, true);
-  }
-
   private Fixture newFixture(
       AccountGameplayDelegationRedisClient redisClient,
       String migrationTarget,
       boolean currentScope)
-      throws Exception {
-    return newFixture(redisClient, migrationTarget, currentScope, false);
-  }
-
-  private Fixture newFixture(
-      AccountGameplayDelegationRedisClient redisClient,
-      String migrationTarget,
-      boolean currentScope,
-      boolean capacityBootstrap)
       throws Exception {
     String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() > 63) throw new IllegalStateException("Generated schema name is too long");
@@ -1480,14 +1466,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DataSourceTransactionManager manager = new DataSourceTransactionManager(dataSource);
     return new Fixture(
-        schema,
-        dataSource,
-        dsl,
-        manager,
-        temporaryDirectory,
-        redisClient,
-        currentScope,
-        capacityBootstrap);
+        schema, dataSource, dsl, manager, temporaryDirectory, redisClient, currentScope);
   }
 
   private static int awaitBackendBlockedBy(
@@ -2052,7 +2031,6 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private final AccountTenantEntitlementOutboxRepository tenantEntitlementOutbox;
     private final AccountTenantAuthorityEventRepository tenantAuthorityEvents;
     private final AccountDemoTenantEntitlementRepository demoEntitlements;
-    private final AccountConnectScopeRepository connectScopes;
     private final AccountJoinOperationRepository joinOperations;
     private final AccountCanonicalFirstJoinTerminalCoordinator joinTerminal;
     private final AccountGameplayAdmissionLeaseRepository leases;
@@ -2068,7 +2046,6 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     private final VerifiedTenantProvenance tenantProvenance;
     private final CanonicalJoinScopeV2 joinScope;
     private final Account account;
-    private final boolean capacityBootstrap;
     private final IssuerAccountSourceSnapshot issuanceSource;
     final CommittedCandidateVerificationData committedCandidate;
 
@@ -2079,10 +2056,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         DataSourceTransactionManager manager,
         Path temporaryDirectory,
         AccountGameplayDelegationRedisClient redisClient,
-        boolean currentScope,
-        boolean capacityBootstrap)
+        boolean currentScope)
         throws Exception {
-      this.capacityBootstrap = capacityBootstrap;
       this.schema = schema;
       this.dataSource = dataSource;
       this.dsl = dsl;
@@ -2111,7 +2086,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       var retainedAssociations = mock(ApprovedLegacyTenantAssociationRepository.class);
       var retainedResolver =
           new AccountTenantIdentityResolver(retainedAssociations, TEST_NAMESPACE);
-      this.connectScopes = new AccountConnectScopeRepository(dsl, retainedResolver, freshTenants);
+      var connectScopes = new AccountConnectScopeRepository(dsl, retainedResolver, freshTenants);
       this.joinOperations = new AccountJoinOperationRepository(dsl, connectScopes);
       var membershipEvents =
           new AccountMembershipAuthorityEventProducer(
@@ -2244,115 +2219,6 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
           TEST_NAMESPACE);
     }
 
-    /**
-     * Actual creator bootstrap establishes zero usage in the same fresh-association transaction.
-     * Its separate creator-authorization participant is explicitly controlled, never production
-     * custody.
-     */
-    private void bootstrapFreshCapacityBaseline() {
-      Account creator = new Account();
-      String suffix = UUID.randomUUID().toString().replace("-", "");
-      creator.setUsername("capacity-creator-" + suffix);
-      creator.setEmail("capacity-creator-" + suffix + "@example.test");
-      creator.setPasswordHash("controlled-creator-password-hash");
-      creator.setRole("player");
-      creator = accounts.save(creator);
-      var operations = new AccountTenantCreationBootstrapOperationRepository(dsl);
-      var reader =
-          new net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader(
-              accounts,
-              joinOperations,
-              memberships,
-              membershipPairs,
-              membershipRoles,
-              freshTenants,
-              generations,
-              authorityOutbox,
-              sourceEvidence,
-              operations);
-      var providers = new org.springframework.beans.factory.support.StaticListableBeanFactory();
-      providers.addBean(
-          "controlledCreatorSource",
-          (net.firedevops.firemud.accountservice.service
-                  .AccountTenantCreationBootstrapAuthorizationSource)
-              (evidence, mutation) -> mutation.get());
-      var bootstrap =
-          new net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService(
-              accounts,
-              freshTenants,
-              reader,
-              membershipPairs,
-              memberships,
-              membershipRoles,
-              authorityOutbox,
-              new AccountAuditOutboxRepository(dsl),
-              operations,
-              providers.getBeanProvider(
-                  net.firedevops.firemud.accountservice.service
-                      .AccountTenantCreationBootstrapAuthorizationSource.class));
-      UUID operation = UUID.randomUUID();
-      String authorization = "sha256:" + "a".repeat(64);
-      var creatorEvidence =
-          new net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence(
-              1,
-              tenantEvidence,
-              creator.getAccountUuid(),
-              operation,
-              authorization,
-              net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest.evidenceDigest(
-                  1, tenantEvidence, creator.getAccountUuid(), operation, authorization));
-      bootstrap.bootstrap(creatorEvidence);
-    }
-
-    net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner capacityOwner(
-        Clock clock) {
-      var snapshots =
-          new AccountCanonicalRuntimeMembershipSnapshotRepository(
-              accounts,
-              generations,
-              sourceEvidence,
-              tenantAuthorityEvents,
-              freshTenants,
-              memberships,
-              membershipPairs,
-              membershipRoles,
-              authorityOutbox);
-      return new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
-          dsl, accounts, snapshots, issuance, connectScopes, manager, clock, TEST_NAMESPACE);
-    }
-
-    net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2 capacityScope(
-        net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec
-                .Target
-            target) {
-      var now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
-      var scope =
-          new CanonicalJoinScopeV2(
-              "capacity-scope-" + UUID.randomUUID(),
-              account.getAccountUuid(),
-              tenantUuid,
-              target.realmId(),
-              target.tenantSlug(),
-              target.worldSlug(),
-              target.realmSlug(),
-              target.playableStateNamespaceId(),
-              "SHARED",
-              target.canonicalGameInstanceId(),
-              target.catalogRevision(),
-              target.pointerVersion(),
-              now.minusSeconds(1).toString(),
-              now.plusSeconds(120).toString());
-      var scopes =
-          new AccountConnectScopeRepository(
-              dsl,
-              new AccountTenantIdentityResolver(
-                  mock(ApprovedLegacyTenantAssociationRepository.class), TEST_NAMESPACE),
-              freshTenants);
-      transaction.executeWithoutResult(
-          status -> scopes.insertCanonical(account.getId(), scope, tenantProvenance));
-      return scope;
-    }
-
     private void establishTenantEntitlementAndMembership(
         AccountConnectScopeRepository connectScopes) {
       transaction.execute(
@@ -2360,7 +2226,6 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
             freshTenants.importVerified(tenantEvidence);
             sourceEvidence.initializeIssuerIfAbsent(ACCOUNT_ISSUER);
             generations.initializeTenantIfAbsent(tenantUuid);
-            if (capacityBootstrap) bootstrapFreshCapacityBaseline();
             generations.initialize(AuthorityScope.membership(account.getAccountUuid(), tenantUuid));
             connectScopes.insertCanonical(account.getId(), joinScope, tenantProvenance);
             joinOperations.insertCanonicalIntent(

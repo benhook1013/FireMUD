@@ -350,9 +350,6 @@ subprojects {
 
     tasks.withType<SpotBugsTask>().configureEach {
         enabled = fullCheck
-        reports.create("xml") {
-            required.set(true)
-        }
         excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
         when (name) {
             "spotbugsMain" -> dependsOn("compileJava", "processResources")

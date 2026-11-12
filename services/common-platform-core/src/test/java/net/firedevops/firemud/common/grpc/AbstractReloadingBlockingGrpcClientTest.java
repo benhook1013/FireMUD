@@ -2,14 +2,9 @@ package net.firedevops.firemud.common.grpc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
@@ -19,7 +14,6 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -58,8 +52,6 @@ class AbstractReloadingBlockingGrpcClientTest {
     assertThatThrownBy(client::requireExplicitStub)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test client is not initialized and available");
-    assertThatThrownBy(client::requirePublishedExplicitStub)
-        .isInstanceOf(IllegalStateException.class);
 
     client.initExplicit();
     GameDesignServiceGrpc.GameDesignServiceBlockingStub initializedStub =
@@ -68,48 +60,15 @@ class AbstractReloadingBlockingGrpcClientTest {
 
     assertThat(factory.buildAttempts.get()).isEqualTo(1);
     assertThat(client.requireExplicitStub()).isSameAs(initializedStub);
-    assertThat(client.requirePublishedExplicitStub()).isSameAs(initializedStub);
 
     client.close();
 
     assertThatThrownBy(client::requireExplicitStub)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test client is not initialized and available");
-    assertThatThrownBy(client::requirePublishedExplicitStub)
-        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(client::initExplicit)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test client is closed");
-  }
-
-  @Test
-  void replacementStubIsPublishedWhenPreviousChannelStartsShutdown() throws Exception {
-    var grpc = new CommonGrpcClientProperties();
-    grpc.setPlaintext(true);
-    var previous = mock(ManagedChannel.class);
-    var replacement = mock(ManagedChannel.class);
-    var factory = mock(GrpcChannelFactory.class);
-    when(factory.buildChannel(anyString(), anyInt(), any(), anyBoolean()))
-        .thenReturn(previous, replacement);
-    var stubAtShutdown = new AtomicReference<GameDesignServiceGrpc.GameDesignServiceBlockingStub>();
-    try (var client = new TestClient(new ServiceEndpointsProperties(), grpc, factory)) {
-      client.initExplicit();
-      var original = client.requirePublishedExplicitStub();
-      when(previous.shutdown())
-          .thenAnswer(
-              invocation -> {
-                stubAtShutdown.set(client.requirePublishedExplicitStub());
-                return previous;
-              });
-
-      client.reloadChannel();
-
-      var published = client.requirePublishedExplicitStub();
-      assertThat(published).isNotSameAs(original);
-      assertThat(stubAtShutdown.get()).isSameAs(published);
-      verify(previous).shutdown();
-    }
-    verify(replacement).shutdown();
   }
 
   @Test
@@ -285,10 +244,6 @@ class AbstractReloadingBlockingGrpcClientTest {
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub requireExplicitStub() {
       return requireInitializedStub("test client is not initialized and available");
-    }
-
-    private GameDesignServiceGrpc.GameDesignServiceBlockingStub requirePublishedExplicitStub() {
-      return requirePublishedInitializedStub("test client is not initialized and available");
     }
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub() {
