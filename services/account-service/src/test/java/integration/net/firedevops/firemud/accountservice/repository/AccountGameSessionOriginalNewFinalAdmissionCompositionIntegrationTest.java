@@ -342,6 +342,39 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void capacityStateImageDetectsTtlOnlyChangeAndMissingCapacityRefusalPreservesIt()
+      throws Exception {
+    try (Session session = session()) {
+      byte[] candidate = session.gs.physicalSession();
+      var before = new java.util.TreeMap<>(session.gs.capacityStateImage());
+      String changedKey = session.gs.setPhysicalSessionExpiryForFault();
+      var after = new java.util.TreeMap<>(session.gs.capacityStateImage());
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(after.get(changedKey)).isNotEqualTo(before.get(changedKey));
+      before.remove(changedKey);
+      after.remove(changedKey);
+      assertThat(after).isEqualTo(before);
+
+      var physical = session.gs.capacityStateImage();
+      String capacity = session.capacityImage();
+      assertThatThrownBy(
+              () ->
+                  session.gs.complete(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      System.currentTimeMillis() + 10_000L,
+                      session.capacityClient,
+                      null))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(session.gs.capacityStateImage()).isEqualTo(physical);
+      assertThat(session.capacityImage()).isEqualTo(capacity);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+      assertThat(session.gs.finalReadCalls()).isZero();
+    }
+  }
+
+  @Test
   void changedCatalogRevisionRefusesBeforeAccountCapacityCommitment() throws Exception {
     try (Session session = session()) {
       var original = session.capacityRequest;
