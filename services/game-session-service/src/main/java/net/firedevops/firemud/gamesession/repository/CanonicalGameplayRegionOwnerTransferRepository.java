@@ -695,7 +695,11 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     if (tx.execute(
             "UPDATE "
                 + TRANSFER
-                + " SET state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=? AND old_owner_fence=? AND state='FROZEN'",
+                + " t SET state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=?"
+                + " WHERE t.tenant_id=? AND t.game_instance_id=? AND t.region_id=?"
+                + " AND t.old_owner_fence=? AND t.state='FROZEN' AND NOT EXISTS (SELECT 1 FROM "
+                + ITEM
+                + " i WHERE i.transfer_id=t.transfer_id)",
             newOwner,
             newFence,
             newLease,
