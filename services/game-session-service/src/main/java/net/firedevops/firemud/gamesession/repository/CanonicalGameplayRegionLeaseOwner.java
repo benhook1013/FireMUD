@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.repository;
 import java.math.BigInteger;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -313,26 +312,120 @@ final class CanonicalGameplayRegionLeaseOwner {
     redisOwner.verifyInitializedTimeline(grant, preparation);
 
     if (transferOwner != null && clock.millis() >= handoffDeadline) throw unavailable();
-    Instant installedAt = clock.instant();
-    CanonicalGameplayRegionRuntimeStatus installed =
-        transferId == null
-            ? statusRepository.installOwner(
-                source,
-                expectedRegionEpoch,
-                prior,
-                grant.tokenCorrelation(),
-                grant.ownerService(),
-                grant.ownerInstanceId(),
-                installedAt)
-            : transferOwner.install(
-                transferId,
-                source,
-                prior,
-                grant.tokenCorrelation(),
-                grant.ownerService(),
-                grant.ownerInstanceId(),
-                handoffDeadline);
+    if (transferId == null) {
+      var installed =
+          statusRepository.installOwner(
+              source,
+              expectedRegionEpoch,
+              prior,
+              grant.tokenCorrelation(),
+              grant.ownerService(),
+              grant.ownerInstanceId(),
+              clock.instant());
+      return verifyInstallation(
+          transitionId,
+          worldRequest,
+          evidence,
+          source,
+          incarnation,
+          preparation,
+          grant,
+          installed,
+          transferSource,
+          transferOwner,
+          handoffDeadline);
+    }
+    var pending =
+        new PendingTransfer(
+            this,
+            transferId,
+            transferOwner,
+            transitionId,
+            worldRequest,
+            evidence,
+            source,
+            incarnation,
+            preparation,
+            expectedRegionEpoch,
+            grant,
+            transferSource);
+    try {
+      var installed =
+          transferOwner.install(
+              transferId,
+              source,
+              prior,
+              grant.tokenCorrelation(),
+              grant.ownerService(),
+              grant.ownerInstanceId(),
+              handoffDeadline);
+      return verifyInstallation(
+          transitionId,
+          worldRequest,
+          evidence,
+          source,
+          incarnation,
+          preparation,
+          grant,
+          installed,
+          transferSource,
+          transferOwner,
+          handoffDeadline);
+    } catch (RuntimeException failure) {
+      throw new TransferCompletionUnconfirmed(pending, failure);
+    }
+  }
 
+  /**
+   * Resumes only the same process's still-current grant after an unconfirmed transfer completion.
+   */
+  Installation resumeCompletedTransfer(
+      TransferCompletionUnconfirmed interrupted, long absoluteDeadlineMillis) {
+    requireNoAmbientTransaction();
+    var pending = Objects.requireNonNull(interrupted, "interrupted").pending;
+    if (pending == null || pending.owner() != this) throw unavailable();
+    long deadline = Math.min(absoluteDeadlineMillis, Math.addExact(clock.millis(), 5_000L));
+    if (clock.millis() >= deadline) throw unavailable();
+    redisOwner.requireGrantScope(
+        pending.grant(), pending.source(), pending.expectedRegionEpoch(), runtimeIdentity);
+    redisOwner.requireCurrent(pending.grant());
+    redisOwner.verifyInitializedTimeline(pending.grant(), pending.preparation());
+    requireSameIncarnation(pending.incarnation(), readCurrentIncarnation(pending.source()));
+    var installed =
+        pending
+            .transferOwner()
+            .recoverCompleted(
+                pending.transferId(),
+                pending.grant().ownerInstanceId(),
+                pending.grant().tokenCorrelation(),
+                deadline);
+    if (clock.millis() >= deadline) throw unavailable();
+    return verifyInstallation(
+        pending.transitionId(),
+        pending.worldRequest(),
+        pending.evidence(),
+        pending.source(),
+        pending.incarnation(),
+        pending.preparation(),
+        pending.grant(),
+        installed,
+        pending.transferSource(),
+        pending.transferOwner(),
+        deadline);
+  }
+
+  private Installation verifyInstallation(
+      UUID transitionId,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation,
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant,
+      CanonicalGameplayRegionRuntimeStatus installed,
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource,
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      long handoffDeadline) {
     redisOwner.requireCurrent(grant);
     redisOwner.verifyInitializedTimeline(grant, preparation);
     CanonicalGameplayRegionRuntimeStatus observed =
@@ -355,7 +448,9 @@ final class CanonicalGameplayRegionLeaseOwner {
             worldRequest, evidence, transferSource, transferOwner, handoffDeadline));
     CanonicalGameplayRegionRuntimeStatus finalStatus =
         statusRepository.find(source).orElseThrow(CanonicalGameplayRegionLeaseOwner::unavailable);
-    if (!installed.equals(finalStatus) || finalStatus.paused()) throw unavailable();
+    if (!installed.equals(finalStatus)
+        || finalStatus.paused()
+        || transferOwner != null && clock.millis() >= handoffDeadline) throw unavailable();
     return new Installation(
         transitionId, worldRequest, evidence, source, incarnation, preparation, grant, installed);
   }
@@ -925,6 +1020,30 @@ final class CanonicalGameplayRegionLeaseOwner {
   private static IllegalStateException unavailable() {
     return new IllegalStateException(
         "Canonical Game Session region owner requires current exact assignment and lease evidence");
+  }
+
+  private record PendingTransfer(
+      CanonicalGameplayRegionLeaseOwner owner,
+      UUID transferId,
+      CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
+      UUID transitionId,
+      CanonicalInitialPlayerLocationRequest worldRequest,
+      CanonicalGameplayBindingProvisionalCasEvidence evidence,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation,
+      CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
+      long expectedRegionEpoch,
+      CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant,
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource) {}
+
+  static final class TransferCompletionUnconfirmed extends IllegalStateException {
+    private static final long serialVersionUID = 1L;
+    private final transient PendingTransfer pending;
+
+    private TransferCompletionUnconfirmed(PendingTransfer pending, RuntimeException cause) {
+      super("Normal region handoff completion requires current exact verification", cause);
+      this.pending = pending;
+    }
   }
 
   /** Private construction prevents caller-created installation/readback objects. */
