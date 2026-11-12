@@ -368,6 +368,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     when(provider.acquire()).thenReturn(connection);
     when(statement.execute()).thenReturn(true);
     CountDownLatch returned = new CountDownLatch(1), finish = new CountDownLatch(1);
+    CountDownLatch cancellationWorkerFinished = new CountDownLatch(1);
     doAnswer(
             invocation -> {
               returned.countDown();
@@ -385,13 +386,26 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                         execute(budget.sql(source(provider)));
                         awaitUninterruptibly(finish);
                         return true;
-                      }))
+                      },
+                      cancellation ->
+                          Thread.ofVirtual()
+                              .name("test-original-new-capacity-cancel")
+                              .unstarted(
+                                  () -> {
+                                    try {
+                                      cancellation.run();
+                                    } finally {
+                                      cancellationWorkerFinished.countDown();
+                                    }
+                                  })))
           .isInstanceOf(IllegalStateException.class);
       assertThat(returned.await(1, TimeUnit.SECONDS)).isTrue();
-      verify(statement, never()).cancel();
     } finally {
       finish.countDown();
     }
+    assertThat(cancellationWorkerFinished.await(2, TimeUnit.SECONDS)).isTrue();
+    awaitResourceAndCancellationWorkerCleanup();
+    verify(statement, never()).cancel();
   }
 
   @Test
