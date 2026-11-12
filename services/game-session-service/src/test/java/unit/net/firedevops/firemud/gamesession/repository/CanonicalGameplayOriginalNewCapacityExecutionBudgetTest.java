@@ -693,7 +693,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             budget -> {
               assertThat(budget.absoluteDeadlineMillis()).isEqualTo(originalDeadline);
               execute(budget.sql(dsl));
-              assertThat(budget.remainingMillis()).isBetween(1L, 4000L);
+              assertThat(budget.remainingMillis()).isBetween(1L, 3000L);
               return budget.absoluteDeadlineMillis();
             });
 
