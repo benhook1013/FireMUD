@@ -1856,7 +1856,6 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     migration(f.source, f.schema, f.history, target).validate();
   }
 
-
   private static Request request() {
     return new Request(UUID.randomUUID(), "test");
   }

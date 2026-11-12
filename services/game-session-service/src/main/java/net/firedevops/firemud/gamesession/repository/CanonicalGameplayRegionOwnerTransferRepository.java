@@ -497,8 +497,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !before.incarnationDigest().equals(after.incarnationDigest())) throw unavailable();
     if (before.ownerKind()
         == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.REGION_OWNER_TRANSFER) {
-      requireObservation(readCurrent(transferId, before.targetOrdinal()), before);
-      requireObservation(readCurrent(transferId, after.targetOrdinal()), after);
+      requireObservation(readCurrent(transferId, before.targetOrdinal(), deadline), before);
+      requireObservation(readCurrent(transferId, after.targetOrdinal(), deadline), after);
       if (!"FROZEN".equals(before.regionOwnerTransferContext().controlState())
           || !"FROZEN".equals(after.regionOwnerTransferContext().controlState()))
         throw unavailable();
@@ -508,10 +508,10 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             == CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.ORIGIN_OWNER_TRANSFER) {
       var origins = new CanonicalGameplayCapacityOriginTransferRepository(this);
       if (!origins
-              .readCurrent(transferId, before.targetOrdinal())
+              .readCurrent(transferId, before.targetOrdinal(), deadline)
               .equals(before.originTransferContext())
           || !origins
-              .readCurrent(transferId, after.targetOrdinal())
+              .readCurrent(transferId, after.targetOrdinal(), deadline)
               .equals(after.originTransferContext())
           || !"FROZEN".equals(before.originTransferContext().controlState())
           || !"FROZEN".equals(after.originTransferContext().controlState())

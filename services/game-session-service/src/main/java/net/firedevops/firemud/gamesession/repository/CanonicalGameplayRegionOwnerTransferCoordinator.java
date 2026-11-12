@@ -184,7 +184,12 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
               var actual = owner.readOriginTransferCustody(item, budget.absoluteDeadlineMillis());
               var originAfter = observeOrigin(item, budget.absoluteDeadlineMillis());
               origins.retainVerification(
-                  item, originRound, actual, originBefore, originAfter, budget.absoluteDeadlineMillis());
+                  item,
+                  originRound,
+                  actual,
+                  originBefore,
+                  originAfter,
+                  budget.absoluteDeadlineMillis());
             }
             originPage = origins.page(transferId, originPage.getLast().ordinal());
           }
