@@ -15,11 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      SOURCE_SHA: dd5df1e022d08a78c1b90c6b6ac081f9a08d01ee
-      SOURCE_TREE: 702fda350b841075b2ce580fe111c752a800ffe2
-      SOURCE_FILES: '[{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java","preimage_blob":"11deaa833785653aa2c07f9055fe6ad7010fe4ee","postimage_blob":"626c0e833fb0c2339f1ef38a3e7f5d76aec468b1","postimage_sha256":"ff0fb1841eddf0a496050fc7383072302037eca149c689c53bfbc81a46cbdf68"}]'
+      SOURCE_SHA: 2942ea82eaf7d56a0d745a53e062e8f33d5a9ff8
+      SOURCE_TREE: 8c005460e003b96518d42eec7e6644050e5d3b9c
+      SOURCE_FILES: '[{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java","preimage_blob":"626c0e833fb0c2339f1ef38a3e7f5d76aec468b1","postimage_blob":"1fdb1c87032a772ab6f5a7fdc64c03f8c5e76bd2","postimage_sha256":"abb2cf788c4e336d18b686fc20c10a661a3905be76dc93322a021610e2e72869"}]'
       TESTCONTAINERS_CHECKS_DISABLE: 'false'
-      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"actualFinalBeforeAccountFenceRetainsPhysicalPositiveButRecoveryRemainsIndeterminate","count":1}]'
+      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"accountSqlFenceBeforeDelayedFinalCannotEstablishPreIntentCommitOrdering","count":1}]'
     steps:
     - name: Set isolated proof directory
       shell: bash
