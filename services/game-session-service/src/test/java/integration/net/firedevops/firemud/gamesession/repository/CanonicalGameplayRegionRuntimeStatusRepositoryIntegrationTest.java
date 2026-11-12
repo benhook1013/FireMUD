@@ -601,6 +601,15 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       UUID id = proof.begin();
       var first = proof.captureAndFence(id);
       assertThat(first).hasSize(32);
+      assertThat(first)
+          .allMatch(item -> item.execution().transitionId().equals(proof.execution.transitionId()));
+      assertThatThrownBy(
+              () ->
+                  proof.transfers.within(
+                      transferDeadline(),
+                      ignored -> proof.transfers.frozenOriginal(proof.execution.transitionId())))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Normal region owner transfer is held");
       assertThatThrownBy(
               () ->
                   proof.transfers.within(
@@ -711,6 +720,28 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       assertThat(proof.begin()).isEqualTo(id);
       assertThat(proof.captureAndFence(id)).isEmpty();
       assertThat(proof.physicalExecutionExists(last.execution())).isFalse();
+    }
+  }
+
+  @Test
+  void originalCapacityExecutionRefusesForgedInitialAuthorizationAndTerminalEvidence()
+      throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      byte[] forgedReadback = {1};
+      for (String status : List.of("AUTHORIZED", "COMMITTED", "CLOSED", "INSTALL_DISPATCHED")) {
+        byte[] readback = "AUTHORIZED".equals(status) ? null : forgedReadback;
+        assertThatThrownBy(() -> proof.insertExecution(proof.execution, status, readback))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining(
+                "Original NEW capacity execution cannot start with an authorization or terminal proof");
+      }
+      assertThat(proof.executionState(proof.execution)).isNull();
+      assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+
+      proof.seedUndeliveredDispatch(proof.execution);
+      assertThat(proof.executionState(proof.execution)).isEqualTo("INSTALL_DISPATCHED");
+      assertThat(proof.physicalExecutionExists(proof.execution)).isFalse();
     }
   }
 
@@ -1234,12 +1265,17 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private void seedUndeliveredDispatch(OriginalNewCapacityExecution original) {
       // Controlled crash-window storage seed only. No guard is disabled, no AUTHORIZED result is
       // invented, and this is not the real authorize path exercised by the two row-lock races.
+      insertExecution(original, "INSTALL_DISPATCHED", null);
+    }
+
+    private void insertExecution(
+        OriginalNewCapacityExecution original, String status, byte[] terminalReadback) {
       sql.execute(
           "INSERT INTO game_session_original_new_capacity_execution"
               + " (tenant_id,request_id,admission_id,admission_attempt_id,transition_id,capacity_rearm_fence,"
               + " reservation_id,reservation_fence,mutation_digest,execution_digest,canonical_execution,"
-              + " selected_owner_id,selected_owner_fence,tenant_gameplay_tag,status)"
-              + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'INSTALL_DISPATCHED')",
+              + " selected_owner_id,selected_owner_fence,tenant_gameplay_tag,status,terminal_readback)"
+              + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
           original.request().identity().tenantId(),
           original.request().identity().requestId(),
           original.request().identity().admissionId(),
@@ -1253,7 +1289,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           original.canonicalBytes(),
           original.selectedOwnerId(),
           original.selectedOwnerFence(),
-          tags.assignmentForTransition(original.transitionId()).tenantGameplayTag());
+          tags.assignmentForTransition(original.transitionId()).tenantGameplayTag(),
+          status,
+          terminalReadback);
     }
 
     private List<CanonicalGameplayRegionOwnerTransferRepository.Item> captureAndFence(UUID id) {

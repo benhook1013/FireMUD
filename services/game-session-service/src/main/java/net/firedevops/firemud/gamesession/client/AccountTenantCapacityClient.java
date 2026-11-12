@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.client;
 import io.grpc.Context;
 import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.time.Clock;
@@ -60,30 +61,33 @@ public final class AccountTenantCapacityClient
    * allocates another ID.
    */
   public Result commit(Request request, long absoluteDeadlineMillis) {
+    long maximumMillis =
+        TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS);
+    Deadline maximum = Deadline.after(maximumMillis, TimeUnit.MILLISECONDS);
     requireNoAmbientSql("Capacity commitment requires no ambient SQL");
+    long startedMillis = clock.millis();
     request.requireStructurallyValid();
     if (request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
         || !namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Exact Game Session context required");
-    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, clock.millis());
+    long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, startedMillis);
     Deadline deadline =
-        Deadline.after(
-            Math.min(
-                TimeUnit.SECONDS.toMillis(TenantCapacityAdmissionGrpcCodec.CALL_DEADLINE_SECONDS),
-                remainingMillis),
+        maximum.offset(
+            Math.max(0L, Math.min(maximumMillis, remainingMillis)) - maximumMillis,
             TimeUnit.MILLISECONDS);
     Deadline incoming = Context.current().getDeadline();
     if (incoming != null) deadline = deadline.minimum(incoming);
     var stub =
-        requireInitializedStub("Account capacity unavailable")
+        requirePublishedInitializedStub("Account capacity unavailable")
             .withDeadline(deadline)
             .withMaxOutboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES)
             .withMaxInboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
     try {
+      var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
+      if (deadline.isExpired()) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
       // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
       return TenantCapacityAdmissionGrpcCodec.requireResponse(
-          request,
-          stub.commitTenantCapacityAdmission(TenantCapacityAdmissionGrpcCodec.toRequest(request)));
+          request, stub.commitTenantCapacityAdmission(wire));
     } catch (StatusRuntimeException failure) {
       throw TenantCapacityAdmissionGrpcCodec.validateFailure(failure);
     }

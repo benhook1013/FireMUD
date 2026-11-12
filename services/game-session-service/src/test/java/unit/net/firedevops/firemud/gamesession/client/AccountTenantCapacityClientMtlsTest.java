@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.Any;
 import io.grpc.Context;
+import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -16,16 +17,20 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
@@ -33,6 +38,7 @@ import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixtu
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
@@ -198,6 +204,42 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
+  void commitReachesItsTransportDeadlineWhileTlsReloadIsBlocked() throws Exception {
+    var calls = new AtomicInteger();
+    var respond = new AtomicBoolean(true);
+    var tls = pki.clientProperties(directory, pki.identity("client"));
+    var factory = new BlockingReloadChannelFactory();
+    var server = server("account", calls, false, new AtomicLong(), respond);
+    try (var client = client(server, tls, factory);
+        var executor = Executors.newSingleThreadExecutor()) {
+      client.init();
+      var request = CapacityAdmissionTestFixture.playerRequest();
+      client.commit(request, deadline());
+      respond.set(false);
+      try {
+        Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
+        assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L;
+        var timedOut =
+            executor.submit(
+                () ->
+                    assertThatThrownBy(() -> client.commit(request, explicitDeadline))
+                        .isInstanceOfSatisfying(
+                            StatusRuntimeException.class,
+                            failure ->
+                                assertThat(failure.getStatus().getCode())
+                                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
+        timedOut.get(3, TimeUnit.SECONDS);
+        assertThat(calls).hasValue(2);
+      } finally {
+        factory.releaseReload.countDown();
+      }
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
   void incomingDeadlineBoundsAStalledAccountCall() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     AtomicBoolean respond = new AtomicBoolean(true);
@@ -253,12 +295,18 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   private static AccountTenantCapacityClient client(Server server) throws Exception {
+    return client(
+        server, pki.clientProperties(directory, pki.identity("client")), new GrpcChannelFactory());
+  }
+
+  private static AccountTenantCapacityClient client(
+      Server server, CommonGrpcClientProperties tls, GrpcChannelFactory factory) {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + server.getPort());
     return new AccountTenantCapacityClient(
         endpoints,
-        pki.clientProperties(directory, pki.identity("client")),
-        new GrpcChannelFactory(),
+        tls,
+        factory,
         "prod",
         Clock.fixed(CapacityAdmissionTestFixture.NOW, ZoneOffset.UTC));
   }
@@ -346,5 +394,29 @@ class AccountTenantCapacityClientMtlsTest {
   private static void stop(Server server) throws InterruptedException {
     server.shutdownNow();
     assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+  }
+
+  private static final class BlockingReloadChannelFactory extends GrpcChannelFactory {
+    private final AtomicBoolean initialBuild = new AtomicBoolean(true);
+    private final CountDownLatch reloadStarted = new CountDownLatch(1);
+    private final CountDownLatch releaseReload = new CountDownLatch(1);
+
+    @Override
+    public ManagedChannel buildChannel(
+        String target, int defaultPort, CommonGrpcClientProperties properties, boolean keepAlive)
+        throws SSLException {
+      if (!initialBuild.getAndSet(false)) {
+        reloadStarted.countDown();
+        try {
+          if (!releaseReload.await(10, TimeUnit.SECONDS)) {
+            throw new SSLException("Test reload release timed out");
+          }
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          throw new SSLException("Test reload wait interrupted", interrupted);
+        }
+      }
+      return super.buildChannel(target, defaultPort, properties, keepAlive);
+    }
   }
 }
