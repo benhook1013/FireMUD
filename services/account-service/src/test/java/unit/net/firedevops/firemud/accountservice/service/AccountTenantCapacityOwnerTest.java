@@ -110,7 +110,8 @@ class AccountTenantCapacityOwnerTest {
 
     assertThatThrownBy(
             () ->
-                repository.create(request, repository.usage(request), request.evidence().expiresAt()))
+                repository.create(
+                    request, repository.usage(request), request.evidence().expiresAt()))
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
