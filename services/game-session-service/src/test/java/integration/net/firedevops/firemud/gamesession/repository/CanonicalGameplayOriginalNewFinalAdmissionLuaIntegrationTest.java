@@ -409,7 +409,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(eval(action(original, "FENCE"))).isEqualTo(9L);
     assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(9L);
     byte[][] credentialFree = action(original, "FENCE").arguments().clone();
+    credentialFree[10] = ascii("{}");
     credentialFree[11] = ascii("1");
+    credentialFree[12] = ascii("{}");
+    credentialFree[13] = ascii("{}");
     assertThat(eval(new ScriptCase(original.keys(), credentialFree))).isEqualTo(9L);
     assertThat(eval(expired(new ScriptCase(original.keys(), credentialFree)))).isEqualTo(9L);
     assertThat(eval(preFenceScriptSha, original)).isEqualTo(2L);
