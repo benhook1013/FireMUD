@@ -405,7 +405,14 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
 
   @ParameterizedTest
   @ValueSource(
-      strings = {"issued", "observed-before", "observed-after", "expires", "expired", "clock-back"})
+      strings = {
+        "issued",
+        "observed-before",
+        "observed-after-expiry",
+        "expires",
+        "expired",
+        "clock-back"
+      })
   void timeWindowMismatchOrDeadlineExpiryRefuses(String mode) {
     var fixture = new Fixture();
     switch (mode) {
@@ -413,7 +420,7 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
           fixture.mutation = root -> root.put("observationIssuedAtEpochMillis", NOW - 1L);
       case "observed-before" ->
           fixture.mutation = root -> root.put("observationObservedAtEpochMillis", NOW - 1L);
-      case "observed-after" ->
+      case "observed-after-expiry" ->
           fixture.mutation = root -> root.put("observationObservedAtEpochMillis", NOW + 1_001L);
       case "expires" ->
           fixture.mutation = root -> root.put("observationExpiresAtEpochMillis", NOW + 999L);
@@ -422,6 +429,19 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
       default -> throw new IllegalArgumentException(mode);
     }
     assertRejected(fixture);
+  }
+
+  @Test
+  void futureObservationWithinSignedExpiryReachesCurrentClockRefusal() {
+    var fixture = new Fixture();
+    fixture.mutation = root -> root.put("observationObservedAtEpochMillis", NOW + 1L);
+    assertThatThrownBy(() -> fixture.observe(NOW + 1_000L))
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationRejectedException.class)
+        .hasMessage("Protected observation is expired or out of window");
+    // A second source read occurs only after the signed payload and its time window are verified.
+    assertThat(fixture.sourceReads).hasValue(2);
+    assertThat(fixture.channelCalls).hasValue(1);
   }
 
   @Test

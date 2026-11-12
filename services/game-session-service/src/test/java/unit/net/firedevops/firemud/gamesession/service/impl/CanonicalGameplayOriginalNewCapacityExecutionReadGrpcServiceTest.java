@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
@@ -96,6 +97,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionReadGrpcServiceTest {
   private static void assertStatus(StreamObserver<?> observer, Status.Code code) {
     ArgumentCaptor<Throwable> error = ArgumentCaptor.forClass(Throwable.class);
     verify(observer).onError(error.capture());
+    verifyNoMoreInteractions(observer);
     assertThat(Status.fromThrowable(error.getValue()).getCode()).isEqualTo(code);
   }
 }
