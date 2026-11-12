@@ -72,22 +72,27 @@ public final class AccountTenantCapacityClient
         || !namespace.equals(request.targetNamespace()))
       throw new IllegalArgumentException("Exact Game Session context required");
     long remainingMillis = Math.subtractExact(absoluteDeadlineMillis, startedMillis);
-    Deadline deadline =
+    Deadline absoluteDeadline =
         maximum.offset(
             Math.max(0L, Math.min(maximumMillis, remainingMillis)) - maximumMillis,
             TimeUnit.MILLISECONDS);
     Deadline incoming = Context.current().getDeadline();
-    if (incoming != null) deadline = deadline.minimum(incoming);
-    var stub =
-        requirePublishedInitializedStub("Account capacity unavailable")
-            .withDeadline(deadline)
-            .withMaxOutboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES)
-            .withMaxInboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
+    Deadline deadline = incoming == null ? absoluteDeadline : absoluteDeadline.minimum(incoming);
     var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
     CommitTenantCapacityAdmissionResponse response;
     try {
-      if (deadline.isExpired()) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
-      response = stub.commitTenantCapacityAdmission(wire);
+      response =
+          withPublishedInitializedStub(
+              "Account capacity unavailable",
+              stub -> {
+                if (deadline.isExpired()) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
+                return stub.withDeadline(deadline)
+                    .withMaxOutboundMessageSize(
+                        TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES)
+                    .withMaxInboundMessageSize(
+                        TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
+                    .commitTenantCapacityAdmission(wire);
+              });
     } catch (StatusRuntimeException failure) {
       throw TenantCapacityAdmissionGrpcCodec.validateFailure(failure);
     }
