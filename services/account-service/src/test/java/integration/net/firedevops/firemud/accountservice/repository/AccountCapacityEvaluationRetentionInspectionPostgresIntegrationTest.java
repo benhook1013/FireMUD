@@ -59,7 +59,14 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
       var write = new TransactionTemplate(transactions);
       if (populated) populate(dsl, write);
       var beforeRows = rowImages(dsl);
+      if (populated) {
+        assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isOne();
+        assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_attempt_history"))).isOne();
+        assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_recovery_evidence"))).isOne();
+      }
       var beforeGuards = guardImages(dsl);
+      var beforeFlyway =
+          dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank").intoMaps();
       String originalMigration =
           dsl.fetchSingle("SELECT checksum::text FROM flyway_schema_history WHERE version = '1040'")
               .get(0, String.class);
@@ -68,6 +75,17 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
 
       assertThat(rowImages(dsl)).isEqualTo(beforeRows);
       assertThat(guardImages(dsl)).isEqualTo(beforeGuards);
+      assertThat(
+              dsl.fetch("SELECT * FROM flyway_schema_history ORDER BY installed_rank")
+                  .intoMaps()
+                  .subList(0, beforeFlyway.size()))
+          .isEqualTo(beforeFlyway);
+      var conservation =
+          dsl.fetch(
+                  "SELECT to_jsonb(c)::text AS row, xmin::text AS xmin "
+                      + "FROM account_tenant_capacity_conservation c ORDER BY tenant_uuid, owner_service")
+              .intoMaps();
+      assertThat(conservation).hasSize(populated ? 2 : 0);
       assertThat(
               dsl.fetchSingle(
                       "SELECT checksum::text FROM flyway_schema_history WHERE version = '1040'")
@@ -113,13 +131,22 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
                 "DELETE FROM account_tenant_capacity_reservations",
                 "UPDATE account_tenant_capacity_attempt_history SET canonical_payload = decode('01', 'hex')",
                 "DELETE FROM account_tenant_capacity_attempt_history",
-                "TRUNCATE account_tenant_capacity_attempt_history")) {
+                "TRUNCATE account_tenant_capacity_attempt_history",
+                "UPDATE account_tenant_capacity_recovery_evidence SET outcome = 'INDETERMINATE'",
+                "DELETE FROM account_tenant_capacity_recovery_evidence",
+                "TRUNCATE account_tenant_capacity_recovery_evidence")) {
           assertThatThrownBy(() -> write.executeWithoutResult(status -> dsl.execute(sql)))
               .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
         }
       }
       assertThat(rowImages(dsl)).isEqualTo(beforeRows);
       assertThat(guardImages(dsl)).isEqualTo(beforeGuards);
+      assertThat(
+              dsl.fetch(
+                      "SELECT to_jsonb(c)::text AS row, xmin::text AS xmin "
+                          + "FROM account_tenant_capacity_conservation c ORDER BY tenant_uuid, owner_service")
+                  .intoMaps())
+          .isEqualTo(conservation);
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }
@@ -143,7 +170,11 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
                 + "SELECT 'history', (to_jsonb(h) || jsonb_build_object('xmin', h.xmin::text))::text "
                 + "FROM account_tenant_capacity_attempt_history h UNION ALL "
                 + "SELECT 'recovery', (to_jsonb(r) || jsonb_build_object('xmin', r.xmin::text))::text "
-                + "FROM account_tenant_capacity_recovery_evidence r) retained ORDER BY family, image")
+                + "FROM account_tenant_capacity_recovery_evidence r UNION ALL "
+                + "SELECT 'reservation', (to_jsonb(r) || jsonb_build_object('xmin', r.xmin::text))::text "
+                + "FROM account_tenant_capacity_reservations r UNION ALL "
+                + "SELECT 'usage', (to_jsonb(u) || jsonb_build_object('xmin', u.xmin::text))::text "
+                + "FROM account_tenant_capacity_usage u) retained ORDER BY family, image")
         .getValues("image", String.class);
   }
 
@@ -252,6 +283,33 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
               "f".repeat(64),
               digest('a'),
               new byte[] {8});
+          // Controlled SQL lineage for inspection, not a genuine execution-source observation.
+          // Establish the ordinary fenced claim before retaining its unavailable-source evidence.
+          dsl.execute(
+              "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, "
+                  + "recovery_claim_fence = 1, recovery_claim_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 day' "
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+              UUID.randomUUID(),
+              tenant.canonicalTenantId(),
+              request,
+              admission);
+          dsl.execute(
+              "INSERT INTO account_tenant_capacity_recovery_evidence "
+                  + "(tenant_uuid, request_id, admission_id, admission_attempt_id, recovery_claim_fence, "
+                  + "recovery_policy_version, recovery_attempt_number, observed_at, outcome) "
+                  + "SELECT tenant_uuid, request_id, admission_id, admission_attempt_id, recovery_claim_fence, "
+                  + "recovery_policy_version, 1, CURRENT_TIMESTAMP, 'SOURCE_UNAVAILABLE' "
+                  + "FROM account_tenant_capacity_reservations "
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+              tenant.canonicalTenantId(),
+              request,
+              admission);
+          dsl.execute(
+              "UPDATE account_tenant_capacity_reservations SET recovery_attempt_count = 1 "
+                  + "WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+              tenant.canonicalTenantId(),
+              request,
+              admission);
         });
   }
 
