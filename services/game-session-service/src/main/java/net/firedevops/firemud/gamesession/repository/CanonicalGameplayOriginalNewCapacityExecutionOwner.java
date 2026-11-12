@@ -132,7 +132,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 selected.instanceId(),
                 selected.fence(),
                 retained.state(),
-                deadline);
+                Math.min(deadline, budget.absoluteDeadlineMillis()));
       } else {
         originRedis()
             .readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
@@ -336,7 +336,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             item.newOwner(),
             item.newFence(),
             item.state(),
-            deadline);
+            Math.min(deadline, budget.absoluteDeadlineMillis()));
   }
 
   CanonicalGameplayCapacityOriginRedisOwner.Readback readOriginTransferCustody(
@@ -606,7 +606,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 execution.selectedOwnerId(),
                 execution.selectedOwnerFence(),
                 CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED,
-                deadline);
+                Math.min(deadline, budget.absoluteDeadlineMillis()));
       var finalOwner =
           origin == null
               ? scopedFinalOwner()

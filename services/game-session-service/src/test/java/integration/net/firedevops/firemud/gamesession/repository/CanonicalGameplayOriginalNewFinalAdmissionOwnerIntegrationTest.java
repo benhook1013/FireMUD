@@ -173,6 +173,48 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void expiredRedisBudgetCannotDispatchOriginWithLongerCallerDeadline() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var origin = prepareControlledOrigin(source);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var account = controlledAccountOpen();
+    var issuer = issuerOpen();
+    var skewedOwner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            fixture.dsl(),
+            ownerClient,
+            catalog,
+            Clock.offset(CLOCK, Duration.ofSeconds(-10)),
+            tags);
+    long callerDeadline = CLOCK.millis() + 30_000L;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var bound = template.bindCapacityExecution(controlledCapacity)) {
+      assertThatThrownBy(
+              () ->
+                  skewedOwner.authorizeWithOrigin(
+                      source, bound, account, issuer, controlledCapacity, callerDeadline, origin))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(admin.hget(ascii(origin.redisKey()), ascii("state"))).containsExactly(ascii("OPEN"));
+    assertThat(admin.exists(ascii(capacityKey(assignment)))).isZero();
+    var repository = new CanonicalGameplayCapacityOriginRepository(fixture.dsl());
+    assertThat(repository.read(origin).state())
+        .isEqualTo(CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                    controlledCapacity.digest())
+                .get(0, String.class))
+        .isEqualTo("INSTALL_DISPATCHED");
+  }
+
+  @Test
   void originRecoveryUsesTheTwoBackgroundSlotsAndTheFourOperationCeiling() throws Exception {
     repairAccountMember();
     bridge(false);
