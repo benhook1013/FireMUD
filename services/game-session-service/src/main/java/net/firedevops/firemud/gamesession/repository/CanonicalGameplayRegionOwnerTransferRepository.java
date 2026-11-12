@@ -699,6 +699,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     requireComplete(sql(), transferId);
     CanonicalGameplayCapacityOriginTransferRepository.requireVerified(
         sql(), transferId, originRound);
+    long evidenceDeadline =
+        Math.min(deadline, Math.min(before.expiresAtEpochMillis(), after.expiresAtEpochMillis()));
+    if (clock.millis() >= evidenceDeadline) throw unavailable();
     if (originRound == null) {
       // With no origin custody CAS, reserve the successor only after the read-only proof succeeds.
       prepareSuccessor(transferId, successorOwner, successorLease);
@@ -709,7 +712,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || successorFence <= successor.get("old_owner_fence", Long.class)
         || !Objects.equals(successorOwner, successor.get("successor_owner_id", String.class))
         || !Objects.equals(
-            successorLease, successor.get("successor_lease_correlation", String.class)))
+            successorLease, successor.get("successor_lease_correlation", String.class))
+        || clock.millis() >= evidenceDeadline)
       throw unavailable();
     return new Completion(
         transferId,
@@ -718,7 +722,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         round,
         originRound,
         successorFence,
-        deadline);
+        evidenceDeadline,
+        clock);
   }
 
   long verificationCursor(UUID transferId) {
@@ -819,11 +824,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       CanonicalGameplayRegionRuntimeStatus prior,
       String newOwner,
       long newFence,
-      String newLease,
-      Instant now) {
-    if (proof == null
-        || now.toEpochMilli() >= proof.deadline
-        || !sourceDigest(source, prior).equals(proof.sourceDigest)) throw unavailable();
+      String newLease) {
+    if (proof == null || !sourceDigest(source, prior).equals(proof.sourceDigest))
+      throw unavailable();
     Record transfer = current(tx, proof.transferId, true);
     if (!proof.incarnationDigest.equals(transfer.get("incarnation_digest", String.class))
         || !proof.round.equals(transfer.get("verification_round", UUID.class))
@@ -835,8 +838,10 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || newFence != transfer.get("successor_owner_fence", Long.class)
         || !newLease.equals(transfer.get("successor_lease_correlation", String.class)))
       throw unavailable();
+    proof.requireFresh();
     CanonicalGameplayCapacityOriginTransferRepository.promote(
         tx, proof.transferId, proof.originRound, newOwner, newFence);
+    proof.requireFresh();
     if (tx.execute(
             "UPDATE "
                 + TRANSFER
@@ -1369,6 +1374,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     private final UUID originRound;
     private final long reservedFence;
     private final long deadline;
+    private final Clock clock;
 
     long reservedFence() {
       return reservedFence;
@@ -1381,7 +1387,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         UUID round,
         UUID originRound,
         long reservedFence,
-        long deadline) {
+        long deadline,
+        Clock clock) {
       this.transferId = transferId;
       this.sourceDigest = sourceDigest;
       this.incarnationDigest = incarnationDigest;
@@ -1389,6 +1396,11 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       this.originRound = originRound;
       this.reservedFence = reservedFence;
       this.deadline = deadline;
+      this.clock = clock;
+    }
+
+    void requireFresh() {
+      if (clock.millis() >= deadline) throw unavailable();
     }
   }
 }
