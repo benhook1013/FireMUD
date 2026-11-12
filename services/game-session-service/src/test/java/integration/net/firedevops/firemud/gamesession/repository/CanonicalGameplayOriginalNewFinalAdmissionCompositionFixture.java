@@ -684,6 +684,10 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     originReceivingEnabled = true;
   }
 
+  public void useOrdinaryFinalAdmission() {
+    originReceivingEnabled = false;
+  }
+
   public void prepareReceivingOrigin(
       net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
     var source =

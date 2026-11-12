@@ -122,6 +122,19 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
 
       // A recreated owner resumes after acknowledged INSTALL and before the first FINAL.
       var restarted = capacityOwner();
+      String retainedBeforeOrdinary = sqlImage();
+      Map<String, String> physicalBeforeOrdinary = physicalImage();
+      assertThatThrownBy(() -> restarted.requireOrdinaryAdmission(origin.request(), deadline()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact capacity origin custody unavailable");
+      assertThatThrownBy(
+              () ->
+                  restarted.authorize(
+                      source, bound, account, issuer, controlledCapacity, deadline()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact capacity origin custody unavailable");
+      assertThat(sqlImage()).isEqualTo(retainedBeforeOrdinary);
+      assertThat(physicalImage()).isEqualTo(physicalBeforeOrdinary);
       admin.aclSetuser(PRINCIPAL, new AclSetuserArgs().removeCommand(CommandType.EVALSHA));
       try {
         byte[] originKey = ascii(origin.redisKey());
@@ -370,10 +383,16 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     assertThat(sqlImage()).isEqualTo(terminalRows);
   }
 
+  private enum HandoffAbortPhase {
+    BEFORE_CAPTURE,
+    AFTER_CAPTURE,
+    AFTER_INSTALL
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  @org.junit.jupiter.params.provider.EnumSource(HandoffAbortPhase.class)
   void sameGrantResumesFrozenAndCompletedHandoffOfDefinitivelyAbortedOriginal(
-      boolean abortAfterCapture) throws Exception {
+      HandoffAbortPhase abortPhase) throws Exception {
     repairAccountMember();
     bridge();
     var original = regionBinding.installation();
@@ -394,7 +413,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             String statement = context.sql();
             if (statement == null) return;
             boolean atCaptureBoundary =
-                abortAfterCapture
+                abortPhase == HandoffAbortPhase.AFTER_CAPTURE
                     ? statement.contains("UPDATE game_session_region_owner_transfer_item")
                         && statement.contains("SET fence_readback=?")
                     : statement.contains("INSERT INTO game_session_region_owner_transfer_item");
@@ -472,15 +491,15 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     "SELECT count(*) FROM game_session_region_owner_transfer_item WHERE transfer_id=?",
                     transferId)
                 .get(0, Long.class))
-        .isEqualTo(abortAfterCapture ? 1L : 0L);
+        .isEqualTo(abortPhase == HandoffAbortPhase.AFTER_CAPTURE ? 1L : 0L);
     byte[] frozenGrant = admin.get(leaseKey);
     assertThat(frozenGrant).isNotEmpty();
     String grantCorrelation =
         CanonicalGameplayIssuerMemberV2Codec.sha256(frozenGrant).substring("sha256:".length());
     assertThat(grantCorrelation).isNotEqualTo(original.grant.tokenCorrelation());
 
-    var abort = fixture.recordOriginalAccountAbort();
-    assertThat(abort.isAccountAborted()).isTrue();
+    var abort =
+        abortPhase == HandoffAbortPhase.AFTER_INSTALL ? null : fixture.recordOriginalAccountAbort();
     var lostCompletion =
         org.junit.jupiter.api.Assertions.assertThrows(
             CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
@@ -492,6 +511,19 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         .isEqualTo(frozen.get("intent_digest", String.class));
     assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
     assertThat(completed.get("new_lease_correlation", String.class)).isEqualTo(grantCorrelation);
+    if (abortPhase == HandoffAbortPhase.AFTER_INSTALL) {
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                      original.transitionId)
+                  .get(0, String.class))
+          .isEqualTo("PROVISIONAL");
+      abort = fixture.recordOriginalAccountAbort();
+    }
+    assertThat(abort).isNotNull();
+    assertThat(abort.isAccountAborted()).isTrue();
     var retained =
         fixture
             .dsl()

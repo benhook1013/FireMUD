@@ -505,6 +505,12 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       byte[] physical = session.gs.physicalSession();
       session.restartAccount();
       assertThat(session.complete()).isEqualTo(first);
+      int confirmedReads = session.gs.finalReadCalls();
+      session.gs.useOrdinaryFinalAdmission();
+      assertThatThrownBy(session::complete)
+          .isInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage("Exact capacity origin custody unavailable");
+      assertThat(session.gs.finalReadCalls()).isEqualTo(confirmedReads);
       assertThat(session.gs.originPhysicalImage()).isEqualTo(custody);
       assertThat(session.gs.originBudgetImage()).isEqualTo(budget);
       assertThat(session.capacityImage()).isEqualTo(accountCapacity);
