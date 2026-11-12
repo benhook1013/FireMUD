@@ -1,9 +1,0 @@
-version: 2
-updates:
-  # Renovate owns dependency update PRs in this repository. Keep Dependabot's
-  # GitHub Actions updater disabled unless that policy changes.
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 0

@@ -1,3 +1,0 @@
-ALTER TABLE payment_transaction ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1;
-ALTER TABLE subscription ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 1;
-

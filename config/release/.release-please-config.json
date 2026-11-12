@@ -1,6 +1,0 @@
-{
-  "release-type": "gradle",
-  "package-name": "firemud",
-  "bump-minor-pre-major": true,
-  "branches": ["develop"]
-}

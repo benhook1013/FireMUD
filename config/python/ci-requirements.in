@@ -1,4 +1,0 @@
--r yaml-requirements.in
-pathspec
-ruff
-yamllint

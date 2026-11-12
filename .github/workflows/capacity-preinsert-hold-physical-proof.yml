@@ -1,0 +1,227 @@
+name: Temporary preinsert-hold capacity repair proof
+run-name: Pre-INSERT hold capacity repair proof ${{ github.run_id }}
+'on':
+  push:
+    branches:
+    - codex/proof-capacity-preinsert-hold-20261112
+permissions:
+  contents: read
+concurrency:
+  group: capacity-preinsert-hold-physical-proof
+  cancel-in-progress: false
+jobs:
+  capacity-proof:
+    if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/codex/proof-capacity-preinsert-hold-20261112'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: 46a00036a6c0459628f08c4ed1e9856fdcfabd72
+      SOURCE_TREE: 66c454f4742c2099055146c9e62b8bbb318905de
+      SOURCE_FILES: '[{"path":"design/project-management/implementation-tracking/player-access-and-session.md","preimage_blob":"001b77a5a5ea5bbed8d4485ef378046e4ee40da8","postimage_blob":"470a4c8fb846aeedf2e2bdd858eee0e903a50f15","postimage_sha256":"08dbe11ba4a07fc28fd7637020b44b9e94d3fc2f4be43442433659bb2b1c548a"},{"path":"services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest.java","preimage_blob":"1e0e6bfd17703c8c5f388081bfe157b1a79be4eb","postimage_blob":"21458d0091d66b6a7ef490244c41a9b2836466fb","postimage_sha256":"37c2e09c13cb7c169afc92cada422cd5806d6efbd332e7dee21568b43f42f65f"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture.java","preimage_blob":"bb4d8f52b057a84467130ee6a4fa11a5287b5d08","postimage_blob":"c9dc9d9f485b32c801b5c7aa66e6c5ce7eca9ed7","postimage_sha256":"5149768b65e97d1a584618a4de0467bdb04e3ef0d8e1cf538137b1d59f5a802f"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountTenantCapacityOwner.java","postimage_blob":"99bb1e414d7c16b59ab97815f125127e9300f2c7","postimage_sha256":"6ad424af2ccb64382afb70d6f9ea6413176a11d718f88a1625ac68b22d6c408b"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountTenantCapacityRecoveryWorker.java","postimage_blob":"fca009081f16e0c430190630f5aed510a38fa305","postimage_sha256":"dd1e34ec4676a7c12ffb417693ca4201b61ce07a2356b2cce1b05229959c44d7"}]'
+      TESTCONTAINERS_CHECKS_DISABLE: 'false'
+      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualPreInsertOwnerMovementRefusalKeepsCapacityHeldThroughRecoveryQuarantine","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"mismatchedCapacityRequestRefusesBeforeAccountCommit","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualNormalHandoffKeepsUnknownCapacityHeldAndBoundedRecoveryQuarantinesSameReservation","count":1}]'
+    steps:
+    - name: Set isolated proof directory
+      shell: bash
+      run: printf 'PROOF_DIR=%s/capacity-physical-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+    - name: Harden runner
+      uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
+      with:
+        egress-policy: audit
+    - name: Check out immutable repaired source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.SOURCE_SHA }}
+        persist-credentials: false
+    - name: Set up repository-pinned Python
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: none
+    - name: Set up Java 25
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+      with:
+        distribution: temurin
+        java-version: '25'
+    - name: Set up Gradle without caching or scan publication
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+      with:
+        cache-disabled: true
+        build-scan-publish: false
+    - name: Verify exact source and Docker; prepare isolated proof
+      shell: bash
+      run: "set -euo pipefail\nmkdir \"$PROOF_DIR\"\ntest \"$(git rev-parse HEAD)\" = \"$SOURCE_SHA\"\ntest \"$(git rev-parse\
+        \ 'HEAD^{tree}')\" = \"$SOURCE_TREE\"\ntest -z \"$(git status --porcelain --untracked-files=no)\"\ntest ! -d services/account-service/build/test-results\n\
+        python3 - <<'VERIFY'\nimport os,json,hashlib,pathlib,subprocess\nfor f in json.loads(os.environ['SOURCE_FILES']):\n\
+        \    for args in [('rev-parse','HEAD:'+f['path']),('hash-object',f['path'])]:\n        assert subprocess.check_output(['git',*args],text=True).strip()==f['postimage_blob']\n\
+        \    assert hashlib.sha256(pathlib.Path(f['path']).read_bytes()).hexdigest()==f['postimage_sha256']\nVERIFY\ncat >\
+        \ \"$RUNNER_TEMP/capacity-physical.init.gradle\" <<'GRADLE'\nimport org.gradle.api.tasks.testing.Test\nimport groovy.json.JsonOutput\n\
+        import groovy.json.JsonSlurper\n\ndef workspace = System.getenv('GITHUB_WORKSPACE')\nif (!workspace) { throw new GradleException('Proof\
+        \ requires GITHUB_WORKSPACE identity') }\ndef proofRoot = new File(workspace).canonicalFile\ndef isProofBuild = {\
+        \ gradle.rootProject.rootDir.canonicalFile == proofRoot }\ndef requested = new JsonSlurper().parseText(System.getenv('EXPECTED_CASES'))\n\
+        def expectedTasks = [':account-service:integrationTest']\n\ngradle.projectsEvaluated {\n    if (!isProofBuild()) {\
+        \ return }\n    def service = gradle.rootProject.findProject(':account-service')\n    if (service == null) { throw\
+        \ new GradleException('Verified proof build lacks :account-service') }\n    ['integrationTest'].each { taskName ->\n\
+        \        def target = service.tasks.named(taskName, Test).get()\n        target.filter.setIncludePatterns([] as String[])\n\
+        \        requested.findAll { it.task == taskName }.each { item ->\n            target.filter.includeTestsMatching(item.classname\
+        \ + '.' + item.method)\n        }\n        target.filter.failOnNoMatchingTests = true\n        target.outputs.upToDateWhen\
+        \ { false }\n        target.outputs.cacheIf { false }\n        target.maxParallelForks = 1\n        target.maxHeapSize\
+        \ = '1536m'\n        target.systemProperty 'junit.jupiter.execution.parallel.enabled', 'false'\n        def event\
+        \ = { descriptor, phase ->\n            def entry = [task: taskName, classname: descriptor.className,\n          \
+        \      method: descriptor.name, display_name: descriptor.displayName, phase: phase,\n                nonce: System.getenv('GITHUB_RUN_ID')\
+        \ + ':' + System.getenv('GITHUB_RUN_ATTEMPT')]\n            new File(System.getenv('PROOF_DIR'), 'test-events.jsonl').append(JsonOutput.toJson(entry)\
+        \ + '\\n')\n        }\n        target.beforeTest { descriptor -> event(descriptor, 'started') }\n        target.afterTest\
+        \ { descriptor, result -> event(descriptor, result.resultType.toString()) }\n        target.doFirst {\n          \
+        \  new File(System.getenv('PROOF_DIR'), taskName + '-started.txt').text = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT')\
+        \ + '\\n'\n        }\n        target.doLast {\n            new File(System.getenv('PROOF_DIR'), taskName + '-completed.txt').text\
+        \ = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\\n'\n        }\n    }\n}\ngradle.taskGraph.whenReady\
+        \ { graph ->\n    if (!isProofBuild()) { return }\n    if (gradle.rootProject.findProject(':account-service') == null)\
+        \ {\n        throw new GradleException('Verified proof build lacks :account-service')\n    }\n    def tests = graph.allTasks.findAll\
+        \ { it instanceof Test }\n    if (tests.collect { it.path }.sort() != expectedTasks) {\n        throw new GradleException('Proof\
+        \ requires exactly one selected Test task: ' + tests.collect { it.path })\n    }\n}\nGRADLE\ncat > \"$RUNNER_TEMP/collect-capacity-proof.py\"\
+        \ <<'PYTHON'\nimport collections, hashlib, json, os, pathlib, re, subprocess, sys\nimport xml.etree.ElementTree as\
+        \ ET\nout = pathlib.Path(os.environ['PROOF_DIR'])\nout.mkdir(parents=True, exist_ok=True)\nspec = json.loads(os.environ['EXPECTED_CASES'])\n\
+        expected = [(x['task'], x['classname'], x['method']) for x in spec for _ in range(x['count'])]\ndef method_name(raw):\n\
+        \    match = re.fullmatch(r'([A-Za-z_$][\\w$]*)(?:\\([^\\n]*\\))?(?:\\[([1-9][0-9]*)\\])?', raw)\n    return match.group(1)\
+        \ if match else '<invalid-method:' + raw + '>'\nissues = []\nnonce = os.environ['GITHUB_RUN_ID'] + ':' + os.environ['GITHUB_RUN_ATTEMPT']\n\
+        events_path = out / 'test-events.jsonl'\nevents = [json.loads(line) for line in events_path.read_text().splitlines()]\
+        \ if events_path.exists() else []\ndef invocation_index(raw):\n    match = re.fullmatch(r'[A-Za-z_$][\\w$]*(?:\\([^\\\
+        n]*\\))?\\[([1-9][0-9]*)\\]', raw)\n    return int(match.group(1)) if match else None\n# XML contains displayName,\
+        \ not descriptor.name. Bind them using fresh listener\n# evidence, never report order, argument text heuristics, or\
+        \ a guessed method.\nbridges = collections.defaultdict(set)\nfor e in events:\n    display = e.get('display_name')\n\
+        \    if not isinstance(display, str) or not display:\n        issues.append('missing event display name')\n      \
+        \  continue\n    index = invocation_index(e['method'])\n    if index is not None:\n        label = re.fullmatch(r'\\\
+        [([1-9][0-9]*)\\](?: .*)?', display)\n        if not label or int(label.group(1)) != index:\n            issues.append('event\
+        \ display/invocation index mismatch')\n    elif display != e['method']:\n        issues.append('nonparameterized event\
+        \ display mismatch')\n    if e['phase'] == 'started' and e['nonce'] == nonce:\n        bridges[(e['task'], e['classname'],\
+        \ display)].add(e['method'])\nif any(len(values) != 1 for values in bridges.values()):\n    issues.append('ambiguous\
+        \ display-to-method bridge')\nrecords = []\noriginals = []\ncompact = ET.Element('testsuite', name='capacity-current-physical-proof')\n\
+        for path in sorted(pathlib.Path('services/account-service/build/test-results').glob('*/*.xml')):\n    task = path.parent.name\n\
+        \    if task not in ('integrationTest',):\n        issues.append('unexpected test report task: ' + task)\n    raw\
+        \ = path.read_bytes()\n    originals.append({'file': task + '/' + path.name, 'sha256': hashlib.sha256(raw).hexdigest(),\
+        \ 'bytes': len(raw)})\n    try:\n        tree = ET.fromstring(raw)\n    except ET.ParseError:\n        issues.append('invalid\
+        \ JUnit XML: ' + path.name)\n        continue\n    for case in tree.iter('testcase'):\n        name = case.get('name',\
+        \ '')\n        bridge = bridges.get((task, case.get('classname'), name), set())\n        identity_name = next(iter(bridge))\
+        \ if len(bridge) == 1 else ''\n        if not identity_name: issues.append('missing unique XML/event identity bridge')\n\
+        \        method = method_name(identity_name)\n        record = {'task': task, 'raw_name': name, 'classname': case.get('classname'),\
+        \ 'method': method, 'invocation_index': invocation_index(identity_name),\n                  'skipped': case.find('skipped')\
+        \ is not None,\n                  'failed': case.find('failure') is not None or case.find('error') is not None,\n\
+        \                  'seconds': case.get('time')}\n        records.append(record)\n        copied = ET.SubElement(compact,\
+        \ 'testcase', **case.attrib)\n        for child in case:\n            if child.tag in ('failure', 'error', 'skipped'):\n\
+        \                leaf = ET.SubElement(copied, child.tag, **{k: v[:4096] for k, v in child.attrib.items()})\n     \
+        \           leaf.text = (child.text or '')[:65536]\nif collections.Counter((r['task'],r['classname'],r['method'])\
+        \ for r in records) != collections.Counter(tuple(p) for p in expected):\n    issues.append('expected exact task/class/method\
+        \ invocation counts, no extras')\nfor item in spec:\n    leaves = [r['invocation_index'] for r in records if (r['task'],\
+        \ r['classname'], r['method']) == (item['task'], item['classname'], item['method'])]\n    indexes = leaves\n    wanted\
+        \ = [None] if item['count'] == 1 else list(range(1, item['count'] + 1))\n    if collections.Counter(indexes) != collections.Counter(wanted):\n\
+        \        issues.append('missing, repeated or unexpected invocation indexes: ' + item['method'])\nif any(r['skipped']\
+        \ or r['failed'] for r in records):\n    issues.append('skipped, failed, aborted, or errored testcase')\nfor marker\
+        \ in ('integrationTest-started.txt', 'integrationTest-completed.txt'):\n    if not (out / marker).is_file() or (out\
+        \ / marker).read_text().strip() != nonce:\n        issues.append('missing or stale fresh task marker: ' + marker)\n\
+        for phase in ('started', 'SUCCESS'):\n    actual = [(e['task'], e['classname'], method_name(e['method'])) for e in\
+        \ events if e['phase'] == phase and e['nonce'] == nonce]\n    if collections.Counter(actual) != collections.Counter(tuple(p)\
+        \ for p in expected):\n        issues.append('expected exact fresh test events: ' + phase)\nif len(events) != 2 *\
+        \ len(expected):\n    issues.append('extra or missing lifecycle events')\n# Every leaf invocation must be unique and\
+        \ correspond to one actual started/completed event.\nraw_cases = [(r['task'], r['classname'], r['raw_name']) for r\
+        \ in records]\nif len(set(raw_cases)) != len(raw_cases): issues.append('duplicate leaf invocation')\nfor phase in\
+        \ ('started', 'SUCCESS'):\n    raw_events = [(e['task'], e['classname'], e.get('display_name')) for e in events if\
+        \ e['phase'] == phase and e['nonce'] == nonce]\n    if collections.Counter(raw_events) != collections.Counter(raw_cases):\n\
+        \        issues.append('leaf XML/event mismatch: ' + phase)\nstarted_identities = collections.Counter((e['task'],\
+        \ e['classname'], e['method'], e.get('display_name')) for e in events if e['phase'] == 'started' and e['nonce'] ==\
+        \ nonce)\nfor phase in ('started', 'SUCCESS'):\n    phase_events = [e for e in events if e['phase'] == phase and e['nonce']\
+        \ == nonce]\n    identities = collections.Counter((e['task'], e['classname'], e['method'], e.get('display_name'))\
+        \ for e in phase_events)\n    if identities != started_identities:\n        issues.append('started/completed invocation\
+        \ identity mismatch: ' + phase)\n    for item in spec:\n        indexes = [invocation_index(e['method']) for e in\
+        \ phase_events if (e['task'], e['classname'], method_name(e['method'])) == (item['task'], item['classname'], item['method'])]\n\
+        \        wanted = [None] if item['count'] == 1 else list(range(1, item['count'] + 1))\n        if collections.Counter(indexes)\
+        \ != collections.Counter(wanted):\n            issues.append('event invocation indexes mismatch: ' + phase + ': '\
+        \ + item['method'])\nstatus_file = out / 'gradle-exit.txt'\nif not status_file.is_file() or status_file.read_text().strip()\
+        \ != '0':\n    issues.append('Gradle did not complete successfully')\nlog_path = pathlib.Path(os.environ['RUNNER_TEMP'])\
+        \ / 'capacity-physical-gradle.log'\nlog = log_path.read_bytes() if log_path.exists() else b''\ncapture_path = log_path.with_suffix(log_path.suffix\
+        \ + '.json')\ncapture = json.loads(capture_path.read_text()) if capture_path.is_file() else None\nif capture is None:\n\
+        \    issues.append('missing log capture completion metadata')\nelse:\n    (out / 'log-capture.json').write_text(json.dumps(capture,\
+        \ indent=2) + '\\n')\n    if capture['truncated'] or capture['stream_bytes'] > capture['limit_bytes']:\n        issues.append('log\
+        \ output exceeded retention cap; proof is incomplete')\n    if capture['retained_bytes'] != len(log) or capture['limit_bytes']\
+        \ != 128 * 1024 * 1024:\n        issues.append('log capture size mismatch')\n    if capture['exit_status'] != 0 or\
+        \ capture['child_returncode'] != 0:\n        issues.append('captured child did not exit successfully')\n    if not\
+        \ capture['truncated'] and capture['stream_sha256'] != hashlib.sha256(log).hexdigest():\n        issues.append('log\
+        \ capture digest mismatch')\ntext = log.decode('utf-8', errors='replace')\nif re.search(r'^> Task :account-service:(?:integrationTest|test)\
+        \ (?:FROM-CACHE|UP-TO-DATE|SKIPPED|NO-SOURCE)', text, re.M):\n    issues.append('integration task was cached or skipped')\n\
+        (out / 'gradle-tail.txt').write_bytes(log[-262144:])\nsha = lambda value: hashlib.sha256(value).hexdigest()\ngit =\
+        \ lambda *args: subprocess.check_output(['git', *args], text=True).strip()\nidentity = {'head': git('rev-parse', 'HEAD'),\
+        \ 'tree': git('rev-parse', 'HEAD^{tree}'), 'files': []}\nfor key, env in [('head','SOURCE_SHA'),('tree','SOURCE_TREE')]:\n\
+        \    if identity[key] != os.environ[env]: issues.append('source identity mismatch: ' + key)\nfor item in json.loads(os.environ['SOURCE_FILES']):\n\
+        \    path = item['path']\n    observed = {'path':path, 'blob':git('rev-parse','HEAD:'+path), 'file_blob':git('hash-object',path),\
+        \ 'sha256':sha(pathlib.Path(path).read_bytes())}\n    identity['files'].append(observed)\n    if observed['blob']\
+        \ != item['postimage_blob'] or observed['file_blob'] != item['postimage_blob'] or observed['sha256'] != item['postimage_sha256']:\n\
+        \        issues.append('source file mismatch: ' + path)\nif git('status', '--porcelain', '--untracked-files=no'):\n\
+        \    issues.append('tracked source files changed during proof')\ncompact.set('tests', str(len(records)))\ncompact.set('failures',\
+        \ str(sum(r['failed'] for r in records)))\ncompact.set('skipped', str(sum(r['skipped'] for r in records)))\nET.ElementTree(compact).write(out\
+        \ / 'junit-compact.xml', encoding='utf-8', xml_declaration=True)\nsummary = {'source': identity, 'requested_cases':\
+        \ spec, 'cases': records,\n           'original_junit': originals, 'gradle_log_sha256': sha(log),\n           'log_capture':\
+        \ capture, 'gradle_log_bytes': len(log), 'log_tail_limit': 262144,\n           'junit_system_output_omitted': True,\
+        \ 'failure_text_limit': 65536,\n           'workflow_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],\n\
+        \           'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'issues': issues,\n           'passed': not issues}\n\
+        (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\\n')\nfiles = [p for p in out.iterdir() if p.is_file()]\n\
+        if sum(p.stat().st_size for p in files) > 2 * 1024 * 1024:\n    raise SystemExit('compact proof exceeds 2 MiB; refusing\
+        \ oversized artifact')\n(out / 'sha256sums.txt').write_text(''.join(sha(p.read_bytes()) + '  ' + p.name + '\\n' for\
+        \ p in sorted(files)))\nprint(json.dumps(summary, indent=2))\nraise SystemExit(1 if issues else 0)\nPYTHON\njava -version\
+        \ 2> \"$PROOF_DIR/java-version.txt\"\ndocker version --format '{{.Server.Version}}' > \"$PROOF_DIR/docker-version.txt\"\
+        \ndocker info --format '{{.OSType}}' > \"$PROOF_DIR/docker-os.txt\"\ntest \"$(cat \"$PROOF_DIR/docker-os.txt\")\"\
+        \ = linux\n\ncat > \"$RUNNER_TEMP/capture-capacity-log.py\" <<'CAPTURE'\n\"\"\"Bound only retained stdout/stderr;\
+        \ never impose a file limit on child dependencies.\"\"\"\nimport hashlib\nimport json\nimport pathlib\nimport subprocess\n\
+        import sys\n\nLIMIT = 128 * 1024 * 1024\n\ndef capture(path, command, limit=LIMIT):\n    path = pathlib.Path(path)\n\
+        \    digest = hashlib.sha256()\n    total = retained = 0\n    with path.open('xb') as log:\n        child = subprocess.Popen(command,\
+        \ stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n        try:\n            while True:\n                chunk\
+        \ = child.stdout.read(65536)\n                if not chunk:\n                    break\n                digest.update(chunk)\n\
+        \                total += len(chunk)\n                # Continue draining after the cap: no broken pipe and no blocked\
+        \ child.\n                keep = chunk[:max(0, limit - retained)]\n                log.write(keep)\n             \
+        \   retained += len(keep)\n            code = child.wait()\n        finally:\n            child.stdout.close()\n \
+        \           if child.poll() is None:\n                child.kill()\n                child.wait()\n    # Match shell\
+        \ convention for a child terminated by signal.\n    status = code if code >= 0 else 128 - code\n    metadata = dict(child_returncode=code,\
+        \ exit_status=status, stream_bytes=total,\n                    retained_bytes=retained, limit_bytes=limit, truncated=total\
+        \ > limit,\n                    stream_sha256=digest.hexdigest())\n    path.with_suffix(path.suffix + '.json').write_text(json.dumps(metadata,\
+        \ indent=2) + '\\n')\n    return status\n\nif __name__ == '__main__':\n    if len(sys.argv) < 4 or sys.argv[2] !=\
+        \ '--':\n        raise SystemExit('Usage: capture_log.py LOG -- COMMAND [ARG ...]')\n    raise SystemExit(capture(sys.argv[1],\
+        \ sys.argv[3:]))\nCAPTURE\n"
+    - name: Run exact composed Account hold methods
+      shell: bash
+      run: "set -euo pipefail\nset +e\npython3 \"$RUNNER_TEMP/capture-capacity-log.py\" \"$RUNNER_TEMP/capacity-physical-gradle.log\"\
+        \ -- \\\n  timeout --signal=TERM --kill-after=30s 15m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
+        \ --runner ./gradlew -- \\\n  --no-daemon --no-build-cache --no-configuration-cache --no-scan --rerun-tasks \\\n \
+        \ --max-workers=2 --no-parallel '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \\\n  --console=plain -I \"\
+        $RUNNER_TEMP/capacity-physical.init.gradle\" \\\n  :account-service:integrationTest -PfullCheck\nstatus=$?\nset -e\n\
+        printf '%s\\n' \"$status\" > \"$PROOF_DIR/gradle-exit.txt\"\n# Keep CI readable; the collector always retains a bounded\
+        \ tail and validates results.\ntail -n 60 \"$RUNNER_TEMP/capacity-physical-gradle.log\"\nexit \"$status\"\n"
+    - name: Verify all exact invocations started and passed without skips
+      if: ${{ always() }}
+      shell: bash
+      run: python3 "$RUNNER_TEMP/collect-capacity-proof.py"
+    - name: Enforce compact artifact size
+      id: bound
+      if: ${{ always() }}
+      shell: bash
+      run: 'python3 - <<''PYBOUND''
+
+        import os, pathlib
+
+        p=pathlib.Path(os.environ[''PROOF_DIR''])
+
+        files=list(p.glob(''*''))
+
+        assert files and all(f.is_file() and not f.is_symlink() for f in files), ''missing or unsupported proof files''
+
+        assert sum(f.stat().st_size for f in files) <= 2*1024*1024, ''proof exceeds 2 MiB''
+
+        with open(os.environ[''GITHUB_OUTPUT''], ''a'') as out: out.write(''ok=true\n'')
+
+        PYBOUND
+
+        '
+    - name: Upload compact physical proof
+      if: ${{ always() && steps.bound.outputs.ok == 'true' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: capacity-preinsert-hold-physical-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/capacity-physical-proof/
+        if-no-files-found: error
+        retention-days: 7

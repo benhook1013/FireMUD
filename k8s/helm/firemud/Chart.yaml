@@ -1,5 +1,0 @@
-apiVersion: v2
-name: firemud
-version: 0.1.0
-appVersion: "0.1.0"
-description: Preview-oriented chart for deploying the FireMUD stack
