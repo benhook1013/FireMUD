@@ -6,7 +6,9 @@ import static net.firedevops.firemud.accountservice.repository.AccountTenantCapa
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.unavailable;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Context;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -31,6 +33,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrp
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.dao.CannotSerializeTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -85,7 +88,7 @@ public final class AccountTenantCapacityOwner {
   public Result commit(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);
     request.requireStructurallyValid();
-    return inTransaction(
+    return commitWithFreshSnapshot(
         () -> {
           lockPlayerAccount(request);
           Record existing = capacity.find(request.identity());
@@ -277,6 +280,27 @@ public final class AccountTenantCapacityOwner {
         || fence != number(row, "recovery_claim_fence")
         || !now.isBefore(AccountTenantCapacityRepository.time(row, "recovery_claim_expires_at")))
       throw conflict();
+  }
+
+  private Result commitWithFreshSnapshot(Supplier<Result> action) {
+    try {
+      return inTransaction(action);
+    } catch (RuntimeException failure) {
+      // PostgreSQL has rolled back this serialization failure. The whole next transaction needs
+      // a new snapshot so a concurrent first attempt can become exact replay or conflict.
+      if (!serializationFailure(failure) || Context.current().isCancelled()) throw failure;
+      return inTransaction(action);
+    }
+  }
+
+  private static boolean serializationFailure(RuntimeException failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof CannotSerializeTransactionException
+          || cause instanceof org.jooq.exception.DataAccessException jooq
+              && "40001".equals(jooq.sqlState())
+          || cause instanceof SQLException sql && "40001".equals(sql.getSQLState())) return true;
+    }
+    return false;
   }
 
   <T> T inTransaction(Supplier<T> action) {
