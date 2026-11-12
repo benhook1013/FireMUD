@@ -58,6 +58,7 @@ public final class BoundedGrpcServerFactory extends ShadedNettyGrpcServerFactory
 
   @Override
   protected void configure(NettyServerBuilder builder, List<ServerServiceDefinition> services) {
+    GrpcKeepAlivePolicy.configureServer(builder);
     super.configure(builder, services);
     // Customizers cannot leave an alternate mutable lookup or widen the finite ceiling.
     builder.fallbackHandlerRegistry(CLOSED_FALLBACK);

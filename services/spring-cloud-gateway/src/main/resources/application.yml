@@ -59,6 +59,7 @@ spring:
         time: 30s
         timeout: 5s
         permit-without-calls: true
+        permit-time: 30s
       ssl:
         enabled: ${GRPC_SERVER_TLS_ENABLED:true}
         bundle: firemud-grpc
