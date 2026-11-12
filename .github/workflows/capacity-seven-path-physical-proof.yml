@@ -116,38 +116,63 @@ jobs:
         \        issues.append('leaf XML/event mismatch: ' + phase)\nstatus_file = out / 'gradle-exit.txt'\nif not status_file.is_file()\
         \ or status_file.read_text().strip() != '0':\n    issues.append('Gradle did not complete successfully')\nlog_path\
         \ = pathlib.Path(os.environ['RUNNER_TEMP']) / 'capacity-physical-gradle.log'\nlog = log_path.read_bytes() if log_path.exists()\
-        \ else b''\ntext = log.decode('utf-8', errors='replace')\nif re.search(r'^> Task :game-session-service:(?:integrationTest|test)\
-        \ (?:FROM-CACHE|UP-TO-DATE|SKIPPED|NO-SOURCE)', text, re.M):\n    issues.append('integration task was cached or skipped')\n\
-        (out / 'gradle-tail.txt').write_bytes(log[-262144:])\nsha = lambda value: hashlib.sha256(value).hexdigest()\ngit =\
-        \ lambda *args: subprocess.check_output(['git', *args], text=True).strip()\nidentity = {'head': git('rev-parse', 'HEAD'),\
-        \ 'tree': git('rev-parse', 'HEAD^{tree}'), 'files': []}\nfor key, env in [('head','SOURCE_SHA'),('tree','SOURCE_TREE')]:\n\
-        \    if identity[key] != os.environ[env]: issues.append('source identity mismatch: ' + key)\nfor item in json.loads(os.environ['SOURCE_FILES']):\n\
-        \    path = item['path']\n    observed = {'path':path, 'blob':git('rev-parse','HEAD:'+path), 'file_blob':git('hash-object',path),\
-        \ 'sha256':sha(pathlib.Path(path).read_bytes())}\n    identity['files'].append(observed)\n    if observed['blob']\
-        \ != item['postimage_blob'] or observed['file_blob'] != item['postimage_blob'] or observed['sha256'] != item['postimage_sha256']:\n\
-        \        issues.append('source file mismatch: ' + path)\nif git('status', '--porcelain', '--untracked-files=no'):\n\
-        \    issues.append('tracked source files changed during proof')\ncompact.set('tests', str(len(records)))\ncompact.set('failures',\
-        \ str(sum(r['failed'] for r in records)))\ncompact.set('skipped', str(sum(r['skipped'] for r in records)))\nET.ElementTree(compact).write(out\
+        \ else b''\ncapture_path = log_path.with_suffix(log_path.suffix + '.json')\ncapture = json.loads(capture_path.read_text())\
+        \ if capture_path.is_file() else None\nif capture is None:\n    issues.append('missing log capture completion metadata')\n\
+        else:\n    (out / 'log-capture.json').write_text(json.dumps(capture, indent=2) + '\\n')\n    if capture['truncated']\
+        \ or capture['stream_bytes'] > capture['limit_bytes']:\n        issues.append('log output exceeded retention cap;\
+        \ proof is incomplete')\n    if capture['retained_bytes'] != len(log) or capture['limit_bytes'] != 128 * 1024 * 1024:\n\
+        \        issues.append('log capture size mismatch')\n    if capture['exit_status'] != 0 or capture['child_returncode']\
+        \ != 0:\n        issues.append('captured child did not exit successfully')\n    if not capture['truncated'] and capture['stream_sha256']\
+        \ != hashlib.sha256(log).hexdigest():\n        issues.append('log capture digest mismatch')\ntext = log.decode('utf-8',\
+        \ errors='replace')\nif re.search(r'^> Task :game-session-service:(?:integrationTest|test) (?:FROM-CACHE|UP-TO-DATE|SKIPPED|NO-SOURCE)',\
+        \ text, re.M):\n    issues.append('integration task was cached or skipped')\n(out / 'gradle-tail.txt').write_bytes(log[-262144:])\n\
+        sha = lambda value: hashlib.sha256(value).hexdigest()\ngit = lambda *args: subprocess.check_output(['git', *args],\
+        \ text=True).strip()\nidentity = {'head': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'), 'files':\
+        \ []}\nfor key, env in [('head','SOURCE_SHA'),('tree','SOURCE_TREE')]:\n    if identity[key] != os.environ[env]: issues.append('source\
+        \ identity mismatch: ' + key)\nfor item in json.loads(os.environ['SOURCE_FILES']):\n    path = item['path']\n    observed\
+        \ = {'path':path, 'blob':git('rev-parse','HEAD:'+path), 'file_blob':git('hash-object',path), 'sha256':sha(pathlib.Path(path).read_bytes())}\n\
+        \    identity['files'].append(observed)\n    if observed['blob'] != item['postimage_blob'] or observed['file_blob']\
+        \ != item['postimage_blob'] or observed['sha256'] != item['postimage_sha256']:\n        issues.append('source file\
+        \ mismatch: ' + path)\nif git('status', '--porcelain', '--untracked-files=no'):\n    issues.append('tracked source\
+        \ files changed during proof')\ncompact.set('tests', str(len(records)))\ncompact.set('failures', str(sum(r['failed']\
+        \ for r in records)))\ncompact.set('skipped', str(sum(r['skipped'] for r in records)))\nET.ElementTree(compact).write(out\
         \ / 'junit-compact.xml', encoding='utf-8', xml_declaration=True)\nsummary = {'source': identity, 'requested_cases':\
-        \ spec, 'cases': records,\n           'original_junit': originals, 'gradle_log_sha256': sha(log),\n           'gradle_log_bytes':\
-        \ len(log), 'log_tail_limit': 262144,\n           'junit_system_output_omitted': True, 'failure_text_limit': 65536,\n\
-        \           'workflow_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],\n           'run_attempt':\
-        \ os.environ['GITHUB_RUN_ATTEMPT'], 'issues': issues,\n           'passed': not issues}\n(out / 'summary.json').write_text(json.dumps(summary,\
-        \ indent=2) + '\\n')\nfiles = [p for p in out.iterdir() if p.is_file()]\nif sum(p.stat().st_size for p in files) >\
-        \ 2 * 1024 * 1024:\n    raise SystemExit('compact proof exceeds 2 MiB; refusing oversized artifact')\n(out / 'sha256sums.txt').write_text(''.join(sha(p.read_bytes())\
-        \ + '  ' + p.name + '\\n' for p in sorted(files)))\nprint(json.dumps(summary, indent=2))\nraise SystemExit(1 if issues\
-        \ else 0)\nPYTHON\njava -version 2> \"$PROOF_DIR/java-version.txt\"\ndocker version --format '{{.Server.Version}}'\
-        \ > \"$PROOF_DIR/docker-version.txt\"\ndocker info --format '{{.OSType}}' > \"$PROOF_DIR/docker-os.txt\"\ntest \"\
-        $(cat \"$PROOF_DIR/docker-os.txt\")\" = linux\n"
+        \ spec, 'cases': records,\n           'original_junit': originals, 'gradle_log_sha256': sha(log),\n           'log_capture':\
+        \ capture, 'gradle_log_bytes': len(log), 'log_tail_limit': 262144,\n           'junit_system_output_omitted': True,\
+        \ 'failure_text_limit': 65536,\n           'workflow_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],\n\
+        \           'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'issues': issues,\n           'passed': not issues}\n\
+        (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\\n')\nfiles = [p for p in out.iterdir() if p.is_file()]\n\
+        if sum(p.stat().st_size for p in files) > 2 * 1024 * 1024:\n    raise SystemExit('compact proof exceeds 2 MiB; refusing\
+        \ oversized artifact')\n(out / 'sha256sums.txt').write_text(''.join(sha(p.read_bytes()) + '  ' + p.name + '\\n' for\
+        \ p in sorted(files)))\nprint(json.dumps(summary, indent=2))\nraise SystemExit(1 if issues else 0)\nPYTHON\njava -version\
+        \ 2> \"$PROOF_DIR/java-version.txt\"\ndocker version --format '{{.Server.Version}}' > \"$PROOF_DIR/docker-version.txt\"\
+        \ndocker info --format '{{.OSType}}' > \"$PROOF_DIR/docker-os.txt\"\ntest \"$(cat \"$PROOF_DIR/docker-os.txt\")\"\
+        \ = linux\n\ncat > \"$RUNNER_TEMP/capture-capacity-log.py\" <<'CAPTURE'\n\"\"\"Bound only retained stdout/stderr;\
+        \ never impose a file limit on child dependencies.\"\"\"\nimport hashlib\nimport json\nimport pathlib\nimport subprocess\n\
+        import sys\n\nLIMIT = 128 * 1024 * 1024\n\ndef capture(path, command, limit=LIMIT):\n    path = pathlib.Path(path)\n\
+        \    digest = hashlib.sha256()\n    total = retained = 0\n    with path.open('xb') as log:\n        child = subprocess.Popen(command,\
+        \ stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n        try:\n            while True:\n                chunk\
+        \ = child.stdout.read(65536)\n                if not chunk:\n                    break\n                digest.update(chunk)\n\
+        \                total += len(chunk)\n                # Continue draining after the cap: no broken pipe and no blocked\
+        \ child.\n                keep = chunk[:max(0, limit - retained)]\n                log.write(keep)\n             \
+        \   retained += len(keep)\n            code = child.wait()\n        finally:\n            child.stdout.close()\n \
+        \           if child.poll() is None:\n                child.kill()\n                child.wait()\n    # Match shell\
+        \ convention for a child terminated by signal.\n    status = code if code >= 0 else 128 - code\n    metadata = dict(child_returncode=code,\
+        \ exit_status=status, stream_bytes=total,\n                    retained_bytes=retained, limit_bytes=limit, truncated=total\
+        \ > limit,\n                    stream_sha256=digest.hexdigest())\n    path.with_suffix(path.suffix + '.json').write_text(json.dumps(metadata,\
+        \ indent=2) + '\\n')\n    return status\n\nif __name__ == '__main__':\n    if len(sys.argv) < 4 or sys.argv[2] !=\
+        \ '--':\n        raise SystemExit('Usage: capture_log.py LOG -- COMMAND [ARG ...]')\n    raise SystemExit(capture(sys.argv[1],\
+        \ sys.argv[3:]))\nCAPTURE\n"
     - name: Run exact physical methods and three repaired unit classes
       shell: bash
-      run: "set -euo pipefail\nulimit -f 131072\nset +e\ntimeout --signal=TERM --kill-after=30s 15m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
+      run: "set -euo pipefail\nset +e\npython3 \"$RUNNER_TEMP/capture-capacity-log.py\" \"$RUNNER_TEMP/capacity-physical-gradle.log\"\
+        \ -- \\\n  timeout --signal=TERM --kill-after=30s 15m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
         \ --runner ./gradlew -- \\\n  --no-daemon --no-build-cache --no-configuration-cache --no-scan --rerun-tasks \\\n \
         \ --max-workers=2 --no-parallel '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \\\n  --console=plain -I \"\
         $RUNNER_TEMP/capacity-physical.init.gradle\" \\\n  :game-session-service:test :game-session-service:integrationTest\
-        \ -PfullCheck > \"$RUNNER_TEMP/capacity-physical-gradle.log\" 2>&1\nstatus=$?\nset -e\nprintf '%s\\n' \"$status\"\
-        \ > \"$PROOF_DIR/gradle-exit.txt\"\n# Keep CI readable; the collector always retains a bounded tail and validates\
-        \ results.\ntail -n 60 \"$RUNNER_TEMP/capacity-physical-gradle.log\"\nexit \"$status\"\n"
+        \ -PfullCheck\nstatus=$?\nset -e\nprintf '%s\\n' \"$status\" > \"$PROOF_DIR/gradle-exit.txt\"\n# Keep CI readable;\
+        \ the collector always retains a bounded tail and validates results.\ntail -n 60 \"$RUNNER_TEMP/capacity-physical-gradle.log\"\
+        \nexit \"$status\"\n"
     - name: Verify all exact invocations started and passed without skips
       if: ${{ always() }}
       shell: bash
