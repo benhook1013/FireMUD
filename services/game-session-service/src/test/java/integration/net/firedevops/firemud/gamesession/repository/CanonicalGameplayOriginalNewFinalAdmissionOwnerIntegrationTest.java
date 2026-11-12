@@ -1565,6 +1565,55 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead.class)
+  void stalledWorldReadCannotOutliveHandoffDeadline(
+      CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead
+          stalledRead)
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var transferRepository =
+        new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(transferRepository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, transferRepository, capacityOwner(), receiver);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    String beforeSql = sqlImage();
+    Map<String, String> beforeRedis = physicalImage();
+    sources.withholdWorldRead = stalledRead;
+    long started = System.nanoTime();
+    long handoffDeadline = CLOCK.millis() + 1500;
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                    fixture.dsl(),
+                    ownerClient,
+                    catalog,
+                    original,
+                    sources.resolver,
+                    transfer,
+                    handoffDeadline))
+        .isInstanceOfSatisfying(
+            io.grpc.StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.DEADLINE_EXCEEDED));
+    assertThat(sources.withheldReadEntered.getCount()).isZero();
+    assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
+        .isLessThan(3500);
+    assertThat(sqlImage()).isEqualTo(beforeSql);
+    assertThat(physicalImage()).isEqualTo(beforeRedis);
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isZero();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2})
   void blockedCommittedSelectionOrPreInstallRevalidationCannotOutliveHandoffDeadline(
       int blockedRead) throws Exception {
