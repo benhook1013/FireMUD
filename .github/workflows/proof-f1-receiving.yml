@@ -1,0 +1,227 @@
+name: Temporary origin-receiving capacity repair proof
+run-name: Origin receiving capacity repair proof ${{ github.run_id }}
+'on':
+  push:
+    branches:
+    - dot/proof-f1-receiving-20261112
+permissions:
+  contents: read
+concurrency:
+  group: capacity-origin-receiving-physical-proof
+  cancel-in-progress: false
+jobs:
+  capacity-proof:
+    if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/dot/proof-f1-receiving-20261112'
+    runs-on: ubuntu-latest
+    timeout-minutes: 38
+    env:
+      SOURCE_SHA: 3c8d8c1714e5ef9fd97de2720341dc7e27a80212
+      SOURCE_TREE: 50ef53ad65c6e9d4006bda7f7a262507982dbc35
+      SOURCE_FILES: '[{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/repository/AccountCapacityOriginDecisionRepository.java","preimage_blob":null,"postimage_blob":"a1a25beb6b97e418a3e01b0ae187a2aae21374fd","postimage_sha256":"28ebc7772e21a2214221ad9f0eba3e39351f7629e6b354ef0f1e0a92f81bf20c"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/repository/AccountTenantCapacityRepository.java","preimage_blob":"6c67a69c23aabe33f8b92d71776db88dfe901a1b","postimage_blob":"061f87cd3c4999363f187611d4cd2cf7a7d46069","postimage_sha256":"282be062a32d3eff6a10e1193e609fb0599ce272a1be05d90e79dee099e0c30e"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountCapacityOriginRecovery.java","preimage_blob":null,"postimage_blob":"16403479ce10ccc826395e57514b22686ad91554","postimage_sha256":"26f71209a6272453f9712f5dbf2a5fc497bad523f16508dc8c4e8fb97ab9e0b0"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountTenantCapacityOwner.java","preimage_blob":"99bb1e414d7c16b59ab97815f125127e9300f2c7","postimage_blob":"f659d327f85ad12ca166cee32b68f363dbadf002","postimage_sha256":"c7dbc0c26c718d6583fa8e95f73d195723dc7c705dad0c227175f57fb12f0a4b"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountTenantCapacityRecoveryWorker.java","preimage_blob":"fca009081f16e0c430190630f5aed510a38fa305","postimage_blob":"1020687a499bd738b9ac7a011abc0e870dd6cb17","postimage_sha256":"655f0d7345c5d1aded52f4aa35f17bf68e47c4f919a7a29872646f46d19a213b"},{"path":"services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest.java","preimage_blob":"cf321463f4081a6291ede78d06c33338a534ceaf","postimage_blob":"c3b1a983cb5552daa64510bc58f13791abdd7ec6","postimage_sha256":"91dbc6565a535331b311c08d79d6537237d1d4a73b3b465d0f45e502d4f9df2b"},{"path":"services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/OriginReceivingMtlsTestBridge.java","preimage_blob":null,"postimage_blob":"cee9f2d0716b68292853b32dbc28746fdc8192ea","postimage_sha256":"14ae2788179df33521ef2666d7565203a88b2bb6d20798b07f12437f9af0b36b"},{"path":"services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/AccountCapacityOriginCustodyTest.java","preimage_blob":null,"postimage_blob":"d08b645c5d40624d47a59d018f82e9465a5c41e5","postimage_sha256":"cf9a5a139cd64b9c2030595e93eb1c97154f559f1ef29e0ed96839882ebf584c"},{"path":"services/account-service/src/test/resources/origin-receiving/account_capacity_origin_decisions.proposed.sql","preimage_blob":null,"postimage_blob":"18fdd35ee6f64cdb59946b5893c3dbb176e50f67","postimage_sha256":"c249bc3a6e305e7a2ebad7c947c758ae9ea75e0b69642d010fec74a58fbd85ea"},{"path":"services/account-service/src/test/resources/origin-receiving/game-session-origin-custody.sql","preimage_blob":null,"postimage_blob":"98e5c4b4d2052d039b1618807c9403131e671c35","postimage_sha256":"3d3a258fdea134cd1ad872b1b49078a0d869b81b388d6fe527c578efa7da9b20"},{"path":"services/account-service/src/test/resources/origin-receiving/origin-transfer-custody.sql","preimage_blob":null,"postimage_blob":"382bf8d87bc74419e4f7d78520db471c5f52bb22","postimage_sha256":"100ed51b3740b8367f5deda09190c8a490dd82e1638c14bbd3af04343adc9fa9"},{"path":"services/common-platform-core/src/main/java/net/firedevops/firemud/common/account/capacity/AccountCapacityOriginContinuation.java","preimage_blob":null,"postimage_blob":"ac9e0ed336cbc8979661c6302267cb3530b6fd8f","postimage_sha256":"a7b16afdd746eb371fca9572ae5902c18d9b904c5e4775824cdd431fa9763541"},{"path":"services/common-platform-core/src/main/java/net/firedevops/firemud/common/account/capacity/AccountCapacityOriginResolution.java","preimage_blob":null,"postimage_blob":"eccabf3f7d1773818783bde8cd650c5b9da52ede","postimage_sha256":"5598711ab6155f2ee1048ab4d4f5f3f90e627f070901129edd94da3b672c053b"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayCapacityOrigin.java","preimage_blob":null,"postimage_blob":"c436b83e7971102cac397afccc6c67f9258fdf1a","postimage_sha256":"481c7793f2ed91d07828da50c9af44edc73e4b6ae572867441cbba361c42e63e"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayCapacityOriginRedisOwner.java","preimage_blob":null,"postimage_blob":"729af91eb69c5fa9edf1d01d15763fc48ef39b64","postimage_sha256":"3014f07a49b1dfbc05cecd2e32ef53aa06af54ba93d14f8e9fa730f5fb5018b2"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayCapacityOriginRepository.java","preimage_blob":null,"postimage_blob":"242797571960168ea7c85b9b03ed0d6e175ea337","postimage_sha256":"e3b0226edc03cab60938b07e63ea2ecd71b50f70e6daf5bad7661d9d08c189bf"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayCapacityOriginTransferRepository.java","preimage_blob":null,"postimage_blob":"5a4926d4a2475e29e713deae78d0a6c668532621","postimage_sha256":"5a0ecc0ffa21561bf2b57c3efecd8f4f7201bb628fd36c250cb16df252aeed96"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewCapacityExecutionOwner.java","preimage_blob":"64115048475f8761cbcfa5ff97eb607256516cf7","postimage_blob":"49a335f0b15072374e880398d43415c191a45809","postimage_sha256":"d6b7d7d377ecc7d8ace88843e3f4bc7dcf0453aa5424a45c42ceb0e5450eed47"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionCoordinator.java","preimage_blob":"4154e891af76a3652f7f494081527f48fcb9d49f","postimage_blob":"710231228a2aa843124046ee761606609844c97c","postimage_sha256":"50ff4b8f495ca9d6059164d1f68f1a538b2d7c4a717825b3368ad952242794f1"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.java","preimage_blob":"a3f4184d04b50067c9ee4e657a911e9f61ec5b07","postimage_blob":"10ceb4e60b8280fb51e27affa9e92515e5c6abb0","postimage_sha256":"8acbc44a23df016d9d35e0a93cc70837c377ca511d5ffa4be467bced043af116"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayProtectedIncarnationReceiver.java","preimage_blob":"0828a818ade4ea496f474b5afef20956406d54d6","postimage_blob":"6a3a6e2169da196d68a6498ed2b77e5e28af488d","postimage_sha256":"8e571ccfdcc0225f793b9d2586197aba0e356a2d3a26eb430f39805beaf3e374"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferCoordinator.java","preimage_blob":"8c5247d97cf2dc1bfc1a758aa5bed37d52d7a5ea","postimage_blob":"63957a66c10c8a4c720a757f3ee8952054c16cf7","postimage_sha256":"3152fb851ddd82349a8e04bee5ba329b057b9ffb8c245c9ac1a3b0eda835e64c"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferRepository.java","preimage_blob":"48ed47c9d8c9697ed5fc796a54b5c993cda4884a","postimage_blob":"98bd65ab4b6dad70fe4f25ee25e3529e6b318e62","postimage_sha256":"1cb67e165324fa7dc8179f5f1734f25438520593007b463db31e2dc5a0bbc6d1"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionRuntimeStatusRepository.java","preimage_blob":"decf04fdc3df0abb0629ce0ead501496c2d0f50a","postimage_blob":"7bc24c77ef3171f7ea42dcce4d396211cc814e34","postimage_sha256":"5dc6900dd0fa7d1879863eaa4e012a276349243a366c5a5e13fe1a5a940aaaaf"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/CanonicalGameplayCapacityOriginCustodyRedisScriptContribution.java","preimage_blob":null,"postimage_blob":"cc13560e09047f2c4576ebcfa0eb03e512698c45","postimage_sha256":"926d80d30612f3c40a0099603f55f75e6b96f42af9e70d28564c9beb2adc1f80"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution.java","preimage_blob":null,"postimage_blob":"3c9211cf15d09050bcb6087561939a49184ef0e4","postimage_sha256":"605044c1fbcc6bf80616bc50add8edb1bb5ed1617bf49c186f46a78b204ba503"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/impl/CanonicalGameplayCapacityOriginRecoveryReceiver.java","preimage_blob":null,"postimage_blob":"f7e724ac57303318477f66f0283c65870e96b791","postimage_sha256":"148e60715badd69e316a3371fbeb33a6d5e234eddf3252f8f253d29310a7ac53"},{"path":"services/game-session-service/src/main/resources/redis/lua/game-session-original-new-capacity-origin-custody.lua","preimage_blob":null,"postimage_blob":"b97da38635668899d2c85d8bb6aaddf486475b64","postimage_sha256":"4a0606e797c9c459da9873c24b40a232c4e7248b71a4bfa9890893200424ae3e"},{"path":"services/game-session-service/src/main/resources/redis/lua/game-session-original-new-final-admission.lua","preimage_blob":"f903e14e90274e41bd580ca6d226a4af8250ca98","postimage_blob":"7fbe62ff9913868c9abbfc36a1cc1335c73f0e2e","postimage_sha256":"848aa9569db14d28f7d1f83cc591d88fe70e1115f892cb4af6e9955a24e6b603"},{"path":"services/game-session-service/src/main/resources/redis/scripts/game-session-original-new-capacity-origin-custody.json","preimage_blob":null,"postimage_blob":"cc9f490ccd92fd014df32305f3912bae63eeba88","postimage_sha256":"16f986b819eb15263c19fcea63bcfeb5f5776f930e49899a0ce3bf12103c3729"},{"path":"services/game-session-service/src/main/resources/redis/scripts/game-session-original-new-final-admission.json","preimage_blob":"9ea8d5000989ed8f14284510eaef4d9e47873e86","postimage_blob":"669ab5571eca4912df5ab2e1ba2aaeb3c73a6241","postimage_sha256":"82109f4c3173e77ccb6fc7147aa1deba75ba0237b088dd43713c31205e5090e4"},{"path":"services/game-session-service/src/main/resources/redis/scripts/game-session-original-new-origin-final-admission.json","preimage_blob":null,"postimage_blob":"29237da9b656d46523583964f83b561de6fc76e2","postimage_sha256":"1a939287d59d2f707708f0bd4261a9ed82808fbecf2b40f595b2a89c6c1a020b"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayControlledOriginTransferObservationFixture.java","preimage_blob":null,"postimage_blob":"bfe631063a7a5884cd41970ad00f6df11deb30c9","postimage_sha256":"d9351e79fdce2d95c82198bad332318dc376ec9e231ec2f8f47ed42aafe6d00d"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture.java","preimage_blob":"2e7c6a013e895369a1c265b325942245b0f864f9","postimage_blob":"0b5aaa1a48d97173755963541f44ddb75a76453c","postimage_sha256":"6083ef9fb9835c06dee64b4da67fb384d40a42981f5534b13ce5e1855cbbde7c"},{"path":"services/game-session-service/src/test/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayCapacityOriginTest.java","preimage_blob":null,"postimage_blob":"20ec04a943a16fb3fcc15e27cf7a596eba896e74","postimage_sha256":"c688ee1f0ab45ffbeaa9ef28aa931f4b98a4ffe0324702914f6cf8fffc9f2b5b"},{"path":"services/game-session-service/src/test/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayCapacityOriginTransferRepositoryTest.java","preimage_blob":null,"postimage_blob":"28b005f114d5da1b3fcfa19125dfdc10d8052299","postimage_sha256":"5674244e2e445d3035b86e6118fbd098fe0ad7ec5a287c181d5f2676cd42d20d"},{"path":"services/game-session-service/src/test/java/net/firedevops/firemud/gamesession/service/impl/CanonicalGameplayCapacityOriginRecoveryReceiverTest.java","preimage_blob":null,"postimage_blob":"f2083105d1beb2fff131c7a3cf3d438ea993094f","postimage_sha256":"00d9268ecd1ab7300b4755e8a496c62c3a12f234117b0d84bb9be4dc3d757926"}]'
+      TESTCONTAINERS_CHECKS_DISABLE: 'false'
+      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualTamperedOriginRefusesClosureWithoutNegativeProofOrCandidateMutation","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualOriginCallbackRacesOwnerMovementWithoutLosingDenialOrReplenishingBudget","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualExpiredOriginPolicyRetainsBudgetAndRejectsFurtherObservation","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualOriginCallbackConstructsDualStoreClosedFromRetainedAccountReservation","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualUnknownOriginCallbackConsumesDurableBudgetWithoutInventingReservation","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualNoAcceptOriginCallbackRetiresOnlyExactCustodyAndExcludesDelayedCommit","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualOriginHandoffPreservesBudgetAndRefusesStillLiveOldCustodyCallback","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.accountservice.repository.AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest","method":"actualOriginObservationExhaustionRetainsHoldAndCannotResetOnRecreatedReceiver","count":1}]'
+    steps:
+    - name: Set isolated proof directory
+      shell: bash
+      run: printf 'PROOF_DIR=%s/capacity-physical-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+    - name: Harden runner
+      uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
+      with:
+        egress-policy: audit
+    - name: Check out immutable repaired source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.SOURCE_SHA }}
+        persist-credentials: false
+    - name: Set up repository-pinned Python
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: none
+    - name: Set up Java 25
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+      with:
+        distribution: temurin
+        java-version: '25'
+    - name: Set up Gradle without caching or scan publication
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+      with:
+        cache-disabled: true
+        build-scan-publish: false
+    - name: Verify exact source and Docker; prepare isolated proof
+      shell: bash
+      run: "set -euo pipefail\nmkdir \"$PROOF_DIR\"\ntest \"$(git rev-parse HEAD)\" = \"$SOURCE_SHA\"\ntest \"$(git rev-parse\
+        \ 'HEAD^{tree}')\" = \"$SOURCE_TREE\"\ntest -z \"$(git status --porcelain --untracked-files=no)\"\ntest ! -d services/account-service/build/test-results\n\
+        python3 - <<'VERIFY'\nimport os,json,hashlib,pathlib,subprocess\nfor f in json.loads(os.environ['SOURCE_FILES']):\n\
+        \    for args in [('rev-parse','HEAD:'+f['path']),('hash-object',f['path'])]:\n        assert subprocess.check_output(['git',*args],text=True).strip()==f['postimage_blob']\n\
+        \    assert hashlib.sha256(pathlib.Path(f['path']).read_bytes()).hexdigest()==f['postimage_sha256']\nVERIFY\ncat >\
+        \ \"$RUNNER_TEMP/capacity-physical.init.gradle\" <<'GRADLE'\nimport org.gradle.api.tasks.testing.Test\nimport groovy.json.JsonOutput\n\
+        import groovy.json.JsonSlurper\n\ndef workspace = System.getenv('GITHUB_WORKSPACE')\nif (!workspace) { throw new GradleException('Proof\
+        \ requires GITHUB_WORKSPACE identity') }\ndef proofRoot = new File(workspace).canonicalFile\ndef isProofBuild = {\
+        \ gradle.rootProject.rootDir.canonicalFile == proofRoot }\ndef requested = new JsonSlurper().parseText(System.getenv('EXPECTED_CASES'))\n\
+        def expectedTasks = [':account-service:integrationTest']\n\ngradle.projectsEvaluated {\n    if (!isProofBuild()) {\
+        \ return }\n    def service = gradle.rootProject.findProject(':account-service')\n    if (service == null) { throw\
+        \ new GradleException('Verified proof build lacks :account-service') }\n    ['integrationTest'].each { taskName ->\n\
+        \        def target = service.tasks.named(taskName, Test).get()\n        target.filter.setIncludePatterns([] as String[])\n\
+        \        requested.findAll { it.task == taskName }.each { item ->\n            target.filter.includeTestsMatching(item.classname\
+        \ + '.' + item.method)\n        }\n        target.filter.failOnNoMatchingTests = true\n        target.outputs.upToDateWhen\
+        \ { false }\n        target.outputs.cacheIf { false }\n        target.maxParallelForks = 1\n        target.maxHeapSize\
+        \ = '1536m'\n        target.systemProperty 'junit.jupiter.execution.parallel.enabled', 'false'\n        def event\
+        \ = { descriptor, phase ->\n            def entry = [task: taskName, classname: descriptor.className,\n          \
+        \      method: descriptor.name, display_name: descriptor.displayName, phase: phase,\n                nonce: System.getenv('GITHUB_RUN_ID')\
+        \ + ':' + System.getenv('GITHUB_RUN_ATTEMPT')]\n            new File(System.getenv('PROOF_DIR'), 'test-events.jsonl').append(JsonOutput.toJson(entry)\
+        \ + '\\n')\n        }\n        target.beforeTest { descriptor -> event(descriptor, 'started') }\n        target.afterTest\
+        \ { descriptor, result -> event(descriptor, result.resultType.toString()) }\n        target.doFirst {\n          \
+        \  new File(System.getenv('PROOF_DIR'), taskName + '-started.txt').text = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT')\
+        \ + '\\n'\n        }\n        target.doLast {\n            new File(System.getenv('PROOF_DIR'), taskName + '-completed.txt').text\
+        \ = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\\n'\n        }\n    }\n}\ngradle.taskGraph.whenReady\
+        \ { graph ->\n    if (!isProofBuild()) { return }\n    if (gradle.rootProject.findProject(':account-service') == null)\
+        \ {\n        throw new GradleException('Verified proof build lacks :account-service')\n    }\n    def tests = graph.allTasks.findAll\
+        \ { it instanceof Test }\n    if (tests.collect { it.path }.sort() != expectedTasks) {\n        throw new GradleException('Proof\
+        \ requires exactly one selected Test task: ' + tests.collect { it.path })\n    }\n}\nGRADLE\ncat > \"$RUNNER_TEMP/collect-capacity-proof.py\"\
+        \ <<'PYTHON'\nimport collections, hashlib, json, os, pathlib, re, subprocess, sys\nimport xml.etree.ElementTree as\
+        \ ET\nout = pathlib.Path(os.environ['PROOF_DIR'])\nout.mkdir(parents=True, exist_ok=True)\nspec = json.loads(os.environ['EXPECTED_CASES'])\n\
+        expected = [(x['task'], x['classname'], x['method']) for x in spec for _ in range(x['count'])]\ndef method_name(raw):\n\
+        \    match = re.fullmatch(r'([A-Za-z_$][\\w$]*)(?:\\([^\\n]*\\))?(?:\\[([1-9][0-9]*)\\])?', raw)\n    return match.group(1)\
+        \ if match else '<invalid-method:' + raw + '>'\nissues = []\nnonce = os.environ['GITHUB_RUN_ID'] + ':' + os.environ['GITHUB_RUN_ATTEMPT']\n\
+        events_path = out / 'test-events.jsonl'\nevents = [json.loads(line) for line in events_path.read_text().splitlines()]\
+        \ if events_path.exists() else []\ndef invocation_index(raw):\n    match = re.fullmatch(r'[A-Za-z_$][\\w$]*(?:\\([^\\\
+        n]*\\))?\\[([1-9][0-9]*)\\]', raw)\n    return int(match.group(1)) if match else None\n# XML contains displayName,\
+        \ not descriptor.name. Bind them using fresh listener\n# evidence, never report order, argument text heuristics, or\
+        \ a guessed method.\nbridges = collections.defaultdict(set)\nfor e in events:\n    display = e.get('display_name')\n\
+        \    if not isinstance(display, str) or not display:\n        issues.append('missing event display name')\n      \
+        \  continue\n    index = invocation_index(e['method'])\n    if index is not None:\n        label = re.fullmatch(r'\\\
+        [([1-9][0-9]*)\\](?: .*)?', display)\n        if not label or int(label.group(1)) != index:\n            issues.append('event\
+        \ display/invocation index mismatch')\n    elif display != e['method']:\n        issues.append('nonparameterized event\
+        \ display mismatch')\n    if e['phase'] == 'started' and e['nonce'] == nonce:\n        bridges[(e['task'], e['classname'],\
+        \ display)].add(e['method'])\nif any(len(values) != 1 for values in bridges.values()):\n    issues.append('ambiguous\
+        \ display-to-method bridge')\nrecords = []\noriginals = []\ncompact = ET.Element('testsuite', name='capacity-current-physical-proof')\n\
+        for path in sorted(pathlib.Path('services/account-service/build/test-results').glob('*/*.xml')):\n    task = path.parent.name\n\
+        \    if task not in ('integrationTest',):\n        issues.append('unexpected test report task: ' + task)\n    raw\
+        \ = path.read_bytes()\n    originals.append({'file': task + '/' + path.name, 'sha256': hashlib.sha256(raw).hexdigest(),\
+        \ 'bytes': len(raw)})\n    try:\n        tree = ET.fromstring(raw)\n    except ET.ParseError:\n        issues.append('invalid\
+        \ JUnit XML: ' + path.name)\n        continue\n    for case in tree.iter('testcase'):\n        name = case.get('name',\
+        \ '')\n        bridge = bridges.get((task, case.get('classname'), name), set())\n        identity_name = next(iter(bridge))\
+        \ if len(bridge) == 1 else ''\n        if not identity_name: issues.append('missing unique XML/event identity bridge')\n\
+        \        method = method_name(identity_name)\n        record = {'task': task, 'raw_name': name, 'classname': case.get('classname'),\
+        \ 'method': method, 'invocation_index': invocation_index(identity_name),\n                  'skipped': case.find('skipped')\
+        \ is not None,\n                  'failed': case.find('failure') is not None or case.find('error') is not None,\n\
+        \                  'seconds': case.get('time')}\n        records.append(record)\n        copied = ET.SubElement(compact,\
+        \ 'testcase', **case.attrib)\n        for child in case:\n            if child.tag in ('failure', 'error', 'skipped'):\n\
+        \                leaf = ET.SubElement(copied, child.tag, **{k: v[:4096] for k, v in child.attrib.items()})\n     \
+        \           leaf.text = (child.text or '')[:65536]\nif collections.Counter((r['task'],r['classname'],r['method'])\
+        \ for r in records) != collections.Counter(tuple(p) for p in expected):\n    issues.append('expected exact task/class/method\
+        \ invocation counts, no extras')\nfor item in spec:\n    leaves = [r['invocation_index'] for r in records if (r['task'],\
+        \ r['classname'], r['method']) == (item['task'], item['classname'], item['method'])]\n    indexes = leaves\n    wanted\
+        \ = [None] if item['count'] == 1 else list(range(1, item['count'] + 1))\n    if collections.Counter(indexes) != collections.Counter(wanted):\n\
+        \        issues.append('missing, repeated or unexpected invocation indexes: ' + item['method'])\nif any(r['skipped']\
+        \ or r['failed'] for r in records):\n    issues.append('skipped, failed, aborted, or errored testcase')\nfor marker\
+        \ in ('integrationTest-started.txt', 'integrationTest-completed.txt'):\n    if not (out / marker).is_file() or (out\
+        \ / marker).read_text().strip() != nonce:\n        issues.append('missing or stale fresh task marker: ' + marker)\n\
+        for phase in ('started', 'SUCCESS'):\n    actual = [(e['task'], e['classname'], method_name(e['method'])) for e in\
+        \ events if e['phase'] == phase and e['nonce'] == nonce]\n    if collections.Counter(actual) != collections.Counter(tuple(p)\
+        \ for p in expected):\n        issues.append('expected exact fresh test events: ' + phase)\nif len(events) != 2 *\
+        \ len(expected):\n    issues.append('extra or missing lifecycle events')\n# Every leaf invocation must be unique and\
+        \ correspond to one actual started/completed event.\nraw_cases = [(r['task'], r['classname'], r['raw_name']) for r\
+        \ in records]\nif len(set(raw_cases)) != len(raw_cases): issues.append('duplicate leaf invocation')\nfor phase in\
+        \ ('started', 'SUCCESS'):\n    raw_events = [(e['task'], e['classname'], e.get('display_name')) for e in events if\
+        \ e['phase'] == phase and e['nonce'] == nonce]\n    if collections.Counter(raw_events) != collections.Counter(raw_cases):\n\
+        \        issues.append('leaf XML/event mismatch: ' + phase)\nstarted_identities = collections.Counter((e['task'],\
+        \ e['classname'], e['method'], e.get('display_name')) for e in events if e['phase'] == 'started' and e['nonce'] ==\
+        \ nonce)\nfor phase in ('started', 'SUCCESS'):\n    phase_events = [e for e in events if e['phase'] == phase and e['nonce']\
+        \ == nonce]\n    identities = collections.Counter((e['task'], e['classname'], e['method'], e.get('display_name'))\
+        \ for e in phase_events)\n    if identities != started_identities:\n        issues.append('started/completed invocation\
+        \ identity mismatch: ' + phase)\n    for item in spec:\n        indexes = [invocation_index(e['method']) for e in\
+        \ phase_events if (e['task'], e['classname'], method_name(e['method'])) == (item['task'], item['classname'], item['method'])]\n\
+        \        wanted = [None] if item['count'] == 1 else list(range(1, item['count'] + 1))\n        if collections.Counter(indexes)\
+        \ != collections.Counter(wanted):\n            issues.append('event invocation indexes mismatch: ' + phase + ': '\
+        \ + item['method'])\nstatus_file = out / 'gradle-exit.txt'\nif not status_file.is_file() or status_file.read_text().strip()\
+        \ != '0':\n    issues.append('Gradle did not complete successfully')\nlog_path = pathlib.Path(os.environ['RUNNER_TEMP'])\
+        \ / 'capacity-physical-gradle.log'\nlog = log_path.read_bytes() if log_path.exists() else b''\ncapture_path = log_path.with_suffix(log_path.suffix\
+        \ + '.json')\ncapture = json.loads(capture_path.read_text()) if capture_path.is_file() else None\nif capture is None:\n\
+        \    issues.append('missing log capture completion metadata')\nelse:\n    (out / 'log-capture.json').write_text(json.dumps(capture,\
+        \ indent=2) + '\\n')\n    if capture['truncated'] or capture['stream_bytes'] > capture['limit_bytes']:\n        issues.append('log\
+        \ output exceeded retention cap; proof is incomplete')\n    if capture['retained_bytes'] != len(log) or capture['limit_bytes']\
+        \ != 128 * 1024 * 1024:\n        issues.append('log capture size mismatch')\n    if capture['exit_status'] != 0 or\
+        \ capture['child_returncode'] != 0:\n        issues.append('captured child did not exit successfully')\n    if not\
+        \ capture['truncated'] and capture['stream_sha256'] != hashlib.sha256(log).hexdigest():\n        issues.append('log\
+        \ capture digest mismatch')\ntext = log.decode('utf-8', errors='replace')\nif re.search(r'^> Task :account-service:(?:integrationTest|test)\
+        \ (?:FROM-CACHE|UP-TO-DATE|SKIPPED|NO-SOURCE)', text, re.M):\n    issues.append('integration task was cached or skipped')\n\
+        (out / 'gradle-tail.txt').write_bytes(log[-262144:])\nsha = lambda value: hashlib.sha256(value).hexdigest()\ngit =\
+        \ lambda *args: subprocess.check_output(['git', *args], text=True).strip()\nidentity = {'head': git('rev-parse', 'HEAD'),\
+        \ 'tree': git('rev-parse', 'HEAD^{tree}'), 'files': []}\nfor key, env in [('head','SOURCE_SHA'),('tree','SOURCE_TREE')]:\n\
+        \    if identity[key] != os.environ[env]: issues.append('source identity mismatch: ' + key)\nfor item in json.loads(os.environ['SOURCE_FILES']):\n\
+        \    path = item['path']\n    observed = {'path':path, 'blob':git('rev-parse','HEAD:'+path), 'file_blob':git('hash-object',path),\
+        \ 'sha256':sha(pathlib.Path(path).read_bytes())}\n    identity['files'].append(observed)\n    if observed['blob']\
+        \ != item['postimage_blob'] or observed['file_blob'] != item['postimage_blob'] or observed['sha256'] != item['postimage_sha256']:\n\
+        \        issues.append('source file mismatch: ' + path)\nif git('status', '--porcelain', '--untracked-files=no'):\n\
+        \    issues.append('tracked source files changed during proof')\ncompact.set('tests', str(len(records)))\ncompact.set('failures',\
+        \ str(sum(r['failed'] for r in records)))\ncompact.set('skipped', str(sum(r['skipped'] for r in records)))\nET.ElementTree(compact).write(out\
+        \ / 'junit-compact.xml', encoding='utf-8', xml_declaration=True)\nsummary = {'source': identity, 'requested_cases':\
+        \ spec, 'cases': records,\n           'original_junit': originals, 'gradle_log_sha256': sha(log),\n           'log_capture':\
+        \ capture, 'gradle_log_bytes': len(log), 'log_tail_limit': 262144,\n           'junit_system_output_omitted': True,\
+        \ 'failure_text_limit': 65536,\n           'workflow_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],\n\
+        \           'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'issues': issues,\n           'passed': not issues}\n\
+        (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\\n')\nfiles = [p for p in out.iterdir() if p.is_file()]\n\
+        if sum(p.stat().st_size for p in files) > 2 * 1024 * 1024:\n    raise SystemExit('compact proof exceeds 2 MiB; refusing\
+        \ oversized artifact')\n(out / 'sha256sums.txt').write_text(''.join(sha(p.read_bytes()) + '  ' + p.name + '\\n' for\
+        \ p in sorted(files)))\nprint(json.dumps(summary, indent=2))\nraise SystemExit(1 if issues else 0)\nPYTHON\njava -version\
+        \ 2> \"$PROOF_DIR/java-version.txt\"\ndocker version --format '{{.Server.Version}}' > \"$PROOF_DIR/docker-version.txt\"\
+        \ndocker info --format '{{.OSType}}' > \"$PROOF_DIR/docker-os.txt\"\ntest \"$(cat \"$PROOF_DIR/docker-os.txt\")\"\
+        \ = linux\n\ncat > \"$RUNNER_TEMP/capture-capacity-log.py\" <<'CAPTURE'\n\"\"\"Bound only retained stdout/stderr;\
+        \ never impose a file limit on child dependencies.\"\"\"\nimport hashlib\nimport json\nimport pathlib\nimport subprocess\n\
+        import sys\n\nLIMIT = 128 * 1024 * 1024\n\ndef capture(path, command, limit=LIMIT):\n    path = pathlib.Path(path)\n\
+        \    digest = hashlib.sha256()\n    total = retained = 0\n    with path.open('xb') as log:\n        child = subprocess.Popen(command,\
+        \ stdout=subprocess.PIPE, stderr=subprocess.STDOUT)\n        try:\n            while True:\n                chunk\
+        \ = child.stdout.read(65536)\n                if not chunk:\n                    break\n                digest.update(chunk)\n\
+        \                total += len(chunk)\n                # Continue draining after the cap: no broken pipe and no blocked\
+        \ child.\n                keep = chunk[:max(0, limit - retained)]\n                log.write(keep)\n             \
+        \   retained += len(keep)\n            code = child.wait()\n        finally:\n            child.stdout.close()\n \
+        \           if child.poll() is None:\n                child.kill()\n                child.wait()\n    # Match shell\
+        \ convention for a child terminated by signal.\n    status = code if code >= 0 else 128 - code\n    metadata = dict(child_returncode=code,\
+        \ exit_status=status, stream_bytes=total,\n                    retained_bytes=retained, limit_bytes=limit, truncated=total\
+        \ > limit,\n                    stream_sha256=digest.hexdigest())\n    path.with_suffix(path.suffix + '.json').write_text(json.dumps(metadata,\
+        \ indent=2) + '\\n')\n    return status\n\nif __name__ == '__main__':\n    if len(sys.argv) < 4 or sys.argv[2] !=\
+        \ '--':\n        raise SystemExit('Usage: capture_log.py LOG -- COMMAND [ARG ...]')\n    raise SystemExit(capture(sys.argv[1],\
+        \ sys.argv[3:]))\nCAPTURE\n"
+    - name: Run exact composed origin receiving methods
+      shell: bash
+      run: "set -euo pipefail\nset +e\npython3 \"$RUNNER_TEMP/capture-capacity-log.py\" \"$RUNNER_TEMP/capacity-physical-gradle.log\"\
+        \ -- \\\n  timeout --signal=TERM --kill-after=30s 30m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
+        \ --runner ./gradlew -- \\\n  --no-daemon --no-build-cache --no-configuration-cache --no-scan --rerun-tasks \\\n \
+        \ --max-workers=2 --no-parallel '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \\\n  --console=plain -I \"\
+        $RUNNER_TEMP/capacity-physical.init.gradle\" \\\n  :account-service:integrationTest -PfullCheck\nstatus=$?\nset -e\n\
+        printf '%s\\n' \"$status\" > \"$PROOF_DIR/gradle-exit.txt\"\n# Keep CI readable; the collector always retains a bounded\
+        \ tail and validates results.\ntail -n 60 \"$RUNNER_TEMP/capacity-physical-gradle.log\"\nexit \"$status\"\n"
+    - name: Verify all exact invocations started and passed without skips
+      if: ${{ always() }}
+      shell: bash
+      run: python3 "$RUNNER_TEMP/collect-capacity-proof.py"
+    - name: Enforce compact artifact size
+      id: bound
+      if: ${{ always() }}
+      shell: bash
+      run: 'python3 - <<''PYBOUND''
+
+        import os, pathlib
+
+        p=pathlib.Path(os.environ[''PROOF_DIR''])
+
+        files=list(p.glob(''*''))
+
+        assert files and all(f.is_file() and not f.is_symlink() for f in files), ''missing or unsupported proof files''
+
+        assert sum(f.stat().st_size for f in files) <= 2*1024*1024, ''proof exceeds 2 MiB''
+
+        with open(os.environ[''GITHUB_OUTPUT''], ''a'') as out: out.write(''ok=true\n'')
+
+        PYBOUND
+
+        '
+    - name: Upload compact physical proof
+      if: ${{ always() && steps.bound.outputs.ok == 'true' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: capacity-origin-receiving-physical-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/capacity-physical-proof/
+        if-no-files-found: error
+        retention-days: 7
