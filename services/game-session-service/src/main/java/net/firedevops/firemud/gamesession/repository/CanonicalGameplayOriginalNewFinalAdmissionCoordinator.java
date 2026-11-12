@@ -37,6 +37,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
   private final Clock clock;
   private final AccountTenantCapacityClient capacityClient;
   private final CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution;
+  private final boolean originReceiving;
 
   CanonicalGameplayOriginalNewFinalAdmissionCoordinator(
       CanonicalGameplayBindingInventoryRepository inventory,
@@ -49,6 +50,34 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       Clock clock,
       AccountTenantCapacityClient capacityClient,
       CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution) {
+    this(
+        inventory,
+        accountClient,
+        accountBarrier,
+        issuerBarrier,
+        regionBridge,
+        credentialVerifier,
+        finalRedis,
+        clock,
+        capacityClient,
+        capacityExecution,
+        false);
+  }
+
+  /** Explicit private receiving composition; no bean, default registration or live activation. */
+  CanonicalGameplayOriginalNewFinalAdmissionCoordinator(
+      CanonicalGameplayBindingInventoryRepository inventory,
+      AccountGameplayAdmissionLeaseClient accountClient,
+      CanonicalGameplayAccountInitialBarrierRedisOwner accountBarrier,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner issuerBarrier,
+      CanonicalGameplayRegionBindingBridgeOwner regionBridge,
+      CanonicalGameplayOriginalNewBoundCredentialVerifier credentialVerifier,
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner finalRedis,
+      Clock clock,
+      AccountTenantCapacityClient capacityClient,
+      CanonicalGameplayOriginalNewCapacityExecutionOwner capacityExecution,
+      boolean originReceiving) {
+    this.originReceiving = originReceiving;
     this.capacityClient =
         Objects.requireNonNull(capacityClient, "Account capacity client is required");
     this.capacityExecution =
@@ -149,26 +178,36 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           if (!selectedOwner.equals(
               capacityExecution.requireRequestBinding(
                   source, capacityRequest, absoluteDeadlineMillis))) throw unavailable();
+          var origin =
+              originReceiving
+                  ? capacityExecution.prepareOrigin(source, capacityRequest, absoluteDeadlineMillis)
+                  : null;
           var reservation = capacityClient.commit(capacityRequest, absoluteDeadlineMillis);
           var execution =
               capacityExecution.bind(
                   source, capacityRequest, reservation, absoluteDeadlineMillis, selectedOwner);
           try (var boundTemplate = template.bindCapacityExecution(execution)) {
-            capacityExecution.authorize(
+            capacityExecution.authorizeWithOrigin(
                 source,
                 boundTemplate,
                 beforeFinalCas.accountOpen,
                 beforeFinalCas.issuerOpen,
                 execution,
-                absoluteDeadlineMillis);
+                absoluteDeadlineMillis,
+                origin);
             // Account commitment and capacity installation may outlive the prior grant check.
             // Revalidate immediately before dispatch; durable execution custody excludes owner
             // replacement throughout the residual lease-loss race and result reconciliation.
             Currentness atDispatch = currentness(source, privateRegionInstallation);
             requireSameCurrentness(beforeFinalCas, atDispatch);
             requireDeadline(absoluteDeadlineMillis);
+            var exactFinalOwner =
+                origin == null
+                    ? finalRedis
+                    : capacityExecution.bindFinalOwnerToOrigin(
+                        finalRedis, origin, absoluteDeadlineMillis);
             try (CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback finalReadback =
-                finalRedis.finalizeOriginalNewOnce(
+                exactFinalOwner.finalizeOriginalNewOnce(
                     source,
                     boundTemplate,
                     requireAccountOpen(beforeFinalCas.accountOpen, source.candidate()),

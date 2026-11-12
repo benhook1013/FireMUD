@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(13);
+      assertThat(catalog.catalogEpoch()).isEqualTo(15);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -148,6 +148,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "gs_canonical_account_coverage_snapshot_region_obligation",
               "game_session_canonical_account_admission_fence_intent_cohort_ro",
               "game_session_canonical_account_admission_fence_intent_barrier_t",
+              "game_session_account_fence_final_observation",
               "game_instances.script_patch_version",
               "gameplay_command.declared_effects_json",
               "game_session_canonical_binding_transition.admission_request_id",
@@ -204,6 +205,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.1",
               "catalog-installation:1065.0.2",
               "catalog-installation:1065.0.3",
+              "catalog-installation:1065.1",
+              "catalog-installation:1065.2",
               "catalog-installation:1066")
           .noneMatch(
               identity ->
@@ -219,6 +222,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1065.0.1:")
                       || identity.contains(":1065.0.2:")
                       || identity.contains(":1065.0.3:")
+                      || identity.contains(":1065.1:")
+                      || identity.contains(":1065.2:")
                       || identity.contains(":1066:"));
       assertThat(
               f.dsl
@@ -762,7 +767,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(13);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(15);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -909,7 +914,10 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065",
             "1065.0.1",
             "1065.0.2",
-            "1065.0.3")) {
+            "1065.0.3",
+            "1065.1",
+            "1065.2",
+            "1066")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -932,7 +940,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           "INSERT INTO "
               + f.history
               + "(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success)"
-              + " VALUES(10000,'1066','controlled later migration','SQL','V1066__probe.sql',1,current_user,0,true)");
+              + " VALUES(10000,'1067','controlled later migration','SQL','V1067__probe.sql',1,current_user,0,true)");
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
@@ -949,7 +957,10 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065",
             "1065.0.1",
             "1065.0.2",
-            "1065.0.3")) {
+            "1065.0.3",
+            "1065.1",
+            "1065.2",
+            "1066")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -970,12 +981,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var original = f.owner().capture(request());
       f.addComponent();
-      for (long invalid : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14}) {
+      for (long invalid : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17}) {
         assertThatThrownBy(() -> f.installEpoch(invalid))
             .hasMessageContaining("exact classified installed schema");
       }
       // Controlled explicit owner revision, not an exposed registry/runtime mutation API.
-      f.installEpoch(13);
+      f.installEpoch(16);
       assertThatThrownBy(() -> f.owner().capture(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
@@ -983,9 +994,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.evidence(original.request()))
           .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().capture(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(13);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(16);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count(EPOCHS)).isEqualTo(13);
+      assertThat(f.count(EPOCHS)).isEqualTo(16);
     }
   }
 
@@ -1022,9 +1033,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       "INSERT INTO "
                           + EPOCHS
                           + "(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 13,catalog_bytes,catalog_digest FROM "
+                          + " SELECT 16,catalog_bytes,catalog_digest FROM "
                           + EPOCHS
-                          + " WHERE catalog_epoch=12"))
+                          + " WHERE catalog_epoch=15"))
           .hasMessageContaining("exact classified installed schema");
       assertThatThrownBy(
               () ->
@@ -1622,6 +1633,103 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "current_owner.executor_fence IS DISTINCT FROM NEW.selected_owner_fence",
               "Region dispatch is frozen for normal owner transfer",
               "Completed region predecessor cannot acquire dispatch"));
+    }
+  }
+
+  @Test
+  void originCustodyUpgradeSealsNewFamiliesWithoutInventingPriorOriginEvidence() {
+    try (Fixture f = fixture("1065.0.3")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(12);
+      var history = f.historyRows(false);
+      var classifications = f.classificationRows();
+      var oldEpochs =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                      + EPOCHS
+                      + " e ORDER BY catalog_epoch")
+              .getValues(0, String.class);
+      var predecessorExecution = f.rows(List.of("game_session_original_new_capacity_execution"));
+
+      migration(f.source, f.schema, f.history, "1065.1").migrate();
+
+      assertThat(f.rows(predecessorExecution.keySet())).isEqualTo(predecessorExecution);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 1);
+      assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
+      assertThat(f.classificationRows())
+          .containsAllEntriesOf(classifications)
+          .hasSize(classifications.size() + 2);
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                          + EPOCHS
+                          + " e WHERE catalog_epoch<=12 ORDER BY catalog_epoch")
+                  .getValues(0, String.class))
+          .isEqualTo(oldEpochs);
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(13);
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      for (String family :
+          List.of(
+              "game_session_original_new_capacity_origin",
+              "game_session_capacity_origin_transfer_item")) {
+        assertThat(current.catalog().families()).anyMatch(item -> item.familyId().equals(family));
+        assertThat(f.count(family)).isZero();
+        assertThatThrownBy(() -> f.dsl.execute("TRUNCATE " + family + " CASCADE"))
+            .hasMessageContaining("Region owner transfer custody is retained");
+      }
+      migration(f.source, f.schema, f.history, "1065.1").validate();
+    }
+  }
+
+  @Test
+  void admittedLogoutUpgradeRetainsPriorCatalogAndSealsTheNewIntentFamily() {
+    try (Fixture f = fixture("1065.2")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(14);
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(CLASSIFICATIONS);
+      before.remove(EPOCHS);
+      var history = f.historyRows(false);
+      var classifications = f.classificationRows();
+      String priorEpochs =
+          "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+              + EPOCHS
+              + " e WHERE catalog_epoch<=14 ORDER BY catalog_epoch";
+      var epochs = f.dsl.fetch(priorEpochs).getValues(0, String.class);
+
+      migration(f.source, f.schema, f.history, "1066").migrate();
+
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 1);
+      assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
+      assertThat(f.classificationRows())
+          .containsAllEntriesOf(classifications)
+          .hasSize(classifications.size() + 1);
+      assertThat(f.dsl.fetch(priorEpochs).getValues(0, String.class)).isEqualTo(epochs);
+      assertThat(f.evidence(original.request()))
+          .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(15);
+      assertThat(current.catalog().families())
+          .anyMatch(
+              item -> item.familyId().equals("game_session_original_new_admitted_logout_intent"));
+      assertThat(f.count("game_session_original_new_admitted_logout_intent")).isZero();
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      migration(f.source, f.schema, f.history, "1066").validate();
     }
   }
 

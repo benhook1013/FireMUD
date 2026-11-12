@@ -1,0 +1,75 @@
+{
+  "scriptId": "game-session.original-new-capacity-origin-custody.v1",
+  "resourcePath": "redis/lua/game-session-original-new-capacity-origin-custody.lua",
+  "sha256": "4a0606e797c9c459da9873c24b40a232c4e7248b71a4bfa9890893200424ae3e",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "capacityOrigin",
+      "ownedPrefix": "session:game:capacity-origin:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "action"
+    },
+    {
+      "name": "originDigest"
+    },
+    {
+      "name": "oldOwner"
+    },
+    {
+      "name": "oldFence"
+    },
+    {
+      "name": "newOwner"
+    },
+    {
+      "name": "newFence"
+    },
+    {
+      "name": "capturedState"
+    },
+    {
+      "name": "absoluteDeadlineMillis"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "ORIGIN_CUSTODY_CHANGED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "ORIGIN_CUSTODY_REPLAY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CURRENT_PHYSICAL_STATE_REFUSED",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "Missing capacity execution remains historically indeterminate and cannot be reinstalled as AUTHORIZED by retry. Under separately qualified current-incarnation normal owner handoff only, FENCE creates or retains an exact persistent FENCED_INDETERMINATE deny, excluding delayed INSTALL/FINAL without claiming no earlier execution, permitting reset adoption, or authorizing Account release/rearm. FENCE preserves exact COMMITTED and CLOSED outcomes; first mutation must meet the frozen Redis TIME deadline and completed exact replay is read-only. CLOSED is irreversible and fences every delayed same-attempt FINAL. Account alone consumes exact terminal evidence to mutate capacity. A missing or changed candidate, tenant index, OPEN barrier, or Redis state fails closed for admission. Exact final retry is read-only and preserves the first Redis TIME values; the script never repairs indexes, recreates barriers, transfers a controller, or claims that the supplied OPEN sources establish the complete admission flow. The owner returns evidence only after independent exact physical readback. Reset-sensitive state requires its owning recovery before the final consumer can proceed.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "none"
+    }
+  ],
+  "legacyPayloadShape": null
+}

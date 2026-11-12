@@ -81,7 +81,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   private CanonicalGameplayAdmissionAbortCompositionFixture binding;
   private CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources sources;
   private CanonicalGameplayTenantGameplayTagRepository tags;
-  private RedisScriptCatalog scripts;
+  private volatile RedisScriptCatalog scripts;
   private CanonicalGameplayControlledInitialObservationFixture attestor;
   private CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository;
   private CanonicalGameplayRegionBindingBridgeOwner region;
@@ -90,6 +90,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   private CanonicalGameplayAdmissionDecision decision;
   private String initialBarrierKey;
   private Server server;
+  private volatile boolean originReceivingEnabled;
 
   public static CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture open(
       DriverManagerDataSource accountDataSource,
@@ -651,7 +652,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             CLOCK,
             capacityClient,
             new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                binding.dsl(), coordination, scripts, CLOCK, tags));
+                binding.dsl(), coordination, scripts, CLOCK, tags),
+            originReceivingEnabled);
     var result =
         coordinator.completeOriginalNew(
             decision, originalLoginJwt, regionInstallation, 120_000L, deadline, capacityRequest);
@@ -661,6 +663,192 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         result.continuityExpiresAtMillis(),
         result.canonicalSessionDurationMillis(),
         result.finalSessionSha256());
+  }
+
+  /** Compose the origin recovery scripts for the controlled receiver. */
+  public void enableOriginReceiving() {
+    scripts =
+        RedisScriptCatalog.fromContributions(
+            List.of(
+                new CanonicalGameplayAccountInitialBarrierRedisScriptContribution(),
+                new CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
+                new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution(),
+                new CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
+                new CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                new CanonicalGameplayRegionBindingBridgeRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution()));
+    originReceivingEnabled = true;
+  }
+
+  public void prepareReceivingOrigin(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
+    var source =
+        new CanonicalGameplayBindingInventoryRepository(binding.dsl())
+            .readOriginalNewFinalAdmissionSource(decision);
+    originExecutionOwner(CLOCK).prepareOrigin(source, request, CLOCK.millis() + 5000);
+  }
+
+  private CanonicalGameplayOriginalNewCapacityExecutionOwner originExecutionOwner(Clock clock) {
+    return new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+        binding.dsl(), coordination, scripts, clock, tags);
+  }
+
+  public net.firedevops.firemud.gamesession.service.impl
+          .CanonicalGameplayCapacityOriginRecoveryReceiver
+      originReceiver(Clock clock) {
+    return new net.firedevops.firemud.gamesession.service.impl
+        .CanonicalGameplayCapacityOriginRecoveryReceiver(
+        originExecutionOwner(clock), "test", clock);
+  }
+
+  public java.util.Map<String, Object> originBudgetImage() {
+    var row =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT recovery_deadline,recovery_max_observations,recovery_observations,last_observation_deadline,reservation_policy_applied,custody_owner_id,custody_owner_fence,state FROM game_session_original_new_capacity_origin");
+    return new java.util.LinkedHashMap<>(row.intoMap());
+  }
+
+  public java.util.Map<String, String> originPhysicalImage() {
+    var row =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
+    String key =
+        "session:game:capacity-origin:{"
+            + row.get("tenant_gameplay_tag", String.class)
+            + "}:"
+            + row.get("admission_attempt_id", java.util.UUID.class);
+    var result = new java.util.LinkedHashMap<String, String>();
+    administration
+        .sync()
+        .hgetall(ascii(key))
+        .forEach(
+            (k, v) ->
+                result.put(
+                    new String(k, StandardCharsets.UTF_8), new String(v, StandardCharsets.UTF_8)));
+    result.put("pttl", Long.toString(administration.sync().pttl(ascii(key))));
+    return result;
+  }
+
+  public void corruptOriginDigestForFault() {
+    var row =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
+    String key =
+        "session:game:capacity-origin:{"
+            + row.get("tenant_gameplay_tag", String.class)
+            + "}:"
+            + row.get("admission_attempt_id", java.util.UUID.class);
+    administration.sync().hset(ascii(key), ascii("origin"), ascii("sha256:" + "0".repeat(64)));
+  }
+
+  public void handoffReceivingOrigin() throws Exception {
+    handoffReceivingOrigin(false);
+  }
+
+  public void handoffReceivingOriginAfterLostConfirmation() throws Exception {
+    handoffReceivingOrigin(true);
+  }
+
+  private void handoffReceivingOrigin(boolean loseConfirmation) throws Exception {
+    var fail = new java.util.concurrent.atomic.AtomicBoolean(loseConfirmation);
+    var sql = binding.dsl();
+    var transferSql =
+        loseConfirmation
+            ? org.jooq.impl.DSL.using(
+                sql.configuration()
+                    .deriveAppending(
+                        new org.jooq.impl.DefaultExecuteListener() {
+                          @Override
+                          public void executeStart(org.jooq.ExecuteContext context) {
+                            var query = context.sql();
+                            if (fail.get()
+                                && query != null
+                                && query.contains("JOIN game_session_region_runtime_status r")
+                                && sql.fetchExists(
+                                    org.jooq
+                                        .impl
+                                        .DSL
+                                        .selectOne()
+                                        .from("game_session_region_owner_transfer")
+                                        .where("state='COMPLETED'"))
+                                && fail.compareAndSet(true, false)) {
+                              throw new IllegalStateException(
+                                  "Controlled loss of completed origin observation");
+                            }
+                          }
+                        }))
+            : sql;
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(transferSql, CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var origins = new CanonicalGameplayCapacityOriginTransferRepository(repository);
+    var originReceiver =
+        new CanonicalGameplayControlledOriginTransferObservationFixture().receiver(origins, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            transferSql, CLOCK, repository, originExecutionOwner(CLOCK), receiver, originReceiver);
+    administration.sync().pexpire(ascii(regionInstallation.grant.key()), 0);
+    if (loseConfirmation) {
+      var successor =
+          CanonicalGameplayRegionLeaseOwnerFactory.compose(
+              sql,
+              coordination,
+              scripts,
+              CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
+                  ::controlledRegionIncarnation,
+              sources.resolver,
+              new RuntimeIdentity(
+                  "game-session-service",
+                  "final-owner-handoff",
+                  "localhost",
+                  CLOCK.instant(),
+                  "test",
+                  "test",
+                  "controlled-test-image"),
+              Duration.ofSeconds(30),
+              CLOCK);
+      var unconfirmed =
+          org.junit.jupiter.api.Assertions.assertThrows(
+              CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
+              () ->
+                  successor.installForTransition(
+                      null,
+                      regionInstallation.transitionId,
+                      regionInstallation.worldRequest,
+                      transfer,
+                      CLOCK.millis() + 5000));
+      org.assertj.core.api.Assertions.assertThat(fail).isFalse();
+      var before = sql.fetchSingle("SELECT * FROM game_session_region_owner_transfer");
+      org.assertj.core.api.Assertions.assertThat(before.get("state", String.class))
+          .isEqualTo("COMPLETED");
+      regionInstallation = successor.resumeCompletedTransfer(unconfirmed, CLOCK.millis() + 5000);
+      org.assertj.core.api.Assertions.assertThat(
+              sql.fetchSingle("SELECT * FROM game_session_region_owner_transfer"))
+          .isEqualTo(before);
+      return;
+    }
+    regionInstallation =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            binding.dsl(),
+            coordination,
+            scripts,
+            regionInstallation,
+            sources.resolver,
+            CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
+                ::controlledRegionIncarnation,
+            transfer,
+            CLOCK.millis() + 5000);
   }
 
   public Candidate candidate() {

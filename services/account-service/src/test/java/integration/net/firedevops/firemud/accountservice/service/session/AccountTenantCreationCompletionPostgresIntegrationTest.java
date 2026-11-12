@@ -865,6 +865,9 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                       .at(evidence.evaluatedAt()),
                   net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
                       .at(evidence.expiresAt()));
+              new net.firedevops.firemud.accountservice.repository
+                      .AccountCapacityOriginDecisionRepository(c.dsl)
+                  .accept(request);
               return repository.create(
                   request,
                   evidence.expiresAt(),
