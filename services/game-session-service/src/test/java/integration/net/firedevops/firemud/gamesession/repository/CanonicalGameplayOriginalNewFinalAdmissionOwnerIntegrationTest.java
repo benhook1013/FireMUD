@@ -652,6 +652,40 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void changedExecutionCandidateRefusesBeforeCreatingSqlDispatchCustody() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var changed =
+        new net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution(
+            controlledCapacity.request(),
+            controlledCapacity.reservation(),
+            controlledCapacity.transitionId(),
+            "sha256:" + "0".repeat(64),
+            controlledCapacity.selectedOwnerId(),
+            controlledCapacity.selectedOwnerFence());
+    var sqlBefore = sqlImage();
+    var physicalBefore = physicalImage();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template()) {
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .authorize(
+                          source,
+                          template,
+                          controlledAccountOpen(),
+                          issuerOpen(),
+                          changed,
+                          deadline()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+    assertThat(sqlImage()).isEqualTo(sqlBefore);
+    assertThat(physicalImage()).isEqualTo(physicalBefore);
+  }
+
+  @Test
   void processStopAfterActualSqlAuthorizationBeforeRedisSendFencesUnknownAndActuallyHandsOff()
       throws Exception {
     repairAccountMember();
@@ -966,7 +1000,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       admin.del(keysToDelete);
       admin.set(key, ascii("wrong-type"));
     } else admin.hset(key, ascii("binding"), ascii("{}"));
-    byte[] physical = admin.dump(key);
+    byte[] physical =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
     admin.pexpire(ascii(original.grant.key()), 0);
     assertThatThrownBy(
             () ->
@@ -979,7 +1014,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     transfer,
                     deadline()))
         .isInstanceOf(IllegalStateException.class);
-    assertThat(admin.dump(key)).containsExactly(physical);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .containsExactly(physical);
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
                 .find(original.source)

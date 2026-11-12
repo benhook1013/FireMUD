@@ -210,10 +210,14 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                   ? observeOrigin(firstOrigins.getFirst(), budget.absoluteDeadlineMillis())
                   : observe(first.getFirst(), budget.absoluteDeadlineMillis());
           if (!after.incarnationDigest().equals(completed.incarnationDigest())) throw held();
-          if (first.isEmpty())
+          if (first.isEmpty()) {
             owner.readOriginTransferCustody(
                 firstOrigins.getFirst(), budget.absoluteDeadlineMillis());
-          else owner.readTransferFence(first.getFirst(), budget.absoluteDeadlineMillis());
+          } else {
+            repository.requireRetainedPhysical(
+                first.getFirst(),
+                owner.readTransferFence(first.getFirst(), budget.absoluteDeadlineMillis()));
+          }
           return installed;
         });
   }
@@ -224,22 +228,41 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     return repository.within(
         deadline,
         budget -> {
+          long absoluteDeadline = budget.absoluteDeadlineMillis();
           var completed = repository.completedSuccessor(transferId, ownerInstance, correlation);
           var page = repository.completedPage(transferId, -1);
-          if (page.isEmpty()) throw held();
-          var first = page.getFirst();
-          var before = observe(first, budget.absoluteDeadlineMillis());
+          var originPage = origins.page(transferId, -1);
+          if (page.isEmpty() && originPage.isEmpty()) throw held();
+          var first = page.isEmpty() ? null : page.getFirst();
+          var firstOrigin = originPage.isEmpty() ? null : originPage.getFirst();
+          var before =
+              first == null
+                  ? observeOrigin(firstOrigin, absoluteDeadline)
+                  : observe(first, absoluteDeadline);
           if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
           var owner = capacity.forTransferBudget(budget);
           while (!page.isEmpty()) {
             for (var item : page) {
               budget.check();
               repository.requireRetainedPhysical(
-                  item, owner.readTransferFence(item, budget.absoluteDeadlineMillis()));
+                  item, owner.readTransferFence(item, absoluteDeadline));
             }
             page = repository.completedPage(transferId, page.getLast().ordinal());
           }
-          var after = observe(first, budget.absoluteDeadlineMillis());
+          while (!originPage.isEmpty()) {
+            for (var item : originPage) {
+              budget.check();
+              origins.requireRetainedPhysical(
+                  item,
+                  owner.readOriginTransferCustody(item, absoluteDeadline),
+                  completed.incarnationDigest());
+            }
+            originPage = origins.page(transferId, originPage.getLast().ordinal());
+          }
+          var after =
+              first == null
+                  ? observeOrigin(firstOrigin, absoluteDeadline)
+                  : observe(first, absoluteDeadline);
           if (!after.incarnationDigest().equals(completed.incarnationDigest())
               || !completed.equals(
                   repository.completedSuccessor(transferId, ownerInstance, correlation))) {

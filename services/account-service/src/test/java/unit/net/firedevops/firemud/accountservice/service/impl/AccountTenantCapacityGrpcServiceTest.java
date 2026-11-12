@@ -15,6 +15,7 @@ import io.grpc.stub.StreamObserver;
 import java.util.stream.Stream;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.accountservice.security.AccountTenantCapacityWorkloadGuard;
 import net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
@@ -53,8 +54,7 @@ class AccountTenantCapacityGrpcServiceTest {
 
   @ParameterizedTest
   @MethodSource("ownerEvidenceFailures")
-  void retainedOwnerParseEnumAndArithmeticFailuresAreEntitlementUnavailable(
-      RuntimeException cause) {
+  void unexpectedOwnerFailuresAreSanitizedInternal(RuntimeException cause) {
     var request = CapacityAdmissionTestFixture.playerRequest();
     try (var guards = authenticatedCaller()) {
       AccountTenantCapacityOwner owner = mock();
@@ -65,8 +65,28 @@ class AccountTenantCapacityGrpcServiceTest {
           .commitTenantCapacityAdmission(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
 
-      assertFailure(observer, Failure.ENTITLEMENT_UNAVAILABLE);
+      var error = ArgumentCaptor.forClass(Throwable.class);
+      verify(observer).onError(error.capture());
+      assertThat(Status.fromThrowable(error.getValue())).isEqualTo(Status.INTERNAL);
+      assertThat(error.getValue().getCause()).isNull();
+      verify(observer, never()).onNext(any());
+      verify(observer, never()).onCompleted();
       verify(owner).commit(request, CapacityAdmissionTestFixture.PEER);
+    }
+  }
+
+  @Test
+  void typedOwnerEvidenceUnavailableKeepsItsPublicFailure() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    try (var guards = authenticatedCaller()) {
+      AccountTenantCapacityOwner owner = mock();
+      when(owner.commit(request, CapacityAdmissionTestFixture.PEER))
+          .thenThrow(new CapacityException(Failure.ENTITLEMENT_UNAVAILABLE));
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .commitTenantCapacityAdmission(
+              TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
+      assertFailure(observer, Failure.ENTITLEMENT_UNAVAILABLE);
     }
   }
 

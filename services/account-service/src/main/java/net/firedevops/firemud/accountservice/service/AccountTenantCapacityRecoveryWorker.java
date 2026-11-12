@@ -13,11 +13,15 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Identity;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
@@ -103,6 +107,7 @@ public final class AccountTenantCapacityRecoveryWorker {
   private final ExecutionReadClient source;
   private final Clock clock;
   private final UUID workerId = UUID.randomUUID();
+  private final Set<Identity> inFlight = ConcurrentHashMap.newKeySet();
 
   public AccountTenantCapacityRecoveryWorker(
       AccountTenantCapacityOwner owner, DSLContext dsl, ExecutionReadClient source, Clock clock) {
@@ -117,6 +122,11 @@ public final class AccountTenantCapacityRecoveryWorker {
   public Result reconcile(Request request, NoCommitAction noCommitAction) {
     Objects.requireNonNull(noCommitAction);
     request.requireCommittable();
+    return withExclusiveOperation(
+        request.identity(), () -> reconcileClaim(request, noCommitAction));
+  }
+
+  private Result reconcileClaim(Request request, NoCommitAction noCommitAction) {
     Claim claim = claim(request);
     if (claim.reservation().state() != State.RESERVED) return claim.reservation();
     if (claim.noCommitProof() != null) {
@@ -277,6 +287,10 @@ public final class AccountTenantCapacityRecoveryWorker {
   public Result rearm(Request prior, Request next) {
     prior.requireCommittable();
     next.requireCommittable();
+    return withExclusiveOperation(prior.identity(), () -> rearmClaim(prior, next));
+  }
+
+  private Result rearmClaim(Request prior, Request next) {
     java.util.Optional<Result> replay =
         owner.inTransaction(
             () -> {
@@ -292,6 +306,16 @@ public final class AccountTenantCapacityRecoveryWorker {
     if (replay.isPresent()) return replay.orElseThrow();
     Claim claim = claim(prior);
     return owner.rearm(prior, next, workerId, claim.fence());
+  }
+
+  private Result withExclusiveOperation(Identity identity, Supplier<Result> operation) {
+    // This worker can advance its own live claim for a sequential retry or rearm.
+    if (!inFlight.add(identity)) throw unavailable();
+    try {
+      return operation.get();
+    } finally {
+      inFlight.remove(identity);
+    }
   }
 
   private Claim claim(Request request) {

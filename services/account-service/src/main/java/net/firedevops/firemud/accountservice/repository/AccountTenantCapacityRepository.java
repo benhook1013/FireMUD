@@ -1,9 +1,11 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
@@ -131,8 +133,9 @@ public final class AccountTenantCapacityRepository {
         || history.get("owner_readback", byte[].class) == null) throw conflict();
   }
 
-  public Result create(Request request, Instant expiresAt) {
+  public Result create(Request request, Instant expiresAt, Clock clock) {
     Record usage = usage(request);
+    requireCurrentLifetime(request.evidence(), clock.instant());
     long delta = Objects.requireNonNull(request.capacityDelta());
     long occupied = Math.addExact(number(usage, "held_units"), number(usage, "used_units"));
     if (delta > request.evidence().quota() - occupied)
@@ -160,6 +163,14 @@ public final class AccountTenantCapacityRepository {
             at(AccountCapacityOriginContinuation.reconcileDeadline(expiresAt)));
     if (created != 1) throw unavailable();
     return exact(request, Objects.requireNonNull(find(request.identity())));
+  }
+
+  public static void requireCurrentLifetime(Evidence evidence, Instant now) {
+    // PostgreSQL stores microseconds. Floor the bound, never round an expiry forward.
+    if (now.isBefore(evidence.evaluatedAt())
+        || !now.isBefore(evidence.expiresAt().truncatedTo(ChronoUnit.MICROS))) {
+      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+    }
   }
 
   public void updateUsage(Request request, Record before, long held, long used) {

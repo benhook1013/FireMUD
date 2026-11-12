@@ -291,7 +291,10 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                 var execution = decode(retained.get("canonical_execution", byte[].class));
                 ordinal = Math.incrementExact(ordinal);
                 String tag = retained.get("tenant_gameplay_tag", String.class);
-                int allocation = Integer.parseInt(tag.substring(1, tag.indexOf('-')));
+                String namespace = execution.request().targetNamespace();
+                int allocation =
+                    tags.requireRetainedAllocation(
+                        tx, execution.request().identity().tenantId(), tag, namespace);
                 tx.execute(
                     "INSERT INTO "
                         + ITEM
@@ -302,7 +305,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
                     execution.canonicalBytes(),
                     execution.candidateDigest(),
                     tag,
-                    execution.request().targetNamespace(),
+                    namespace,
                     allocation);
               }
             });

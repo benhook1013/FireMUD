@@ -378,6 +378,27 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
             });
   }
 
+  void requireRetainedPhysical(
+      Item item,
+      CanonicalGameplayCapacityOriginRedisOwner.Readback actual,
+      String incarnationDigest) {
+    if (!exists(
+        transfers.sql(),
+        "SELECT 1 FROM "
+            + ITEM
+            + " i JOIN "
+            + TRANSFER
+            + " t ON t.transfer_id=i.transfer_id WHERE i.transfer_id=? AND i.target_ordinal=?"
+            + " AND i.origin_digest=? AND i.fence_readback=? AND i.incarnation_digest=?"
+            + " AND t.state='COMPLETED' AND t.incarnation_digest=i.incarnation_digest"
+            + " AND i.verified_round=t.origin_verification_round",
+        item.transferId(),
+        item.ordinal(),
+        item.origin().digest(),
+        exactReadback(item, actual),
+        incarnationDigest)) throw held();
+  }
+
   static void requireComplete(DSLContext tx, UUID transferId) {
     requireCaptured(tx, transferId);
     Record transfer = CanonicalGameplayRegionOwnerTransferRepository.current(tx, transferId, false);
