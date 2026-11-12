@@ -28,6 +28,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
     value = "EI_EXPOSE_REP2",
     justification = "Private owner transaction collaborator.")
 public final class AccountTenantCapacityRepository {
+  private static final String FIND_RESERVATION =
+      "SELECT * FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?";
   private final DSLContext dsl;
 
   public AccountTenantCapacityRepository(DSLContext dsl) {
@@ -81,12 +83,17 @@ public final class AccountTenantCapacityRepository {
   }
 
   public Record find(Identity id) {
+    return find(id, FIND_RESERVATION + " FOR UPDATE");
+  }
+
+  /** Exact replay reads the transaction snapshot without taking a mutation lock. */
+  public Record findForReplay(Identity id) {
+    return find(id, FIND_RESERVATION);
+  }
+
+  private Record find(Identity id, String query) {
     transaction();
-    return dsl.fetchOne(
-        "SELECT * FROM account_tenant_capacity_reservations WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ? FOR UPDATE",
-        id.tenantId(),
-        id.requestId(),
-        id.admissionId());
+    return dsl.fetchOne(query, id.tenantId(), id.requestId(), id.admissionId());
   }
 
   public Record usage(Request request) {
