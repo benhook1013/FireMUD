@@ -120,6 +120,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         .transaction(
             configuration -> {
               var tx = DSL.using(configuration);
+              // Bridge retries take inventory before region. Retained tag validation below must
+              // join this transaction, so no separate connection waits behind our own clock lock.
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
               requireOldOwner(tx, source, prior);
               var row = current(tx, original.transferId(), true);
               if (!sourceDigest(source, prior).equals(row.get("source_digest", String.class)))
@@ -634,7 +637,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             .admissionAttemptId()
             .equals(row.get("admission_attempt_id", UUID.class))) throw unavailable();
     var assignment =
-        tags.withCapacityExecutionDsl(sql())
+        tags.withCapacityExecutionDsl(tx)
             .assignmentForRetainedCapacityExecution(execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();

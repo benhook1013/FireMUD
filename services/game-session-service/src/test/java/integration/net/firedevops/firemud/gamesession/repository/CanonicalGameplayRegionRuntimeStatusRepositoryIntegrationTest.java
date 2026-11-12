@@ -471,6 +471,84 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void acknowledgedBridgeRetryWaitsBeforeTransitionWhileAuthorizationOwnsRegion() throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), Clock.systemUTC());
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution);
+        var gate = new RegionRowLockGate();
+        ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      Future<?> authorization =
+          executor.submit(
+              () ->
+                  proof
+                      .capacity(gate.attach(proof.sql))
+                      .authorize(
+                          proof.admission,
+                          template,
+                          account,
+                          issuer,
+                          proof.execution,
+                          transferDeadline()));
+      gate.awaitLock();
+      Future<?> replay = executor.submit(proof::replayBridge);
+      try {
+        assertDatabaseWaitsFor(proof.sql, gate.backendPid());
+        assertThat(replay.isDone()).isFalse();
+      } finally {
+        gate.release();
+      }
+      authorization.get(10, TimeUnit.SECONDS);
+      replay.get(10, TimeUnit.SECONDS);
+      assertThat(proof.executionState(proof.execution)).isEqualTo("AUTHORIZED");
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  @Test
+  void frozenContinuationWaitsBeforeRegionWhileAcknowledgedBridgeOwnsInventory() throws Exception {
+    try (var gate = new InventoryRowLockGate();
+        var proof = new TransferSqlProof(gate);
+        ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var original =
+          proof
+              .transfers
+              .within(transferDeadline(), ignored -> proof.transfers.capture(id))
+              .getFirst();
+      String before = proof.transferImage(id);
+      gate.arm();
+      Future<?> replay = executor.submit(proof::replayBridge);
+      gate.awaitLock();
+      Future<?> continuation =
+          executor.submit(
+              () ->
+                  proof.transfers.within(
+                      transferDeadline(),
+                      ignored -> {
+                        proof.transfers.requireFrozenOriginal(original, proof.scope, proof.prior);
+                        return null;
+                      }));
+      try {
+        assertDatabaseWaitsFor(proof.sql, gate.backendPid());
+        assertThat(continuation.isDone()).isFalse();
+      } finally {
+        gate.release();
+      }
+      replay.get(10, TimeUnit.SECONDS);
+      continuation.get(10, TimeUnit.SECONDS);
+      assertThat(proof.transferImage(id)).isEqualTo(before);
+      assertThat(proof.executionState(proof.execution)).isEqualTo("INSTALL_DISPATCHED");
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+    }
+  }
+
+  @Test
   void competingTransferCreatorsAndLostBeginReplyKeepOneOriginalIntent() throws Exception {
     try (var proof = new TransferSqlProof();
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
@@ -850,6 +928,58 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
   }
 
+  /** Stops a real bridge transaction only after its inventory-clock lock was granted. */
+  private static final class InventoryRowLockGate extends DefaultExecuteListener
+      implements AutoCloseable {
+    private final AtomicBoolean armed = new AtomicBoolean();
+    private final AtomicInteger pid = new AtomicInteger();
+    private final CountDownLatch locked = new CountDownLatch(1);
+    private final CountDownLatch resume = new CountDownLatch(1);
+
+    void arm() {
+      armed.set(true);
+    }
+
+    @Override
+    public void executeEnd(ExecuteContext context) {
+      String statement = context.sql();
+      if (statement == null
+          || !statement.contains("game_session_canonical_binding_inventory_clock")
+          || !statement.contains("FOR UPDATE")
+          || !armed.compareAndSet(true, false)) return;
+      try (var query = context.connection().createStatement();
+          var result = query.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(result.next()).isTrue();
+        pid.set(result.getInt(1));
+        locked.countDown();
+        if (!resume.await(4, TimeUnit.SECONDS))
+          throw new AssertionError("Inventory-row test gate was not released");
+      } catch (java.sql.SQLException failure) {
+        throw new IllegalStateException("Could not observe actual inventory lock owner", failure);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Inventory-row test gate was interrupted", interrupted);
+      }
+    }
+
+    void awaitLock() throws InterruptedException {
+      assertThat(locked.await(3, TimeUnit.SECONDS)).isTrue();
+    }
+
+    int backendPid() {
+      return pid.get();
+    }
+
+    void release() {
+      resume.countDown();
+    }
+
+    @Override
+    public void close() {
+      release();
+    }
+  }
+
   /**
    * Actual SQL, candidate/issuer/region and capacity/transfer owners over physical PostgreSQL and
    * Redis. Account lease/reservation/OPEN, World/Entity RPC content, grant and attestor custody are
@@ -870,11 +1000,16 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private final CanonicalGameplayRegionRuntimeStatusRepository.Source scope;
     private final CanonicalGameplayRegionRuntimeStatus prior;
     private final OriginalNewCapacityExecution execution;
+    private final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding region;
     private CanonicalGameplayRegionOwnerTransferRepository transfers;
     private CanonicalGameplayProtectedIncarnationReceiver receiver;
     private CanonicalGameplayRegionOwnerTransferCoordinator coordinator;
 
     private TransferSqlProof() throws Exception {
+      this(new DefaultExecuteListener());
+    }
+
+    private TransferSqlProof(DefaultExecuteListener listener) throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
               RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
@@ -950,6 +1085,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                   .dsl()
                   .configuration()
                   .deriveAppending(
+                      listener,
                       new DefaultExecuteListener() {
                         @Override
                         public void resultEnd(ExecuteContext context) {
@@ -987,7 +1123,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       fixture.acknowledgeOriginalIssuer();
       new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
           .repair(fixture.transitionId());
-      var region =
+      region =
           CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
               sql,
               redis,
@@ -1000,6 +1136,11 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       prior = new CanonicalGameplayRegionRuntimeStatusRepository(sql).find(scope).orElseThrow();
       execution = newControlledExecution();
       recreateTransferOwners();
+    }
+
+    private void replayBridge() {
+      var replayed = region.owner().bridge(region.installation());
+      assertThat(replayed.obligation()).isEqualTo(region.acknowledgement().obligation());
     }
 
     private OriginalNewCapacityExecution newControlledExecution() {
