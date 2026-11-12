@@ -789,6 +789,72 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void capturedOriginalThatBecomesTerminalStillRequiresQualifiedTransferCompletion()
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), proof.clock);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      try (var readback =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                  proof.redis, proof.scripts, proof.clock, proof.tags)
+              .finalizeOriginalNewOnce(
+                  proof.admission,
+                  template,
+                  account,
+                  issuer,
+                  proof.execution,
+                  transferDeadline())) {
+        UUID id = proof.begin();
+        var captured =
+            proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
+        assertThat(captured)
+            .extracting(item -> item.execution().digest())
+            .containsExactly(proof.execution.digest());
+        new CanonicalGameplayBindingInventoryRepository(proof.sql)
+            .commitOriginalNewFinalAdmission(readback);
+        assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
+        String frozen = proof.transferImage(id);
+        String inventory = proof.itemImage(id);
+        var status = new CanonicalGameplayRegionRuntimeStatusRepository(proof.sql);
+
+        assertThatThrownBy(
+                () ->
+                    status.installOwner(
+                        proof.scope,
+                        proof.prior.regionEpoch(),
+                        proof.prior,
+                        "e".repeat(64),
+                        "game-session-service",
+                        "sql-proof-successor",
+                        proof.clock.instant()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasRootCauseMessage("Normal region owner transfer is held");
+        assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+        assertThat(proof.transferImage(id)).isEqualTo(frozen);
+        assertThat(proof.itemImage(id)).isEqualTo(inventory);
+
+        proof.fence(captured.getFirst());
+        proof.verifyPage(id);
+        boolean verified =
+            proof.transfers.within(
+                transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+        assertThat(verified).isTrue();
+        assertThat(proof.install(id).ownerInstanceId()).isEqualTo("sql-proof-successor");
+        assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
+      }
+    }
+  }
+
+  @Test
   void standaloneTransferObservationCancelsBlockedSqlAtItsExplicitDeadline() throws Exception {
     try (var proof = new TransferSqlProof();
         var lock =

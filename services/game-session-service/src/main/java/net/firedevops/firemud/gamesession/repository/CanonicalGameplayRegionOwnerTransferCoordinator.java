@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
 import org.jooq.DSLContext;
 
@@ -54,6 +55,16 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
   CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal frozenOriginal(
       UUID transitionId, long deadline) {
     return repository.within(deadline, ignored -> repository.frozenOriginal(transitionId));
+  }
+
+  /** Runs one lease-owner status operation through the same frozen handoff deadline. */
+  <T> T withStatusRepository(
+      long deadline, Function<CanonicalGameplayRegionRuntimeStatusRepository, T> operation) {
+    Objects.requireNonNull(operation, "operation");
+    return repository.within(
+        deadline,
+        budget ->
+            operation.apply(new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl))));
   }
 
   void requireFrozenOriginal(
@@ -165,16 +176,21 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
               first.isEmpty()
                   ? observeOrigin(firstOrigins.getFirst(), budget.absoluteDeadlineMillis())
                   : observe(first.getFirst(), budget.absoluteDeadlineMillis());
-          // Current verification re-reads every retained physical fence, through bounded pages
-          // under this absolute budget. Earlier receipts never repair or excuse missing markers.
-          var page = first;
-          while (!page.isEmpty()) {
-            budget.check();
-            for (var item : page) {
-              var actual = owner.readTransferFence(item, budget.absoluteDeadlineMillis());
-              repository.requireRetainedPhysical(item, actual);
-            }
-            page = repository.page(transferId, page.getLast().ordinal());
+          // Read every retained execution fence through one connection and the same deadline.
+          // Earlier receipts cannot replace a missing marker or a timed-out qualification.
+          if (!first.isEmpty()) {
+            owner.withTransferReadback(
+                reader -> {
+                  var page = first;
+                  while (!page.isEmpty()) {
+                    budget.check();
+                    for (var item : page) {
+                      var actual = reader.readTransferFence(item, budget.absoluteDeadlineMillis());
+                      repository.requireRetainedPhysical(item, actual);
+                    }
+                    page = repository.page(transferId, page.getLast().ordinal());
+                  }
+                });
           }
           var originPage = firstOrigins;
           while (!originPage.isEmpty()) {
@@ -237,14 +253,14 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
         budget -> {
           long absoluteDeadline = budget.absoluteDeadlineMillis();
           var completed = repository.completedSuccessor(transferId, ownerInstance, correlation);
-          var page = repository.completedPage(transferId, -1);
+          var firstPage = repository.completedPage(transferId, -1);
           var originPage = origins.page(transferId, -1);
-          if (page.isEmpty() && originPage.isEmpty()) {
+          if (firstPage.isEmpty() && originPage.isEmpty()) {
             if (origins.hasItems(transferId)) throw held();
             repository.requireTerminalOnlyCompletion(transferId, completed);
             return completed.status();
           }
-          var first = page.isEmpty() ? null : page.getFirst();
+          var first = firstPage.isEmpty() ? null : firstPage.getFirst();
           var firstOrigin = originPage.isEmpty() ? null : originPage.getFirst();
           var before =
               first == null
@@ -252,13 +268,19 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                   : observe(first, absoluteDeadline);
           if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
           var owner = capacity.forTransferBudget(budget);
-          while (!page.isEmpty()) {
-            for (var item : page) {
-              budget.check();
-              repository.requireRetainedPhysical(
-                  item, owner.readTransferFence(item, absoluteDeadline));
-            }
-            page = repository.completedPage(transferId, page.getLast().ordinal());
+          if (first != null) {
+            owner.withTransferReadback(
+                reader -> {
+                  var page = firstPage;
+                  while (!page.isEmpty()) {
+                    for (var item : page) {
+                      budget.check();
+                      repository.requireRetainedPhysical(
+                          item, reader.readTransferFence(item, absoluteDeadline));
+                    }
+                    page = repository.completedPage(transferId, page.getLast().ordinal());
+                  }
+                });
           }
           while (!originPage.isEmpty()) {
             for (var item : originPage) {

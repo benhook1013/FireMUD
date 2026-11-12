@@ -783,6 +783,73 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void blockedTransferPreinstallRegionStatusReadKeepsCurrentOwner() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
+    java.util.concurrent.CompletableFuture<Boolean> handoff = null;
+    try (var lock =
+        java.sql.DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      lock.setSchema(schema);
+      lock.setAutoCommit(false);
+      int blockerPid;
+      try (var statement = lock.createStatement()) {
+        statement.execute("LOCK TABLE game_session_region_runtime_status IN ACCESS EXCLUSIVE MODE");
+        try (var rows = statement.executeQuery("SELECT pg_backend_pid()")) {
+          rows.next();
+          blockerPid = rows.getInt(1);
+        }
+      }
+
+      handoff =
+          java.util.concurrent.CompletableFuture.supplyAsync(
+              () -> {
+                try {
+                  actualTransferHandoff();
+                  return false;
+                } catch (IllegalStateException unavailable) {
+                  return true;
+                } catch (Exception failure) {
+                  throw new IllegalStateException(failure);
+                }
+              });
+      long blockedDeadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+      boolean statusReadBlocked = false;
+      while (System.nanoTime() < blockedDeadline && !statusReadBlocked && !handoff.isDone()) {
+        statusReadBlocked =
+            fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT pid FROM pg_stat_activity WHERE pid <> pg_backend_pid()"
+                            + " AND ? = ANY(pg_blocking_pids(pid))"
+                            + " AND query LIKE '%game_session_region_runtime_status%' LIMIT 1",
+                        blockerPid)
+                != null;
+        if (!statusReadBlocked) Thread.sleep(20L);
+      }
+      boolean failedClosed = handoff.get(7, java.util.concurrent.TimeUnit.SECONDS);
+      assertThat(statusReadBlocked).as("handoff reached the blocked region status read").isTrue();
+      assertThat(failedClosed).as("bounded status read fails closed").isTrue();
+    } finally {
+      if (handoff != null && !handoff.isDone()) {
+        assertThat(handoff.get(7, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      }
+    }
+
+    var current =
+        new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
+            .find(original.source)
+            .orElseThrow();
+    assertThat(current.executorFence()).isEqualTo(original.status.executorFence());
+    assertThat(current.ownerInstanceId()).isEqualTo(original.status.ownerInstanceId());
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isZero();
+  }
+
+  @Test
   void authorizedUnknownHandoffKeepsOriginalCandidateAndRefusesCompletedMutation()
       throws Exception {
     repairAccountMember();

@@ -206,6 +206,13 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     assertRejected(fixture);
   }
 
+  @Test
+  void signedMalformedTransferIdRefuses() {
+    var fixture = new Fixture();
+    fixture.mutation = root -> object(root, "owner").put("transferId", "invalid-transfer-id");
+    assertRejected(fixture);
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {
@@ -652,7 +659,19 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     } else if (old instanceof String text && text.startsWith("sha256:")) {
       replacement = OTHER_DIGEST;
     } else {
-      replacement = "different-" + old;
+      replacement =
+          switch (field) {
+            case "transferId",
+                "gameInstanceId",
+                "regionId",
+                "transitionId",
+                "requestId",
+                "accountId",
+                "tenantId",
+                "playableStateNamespaceId" ->
+                UUID.randomUUID().toString();
+            default -> "different-" + old;
+          };
     }
     object.put(field, replacement);
   }
