@@ -34,14 +34,7 @@ public record AccountCapacityOriginResolution(
   /** Convenience for decisions without a reservation; accepted results require retained policy. */
   public AccountCapacityOriginResolution(
       Request request, Status status, Result reservation, UUID denialId) {
-    this(
-        request,
-        status,
-        reservation,
-        denialId,
-        status == Status.RESERVATION_RETAINED
-            ? null
-            : AccountCapacityOriginContinuation.preAccount(request));
+    this(request, status, reservation, denialId, preAccountPolicy(request, status));
   }
 
   public AccountCapacityOriginResolution {
@@ -113,6 +106,13 @@ public record AccountCapacityOriginResolution(
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 unavailable", impossible);
     }
+  }
+
+  private static AccountCapacityOriginContinuation.Policy preAccountPolicy(
+      Request request, Status status) {
+    if (status == Status.RESERVATION_RETAINED)
+      throw new NullPointerException("Retained reservation requires exact continuation policy");
+    return AccountCapacityOriginContinuation.preAccount(request);
   }
 
   private static void field(DataOutputStream out, String value) throws IOException {
