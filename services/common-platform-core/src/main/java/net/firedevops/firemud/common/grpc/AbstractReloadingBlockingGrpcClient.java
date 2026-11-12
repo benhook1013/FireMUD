@@ -23,7 +23,8 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
 
   // TLS channel construction uses the client monitor and must not delay call selection.
   private final Object generationLock = new Object();
-  private volatile ChannelGeneration<TStub> generation;
+  private ChannelGeneration generation;
+  private volatile TStub stub;
   private TlsCertificateWatcher watcher;
   private volatile boolean closed;
   private volatile boolean explicitlyInitialized;
@@ -127,7 +128,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       return;
     }
     initReloadingClient();
-    if (stub() == null) {
+    if (stub == null) {
       throw new IllegalStateException(unavailableMessage);
     }
     explicitlyInitialized = true;
@@ -139,19 +140,28 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
 
   /** Takes the last published stub without waiting for a TLS reload. */
   protected final TStub requirePublishedInitializedStub(String unavailableMessage) {
-    return requirePublishedGeneration(unavailableMessage).stub;
+    TStub current = stub;
+    if (closed || !explicitlyInitialized || current == null) {
+      throw new IllegalStateException(unavailableMessage);
+    }
+    return current;
   }
 
   /** Keeps the selected TLS channel available for one bounded blocking call. */
   protected final <R> R withPublishedInitializedStub(
       String unavailableMessage, Function<TStub, R> call) {
-    ChannelGeneration<TStub> selected;
+    ChannelGeneration selected;
+    TStub selectedStub;
     synchronized (generationLock) {
-      selected = requirePublishedGeneration(unavailableMessage);
+      selectedStub = requirePublishedInitializedStub(unavailableMessage);
+      selected = generation;
+      if (selected == null) {
+        throw new IllegalStateException(unavailableMessage);
+      }
       selected.activeCalls++;
     }
     try {
-      return call.apply(selected.stub);
+      return call.apply(selectedStub);
     } finally {
       boolean shutdown;
       synchronized (generationLock) {
@@ -162,14 +172,6 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
         selected.channel.shutdown();
       }
     }
-  }
-
-  private ChannelGeneration<TStub> requirePublishedGeneration(String unavailableMessage) {
-    ChannelGeneration<TStub> current = generation;
-    if (closed || !explicitlyInitialized || current == null || current.stub == null) {
-      throw new IllegalStateException(unavailableMessage);
-    }
-    return current;
   }
 
   protected final synchronized void reloadChannel() throws SSLException {
@@ -189,17 +191,21 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       newChannel.shutdown();
       throw e;
     }
-    ChannelGeneration<TStub> previous;
+    retire(publishGeneration(new ChannelGeneration(newChannel), newStub));
+  }
+
+  private ChannelGeneration publishGeneration(
+      ChannelGeneration replacement, TStub replacementStub) {
     synchronized (generationLock) {
-      previous = generation;
-      generation = new ChannelGeneration<>(newChannel, newStub);
+      ChannelGeneration previous = generation;
+      generation = replacement;
+      stub = replacementStub;
+      return previous;
     }
-    retire(previous);
   }
 
   protected final TStub stub() {
-    ChannelGeneration<TStub> current = generation;
-    return current == null ? null : current.stub;
+    return stub;
   }
 
   protected int defaultPort() {
@@ -227,18 +233,20 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   @Override
   public void close() throws IOException {
     TlsCertificateWatcher watcherToClose;
+    ChannelGeneration generationToRetire;
     synchronized (this) {
       closed = true;
       explicitlyInitialized = false;
       watcherToClose = watcher;
       watcher = null;
+      generationToRetire = publishGeneration(null, stub);
     }
     try {
       if (watcherToClose != null) {
         watcherToClose.close();
       }
     } finally {
-      retire(generation);
+      retire(generationToRetire);
     }
   }
 
@@ -262,13 +270,10 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       }
     }
 
-    ChannelGeneration<TStub> initialGeneration;
+    ChannelGeneration initialGeneration;
     synchronized (this) {
       closed = true;
-      synchronized (generationLock) {
-        initialGeneration = generation;
-        generation = null;
-      }
+      initialGeneration = publishGeneration(null, null);
     }
     try {
       retire(initialGeneration);
@@ -277,7 +282,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
     }
   }
 
-  private void retire(ChannelGeneration<TStub> previous) {
+  private void retire(ChannelGeneration previous) {
     synchronized (generationLock) {
       if (previous == null || previous.retired) {
         return;
@@ -290,15 +295,13 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
     previous.channel.shutdown();
   }
 
-  private static final class ChannelGeneration<S> {
+  private static final class ChannelGeneration {
     private final ManagedChannel channel;
-    private final S stub;
     private int activeCalls;
     private boolean retired;
 
-    private ChannelGeneration(ManagedChannel channel, S stub) {
+    private ChannelGeneration(ManagedChannel channel) {
       this.channel = channel;
-      this.stub = stub;
     }
   }
 }
