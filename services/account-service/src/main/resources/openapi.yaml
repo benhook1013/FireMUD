@@ -448,7 +448,8 @@ paths:
                 properties:
                   evidenceId: {type: string, format: uuid}
         '401': {description: Current owner authentication or ordinary secret refused}
-        '409': {description: Fresh unbound billing request without evidence creation, exact binding refused, or exact current evidence unavailable}
+        '409':
+          description: Fresh unbound billing request without evidence creation, exact binding refused, or exact current evidence unavailable
   /billing/hosting/subscriptions/{subscriptionId}/first-invoice/confirm:
     parameters:
       - name: subscriptionId
