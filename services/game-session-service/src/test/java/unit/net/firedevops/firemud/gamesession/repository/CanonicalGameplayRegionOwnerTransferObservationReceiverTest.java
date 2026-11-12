@@ -34,6 +34,10 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   private static final String KEY_ID = "controlled-transfer-key";
   private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final String OTHER_DIGEST = "sha256:" + "e".repeat(64);
+  private static final String TRANSFER_INTENT_DIGEST = "sha256:" + "1".repeat(64);
+  private static final String FROZEN_SOURCE_DIGEST = "sha256:" + "2".repeat(64);
+  private static final String EXECUTION_DIGEST = "sha256:" + "3".repeat(64);
+  private static final String CANDIDATE_DIGEST = "sha256:" + "4".repeat(64);
   private static final long NOW = 1_794_355_200_000L;
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private static final KeyPair KEYS = controlledKeys();
@@ -46,6 +50,10 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     assertThat(proof.ownerKind())
         .isEqualTo(CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.REGION_OWNER_TRANSFER);
     assertThat(proof.regionOwnerTransferContext()).isSameAs(fixture.original);
+    assertThat(fixture.original.transferIntentDigest()).isEqualTo(TRANSFER_INTENT_DIGEST);
+    assertThat(fixture.original.frozenSourceDigest()).isEqualTo(FROZEN_SOURCE_DIGEST);
+    assertThat(fixture.original.executionDigest()).isEqualTo(EXECUTION_DIGEST);
+    assertThat(fixture.original.candidateDigest()).isEqualTo(CANDIDATE_DIGEST);
     assertThat(proof.operationId()).isEqualTo(fixture.original.transferId());
     assertThat(proof.requestId()).isEqualTo(fixture.original.requestId());
     assertThat(proof.accountId()).isEqualTo(fixture.original.accountId());
@@ -687,8 +695,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
           new CanonicalGameplayRegionOwnerTransferObservationSource.Context(
               UUID.randomUUID(),
               3L,
-              DIGEST,
-              DIGEST,
+              TRANSFER_INTENT_DIGEST,
+              FROZEN_SOURCE_DIGEST,
               ownerId,
               7L,
               tenant,
@@ -699,8 +707,8 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
               UUID.randomUUID(),
               UUID.randomUUID(),
               UUID.randomUUID(),
-              DIGEST,
-              DIGEST,
+              EXECUTION_DIGEST,
+              CANDIDATE_DIGEST,
               "g1-" + tenant.toString().replace("-", ""),
               "test-workload",
               1,

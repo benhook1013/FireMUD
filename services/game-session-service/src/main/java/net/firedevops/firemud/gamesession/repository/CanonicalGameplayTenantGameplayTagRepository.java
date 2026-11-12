@@ -96,6 +96,28 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
         });
   }
 
+  /** Reads the immutable allocation without changing the transfer's region-lock order. */
+  int requireRetainedAllocation(
+      DSLContext transaction, UUID tenantId, String expectedTag, String expectedNamespace) {
+    if (!workloadNamespace.equals(expectedNamespace)) {
+      throw conflict("Retained capacity execution workload namespace differs");
+    }
+    Record mapping =
+        transaction.fetchOne(
+            "SELECT allocation_version, tenant_gameplay_tag FROM "
+                + MAPPING
+                + " WHERE tenant_id = ?",
+            tenantId);
+    if (mapping == null || !expectedTag.equals(mapping.get("tenant_gameplay_tag", String.class))) {
+      throw conflict("Retained capacity execution mapping is unavailable");
+    }
+    Integer version = mapping.get("allocation_version", Integer.class);
+    if (version == null || !tagFor(tenantId, version).equals(expectedTag)) {
+      throw conflict("Retained capacity execution allocation differs");
+    }
+    return version;
+  }
+
   /** Topology-only retained lookup for one irreversibly selected original negative continuation. */
   Assignment assignmentForOriginalNewAbandonment(UUID transitionId, UUID abandonmentId) {
     requireNonNil(transitionId, "transitionId");
