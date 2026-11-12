@@ -1419,6 +1419,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var entered = new java.util.concurrent.CountDownLatch(1);
     var release = new java.util.concurrent.CountDownLatch(1);
     var calls = new java.util.concurrent.atomic.AtomicInteger();
+    var redisReply = new java.util.concurrent.CompletableFuture<Long>();
+    var dispatchedAt = new java.util.concurrent.atomic.AtomicLong();
     String action = installAction ? "INSTALL" : "FINAL";
     RedisClient delayed = mock(RedisClient.class);
     when(delayed.connect(ByteArrayCodec.INSTANCE))
@@ -1430,7 +1432,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     action,
                     entered,
                     release,
-                    calls));
+                    calls,
+                    redisReply,
+                    dispatchedAt));
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var raw = credential.template();
@@ -1478,11 +1482,16 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 frozenDeadline);
         assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
         assertThat(CLOCK.millis()).isLessThan(frozenDeadline);
+        var fencedPhysical = physicalImage();
         release.countDown();
+        assertThat(redisReply.get(2, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(-1L);
+        assertThat(dispatchedAt.get()).isPositive().isLessThan(frozenDeadline);
+        assertThat(CLOCK.millis()).isLessThan(frozenDeadline);
         assertThatThrownBy(() -> old.get(2, java.util.concurrent.TimeUnit.SECONDS))
             .isInstanceOf(java.util.concurrent.ExecutionException.class)
             .hasCauseInstanceOf(IllegalStateException.class);
         assertThat(calls.get()).isOne();
+        assertThat(physicalImage()).isEqualTo(fencedPhysical);
         assertThat(admin.get(ascii(installation.sessionKey())))
             .containsExactly(source.candidate().canonicalBytes());
         assertThat(
@@ -1508,7 +1517,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       String action,
       java.util.concurrent.CountDownLatch entered,
       java.util.concurrent.CountDownLatch release,
-      java.util.concurrent.atomic.AtomicInteger calls) {
+      java.util.concurrent.atomic.AtomicInteger calls,
+      java.util.concurrent.CompletableFuture<Long> redisReply,
+      java.util.concurrent.atomic.AtomicLong dispatchedAt) {
     var commands = actual.async();
     Object delayedCommands =
         java.lang.reflect.Proxy.newProxyInstance(
@@ -1520,14 +1531,21 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                   && args[3] instanceof byte[][] values
                   && values.length == 19
                   && action.equals(new String(values[17], StandardCharsets.US_ASCII))) {
-                calls.incrementAndGet();
                 entered.countDown();
-                if (!release.await(4, java.util.concurrent.TimeUnit.SECONDS))
-                  throw new IllegalStateException("Delayed old invocation not released");
+                if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                  throw new AssertionError("Delayed old invocation not released to Redis");
                 Object[] original = args.clone();
                 original[0] = predecessorSha;
                 try {
-                  return method.invoke(commands, original);
+                  dispatchedAt.set(CLOCK.millis());
+                  var reply = (io.lettuce.core.RedisFuture<Long>) method.invoke(commands, original);
+                  calls.incrementAndGet();
+                  reply.whenComplete(
+                      (value, failure) -> {
+                        if (failure == null) redisReply.complete(value);
+                        else redisReply.completeExceptionally(failure);
+                      });
+                  return reply;
                 } catch (java.lang.reflect.InvocationTargetException failure) {
                   throw failure.getCause();
                 }
