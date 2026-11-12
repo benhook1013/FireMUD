@@ -123,12 +123,12 @@ if action == 'FENCE' then
       if fields ~= 6 or type(sessionSha1) ~= 'string' or #sessionSha1 ~= 40
           or not string.match(sessionSha1, '^[0-9a-f]+$') or not admissionAt or not continuity
           or continuity <= admissionAt or continuity - admissionAt > 300000 then return -1 end
-      return 2
+      return 9
     end
     if fields ~= 3 then return -1 end
     -- Completed exact outcomes are read-only, even after the operation deadline.
-    if state == 'FENCED_INDETERMINATE' then return 5 end
-    if state == 'CLOSED' then return 4 end
+    if state == 'FENCED_INDETERMINATE' then return 8 end
+    if state == 'CLOSED' then return 7 end
     if state ~= 'AUTHORIZED' then return -1 end
   end
   local fenceTime = redis.call('TIME')
@@ -153,8 +153,8 @@ if action == 'CLOSE' then
       or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
       or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
   local state = redis.call('HGET', KEYS[7], 'state')
-  if state == 'CLOSED' and redis.call('HLEN', KEYS[7]) == 3 then return 4 end
-  if state == 'COMMITTED' and redis.call('HLEN', KEYS[7]) == 6 then return 2 end
+  if state == 'CLOSED' and redis.call('HLEN', KEYS[7]) == 3 then return 7 end
+  if state == 'COMMITTED' and redis.call('HLEN', KEYS[7]) == 6 then return 9 end
   if state ~= 'AUTHORIZED' or redis.call('HLEN', KEYS[7]) ~= 3
       or redis.call('TYPE', KEYS[1]).ok ~= 'string' or redis.call('PTTL', KEYS[1]) ~= -1
       or redis.call('GET', KEYS[1]) ~= candidateBytes
@@ -256,11 +256,14 @@ if capacityType ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
     or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
     or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
 local capacityState = redis.call('HGET', KEYS[7], 'state')
-if capacityState == 'CLOSED' then return 4 end
+if capacityState == 'CLOSED' then return 7 end
 if capacityState ~= 'AUTHORIZED' and capacityState ~= 'COMMITTED' then return -1 end
 if (capacityState == 'AUTHORIZED' and redis.call('HLEN', KEYS[7]) ~= 3)
     or (capacityState == 'COMMITTED' and redis.call('HLEN', KEYS[7]) ~= 6) then return -1 end
-if action == 'INSTALL' then return 3 end
+if action == 'INSTALL' then
+  if capacityState == 'AUTHORIZED' then return 6 end
+  return 9
+end
 local observed = redis.call('GET', KEYS[1])
 
 if observed ~= candidateBytes then

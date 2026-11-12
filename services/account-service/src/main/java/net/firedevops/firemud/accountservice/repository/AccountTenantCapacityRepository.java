@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
@@ -134,9 +135,7 @@ public final class AccountTenantCapacityRepository {
   public void requireFresh(Evidence evidence) {
     transaction();
     Instant now = time(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at"), "observed_at");
-    if (now.isBefore(evidence.evaluatedAt())
-        || !now.isBefore(evidence.expiresAt().truncatedTo(java.time.temporal.ChronoUnit.MICROS)))
-      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+    requireCurrentLifetime(evidence, now);
   }
 
   /** The owner already holds this usage row before its final current-source qualification. */
@@ -169,6 +168,14 @@ public final class AccountTenantCapacityRepository {
             at(expiresAt.plusSeconds(60)));
     if (created != 1) throw unavailable();
     return exact(request, Objects.requireNonNull(find(request.identity())));
+  }
+
+  public static void requireCurrentLifetime(Evidence evidence, Instant now) {
+    // PostgreSQL stores microseconds. Floor the bound, never round an expiry forward.
+    if (now.isBefore(evidence.evaluatedAt())
+        || !now.isBefore(evidence.expiresAt().truncatedTo(ChronoUnit.MICROS))) {
+      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+    }
   }
 
   public void updateUsage(Request request, Record before, long held, long used) {

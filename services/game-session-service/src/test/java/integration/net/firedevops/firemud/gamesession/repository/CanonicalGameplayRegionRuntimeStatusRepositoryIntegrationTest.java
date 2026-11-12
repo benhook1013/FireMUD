@@ -742,6 +742,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var installed = proof.install(id);
       String completed = proof.transferImage(id);
       assertSqlGuard(() -> proof.rawReplaceOwner("different-successor", "f".repeat(64)));
+      assertThatThrownBy(() -> proof.seedUndeliveredDispatch(proof.newControlledExecution()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Region dispatch requires the exact current selected owner");
       assertThat(proof.currentOwner()).isEqualTo(installed);
       assertThat(proof.transferImage(id)).isEqualTo(completed);
     }

@@ -1,5 +1,13 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.CAPACITY_EXECUTION_AUTHORIZED;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.CAPACITY_EXECUTION_AUTHORIZED_OBSERVED;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.CAPACITY_EXECUTION_CLOSED;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.CAPACITY_EXECUTION_CLOSED_OBSERVED;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.CAPACITY_EXECUTION_COMMITTED_OBSERVED;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.CAPACITY_EXECUTION_FENCED_INDETERMINATE;
+import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED;
+
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -174,6 +182,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return;
     }
     budget.check();
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
     var assignment = scopedTags().assignmentForTransition(execution.transitionId());
     boolean dispatch =
         sql()
@@ -237,7 +246,9 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   execution,
                   "INSTALL",
                   budget.absoluteDeadlineMillis());
-      if (result != 3) throw unavailable();
+      if (result != CAPACITY_EXECUTION_AUTHORIZED
+          && result != CAPACITY_EXECUTION_AUTHORIZED_OBSERVED
+          && result != CAPACITY_EXECUTION_COMMITTED_OBSERVED) throw unavailable();
     }
     Map<String, byte[]> physical = readExecution(execution, assignment.tenantGameplayTag());
     String state = text(physical.get("state"));
@@ -315,11 +326,12 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         scopedFinalOwner()
             .closeCapacityExecutionOnce(
                 execution, candidate, assignment, budget.absoluteDeadlineMillis());
-    if (result == 2) {
+    if (result == CAPACITY_EXECUTION_COMMITTED_OBSERVED) {
       retainCommittedBeforeCleanup(request, reservation, budget.absoluteDeadlineMillis());
       throw unavailable();
     }
-    if (result != 4) throw unavailable();
+    if (result != CAPACITY_EXECUTION_CLOSED && result != CAPACITY_EXECUTION_CLOSED_OBSERVED)
+      throw unavailable();
     Map<String, byte[]> physical = readExecution(execution, assignment.tenantGameplayTag());
     exactPhysicalBinding(physical, execution, "CLOSED");
     requireCandidateAndIndexes(row, candidate, null, execution);
@@ -627,16 +639,17 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         scopedFinalOwner()
             .fenceCapacityExecutionOnce(
                 execution, item.candidate(), item.assignment(), budget.absoluteDeadlineMillis());
-    if (result == 2) {
+    if (result == CAPACITY_EXECUTION_COMMITTED_OBSERVED) {
       // Merely seeing a COMMITTED hash must not release old-generation custody.
       retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
-    } else if (result == 4) {
+    } else if (result == CAPACITY_EXECUTION_CLOSED_OBSERVED) {
       if ("CLOSED".equals(row.get("status", String.class))) {
         readExact(execution.request(), execution.reservation(), false);
       } else {
         closeOriginalAttempt(execution.request(), execution.reservation());
       }
-    } else if (result != 5) throw unavailable();
+    } else if (result != CAPACITY_EXECUTION_FENCED_INDETERMINATE
+        && result != CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED) throw unavailable();
     return readTransferFence(item, deadline);
   }
 

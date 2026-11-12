@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -92,6 +93,31 @@ class AccountTenantCapacityOwnerTest {
         }
       }
     }
+  }
+
+  @Test
+  void expiryWhileWaitingForUsageDoesNotReserveCapacity() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    DSLContext dsl = mock(DSLContext.class);
+    Record usage = mock(Record.class);
+    Record databaseTime = mock(Record.class);
+    when(databaseTime.get("observed_at", java.time.OffsetDateTime.class))
+        .thenReturn(AccountTenantCapacityRepository.at(request.evidence().expiresAt()));
+    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(usage);
+    when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at")).thenReturn(databaseTime);
+    var repository = new AccountTenantCapacityRepository(dsl);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThatThrownBy(
+            () ->
+                repository.create(request, repository.usage(request), request.evidence().expiresAt()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+    var order = inOrder(dsl);
+    order.verify(dsl).fetchOne(anyString(), any(Object[].class));
+    order.verify(dsl).fetchSingle("SELECT clock_timestamp() AS observed_at");
+    verify(dsl, never()).execute(anyString(), any(Object[].class));
   }
 
   @Test
