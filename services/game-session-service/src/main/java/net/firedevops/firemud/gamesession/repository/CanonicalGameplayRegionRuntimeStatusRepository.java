@@ -780,6 +780,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
               throw unavailable();
             }
 
+            if (transferProof != null) transferProof.requireFresh();
             Record fenceRow =
                 transaction.fetchOne("SELECT nextval('" + FENCE_SEQUENCE + "') AS fence");
             Long fence = fenceRow == null ? null : fenceRow.get("fence", Long.class);
@@ -793,8 +794,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                   current,
                   ownerInstanceId,
                   fence,
-                  leaseTokenCorrelation,
-                  now);
+                  leaseTokenCorrelation);
             } else if (current != null
                 && CanonicalGameplayRegionOwnerTransferRepository.frozen(
                     transaction,
@@ -888,6 +888,7 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                 || !result.tenantRegionTag().equals(expectedTag)) {
               throw unavailable();
             }
+            if (transferProof != null) transferProof.requireFresh();
             return result;
           });
     } catch (RuntimeException failure) {
