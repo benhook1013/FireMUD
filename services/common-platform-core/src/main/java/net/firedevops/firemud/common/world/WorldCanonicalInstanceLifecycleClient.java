@@ -72,13 +72,15 @@ public final class WorldCanonicalInstanceLifecycleClient
       throw new IllegalArgumentException(
           "World canonical lifecycle request must use the configured workload namespace");
     }
-    Deadline callDeadline = Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
-    if (operationDeadline != null) callDeadline = callDeadline.minimum(operationDeadline);
+    var stub = requireStub();
+    var timedStub =
+        operationDeadline == null
+            ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            : stub.withDeadline(
+                operationDeadline.minimum(Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
     var response =
-        requireStub()
-            .withDeadline(callDeadline)
-            .readWorldCanonicalInstanceLifecycle(
-                WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request));
+        timedStub.readWorldCanonicalInstanceLifecycle(
+            WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(request));
     try {
       return WorldCanonicalInstanceLifecycleGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
