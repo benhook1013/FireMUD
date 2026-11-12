@@ -218,6 +218,27 @@ classify_failure_body() {
         jooq_execution_causes++
         next
       }
+      # Gradle 9.9 can resolve annotation processors while serializing the
+      # compiler-fork predicate, before it starts the Java compile task.
+      if (line ~ /^Configuration cache state could not be cached: field `annotationProcessorPath` of `org\.gradle\.api\.tasks\.compile\.CompileOptions_Decorated` bean found in captured state from method `org\.gradle\.api\.internal\.tasks\.compile\.CompilerForkUtils\.doNotCacheIfForkingViaExecutable\$[[:xdigit:]]+` of lambda of type `org\.gradle\.api\.internal\.lambdas\.SerializableLambdas\$SerializableSpec` returning `boolean` found in field `spec` of `org\.gradle\.api\.internal\.tasks\.execution\.SelfDescribingSpec` bean found in doNotCacheIf specs of task `:[[:alnum:]-]+:compileJava` of type `org\.gradle\.api\.tasks\.compile\.JavaCompile`: error writing value of type \047org\.gradle\.api\.internal\.artifacts\.configurations\.DefaultLegacyConfiguration\047$/) {
+        module = line
+        sub(/^.* specs of task `/, "", module)
+        sub(/:compileJava`.*$/, "", module)
+        expected_wrapped_configuration = module ":annotationProcessor"
+        wrapped_resolution_causes++
+        wrapped_cache_cause = 1
+        cache_cause++
+        next
+      }
+      # Protobuf extracts dependency protos before generation or compilation.
+      if (line ~ /^Execution failed for task \047:[[:alnum:]-]+:extractIncludeProto\047 \(registered by plugin \047com\.google\.protobuf\047\)\.$/) {
+        module = line
+        sub(/^Execution failed for task \047/, "", module)
+        sub(/:extractIncludeProto\047.*$/, "", module)
+        expected_wrapped_configuration = module ":compileProtoPath"
+        wrapped_resolution_causes++
+        next
+      }
       if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/ ||
           line ~ /^- Task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/) {
         if (match(line, /`:[^`]+:compile[A-Za-z0-9]+`/)) {
@@ -239,7 +260,7 @@ classify_failure_body() {
           line == ("> If the artifact you are trying to retrieve can be found in the repository but without metadata in " quote "Maven POM" quote " format, you need to adjust the " quote "metadataSources { ... }" quote " of the repository declaration.") ||
           line == "Deprecated Gradle features were used in this build, making it incompatible with Gradle 10." ||
           line == "You can use \047--warning-mode all\047 to show the individual deprecation warnings and determine if they come from your own scripts or plugins." ||
-          line == "For more on this, please refer to https://docs.gradle.org/9.8.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation." ||
+          line ~ /^For more on this, please refer to https:\/\/docs\.gradle\.org\/[0-9]+\.[0-9]+\.[0-9]+\/userguide\/command_line_interface\.html#sec:command_line_warnings in the Gradle documentation\.$/ ||
           line ~ /^[0-9]+ actionable tasks: [0-9]+ executed, [0-9]+ from cache$/) {
         next
       }
@@ -256,6 +277,7 @@ classify_failure_body() {
         if (substr(configuration_name, 1, 1) == quote) {
           configuration_name = substr(configuration_name, 2, length(configuration_name) - 2)
         }
+        resolved_configuration = configuration_name
         if (configuration_name == "classpath") buildsrc_classpath++
         if (configuration_name ~ /^:[[:alnum:]-]+:jooqCodegen$/) {
           jooq_codegen_roots++
@@ -336,6 +358,11 @@ classify_failure_body() {
              cache_cause || compile_task_failure || searched)) ||
           (cache_summary && (cache_cause == 0 || cache_cause > 2)) ||
           (compile_task_failure && compile_classpath_roots == 0) ||
+          (wrapped_resolution_causes &&
+            (wrapped_resolution_causes != 1 || resolver_roots != 1 ||
+             expected_wrapped_configuration != resolved_configuration ||
+             cache_cause != wrapped_cache_cause || compile_task_failure ||
+             jooq_wrapper_causes || jooq_execution_causes)) ||
           (jooq_wrapper_causes &&
             (jooq_wrapper_causes != 1 || jooq_codegen_roots != 1 || resolver_roots != 1 ||
              cache_cause != 1 || jooq_execution_causes || jooq_module == "" || jooq_root_module != jooq_module)) ||
@@ -346,6 +373,7 @@ classify_failure_body() {
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
+      if (wrapped_resolution_causes) print "before-compile"
       exit 0
     }
   ' "$log_path"
@@ -354,6 +382,7 @@ classify_failure_body() {
 is_dependency_resolution_failure() {
   local log_path="$1"
   local body_path
+  local resolution_boundary
   local substantive_status=0
 
   body_path="$(mktemp "${TEMP_DIR%/}/failure-body.XXXXXX")" || return 1
@@ -361,7 +390,7 @@ is_dependency_resolution_failure() {
     rm -f -- "$body_path"
     return 1
   fi
-  if ! classify_failure_body "$body_path"; then
+  if ! resolution_boundary="$(classify_failure_body "$body_path")"; then
     rm -f -- "$body_path"
     return 1
   fi
@@ -428,7 +457,8 @@ is_dependency_resolution_failure() {
   rm -f -- "$body_path"
   case "$substantive_status" in
     0) return 1 ;;
-    1|2) return 0 ;;
+    1) return 0 ;;
+    2) [[ "$resolution_boundary" != before-compile ]] ;;
     *) return 1 ;;
   esac
 }

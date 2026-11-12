@@ -362,6 +362,78 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Configuration cache state could not be cached: field \`classpath\` of \`org.gradle.process.internal.DefaultJavaExecSpec_Decorated\`"
 assert_output_contains "refreshed-captured-jooq-resolution"
 
+# Gradle 9.9 can fail before source compilation while resolving inputs for the
+# protobuf plugin's registered extraction task or while serializing a forked
+# compiler's annotation processor path. Both shapes refresh once only when
+# task, module, and configuration agree.
+new_case protobuf-include-proto-resolution
+cat > "$CASE_DIR/cause.log" <<'LOG'
+> Task :account-service:extractIncludeProto
+> Task :account-service:extractIncludeProto FAILED
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task ':account-service:extractIncludeProto' (registered by plugin 'com.google.protobuf').
+> Could not resolve all files for configuration ':account-service:compileProtoPath'.
+   > Could not find lombok-1.18.48.jar (org.projectlombok:lombok:1.18.48).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/projectlombok/lombok/1.18.48/lombok-1.18.48.jar
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-protobuf-include-proto; exit 0'
+run_case account-service 0
+assert_call_count 2
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck --profile --info --console=plain"
+assert_output_contains "registered by plugin 'com.google.protobuf'"
+assert_output_contains "refreshed-protobuf-include-proto"
+
+new_case annotation-processor-path-resolution
+cat > "$CASE_DIR/cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `annotationProcessorPath` of `org.gradle.api.tasks.compile.CompileOptions_Decorated` bean found in captured state from method `org.gradle.api.internal.tasks.compile.CompilerForkUtils.doNotCacheIfForkingViaExecutable$f0a6ff5d` of lambda of type `org.gradle.api.internal.lambdas.SerializableLambdas$SerializableSpec` returning `boolean` found in field `spec` of `org.gradle.api.internal.tasks.execution.SelfDescribingSpec` bean found in doNotCacheIf specs of task `:common-platform-core:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration'
+> Could not resolve all files for configuration ':common-platform-core:annotationProcessor'.
+   > Could not find lombok-1.18.48.jar (org.projectlombok:lombok:1.18.48).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/projectlombok/lombok/1.18.48/lombok-1.18.48.jar
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then cat "$CASE_DIR/cause.log"; exit 1; fi; echo refreshed-annotation-processors; exit 0'
+run_case common-platform-core 0
+assert_call_count 2
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :common-platform-core:check -PfullCheck --profile --info --console=plain"
+assert_output_contains "field \`annotationProcessorPath\`"
+assert_output_contains "refreshed-annotation-processors"
+
+# Mismatched ownership, configuration, or another fatal cause must not retry.
+for mutation in wrong-module wrong-configuration extra-cause compile-started; do
+  new_case "protobuf-resolution-invalid-$mutation"
+  cat > "$CASE_DIR/cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task ':account-service:extractIncludeProto' (registered by plugin 'com.google.protobuf').
+> Could not resolve all files for configuration ':account-service:compileProtoPath'.
+   > Could not find lombok-1.18.48.jar (org.projectlombok:lombok:1.18.48).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/projectlombok/lombok/1.18.48/lombok-1.18.48.jar
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+  case "$mutation" in
+    wrong-module) sed -i 's/:account-service:extractIncludeProto/:world-management-service:extractIncludeProto/' "$CASE_DIR/cause.log" ;;
+    wrong-configuration) sed -i 's/:account-service:compileProtoPath/:account-service:runtimeClasspath/' "$CASE_DIR/cause.log" ;;
+    extra-cause) sed -i '/Could not resolve all files/a > Could not create task :unrelated:check due to invalid configuration.' "$CASE_DIR/cause.log" ;;
+    compile-started) sed -i '1i > Task :account-service:compileJava FAILED' "$CASE_DIR/cause.log" ;;
+  esac
+  # shellcheck disable=SC2016
+  write_wrapper 'cat "$CASE_DIR/cause.log"; exit 1'
+  run_case account-service 1
+  assert_no_retry
+done
+
 # PR 3252 retained a protoc connect timeout under a disabled MavenRepo and
 # the existing pre-execution jOOQ configuration-cache wrapper.
 write_jooq_protoc_timeout_cause() {
