@@ -435,6 +435,28 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void receivingOriginReplaysCommittedFinalWithoutAnotherDispatch() throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      var first = session.complete();
+      assertConfirmed(first, session.genesis());
+      var custody = session.gs.originPhysicalImage();
+      assertThat(custody).containsEntry("state", "DISPATCH_CLAIMED");
+      var budget = session.gs.originBudgetImage();
+      String accountCapacity = session.capacityImage();
+      String durable = session.durableImage();
+      byte[] physical = session.gs.physicalSession();
+      session.restartAccount();
+      assertThat(session.complete()).isEqualTo(first);
+      assertThat(session.gs.originPhysicalImage()).isEqualTo(custody);
+      assertThat(session.gs.originBudgetImage()).isEqualTo(budget);
+      assertThat(session.capacityImage()).isEqualTo(accountCapacity);
+      assertThat(session.durableImage()).isEqualTo(durable);
+      assertThat(session.gs.physicalSession()).containsExactly(physical);
+    }
+  }
+
+  @Test
   void actualCapacityCommitAndAuthenticatedFinalReadFinalizeExactlyOneHold() throws Exception {
     try (Session session = session()) {
       var first = session.complete();

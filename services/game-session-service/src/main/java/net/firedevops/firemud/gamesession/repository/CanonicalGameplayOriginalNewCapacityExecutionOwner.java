@@ -22,6 +22,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -106,22 +107,52 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             selected.fence());
     var repository = new CanonicalGameplayCapacityOriginRepository(sql());
     var retained = repository.prepare(origin);
-    if (retained.state() != CanonicalGameplayCapacityOrigin.State.OPEN) throw unavailable();
-    originRedis()
-        .apply(
-            origin,
-            CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
-            selected.instanceId(),
-            selected.fence(),
-            selected.instanceId(),
-            selected.fence(),
-            retained.state(),
-            deadline);
+    if (!retained.ownerId().equals(selected.instanceId())
+        || retained.ownerFence() != selected.fence()) throw unavailable();
+    if (retained.state() == CanonicalGameplayCapacityOrigin.State.OPEN) {
+      originRedis()
+          .apply(
+              origin,
+              CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
+              selected.instanceId(),
+              selected.fence(),
+              selected.instanceId(),
+              selected.fence(),
+              retained.state(),
+              deadline);
+    } else if (retained.state() == CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED) {
+      requireCommittedOriginReplay(source, origin, retained);
+    } else {
+      throw unavailable();
+    }
     var after = repository.read(origin);
     if (!after.ownerId().equals(selected.instanceId())
         || after.ownerFence() != selected.fence()
-        || after.state() != CanonicalGameplayCapacityOrigin.State.OPEN) throw unavailable();
+        || after.state() != retained.state()) throw unavailable();
     return origin;
+  }
+
+  private void requireCommittedOriginReplay(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayCapacityOrigin origin,
+      CanonicalGameplayCapacityOriginRepository.Retained retained) {
+    var execution =
+        CanonicalGameplayRegionOwnerTransferRepository.decode(retained.accountResolution());
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
+    if (!Arrays.equals(
+            CapacityAdmissionDigest.preimage(origin.request()),
+            CapacityAdmissionDigest.preimage(execution.request()))
+        || !origin.selectedOwnerId().equals(execution.selectedOwnerId())
+        || origin.selectedOwnerFence() != execution.selectedOwnerFence()) throw unavailable();
+    Record row = find(sql(), execution);
+    if (row == null) throw unavailable();
+    exact(row, execution);
+    String status = row.get("status", String.class);
+    if (!"AUTHORIZED".equals(status) && !"COMMITTED".equals(status)) throw unavailable();
+    originRedis().readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
+    // Existing authorization is insufficient: an exact replay must observe the prior FINAL.
+    exactPhysicalBinding(
+        readExecution(execution, origin.tenantGameplayTag()), execution, "COMMITTED");
   }
 
   /**
