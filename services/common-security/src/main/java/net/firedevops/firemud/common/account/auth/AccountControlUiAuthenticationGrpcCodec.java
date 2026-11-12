@@ -97,14 +97,26 @@ public final class AccountControlUiAuthenticationGrpcCodec {
 
   public enum Outcome {
     SUCCESS,
-    DENIED
+    DENIED,
+    RETRY_LATER,
+    ABUSE_UNAVAILABLE
   }
 
   /** A denial intentionally carries no account identity or token. */
-  public record Result(Outcome outcome, Authenticated authenticated) {
+  public record Result(Outcome outcome, Authenticated authenticated, Long retryAfterMillis) {
+    public Result(Outcome outcome, Authenticated authenticated) {
+      this(outcome, authenticated, null);
+    }
+
     public Result {
       Objects.requireNonNull(outcome);
       if ((outcome == Outcome.SUCCESS) != (authenticated != null)) throw invalid();
+      if (outcome == Outcome.RETRY_LATER && retryAfterMillis == null) throw invalid();
+      if (retryAfterMillis != null) {
+        if ((outcome != Outcome.RETRY_LATER && outcome != Outcome.ABUSE_UNAVAILABLE)
+            || retryAfterMillis < 1
+            || retryAfterMillis > 9_007_199_254_740_991L) throw invalid();
+      }
     }
 
     @Override
@@ -173,6 +185,29 @@ public final class AccountControlUiAuthenticationGrpcCodec {
     return wire;
   }
 
+  /** Closed policy refusal; never contains account fields or echoes credential data. */
+  public static AuthLoginResponse toRefusalResponse(
+      Request request, Outcome outcome, Long retryAfterMillis) {
+    new Result(outcome, null, retryAfterMillis);
+    if (outcome != Outcome.RETRY_LATER && outcome != Outcome.ABUSE_UNAVAILABLE) throw invalid();
+    var builder =
+        AuthLoginResponse.newBuilder()
+            .addSchemaVersion(SCHEMA_VERSION)
+            .addTargetNamespace(request.callerNamespace())
+            .addRequestId(request.requestId().toString())
+            .addCallerContextId(request.callerContextId().toString())
+            .addStatus(
+                outcome == Outcome.RETRY_LATER
+                    ? AccountControlUiAuthLoginStatus
+                        .ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_RETRY_LATER
+                    : AccountControlUiAuthLoginStatus
+                        .ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_ABUSE_UNAVAILABLE);
+    if (retryAfterMillis != null) builder.addRetryAfterMillis(retryAfterMillis);
+    var wire = builder.build();
+    requireResponse(request, wire);
+    return wire;
+  }
+
   /** Validates the complete response against the exact request before exposing a token. */
   public static Result requireResponse(Request request, AuthLoginResponse wire) {
     Objects.requireNonNull(request);
@@ -186,6 +221,27 @@ public final class AccountControlUiAuthenticationGrpcCodec {
         || wire.getStatusValueList().size() != 1) throw invalid();
 
     int status = wire.getStatusValueList().getFirst();
+    if (status
+            == AccountControlUiAuthLoginStatus
+                .ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_RETRY_LATER_VALUE
+        || status
+            == AccountControlUiAuthLoginStatus
+                .ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_ABUSE_UNAVAILABLE_VALUE) {
+      if (!wire.getAccountIdList().isEmpty()
+          || !wire.getAuthTokenList().isEmpty()
+          || !wire.getExpiresAtEpochSecondsList().isEmpty()) throw invalid();
+      Long retry =
+          wire.getRetryAfterMillisList().isEmpty() ? null : oneLong(wire.getRetryAfterMillisList());
+      return new Result(
+          status
+                  == AccountControlUiAuthLoginStatus
+                      .ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_RETRY_LATER_VALUE
+              ? Outcome.RETRY_LATER
+              : Outcome.ABUSE_UNAVAILABLE,
+          null,
+          retry);
+    }
+    if (!wire.getRetryAfterMillisList().isEmpty()) throw invalid();
     if (status
         == AccountControlUiAuthLoginStatus.ACCOUNT_CONTROL_UI_AUTH_LOGIN_STATUS_DENIED_VALUE) {
       if (!wire.getAccountIdList().isEmpty()

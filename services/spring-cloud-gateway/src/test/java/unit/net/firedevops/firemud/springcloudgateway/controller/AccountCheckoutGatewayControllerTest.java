@@ -46,6 +46,33 @@ class AccountCheckoutGatewayControllerTest {
   private static final String TOKEN = "header.payload.signature";
 
   @Test
+  void sharedAbuseRefusalsAreNoStoreAndRoundRetryHeaderUpWithoutCredentialRetry() {
+    for (var outcome :
+        java.util.List.of(
+            AccountControlUiAuthenticationGrpcCodec.Outcome.RETRY_LATER,
+            AccountControlUiAuthenticationGrpcCodec.Outcome.ABUSE_UNAVAILABLE)) {
+      var auth = mock(AccountControlUiAuthenticationClient.class);
+      var controller =
+          new AccountCheckoutGatewayController(
+              auth, mock(AccountCheckoutHttpClient.class), properties());
+      when(auth.login(any()))
+          .thenReturn(new AccountControlUiAuthenticationGrpcCodec.Result(outcome, null, 1501L));
+      var response =
+          controller.login(secureExchange("/api/account/auth/login", loginJson())).block();
+      assertThat(response.getStatusCode())
+          .isEqualTo(
+              outcome == AccountControlUiAuthenticationGrpcCodec.Outcome.RETRY_LATER
+                  ? HttpStatus.TOO_MANY_REQUESTS
+                  : HttpStatus.SERVICE_UNAVAILABLE);
+      assertThat(response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isEqualTo("2");
+      assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+      assertThat(new String(response.getBody(), StandardCharsets.UTF_8))
+          .doesNotContain(SECRET, TOKEN, ACCOUNT_ID.toString());
+      verify(auth).login(any());
+    }
+  }
+
+  @Test
   void loginRequiresActualTlsAndReturnsNoStoreSuccessWithoutEchoingSecret() {
     var authClient = mock(AccountControlUiAuthenticationClient.class);
     var checkoutClient = mock(AccountCheckoutHttpClient.class);

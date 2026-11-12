@@ -23,6 +23,43 @@ import org.junit.jupiter.api.Test;
 
 class AccountControlUiAuthenticationGrpcServiceTest {
   @Test
+  void sharedPolicyRefusalsRemainClosedWireOutcomesRatherThanCredentialDenials() {
+    var issuer = mock(AccountControlUiIssuanceService.class);
+    var actors = mock(AccountControlUiActorService.class);
+    var receiver = new AccountControlUiAuthenticationGrpcService(issuer, actors, "test");
+    var request = request("test");
+    for (var outcome :
+        java.util.List.of(
+            net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService.Outcome
+                .RETRY_LATER,
+            net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService.Outcome
+                .UNAVAILABLE)) {
+      var refusal =
+          net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseRefusal.from(
+              new net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService
+                  .Decision(outcome, java.time.Duration.ofMillis(1501), null));
+      org.mockito.Mockito.doThrow(refusal).when(issuer).issueAccount(any());
+      var response = new Result();
+      gateway()
+          .run(
+              () ->
+                  receiver.authLogin(
+                      AccountControlUiAuthenticationGrpcCodec.toRequest(request), response));
+      assertThat(response.completed).isTrue();
+      assertThat(response.failureCode).isNull();
+      var parsed = AccountControlUiAuthenticationGrpcCodec.requireResponse(request, response.value);
+      assertThat(parsed.outcome())
+          .isEqualTo(
+              refusal.retryLater()
+                  ? AccountControlUiAuthenticationGrpcCodec.Outcome.RETRY_LATER
+                  : AccountControlUiAuthenticationGrpcCodec.Outcome.ABUSE_UNAVAILABLE);
+      assertThat(parsed.retryAfterMillis()).isEqualTo(1501L);
+      assertThat(parsed.authenticated()).isNull();
+    }
+    verifyNoInteractions(actors);
+  }
+
+  @Test
   void missingAndWrongPeerAreDeniedBeforeDecodeOrPrimaryAuthentication() {
     var issuer = mock(AccountControlUiIssuanceService.class);
     var actors = mock(AccountControlUiActorService.class);
