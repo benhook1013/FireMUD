@@ -416,9 +416,16 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
 
   static void requireVerified(DSLContext tx, UUID transferId, UUID round) {
     requireComplete(tx, transferId);
-    Record transfer = CanonicalGameplayRegionOwnerTransferRepository.current(tx, transferId, false);
-    if (round == null
-        || !round.equals(transfer.get("origin_verification_round", UUID.class))
+    if (round == null) {
+      // The complete anti-join above proves that there is no retained origin cohort to verify.
+      // A missing round cannot qualify any captured origin item.
+      if (exists(tx, "SELECT 1 FROM " + ITEM + " WHERE transfer_id=?", transferId))
+        throw held();
+      return;
+    }
+    Record transfer =
+        CanonicalGameplayRegionOwnerTransferRepository.current(tx, transferId, false);
+    if (!round.equals(transfer.get("origin_verification_round", UUID.class))
         || exists(
             tx,
             "SELECT 1 FROM " + ITEM + " WHERE transfer_id=? AND verified_round IS DISTINCT FROM ?",

@@ -146,7 +146,8 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
         budget -> {
           origins.requireCaptured(transferId);
           var first = repository.page(transferId, -1);
-          if (first.isEmpty() && !origins.hasItems(transferId)) {
+          boolean hasOriginItems = origins.hasItems(transferId);
+          if (first.isEmpty() && !hasOriginItems) {
             // Only a genuinely empty dual-family inventory may use the terminal-only path.
             return new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl))
                 .installOwner(
@@ -159,19 +160,25 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                     clock.instant());
           }
           if (!"game-session-service".equals(ownerService)) throw held();
-          repository.prepareSuccessor(transferId, ownerInstanceId, leaseCorrelation);
           var owner = capacity.forTransferBudget(budget);
-          // One durable physical-capture page per attempt. A lost reply repeats this exact CAS,
-          // retaining the same successor identity and fence, without consulting Account.
-          for (var item : origins.unfenced(transferId)) {
-            var originBefore = observeOrigin(item, budget.absoluteDeadlineMillis());
-            var actual = owner.transferOriginCustody(item, budget.absoluteDeadlineMillis());
-            var originAfter = observeOrigin(item, budget.absoluteDeadlineMillis());
-            origins.retainFence(
-                item, actual, originBefore, originAfter, budget.absoluteDeadlineMillis());
+          UUID originRound = null;
+          List<CanonicalGameplayCapacityOriginTransferRepository.Item> firstOrigins =
+              List.of();
+          if (hasOriginItems) {
+            // The physical origin custody CAS names this reserved successor.
+            repository.prepareSuccessor(transferId, ownerInstanceId, leaseCorrelation);
+            // One durable physical-capture page per attempt. A lost reply repeats this exact CAS,
+            // retaining the same successor identity and fence, without consulting Account.
+            for (var item : origins.unfenced(transferId)) {
+              var originBefore = observeOrigin(item, budget.absoluteDeadlineMillis());
+              var actual = owner.transferOriginCustody(item, budget.absoluteDeadlineMillis());
+              var originAfter = observeOrigin(item, budget.absoluteDeadlineMillis());
+              origins.retainFence(
+                  item, actual, originBefore, originAfter, budget.absoluteDeadlineMillis());
+            }
+            originRound = origins.beginVerification(transferId);
+            firstOrigins = origins.page(transferId, -1);
           }
-          UUID originRound = origins.beginVerification(transferId);
-          var firstOrigins = origins.page(transferId, -1);
           var before =
               first.isEmpty()
                   ? observeOrigin(firstOrigins.getFirst(), budget.absoluteDeadlineMillis())
@@ -215,7 +222,13 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                   : observe(first.getFirst(), budget.absoluteDeadlineMillis());
           var proof =
               repository.qualify(
-                  transferId, before, after, originRound, budget.absoluteDeadlineMillis());
+                  transferId,
+                  before,
+                  after,
+                  originRound,
+                  ownerInstanceId,
+                  leaseCorrelation,
+                  budget.absoluteDeadlineMillis());
           var installed =
               new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl))
                   .installOwner(
