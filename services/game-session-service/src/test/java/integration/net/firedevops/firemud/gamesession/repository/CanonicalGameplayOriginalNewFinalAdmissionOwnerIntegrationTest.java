@@ -83,6 +83,30 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       controlledCapacity;
   private CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding regionBinding;
 
+  @Test
+  void physicalImageRetainsAbsoluteExpiryRatherThanOnlyItsPresence() {
+    byte[] key = "physical-image-expiry".getBytes(StandardCharsets.US_ASCII);
+    admin.set(key, "unchanged".getBytes(StandardCharsets.US_ASCII));
+    byte[] persistent =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
+    long expiresAt = System.currentTimeMillis() + 60_000L;
+    admin.pexpireat(key, expiresAt);
+    byte[] expiring =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
+    assertThat(expiring).isNotEqualTo(persistent);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isEqualTo(expiring);
+    admin.pexpireat(key, expiresAt + 600_000L);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isNotEqualTo(expiring);
+    admin.persist(key);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isEqualTo(persistent);
+    admin.del(key);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isNotEqualTo(persistent);
+  }
+
   @BeforeEach
   void setUp() throws Exception {
     administrator = client(null, null);
@@ -894,7 +918,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     sources.resolver,
                     transfer,
                     deadline()))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("A first binding cannot proceed while an active controller exists");
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
         .contains(successor.status);

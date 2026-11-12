@@ -15,10 +15,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture {
     var output = new ByteArrayOutputStream();
     String type = commands.type(key);
     append(output, type.getBytes(StandardCharsets.US_ASCII));
-    long ttl = commands.pttl(key);
-    // Persistent/missing keys stay exact. Expiring fault fixtures retain a positive-TTL marker;
-    // their separate assertions check expiry without comparing a naturally decreasing duration.
-    append(output, Long.toString(ttl > 0 ? 1 : ttl).getBytes(StandardCharsets.US_ASCII));
+    long expiresAt = commands.pexpiretime(key);
+    append(output, Long.toString(expiresAt).getBytes(StandardCharsets.US_ASCII));
     switch (type) {
       case "none" -> {}
       case "string" -> append(output, commands.get(key));
