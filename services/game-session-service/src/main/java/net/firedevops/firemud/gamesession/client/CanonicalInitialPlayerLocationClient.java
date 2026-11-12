@@ -115,15 +115,17 @@ public final class CanonicalInitialPlayerLocationClient
       throw new IllegalArgumentException(
           "Initial player location region request exceeds its bound");
     }
-    Deadline callDeadline = Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
-    if (operationDeadline != null) callDeadline = callDeadline.minimum(operationDeadline);
-    var stub =
-        requireInitializedStub("World initial player location client is unavailable")
-            .withDeadline(callDeadline)
-            .withMaxInboundMessageSize(MAX_REGION_RESPONSE_BYTES)
-            .withMaxOutboundMessageSize(MAX_REGION_REQUEST_BYTES);
+    var stub = requireInitializedStub("World initial player location client is unavailable");
+    var timedStub =
+        operationDeadline == null
+            ? stub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            : stub.withDeadline(
+                operationDeadline.minimum(Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)));
     CanonicalInitialPlayerLocationRegionResponse response =
-        stub.readInitialPlayerLocationRegion(request);
+        timedStub
+            .withMaxInboundMessageSize(MAX_REGION_RESPONSE_BYTES)
+            .withMaxOutboundMessageSize(MAX_REGION_REQUEST_BYTES)
+            .readInitialPlayerLocationRegion(request);
     requireRegionResponse(request, response);
     return response;
   }
