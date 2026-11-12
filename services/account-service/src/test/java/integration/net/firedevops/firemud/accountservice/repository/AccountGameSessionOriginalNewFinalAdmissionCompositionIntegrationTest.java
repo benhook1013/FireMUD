@@ -585,6 +585,156 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void historicalFinalReceiptSettlesTheSameHoldAfterPhysicalFinalLosesOriginalSqlCommit()
+      throws Exception {
+    try (Session session = session()) {
+      byte[] candidate = session.gs.physicalSession();
+      assertThatThrownBy(
+              () ->
+                  session.gs.completeWithLostOriginalAdmissionCommit(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      System.currentTimeMillis() + 10_000L,
+                      session.capacityClient,
+                      session.capacityRequest))
+          .isInstanceOf(IllegalStateException.class)
+          .hasRootCauseMessage("Controlled loss of original admission SQL commit reply");
+
+      byte[] finalSession = session.gs.physicalSession();
+      assertThat(finalSession).isNotNull().isNotEqualTo(candidate);
+      var physical =
+          tools.jackson.databind.json.JsonMapper.builder().build().readTree(finalSession);
+      assertThat(physical.path("schemaVersion").asInt()).isEqualTo(2);
+      assertThat(physical.path("admissionState").asText()).isEqualTo("COMPLETE");
+      var transition =
+          session
+              .gs
+              .dsl()
+              .fetchSingle(
+                  "SELECT status, original_new_final_session_sha256 FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                  session.gs.decisionId());
+      assertThat(transition.get("status", String.class)).isEqualTo("PROVISIONAL");
+      assertThat(transition.get("original_new_final_session_sha256", String.class)).isNull();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE transition_id = ?",
+                      session.gs.decisionId())
+                  .get(0, String.class))
+          .isEqualTo("AUTHORIZED");
+
+      var reservation =
+          session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
+      assertThat(reservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      var usage =
+          session.dsl.fetchSingle(
+              "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+              reservation.identity().tenantId());
+      assertThat(usage.get("held_units", Long.class)).isOne();
+      assertThat(usage.get("used_units", Long.class)).isZero();
+
+      assertThatThrownBy(
+              () ->
+                  session.capacityRead.readExact(
+                      session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5)))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                      .isEqualTo(Status.Code.UNAVAILABLE));
+
+      var recovery =
+          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+              session.capacityOwner,
+              session.dsl,
+              session.capacityRead,
+              session.capacityRead,
+              CLOCK);
+      var beforeFence = recovery.reconcileHistoricalFinal(session.capacityRequest);
+      assertThat(beforeFence.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+      assertThat(beforeFence.reservationId()).isEqualTo(reservation.reservationId());
+      assertThat(beforeFence.admissionAttemptId()).isEqualTo(reservation.admissionAttemptId());
+      assertThat(beforeFence.capacityRearmFence()).isEqualTo(reservation.capacityRearmFence());
+      var unresolvedUsage =
+          session.dsl.fetchSingle(
+              "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+              reservation.identity().tenantId());
+      assertThat(unresolvedUsage.get("held_units", Long.class)).isOne();
+      assertThat(unresolvedUsage.get("used_units", Long.class)).isZero();
+
+      UUID fenceOperationId =
+          session.gs.acquireAccountFenceAndCaptureFinal(
+              session.capacityRequest, reservation, CLOCK.millis() + 5_000L);
+      var frozenGameSession = session.gs.capacityStateImage();
+      var frozenAccountFence = session.gs.accountAdmissionFenceImage();
+      var frozenAdmission = session.durableImage();
+      var historical =
+          session.capacityRead.readHistoricalFinal(
+              session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
+      assertThat(historical.authenticatedOwnerWorkload()).isEqualTo(GS);
+      assertThat(historical.receipt().fenceOperationId()).isEqualTo(fenceOperationId);
+      assertThat(historical.receipt().execution().reservation()).isEqualTo(reservation);
+      assertThat(historical.receipt().finalSessionSha256())
+          .isEqualTo(
+              java.util.HexFormat.of()
+                  .formatHex(MessageDigest.getInstance("SHA-256").digest(finalSession)));
+
+      var settled = recovery.reconcileHistoricalFinal(session.capacityRequest);
+      assertThat(settled.state()).isEqualTo(TenantCapacityAdmission.State.FINALIZED);
+      assertThat(settled.reservationId()).isEqualTo(reservation.reservationId());
+      assertThat(settled.reservationFence()).isEqualTo(reservation.reservationFence());
+      assertThat(settled.admissionAttemptId()).isEqualTo(reservation.admissionAttemptId());
+      assertThat(settled.capacityRearmFence()).isEqualTo(reservation.capacityRearmFence());
+
+      var replayedHistorical =
+          session.capacityRead.readHistoricalFinal(
+              session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
+      assertThat(replayedHistorical).isEqualTo(historical);
+      assertThat(recovery.reconcileHistoricalFinal(session.capacityRequest)).isEqualTo(settled);
+      assertThatThrownBy(
+              () ->
+                  session.capacityRead.readExact(
+                      session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5)))
+          .isInstanceOf(StatusRuntimeException.class);
+
+      var settledUsage =
+          session.dsl.fetchSingle(
+              "SELECT held_units, used_units FROM account_tenant_capacity_usage WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+              reservation.identity().tenantId());
+      assertThat(settledUsage.get("held_units", Long.class)).isZero();
+      assertThat(settledUsage.get("used_units", Long.class)).isOne();
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isOne();
+      assertThat(
+              session
+                  .dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_tenant_capacity_recovery_evidence WHERE admission_attempt_id = ?",
+                      reservation.admissionAttemptId())
+                  .get(0, Long.class))
+          .isEqualTo(2L);
+      assertThat(session.gs.physicalSession()).containsExactly(finalSession);
+      assertThat(session.gs.capacityStateImage()).isEqualTo(frozenGameSession);
+      assertThat(session.gs.accountAdmissionFenceImage()).isEqualTo(frozenAccountFence);
+      assertThat(session.durableImage()).isEqualTo(frozenAdmission);
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status, original_new_final_session_sha256 FROM game_session_canonical_binding_transition WHERE transition_id = ?",
+                      session.gs.decisionId())
+                  .get("status", String.class))
+          .isEqualTo("PROVISIONAL");
+    }
+  }
+
+  @Test
   void retainedActualCasEvidenceStillFinalizesCapacityAfterControlledServingRetirement()
       throws Exception {
     try (Session session = session()) {

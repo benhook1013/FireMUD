@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
+import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecutionReadGrpcCodec;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
@@ -889,6 +890,29 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             execution.digest(),
             current)
         != 1) throw unavailable();
+  }
+
+  /** Reads the historical acquisition witness using the bounded recovery resource pool. */
+  public OriginalNewCapacityExecutionReadGrpcCodec.HistoricalFinalReadback readHistoricalFinal(
+      Request request, Result reservation) {
+    return withinBackground(
+        Long.MAX_VALUE,
+        owner -> {
+          var receipt =
+              new CanonicalGameplayAccountAdmissionBarrierRepository(owner.sql(), clock)
+                  .readHistoricalFinalReceipt(request, reservation)
+                  .orElseThrow(CanonicalGameplayOriginalNewCapacityExecutionOwner::unavailable);
+          var observation = receipt.observation();
+          return new OriginalNewCapacityExecutionReadGrpcCodec.HistoricalFinalReadback(
+              receipt.execution(),
+              observation.operationId(),
+              observation.finalSessionSha256(),
+              observation.admissionAtMillis(),
+              observation.continuityExpiresAtMillis(),
+              observation.inventorySnapshotRevision().toString(),
+              observation.cohortDigest(),
+              observation.barrierTargetDigest());
+        });
   }
 
   /** Authenticated transport calls this read-only method. Absence and contradictions throw. */

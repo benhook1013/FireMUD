@@ -2924,6 +2924,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               deadline());
       assertThat(intent.state().name()).isEqualTo("ACQUISITION_INTENT");
       assertThat(barrier.readFinalObservation(intent.operationId())).isEmpty();
+      assertThat(
+              barrier.readHistoricalFinalReceipt(
+                  controlledCapacity.request(), controlledCapacity.reservation()))
+          .isEmpty();
       assertThat(intent.cohortRows())
           .filteredOn(
               row ->
@@ -2977,6 +2981,10 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     .operationId())
             .isEqualTo(intent.operationId());
         assertThat(barrier.readFinalObservation(intent.operationId())).isEmpty();
+        assertThat(
+                barrier.readHistoricalFinalReceipt(
+                    controlledCapacity.request(), controlledCapacity.reservation()))
+            .isEmpty();
       }
     }
   }
@@ -3030,6 +3038,57 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       assertThat(receipt.inventorySnapshotRevision()).isEqualTo(revision);
       assertThat(receipt.cohortDigest()).isEqualTo(intent.cohortDigest());
       assertThat(receipt.barrierTargetDigest()).isEqualTo(intent.barrierTargetDigest());
+      var historical =
+          recreated
+              .readHistoricalFinalReceipt(
+                  controlledCapacity.request(), controlledCapacity.reservation())
+              .orElseThrow();
+      assertThat(historical.accountId()).isEqualTo(accountId);
+      assertThat(historical.tenantId())
+          .isEqualTo(controlledCapacity.request().identity().tenantId());
+      assertThat(historical.operationId()).isEqualTo(intent.operationId());
+      assertThat(historical.observation()).isEqualTo(receipt);
+      assertThat(historical.execution().transitionId()).isEqualTo(fixture.transitionId());
+      assertThat(historical.execution().request().mutationDigest())
+          .isEqualTo(controlledCapacity.request().mutationDigest());
+      assertThat(historical.execution().reservation().reservationId())
+          .isEqualTo(controlledCapacity.reservation().reservationId());
+      assertThat(historical.execution().reservation().reservationFence())
+          .isEqualTo(controlledCapacity.reservation().reservationFence());
+      var wrongReservationFence = controlledCapacity.reservation();
+      var mismatchedFence =
+          new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result(
+              wrongReservationFence.identity(),
+              wrongReservationFence.admissionAttemptId(),
+              wrongReservationFence.capacityRearmFence(),
+              wrongReservationFence.mutationDigest(),
+              wrongReservationFence.reservationId(),
+              wrongReservationFence.reservationFence() + 1,
+              wrongReservationFence.expiresAt(),
+              wrongReservationFence.state(),
+              wrongReservationFence.snapshotIdentity(),
+              wrongReservationFence.evaluationIdentity());
+      assertThat(
+              recreated.readHistoricalFinalReceipt(controlledCapacity.request(), mismatchedFence))
+          .isEmpty();
+      var request = controlledCapacity.request();
+      var wrongAttempt =
+          new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                  request.identity(),
+                  UUID.randomUUID(),
+                  request.capacityRearmFence(),
+                  request.targetNamespace(),
+                  request.context(),
+                  request.operation(),
+                  request.priorShape(),
+                  request.requestedShape(),
+                  request.evidence(),
+                  request.capacityDelta(),
+                  null)
+              .withDigest();
+      assertThat(
+              recreated.readHistoricalFinalReceipt(wrongAttempt, controlledCapacity.reservation()))
+          .isEmpty();
       for (String mutation :
           java.util.List.of(
               "UPDATE game_session_account_fence_final_observation"

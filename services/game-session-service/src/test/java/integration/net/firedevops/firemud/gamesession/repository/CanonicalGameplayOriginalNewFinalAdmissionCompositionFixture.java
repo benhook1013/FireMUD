@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
@@ -54,6 +55,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultExecuteListener;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -630,6 +632,62 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
       net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
           capacityRequest) {
+    return complete(
+        binding.dsl(), account, jwks, originalLoginJwt, deadline, capacityClient, capacityRequest);
+  }
+
+  /**
+   * Runs the real coordinator and physical FINAL, then loses the original admission SQL commit
+   * reply after its transition update has executed. PostgreSQL rolls back the update while Redis
+   * retains the independently committed FINAL.
+   */
+  public void completeWithLostOriginalAdmissionCommit(
+      AccountGameplayAdmissionLeaseClient account,
+      AccountPublicJwksCache jwks,
+      String originalLoginJwt,
+      long deadline,
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+          capacityRequest) {
+    var injected = new AtomicBoolean();
+    DSLContext faultDsl =
+        DSL.using(
+            binding
+                .dsl()
+                .configuration()
+                .deriveAppending(
+                    new DefaultExecuteListener() {
+                      @Override
+                      public void executeEnd(org.jooq.ExecuteContext context) {
+                        String query = context.sql();
+                        if (query != null
+                            && query
+                                .toLowerCase(java.util.Locale.ROOT)
+                                .replaceAll("\\s+", " ")
+                                .contains(
+                                    "update game_session_canonical_binding_transition set status = 'committed'")) {
+                          if (!injected.compareAndSet(false, true)) return;
+                          throw new IllegalStateException(
+                              "Controlled loss of original admission SQL commit reply");
+                        }
+                      }
+                    }));
+    complete(faultDsl, account, jwks, originalLoginJwt, deadline, capacityClient, capacityRequest);
+    throw new IllegalStateException(
+        injected.get()
+            ? "Controlled loss of original admission SQL commit reply"
+            : "Original admission SQL commit fault was not reached");
+  }
+
+  private Receipt complete(
+      DSLContext inventoryDsl,
+      AccountGameplayAdmissionLeaseClient account,
+      AccountPublicJwksCache jwks,
+      String originalLoginJwt,
+      long deadline,
+      net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient capacityClient,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+          capacityRequest) {
     // Recreate the coordinator and its SQL/INITIAL/issuer/final owners on every invocation.
     var issuerSource = binding.currentIssuerSource();
     var issuer =
@@ -641,7 +699,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             issuerSource);
     var coordinator =
         new CanonicalGameplayOriginalNewFinalAdmissionCoordinator(
-            new CanonicalGameplayBindingInventoryRepository(binding.dsl()),
+            new CanonicalGameplayBindingInventoryRepository(inventoryDsl),
             account,
             initialOwner(),
             issuer,
@@ -663,6 +721,25 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         result.continuityExpiresAtMillis(),
         result.canonicalSessionDurationMillis(),
         result.finalSessionSha256());
+  }
+
+  /** Performs the real Account fence acquisition, retaining any exact physical pre-intent FINAL. */
+  public UUID acquireAccountFenceAndCaptureFinal(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result reservation,
+      long deadline) {
+    if (!(request.context()
+        instanceof
+        net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext
+            player))
+      throw new IllegalArgumentException("Original NEW player capacity request is required");
+    var owner =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            binding.dsl(), coordination, scripts, CLOCK, tags);
+    return new CanonicalGameplayAccountAdmissionBarrierRepository(binding.dsl(), CLOCK)
+        .beginFenceIntentWithFinalObservation(
+            player.accountId(), UUID.randomUUID(), owner, request, reservation, deadline)
+        .operationId();
   }
 
   /** Compose the origin recovery scripts for the controlled receiver. */
@@ -1066,6 +1143,33 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
           "redis:" + new String(key, StandardCharsets.UTF_8),
           net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
               CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(commands, key)));
+    }
+    return java.util.Map.copyOf(result);
+  }
+
+  /** Read-only image of the frozen Account admission fence and its captured FINAL witness. */
+  public java.util.Map<String, String> accountAdmissionFenceImage() {
+    var result = new java.util.TreeMap<String, String>();
+    for (String table :
+        java.util.List.of(
+            "game_session_canonical_account_coverage_control",
+            "game_session_canonical_account_admission_fence_intent",
+            "game_session_canonical_account_admission_fence_intent_cohort_row",
+            "game_session_canonical_account_admission_fence_intent_barrier_target",
+            "game_session_account_fence_final_observation")) {
+      String rows =
+          binding
+              .dsl()
+              .fetch(
+                  "SELECT (to_jsonb(t) || jsonb_build_object('_xmin', t.xmin::text))::text AS image FROM "
+                      + table
+                      + " t ORDER BY 1")
+              .getValues("image", String.class)
+              .toString();
+      result.put(
+          "sql:" + table,
+          net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+              rows.getBytes(StandardCharsets.UTF_8)));
     }
     return java.util.Map.copyOf(result);
   }
