@@ -276,7 +276,10 @@ if capacityType ~= 'hash' or redis.call('PTTL', KEYS[7]) ~= -1
     or redis.call('HGET', KEYS[7], 'binding') ~= capacityBytes
     or redis.call('HGET', KEYS[7], 'digest') ~= capacityDigest then return -1 end
 local capacityState = redis.call('HGET', KEYS[7], 'state')
-if capacityState == 'CLOSED' then return 7 end
+if capacityState == 'CLOSED' then
+  if redis.call('HLEN', KEYS[7]) ~= 3 then return -1 end
+  return 7
+end
 if capacityState ~= 'AUTHORIZED' and capacityState ~= 'COMMITTED' then return -1 end
 if (capacityState == 'AUTHORIZED' and redis.call('HLEN', KEYS[7]) ~= 3)
     or (capacityState == 'COMMITTED' and redis.call('HLEN', KEYS[7]) ~= 6) then return -1 end

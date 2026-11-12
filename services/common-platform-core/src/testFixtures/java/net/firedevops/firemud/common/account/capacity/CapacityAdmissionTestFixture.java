@@ -28,6 +28,12 @@ public final class CapacityAdmissionTestFixture {
   public static final UUID REQUEST = UUID.fromString("33333333-3333-4333-8333-333333333333");
   public static final UUID ADMISSION = UUID.fromString("44444444-4444-4444-8444-444444444444");
   public static final UUID ATTEMPT = UUID.fromString("55555555-5555-4555-8555-555555555555");
+  public static final UUID PLAYABLE_STATE_NAMESPACE =
+      UUID.fromString("66666666-6666-4666-8666-666666666666");
+  public static final UUID GAME_INSTANCE = UUID.fromString("77777777-7777-4777-8777-777777777777");
+  public static final UUID CHARACTER = UUID.fromString("88888888-8888-4888-8888-888888888888");
+  public static final UUID SESSION = UUID.fromString("99999999-9999-4999-8999-999999999999");
+  public static final UUID REALM = UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
   public static final String PEER = "spiffe://firemud/ns/prod/sa/game-session-service";
   public static final Instant NOW = Instant.parse("2026-11-02T00:00:00Z");
   private static final String HASH = "a".repeat(64);
@@ -53,7 +59,15 @@ public final class CapacityAdmissionTestFixture {
             1,
             "prod",
             new TenantCapacityAdmission.PlayerContext(
-                ACCOUNT, TENANT, REQUEST, REQUEST, ACCOUNT, ADMISSION, REQUEST, REQUEST, "SHARED"),
+                ACCOUNT,
+                TENANT,
+                PLAYABLE_STATE_NAMESPACE,
+                GAME_INSTANCE,
+                CHARACTER,
+                SESSION,
+                REALM,
+                REQUEST,
+                "SHARED"),
             TenantCapacityAdmission.Operation.CAPACITY_CREATING,
             new TenantCapacityAdmission.Shape(0, 0, 0),
             new TenantCapacityAdmission.Shape(1, 0, 0),
@@ -195,11 +209,11 @@ public final class CapacityAdmissionTestFixture {
     target.put("tenantId", TENANT.toString());
     target.put("tenantSlug", "tenant");
     target.put("worldSlug", "world");
-    target.put("realmId", REQUEST.toString());
+    target.put("realmId", REALM.toString());
     target.put("realmSlug", "production");
-    target.put("playableStateNamespaceId", REQUEST.toString());
+    target.put("playableStateNamespaceId", PLAYABLE_STATE_NAMESPACE.toString());
     target.put("playableStateScope", "SHARED");
-    target.put("gameInstanceId", REQUEST.toString());
+    target.put("gameInstanceId", GAME_INSTANCE.toString());
     target.put("canonicalVersionId", REQUEST.toString());
     target.put("catalogRevision", "7");
     target.put("pointerVersion", "3");

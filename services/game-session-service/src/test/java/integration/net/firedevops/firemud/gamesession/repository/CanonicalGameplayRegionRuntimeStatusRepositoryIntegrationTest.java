@@ -720,6 +720,55 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       proof.seedUndeliveredDispatch(proof.execution);
       String original = proof.originalImage();
       assertSqlGuard(() -> proof.rawReplaceOwner("unretained-successor", "e".repeat(64)));
+      String forgedOwner = "forged-successor";
+      String forgedLease = "e".repeat(64);
+      long forgedFence =
+          proof
+              .sql
+              .fetchSingle("SELECT nextval('game_session_region_executor_fence_seq')")
+              .get(0, Long.class);
+      for (String state : List.of("COMPLETED", "FROZEN")) {
+        boolean completed = "COMPLETED".equals(state);
+        assertThatThrownBy(
+                () ->
+                    proof.sql.execute(
+                        "INSERT INTO game_session_region_owner_transfer"
+                            + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,"
+                            + " old_lease_correlation,source_digest,intent_digest,state,incarnation_digest,verification_round,"
+                            + " verification_cursor,verification_complete,new_owner_id,new_owner_fence,new_lease_correlation)"
+                            + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,true,?,?,?)",
+                        UUID.randomUUID(),
+                        proof.scope.tenantId(),
+                        proof.scope.gameInstanceId(),
+                        proof.scope.regionId(),
+                        proof.prior.regionEpoch(),
+                        proof.prior.ownerInstanceId(),
+                        proof.prior.executorFence().longValueExact(),
+                        proof.prior.leaseTokenCorrelation(),
+                        "sha256:" + "b".repeat(64),
+                        "sha256:" + "c".repeat(64),
+                        state,
+                        "sha256:" + "a".repeat(64),
+                        UUID.randomUUID(),
+                        0L,
+                        completed ? forgedOwner : null,
+                        completed ? forgedFence : null,
+                        completed ? forgedLease : null))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .hasMessageContaining("Region transfer must start as a clean frozen intent");
+      }
+      assertSqlGuard(
+          () ->
+              proof.sql.execute(
+                  "UPDATE game_session_region_runtime_status SET owner_instance_id=?,executor_fence=?,lease_token_correlation=?"
+                      + " WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
+                  forgedOwner,
+                  forgedFence,
+                  forgedLease,
+                  proof.scope.tenantId(),
+                  proof.scope.gameInstanceId(),
+                  proof.scope.regionId()));
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       UUID id = proof.begin();
       assertSqlGuard(() -> proof.rawReplaceOwner("frozen-successor", "e".repeat(64)));
       proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
