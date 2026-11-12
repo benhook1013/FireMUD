@@ -690,10 +690,17 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
 
   public void prepareReceivingOrigin(
       net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
+    prepareReceivingOrigin(request, CLOCK, CLOCK.millis() + 5000);
+  }
+
+  public void prepareReceivingOrigin(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request,
+      Clock clock,
+      long deadline) {
     var source =
         new CanonicalGameplayBindingInventoryRepository(binding.dsl())
             .readOriginalNewFinalAdmissionSource(decision);
-    originExecutionOwner(CLOCK).prepareOrigin(source, request, CLOCK.millis() + 5000);
+    originExecutionOwner(clock).prepareOrigin(source, request, deadline);
   }
 
   private CanonicalGameplayOriginalNewCapacityExecutionOwner originExecutionOwner(Clock clock) {
