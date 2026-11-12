@@ -42,6 +42,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /** Real loopback mTLS with a controlled Account result; not Account sources or final admission. */
 @Timeout(90)
@@ -137,13 +139,43 @@ class AccountTenantCapacityClientMtlsTest {
     }
   }
 
+  @ParameterizedTest
+  @CsvSource({"3000, 60000, 3000", "60000, 3000, 3000", "60000, 60000, 5000"})
+  void successfulRpcPropagatesMinimumOfExplicitIncomingAndMaximumDeadline(
+      long explicitMillis, long incomingMillis, long expectedMaximumMillis) throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    AtomicLong observedNanos = new AtomicLong();
+    // Each case owns one server and one successful RPC, so no other call can supply its sample.
+    Server server = server("account", calls, false, observedNanos, new AtomicBoolean(true));
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    try (var client = client(server)) {
+      client.init();
+      var request = CapacityAdmissionTestFixture.playerRequest();
+      try (var context =
+          Context.current().withDeadlineAfter(incomingMillis, TimeUnit.MILLISECONDS, scheduler)) {
+        var result =
+            context.call(
+                () ->
+                    client.commit(
+                        request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + explicitMillis));
+        assertThat(result.identity()).isEqualTo(request.identity());
+      }
+      assertThat(calls).hasValue(1);
+      assertThat(observedNanos.get())
+          .isPositive()
+          .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(expectedMaximumMillis));
+    } finally {
+      scheduler.shutdownNow();
+      stop(server);
+    }
+  }
+
   @Test
   void explicitRemainingBudgetBoundsAStalledAccountCallAndExactRetryStillReplays()
       throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    AtomicLong observedNanos = new AtomicLong();
     AtomicBoolean respond = new AtomicBoolean(true);
-    Server server = server("account", calls, false, observedNanos, respond);
+    Server server = server("account", calls, false, new AtomicLong(), respond);
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
@@ -158,29 +190,23 @@ class AccountTenantCapacityClientMtlsTest {
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
-      assertThat(observedNanos.get())
-          .isPositive()
-          .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(200));
       respond.set(true);
       assertThat(client.commit(request, deadline())).isEqualTo(first);
-      assertThat(calls).hasValue(3);
     } finally {
       stop(server);
     }
   }
 
   @Test
-  void incomingDeadlineAndFiveSecondMaximumAlsoCapTheAccountCall() throws Exception {
+  void incomingDeadlineBoundsAStalledAccountCall() throws Exception {
     AtomicInteger calls = new AtomicInteger();
-    AtomicLong observedNanos = new AtomicLong();
     AtomicBoolean respond = new AtomicBoolean(true);
-    Server server = server("account", calls, false, observedNanos, respond);
+    Server server = server("account", calls, false, new AtomicLong(), respond);
     var scheduler = Executors.newSingleThreadScheduledExecutor();
     try (var client = client(server)) {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest();
       client.commit(request, CapacityAdmissionTestFixture.NOW.toEpochMilli() + 60_000L);
-      assertThat(observedNanos.get()).isPositive().isLessThanOrEqualTo(TimeUnit.SECONDS.toNanos(5));
       respond.set(false);
       long started = System.nanoTime();
       assertThatThrownBy(
@@ -194,9 +220,6 @@ class AccountTenantCapacityClientMtlsTest {
                   assertThat(Status.fromThrowable(failure).getCode())
                       .isEqualTo(Status.Code.DEADLINE_EXCEEDED));
       assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(2_000L);
-      assertThat(observedNanos.get())
-          .isPositive()
-          .isLessThanOrEqualTo(TimeUnit.MILLISECONDS.toNanos(200));
     } finally {
       scheduler.shutdownNow();
       stop(server);

@@ -62,6 +62,8 @@ def reject_duplicates(pairs):
 
 def evidence(encoded, variant="TENANT_OPERATION"):
     raw = base64.b64decode(encoded, validate=True)
+    if base64.b64encode(raw).decode("ascii") != encoded:
+        raise ValueError("canonical padded base64 required")
     if not 0 < len(raw) <= 262144:
         raise ValueError("evidence bound")
     parsed = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=reject_duplicates)
@@ -144,6 +146,25 @@ class CapacityAdmissionVectors(unittest.TestCase):
         context = swapped["ownerContext"]
         context["characterId"], context["sessionId"] = context["sessionId"], context["characterId"]
         self.assertNotEqual(hashlib.sha256(preimage(swapped, candidate)).hexdigest(), candidate["sha256"])
+
+    def test_rejects_nonzero_unused_base64_pad_bits(self):
+        corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
+        parsed = json.loads(base64.b64decode(corpus["request"]["canonicalAccountEvidenceBase64"]))
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        for padding in (1, 2):
+            # Valid JSON evidence with each padding width isolates the base64 spelling check.
+            for width in range(3):
+                parsed["padBitTest"] = "x" * width
+                raw = json.dumps(parsed, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                canonical = base64.b64encode(raw).decode("ascii")
+                if canonical.endswith("=" * padding) and not canonical.endswith("=" * (padding + 1)):
+                    break
+            self.assertEqual(evidence(canonical), canonical)
+            index = len(canonical) - padding - 1
+            alternate = canonical[:index] + alphabet[alphabet.index(canonical[index]) + 1] + canonical[index + 1:]
+            self.assertEqual(base64.b64decode(alternate, validate=True), raw)
+            with self.subTest(padding=padding), self.assertRaisesRegex(ValueError, "canonical padded base64"):
+                evidence(alternate)
 
     def test_rejected_decimal_candidates(self):
         corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())

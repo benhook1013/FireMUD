@@ -14,6 +14,8 @@ import net.firedevops.firemud.gamesession.v1.OriginalNewCapacityExecutionReadSer
 /** Exact same-namespace Account-only guard for the ORIGINAL_NEW final-result read. */
 public final class CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard
     implements ServerInterceptor {
+  private static final Metadata.Key<String> AUTHORIZATION_KEY =
+      Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER);
   private final String workloadNamespace;
 
   public CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard(String workloadNamespace) {
@@ -61,6 +63,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuar
       requireAccountCaller();
     } catch (StatusRuntimeException denied) {
       call.close(Status.fromCode(denied.getStatus().getCode()), new Metadata());
+      return new ServerCall.Listener<>() {};
+    }
+    if (headers.containsKey(AUTHORIZATION_KEY)) {
+      call.close(
+          Status.PERMISSION_DENIED.withDescription("End-user token not permitted"), new Metadata());
       return new ServerCall.Listener<>() {};
     }
     return next.startCall(call, headers);

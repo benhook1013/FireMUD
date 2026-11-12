@@ -86,6 +86,54 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     return budget.sql(dsl);
   }
 
+  /** Read only an already captured original under its still-current frozen old owner. */
+  Item frozenOriginal(UUID transitionId) {
+    noSql();
+    Record row =
+        sql()
+            .fetchOne(
+                "SELECT i.transfer_id,i.target_ordinal,i.execution_digest FROM "
+                    + ITEM
+                    + " i JOIN "
+                    + TRANSFER
+                    + " t ON t.transfer_id=i.transfer_id"
+                    + " JOIN game_session_original_new_capacity_execution e ON e.execution_digest=i.execution_digest"
+                    + " WHERE e.transition_id=? AND t.state='FROZEN'",
+                transitionId);
+    if (row == null) return null;
+    UUID id = row.get("transfer_id", UUID.class);
+    current(sql(), id, false);
+    return loadItem(
+        sql(),
+        id,
+        row.get("target_ordinal", Long.class),
+        row.get("execution_digest", String.class));
+  }
+
+  /** Revalidate a pinned continuation without creating a replacement transfer intent. */
+  void requireFrozenOriginal(
+      Item original,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    noSql();
+    sql()
+        .transaction(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              var row = current(tx, original.transferId(), true);
+              if (!sourceDigest(source, prior).equals(row.get("source_digest", String.class)))
+                throw unavailable();
+              var actual =
+                  loadItem(
+                      tx, original.transferId(), original.ordinal(), original.execution().digest());
+              if (!actual.candidate().equals(original.candidate())
+                  || !Arrays.equals(
+                      actual.execution().canonicalBytes(), original.execution().canonicalBytes()))
+                throw unavailable();
+            });
+  }
+
   UUID begin(
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior) {
