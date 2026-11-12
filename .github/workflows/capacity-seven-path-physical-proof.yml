@@ -1,0 +1,183 @@
+name: Temporary seven-path capacity repair proof
+run-name: Seven-path capacity repair proof ${{ github.run_id }}
+'on':
+  push:
+    branches:
+    - codex/proof-capacity-seven-path-20261112
+permissions:
+  contents: read
+concurrency:
+  group: capacity-seven-path-physical-proof
+  cancel-in-progress: false
+jobs:
+  capacity-proof:
+    if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/codex/proof-capacity-seven-path-20261112'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: 06c9ec64e4cdecab6c2a8f178f3d95c9fe78768b
+      SOURCE_TREE: e58db5efddd7d22a73fd2a682c19c405444d8c85
+      SOURCE_FILES: '[{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwner.java","preimage_blob":"d9948d4dd4dd8ea0aaf8a0d42cf6fdd3479a258a","postimage_blob":"42860566d9702cfaca28c3b7f06a8640a91acf13","preimage_sha256":"16c6f84e41ec4a6b2d74a35e9f35af2196417f402a9e631da6a0a1ce94cc60c0","postimage_sha256":"19c4870ce5fe8cd447d893dd2abbf7b5a76c0adeb825a5123e8716707ba93516","source_url":"https://github.com/benhook1013/FireMUD/blob/385e43e77d8c71da012b49a8be2c326511ff111d/services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwner.java"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferCoordinator.java","preimage_blob":"ce3eaca3df874e669cdfb87ac9d15ef50a95c278","postimage_blob":"8c5247d97cf2dc1bfc1a758aa5bed37d52d7a5ea","preimage_sha256":"4ad0e55291f8d69ba8b6af8211ed07b0aba5ef2287e0de8841fcd74fa2048c98","postimage_sha256":"b8a7532b6cc821a854e9c47ac05596488f970accdb18a20b0b0bacb2709fcc14","source_url":"https://github.com/benhook1013/FireMUD/blob/385e43e77d8c71da012b49a8be2c326511ff111d/services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferCoordinator.java"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferRepository.java","preimage_blob":"1a22c2c4782b0980de43a85ecb1fbce6801facc9","postimage_blob":"1827841346fbed03b7ad39ff064244aa3b252193","preimage_sha256":"bd15a70403853c21fdc29dc1c27e9b675e488acb8d4a8002bcca76f8ba45db4e","postimage_sha256":"97deb204490c685841c0cbd6caef04704962045f166acad6c0775621ae744702","source_url":"https://github.com/benhook1013/FireMUD/blob/385e43e77d8c71da012b49a8be2c326511ff111d/services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferRepository.java"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java","preimage_blob":"5e3286a5cea8c5be820035517a33a29a9b93a280","postimage_blob":"21f0ed2780d31407c5d34ffe60573a2e06caeea1","preimage_sha256":"b52d87d6acd837916f2948659bde707a70d45f0fb4b6d02911679959386582fc","postimage_sha256":"8fc773b0ba06a5ebd97331d6dbec15882fe72f1fd97bb86717aa28d1b17af6d3","source_url":"https://github.com/benhook1013/FireMUD/blob/385e43e77d8c71da012b49a8be2c326511ff111d/services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java"},{"path":"services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/client/AccountTenantCapacityClientMtlsTest.java","preimage_blob":"d13d56873b6763aba1bce8441b0187500aec3d91","postimage_blob":"6dfc209023a782de476693262aef161391156bd1","preimage_sha256":"b00319f34328baed04219856a5670d3f97126db5588f604d65b1ba19fd4c5375","postimage_sha256":"d81e8b09f037a0ec9bf6a9a3cdf8d75d220a476e4d0aaf83c63990549206c29d"},{"path":"services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/service/impl/CanonicalGameplayOriginalNewCapacityExecutionReadGrpcServiceTest.java","preimage_blob":"e3e3134b9b2762da2c0c94e97a73ca5f07409f29","postimage_blob":"98bcdca7dbe9708f87d4bf4aa140ce3f1acec4c5","preimage_sha256":"e151a53c0418f4f0f4e7e27b19076a9f378345f3c08888309e7c764dc44e0522","postimage_sha256":"bcf22d57d484c3635863756767a7d5d93c827550676c31a5bde9a6ad2a190c49"},{"path":"services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferObservationReceiverTest.java","preimage_blob":"cc6221192bb925334f9323a472a41a55a5eed709","postimage_blob":"6a329f07e466b9eb1ddb07d02600bfc9e23d472b","preimage_sha256":"b661f970a7bce5dd377ec2f83ec93e3791f068ca51b12e9f2dadee5ee69199fa","postimage_sha256":"d9d98c68541010ba271f6feab21564cadbdde72c7ddaf84ee7d1909421cb9423"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest.java","preimage_blob":"2bfe78fb24e8deacd059fdc36b9e50cf29bdb21c","postimage_blob":"1fd780c820d3718a4cd2921f4d7ca1be306dd7f1","preimage_sha256":"796ff43b05187aea903b68a3283e26b8f9a60ca828ddc66e874c87cfe019274e","postimage_sha256":"05bab4ca07769de64bbf679ee72cd3b8e346f7864f1a653ff68d9284726ac433"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/service/InitialGameplayLoginContextRedisIntegrationTest.java","preimage_blob":"3db0c1bf418ca5f4aeda9ac70e1cf9f4b327b751","postimage_blob":"0c6aea2996be5419b29f0b57fbbb1e1e153afa07","preimage_sha256":"ee7b2e75a85f9ec90fb2ba01a9d76396b214a877d6ea7f0903f63ecabe3d80f7","postimage_sha256":"0f230a83a1b12982867b2d652f4e9ee9f3716a9d8dd87b88d2f976048fa3c707"}]'
+      TESTCONTAINERS_CHECKS_DISABLE: 'false'
+      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"frozenTransferResumesSameCommittedOriginalAfterFenceRetentionFailure","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"committedRedisWinnerMustAcquireFullPositiveSqlRetentionBeforeActualHandoff","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"contenderCannotFreezeRenewingOwnerAndExpiredLeaseStillTransfers","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"correctlySignedDifferentStorageGenerationCannotAdoptRetainedTransferReceipts","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"committedHashWithoutCompletePositiveServingProofStillBlocksActualTransfer","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"retainedTransferFenceLossCannotBeReinstalledOrQualifyHandoff","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"retainedTransferFenceWithTtlCannotQualifyNativeHandoff","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"retainedTransferFenceWrongTypeCannotQualifyNativeHandoff","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"retainedTransferFenceChangedEnvelopeCannotQualifyNativeHandoff","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"blockedCommittedSelectionOrPreInstallRevalidationCannotOutliveHandoffDeadline","count":2},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest","method":"concurrentNewGrantsFromOnePriorOwnerInstallOnlyOneNewFence","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest","method":"competingTransferCreatorsAndLostBeginReplyKeepOneOriginalIntent","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest","method":"rawOwnerReplacementCannotSkipFrozenIncompleteOrChangedExactTransfer","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest","method":"boundedCensusAndVerificationResumeBeyondThirtyTwoWithoutLosingAnyOriginal","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextRedisIntegrationTest","method":"ownerComposesDurableOriginalWithPhysicalPendingAndExactNonAdmittingInstall","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"exactAccountPeerReceivesCompleteRequestAndExactRetryKeepsReservation","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"nonCreatingEvidenceReachesControlledAccountAndReturnsStructuredPolicyDenial","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"wrongAccountPeerIsRejectedBeforeRequestBodyRelease","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"changedResponseFenceCannotSubstituteForOriginalCommitment","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"successfulRpcPropagatesMinimumOfExplicitIncomingAndMaximumDeadline","count":3},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"explicitRemainingBudgetBoundsAStalledAccountCallAndExactRetryStillReplays","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"incomingDeadlineBoundsAStalledAccountCall","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.client.AccountTenantCapacityClientMtlsTest","method":"expiredExplicitBudgetSendsNoAccountRequest","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayOriginalNewCapacityExecutionReadGrpcServiceTest","method":"missingPeerRefusesBeforeNullPayloadParsingOrAnyOwnerRead","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayOriginalNewCapacityExecutionReadGrpcServiceTest","method":"authenticatedMalformedSelectorRefusesBeforeAnyOwnerRead","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayOriginalNewCapacityExecutionReadGrpcServiceTest","method":"unavailableExactOwnerEvidenceIsNeverEncodedAsNoCommit","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"verifiesExactFrozenItemTwiceWithRealSignatureAndCapsAtOperationDeadline","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"longerOperationStillUsesConfiguredObservationTtlAndFreshNonce","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"accountAndInitialSignedSchemasCannotBeReplayedAsTransfer","count":2},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"accountAndInitialOwnerProofsCannotBeReplayedAsTransfer","count":2},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"transferSignedPurposeCannotBeReplayedThroughAccountReceiver","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"transferSignedPurposeCannotBeReplayedThroughInitialReceiver","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"everySignedTransferOwnerTupleMutationRefuses","count":15},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"everySignedTargetTupleMutationRefuses","count":6},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"everySignedDeploymentIncarnationMutationRefuses","count":11},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"signedTrustAndCorrelationMutationRefuses","count":6},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"independentlyResolvedAssignmentMustMatchBeforeRemoteCall","count":9},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"assignmentMustStillMatchAfterSignatureVerification","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"frozenSourceMutationDuringSignedReadRefuses","count":7},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"missingOrNoLongerFrozenSourceAfterSignatureCannotProduceProof","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"unavailableCurrentSourceAfterSignatureCannotProduceProof","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"sealedCompletedContextProducesOnlyItsExactReadOnlyCurrentnessObservation","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"completionRacingSignatureVerificationCannotReuseFrozenContextProof","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"changedSealedCompletionDuringObservationRefuses","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"signedProofCannotSubstituteTheOtherControlPhase","count":2},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"completedSignedDigestMustMatchExactSealedCompletion","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"phaseAndCompletionFieldsMustBothBePresentEvenForFrozenNullCompletion","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"sourceContextRejectsUnsupportedOrMismatchedControlPhaseAndCompletion","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"retainedTrimmedOwnerIdentityNeedsNoAdditionalCharacterGrammar","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"retainedOwnerLengthUsesThePostgresCharacterBound","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"timeWindowMismatchOrDeadlineExpiryRefuses","count":6},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"futureObservationWithinSignedExpiryReachesCurrentClockRefusal","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"expiredOperationNeverReadsSourceOrCallsChannel","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"sourceReadCannotRenewAnOperationThatExpiredBeforeChannelDispatch","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"signedUnknownFieldsAreRejectedInEveryClosedObject","count":4},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"accountInitialAndMutableProgressFieldsAreNotTransferOwnerFields","count":6},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"cryptographicCanonicalParsingAndSizeFailuresRefuse","count":6},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"ambientTransactionRefusesBeforeReadingSqlOrCallingChannel","count":1},{"task":"test","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayRegionOwnerTransferObservationReceiverTest","method":"sourceContextRejectsInvalidUuidFenceEpochDigestAndBoundedIdentifiers","count":1}]'
+    steps:
+    - name: Set isolated proof directory
+      shell: bash
+      run: printf 'PROOF_DIR=%s/capacity-physical-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+    - name: Harden runner
+      uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
+      with:
+        egress-policy: audit
+    - name: Check out immutable repaired source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.SOURCE_SHA }}
+        persist-credentials: false
+    - name: Set up repository-pinned Python
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: none
+    - name: Set up Java 25
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+      with:
+        distribution: temurin
+        java-version: '25'
+    - name: Set up Gradle without caching or scan publication
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+      with:
+        cache-disabled: true
+        build-scan-publish: false
+    - name: Verify exact source and Docker; prepare isolated proof
+      shell: bash
+      run: "set -euo pipefail\nmkdir \"$PROOF_DIR\"\ntest \"$(git rev-parse HEAD)\" = \"$SOURCE_SHA\"\ntest \"$(git rev-parse\
+        \ 'HEAD^{tree}')\" = \"$SOURCE_TREE\"\ntest -z \"$(git status --porcelain --untracked-files=no)\"\ntest ! -d services/game-session-service/build/test-results\n\
+        python3 - <<'VERIFY'\nimport os,json,hashlib,pathlib,subprocess\nfor f in json.loads(os.environ['SOURCE_FILES']):\n\
+        \    for args in [('rev-parse','HEAD:'+f['path']),('hash-object',f['path'])]:\n        assert subprocess.check_output(['git',*args],text=True).strip()==f['postimage_blob']\n\
+        \    assert hashlib.sha256(pathlib.Path(f['path']).read_bytes()).hexdigest()==f['postimage_sha256']\nVERIFY\ncat >\
+        \ \"$RUNNER_TEMP/capacity-physical.init.gradle\" <<'GRADLE'\nimport org.gradle.api.tasks.testing.Test\nimport groovy.json.JsonOutput\n\
+        import groovy.json.JsonSlurper\n\ndef workspace = System.getenv('GITHUB_WORKSPACE')\nif (!workspace) { throw new GradleException('Proof\
+        \ requires GITHUB_WORKSPACE identity') }\ndef proofRoot = new File(workspace).canonicalFile\ndef isProofBuild = {\
+        \ gradle.rootProject.rootDir.canonicalFile == proofRoot }\ndef requested = new JsonSlurper().parseText(System.getenv('EXPECTED_CASES'))\n\
+        def expectedTasks = [':game-session-service:integrationTest', ':game-session-service:test']\n\ngradle.projectsEvaluated\
+        \ {\n    if (!isProofBuild()) { return }\n    def service = gradle.rootProject.findProject(':game-session-service')\n\
+        \    if (service == null) { throw new GradleException('Verified proof build lacks :game-session-service') }\n    ['test',\
+        \ 'integrationTest'].each { taskName ->\n        def target = service.tasks.named(taskName, Test).get()\n        target.filter.setIncludePatterns([]\
+        \ as String[])\n        requested.findAll { it.task == taskName }.each { item ->\n            target.filter.includeTestsMatching(item.classname\
+        \ + '.' + item.method)\n        }\n        target.filter.failOnNoMatchingTests = true\n        target.outputs.upToDateWhen\
+        \ { false }\n        target.outputs.cacheIf { false }\n        target.maxParallelForks = 1\n        target.maxHeapSize\
+        \ = '1536m'\n        target.systemProperty 'junit.jupiter.execution.parallel.enabled', 'false'\n        def event\
+        \ = { descriptor, phase ->\n            def entry = [task: taskName, classname: descriptor.className,\n          \
+        \      method: descriptor.name, phase: phase,\n                nonce: System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT')]\n\
+        \            new File(System.getenv('PROOF_DIR'), 'test-events.jsonl').append(JsonOutput.toJson(entry) + '\\n')\n\
+        \        }\n        target.beforeTest { descriptor -> event(descriptor, 'started') }\n        target.afterTest { descriptor,\
+        \ result -> event(descriptor, result.resultType.toString()) }\n        target.doFirst {\n            new File(System.getenv('PROOF_DIR'),\
+        \ taskName + '-started.txt').text = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\\\
+        n'\n        }\n        target.doLast {\n            new File(System.getenv('PROOF_DIR'), taskName + '-completed.txt').text\
+        \ = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\\n'\n        }\n    }\n    service.tasks.named('integrationTest').get().mustRunAfter(service.tasks.named('test'))\n\
+        }\ngradle.taskGraph.whenReady { graph ->\n    if (!isProofBuild()) { return }\n    if (gradle.rootProject.findProject(':game-session-service')\
+        \ == null) {\n        throw new GradleException('Verified proof build lacks :game-session-service')\n    }\n    def\
+        \ tests = graph.allTasks.findAll { it instanceof Test }\n    if (tests.collect { it.path }.sort() != expectedTasks)\
+        \ {\n        throw new GradleException('Proof requires exactly two selected Test tasks: ' + tests.collect { it.path\
+        \ })\n    }\n}\nGRADLE\ncat > \"$RUNNER_TEMP/collect-capacity-proof.py\" <<'PYTHON'\nimport collections, hashlib,\
+        \ json, os, pathlib, re, subprocess, sys\nimport xml.etree.ElementTree as ET\nout = pathlib.Path(os.environ['PROOF_DIR'])\n\
+        out.mkdir(parents=True, exist_ok=True)\nspec = json.loads(os.environ['EXPECTED_CASES'])\nexpected = [(x['task'], x['classname'],\
+        \ x['method']) for x in spec for _ in range(x['count'])]\ndef method_name(raw):\n    match = re.fullmatch(r'([A-Za-z_$][\\\
+        w$]*)(?:\\([^\\n]*\\))?(?:\\[([1-9][0-9]*)\\])?', raw)\n    return match.group(1) if match else '<invalid-method:'\
+        \ + raw + '>'\nissues = []\nrecords = []\noriginals = []\ncompact = ET.Element('testsuite', name='capacity-current-physical-proof')\n\
+        for path in sorted(pathlib.Path('services/game-session-service/build/test-results').glob('*/*.xml')):\n    task =\
+        \ path.parent.name\n    if task not in ('test', 'integrationTest'):\n        issues.append('unexpected test report\
+        \ task: ' + task)\n    raw = path.read_bytes()\n    originals.append({'file': task + '/' + path.name, 'sha256': hashlib.sha256(raw).hexdigest(),\
+        \ 'bytes': len(raw)})\n    try:\n        tree = ET.fromstring(raw)\n    except ET.ParseError:\n        issues.append('invalid\
+        \ JUnit XML: ' + path.name)\n        continue\n    for case in tree.iter('testcase'):\n        name = case.get('name',\
+        \ '')\n        method = method_name(name)\n        record = {'task': task, 'raw_name': name, 'classname': case.get('classname'),\
+        \ 'method': method,\n                  'skipped': case.find('skipped') is not None,\n                  'failed': case.find('failure')\
+        \ is not None or case.find('error') is not None,\n                  'seconds': case.get('time')}\n        records.append(record)\n\
+        \        copied = ET.SubElement(compact, 'testcase', **case.attrib)\n        for child in case:\n            if child.tag\
+        \ in ('failure', 'error', 'skipped'):\n                leaf = ET.SubElement(copied, child.tag, **{k: v[:4096] for\
+        \ k, v in child.attrib.items()})\n                leaf.text = (child.text or '')[:65536]\nif collections.Counter((r['task'],r['classname'],r['method'])\
+        \ for r in records) != collections.Counter(tuple(p) for p in expected):\n    issues.append('expected exact task/class/method\
+        \ invocation counts, no extras')\nfor item in spec:\n    leaves = [r['raw_name'] for r in records if (r['task'], r['classname'],\
+        \ r['method']) == (item['task'], item['classname'], item['method'])]\n    indexes = [int(m.group(1)) if (m := re.search(r'\\\
+        [([1-9][0-9]*)\\]$', raw)) else None for raw in leaves]\n    wanted = [None] if item['count'] == 1 else list(range(1,\
+        \ item['count'] + 1))\n    if collections.Counter(indexes) != collections.Counter(wanted):\n        issues.append('missing,\
+        \ repeated or unexpected invocation indexes: ' + item['method'])\nif any(r['skipped'] or r['failed'] for r in records):\n\
+        \    issues.append('skipped, failed, aborted, or errored testcase')\nnonce = os.environ['GITHUB_RUN_ID'] + ':' + os.environ['GITHUB_RUN_ATTEMPT']\n\
+        for marker in ('test-started.txt', 'test-completed.txt', 'integrationTest-started.txt', 'integrationTest-completed.txt'):\n\
+        \    if not (out / marker).is_file() or (out / marker).read_text().strip() != nonce:\n        issues.append('missing\
+        \ or stale fresh task marker: ' + marker)\nevents_path = out / 'test-events.jsonl'\nevents = [json.loads(line) for\
+        \ line in events_path.read_text().splitlines()] if events_path.exists() else []\nfor phase in ('started', 'SUCCESS'):\n\
+        \    actual = [(e['task'], e['classname'], method_name(e['method'])) for e in events if e['phase'] == phase and e['nonce']\
+        \ == nonce]\n    if collections.Counter(actual) != collections.Counter(tuple(p) for p in expected):\n        issues.append('expected\
+        \ exact fresh test events: ' + phase)\nif len(events) != 2 * len(expected):\n    issues.append('extra or missing lifecycle\
+        \ events')\n# Every leaf invocation must be unique and correspond to one actual started/completed event.\nraw_cases\
+        \ = [(r['task'], r['classname'], r['raw_name']) for r in records]\nif len(set(raw_cases)) != len(raw_cases): issues.append('duplicate\
+        \ leaf invocation')\nfor phase in ('started', 'SUCCESS'):\n    raw_events = [(e['task'], e['classname'], e['method'])\
+        \ for e in events if e['phase'] == phase and e['nonce'] == nonce]\n    if collections.Counter(raw_events) != collections.Counter(raw_cases):\n\
+        \        issues.append('leaf XML/event mismatch: ' + phase)\nstatus_file = out / 'gradle-exit.txt'\nif not status_file.is_file()\
+        \ or status_file.read_text().strip() != '0':\n    issues.append('Gradle did not complete successfully')\nlog_path\
+        \ = pathlib.Path(os.environ['RUNNER_TEMP']) / 'capacity-physical-gradle.log'\nlog = log_path.read_bytes() if log_path.exists()\
+        \ else b''\ntext = log.decode('utf-8', errors='replace')\nif re.search(r'^> Task :game-session-service:(?:integrationTest|test)\
+        \ (?:FROM-CACHE|UP-TO-DATE|SKIPPED|NO-SOURCE)', text, re.M):\n    issues.append('integration task was cached or skipped')\n\
+        (out / 'gradle-tail.txt').write_bytes(log[-262144:])\nsha = lambda value: hashlib.sha256(value).hexdigest()\ngit =\
+        \ lambda *args: subprocess.check_output(['git', *args], text=True).strip()\nidentity = {'head': git('rev-parse', 'HEAD'),\
+        \ 'tree': git('rev-parse', 'HEAD^{tree}'), 'files': []}\nfor key, env in [('head','SOURCE_SHA'),('tree','SOURCE_TREE')]:\n\
+        \    if identity[key] != os.environ[env]: issues.append('source identity mismatch: ' + key)\nfor item in json.loads(os.environ['SOURCE_FILES']):\n\
+        \    path = item['path']\n    observed = {'path':path, 'blob':git('rev-parse','HEAD:'+path), 'file_blob':git('hash-object',path),\
+        \ 'sha256':sha(pathlib.Path(path).read_bytes())}\n    identity['files'].append(observed)\n    if observed['blob']\
+        \ != item['postimage_blob'] or observed['file_blob'] != item['postimage_blob'] or observed['sha256'] != item['postimage_sha256']:\n\
+        \        issues.append('source file mismatch: ' + path)\nif git('status', '--porcelain', '--untracked-files=no'):\n\
+        \    issues.append('tracked source files changed during proof')\ncompact.set('tests', str(len(records)))\ncompact.set('failures',\
+        \ str(sum(r['failed'] for r in records)))\ncompact.set('skipped', str(sum(r['skipped'] for r in records)))\nET.ElementTree(compact).write(out\
+        \ / 'junit-compact.xml', encoding='utf-8', xml_declaration=True)\nsummary = {'source': identity, 'requested_cases':\
+        \ spec, 'cases': records,\n           'original_junit': originals, 'gradle_log_sha256': sha(log),\n           'gradle_log_bytes':\
+        \ len(log), 'log_tail_limit': 262144,\n           'junit_system_output_omitted': True, 'failure_text_limit': 65536,\n\
+        \           'workflow_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],\n           'run_attempt':\
+        \ os.environ['GITHUB_RUN_ATTEMPT'], 'issues': issues,\n           'passed': not issues}\n(out / 'summary.json').write_text(json.dumps(summary,\
+        \ indent=2) + '\\n')\nfiles = [p for p in out.iterdir() if p.is_file()]\nif sum(p.stat().st_size for p in files) >\
+        \ 2 * 1024 * 1024:\n    raise SystemExit('compact proof exceeds 2 MiB; refusing oversized artifact')\n(out / 'sha256sums.txt').write_text(''.join(sha(p.read_bytes())\
+        \ + '  ' + p.name + '\\n' for p in sorted(files)))\nprint(json.dumps(summary, indent=2))\nraise SystemExit(1 if issues\
+        \ else 0)\nPYTHON\njava -version 2> \"$PROOF_DIR/java-version.txt\"\ndocker version --format '{{.Server.Version}}'\
+        \ > \"$PROOF_DIR/docker-version.txt\"\ndocker info --format '{{.OSType}}' > \"$PROOF_DIR/docker-os.txt\"\ntest \"\
+        $(cat \"$PROOF_DIR/docker-os.txt\")\" = linux\n"
+    - name: Run exact physical methods and three repaired unit classes
+      shell: bash
+      run: "set -euo pipefail\nulimit -f 131072\nset +e\ntimeout --signal=TERM --kill-after=30s 15m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
+        \ --runner ./gradlew -- \\\n  --no-daemon --no-build-cache --no-configuration-cache --no-scan --rerun-tasks \\\n \
+        \ --max-workers=2 --no-parallel '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \\\n  --console=plain -I \"\
+        $RUNNER_TEMP/capacity-physical.init.gradle\" \\\n  :game-session-service:test :game-session-service:integrationTest\
+        \ -PfullCheck > \"$RUNNER_TEMP/capacity-physical-gradle.log\" 2>&1\nstatus=$?\nset -e\nprintf '%s\\n' \"$status\"\
+        \ > \"$PROOF_DIR/gradle-exit.txt\"\n# Keep CI readable; the collector always retains a bounded tail and validates\
+        \ results.\ntail -n 60 \"$RUNNER_TEMP/capacity-physical-gradle.log\"\nexit \"$status\"\n"
+    - name: Verify all exact invocations started and passed without skips
+      if: ${{ always() }}
+      shell: bash
+      run: python3 "$RUNNER_TEMP/collect-capacity-proof.py"
+    - name: Enforce compact artifact size
+      id: bound
+      if: ${{ always() }}
+      shell: bash
+      run: 'python3 - <<''PYBOUND''
+
+        import os, pathlib
+
+        p=pathlib.Path(os.environ[''PROOF_DIR''])
+
+        files=list(p.glob(''*''))
+
+        assert files and all(f.is_file() and not f.is_symlink() for f in files), ''missing or unsupported proof files''
+
+        assert sum(f.stat().st_size for f in files) <= 2*1024*1024, ''proof exceeds 2 MiB''
+
+        with open(os.environ[''GITHUB_OUTPUT''], ''a'') as out: out.write(''ok=true\n'')
+
+        PYBOUND
+
+        '
+    - name: Upload compact physical proof
+      if: ${{ always() && steps.bound.outputs.ok == 'true' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: capacity-seven-path-physical-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/capacity-physical-proof/
+        if-no-files-found: error
+        retention-days: 7
