@@ -233,6 +233,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
           }
         }
       }
+    } catch (AccountTenantCapacityClient.CapacityRefusedException refused) {
+      throw refused;
     } catch (RuntimeException uncertain) {
       throw unavailable(uncertain);
     } finally {
