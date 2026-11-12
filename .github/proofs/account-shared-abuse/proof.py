@@ -38,7 +38,13 @@ def source_check():
         data=(ROOT/row['path']).read_bytes();assert sha(data)==row['sha256']
         assert git('rev-parse','HEAD:'+row['path'])==row['after_blob']
         if row['before_blob']:assert git('rev-parse',EXPECTED['base_head']+':'+row['path'])==row['before_blob']
-    return {'commit':expected_sha,'tree':git('rev-parse','HEAD^{tree}'),'base':EXPECTED['base_head']}
+    assert git('rev-parse',EXPECTED['cumulative_base_head']+'^{tree}')==EXPECTED['cumulative_base_tree']
+    assert git('diff-tree','--no-commit-id','--name-only','-r',EXPECTED['cumulative_base_head'],'HEAD').splitlines()==sorted(r['path'] for r in EXPECTED['cumulative_files'])
+    for row in EXPECTED['cumulative_files']:
+        assert git('rev-parse','HEAD:'+row['path'])==row['after_blob']
+        if row['before_blob']:
+            assert git('rev-parse',EXPECTED['cumulative_base_head']+':'+row['path'])==row['before_blob']
+    return {'commit':expected_sha,'tree':git('rev-parse','HEAD^{tree}'),'base':EXPECTED['base_head'],'cumulative_base':EXPECTED['cumulative_base_head']}
 def verify():
     OUT.mkdir(exist_ok=False)
     src=source_check()
