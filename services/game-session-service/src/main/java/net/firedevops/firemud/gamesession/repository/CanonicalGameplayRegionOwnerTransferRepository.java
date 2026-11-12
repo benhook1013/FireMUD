@@ -490,6 +490,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before,
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after,
       UUID originRound,
+      String successorOwner,
+      String successorLease,
       long deadline) {
     if (clock.millis() >= deadline
         || before == null
@@ -532,8 +534,17 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     requireComplete(sql(), transferId);
     CanonicalGameplayCapacityOriginTransferRepository.requireVerified(
         sql(), transferId, originRound);
-    Long successorFence = transfer.get("successor_owner_fence", Long.class);
-    if (successorFence == null || successorFence <= transfer.get("old_owner_fence", Long.class))
+    if (originRound == null) {
+      // With no origin custody CAS, reserve the successor only after the read-only proof succeeds.
+      prepareSuccessor(transferId, successorOwner, successorLease);
+    }
+    Record successor = current(sql(), transferId, false);
+    Long successorFence = successor.get("successor_owner_fence", Long.class);
+    if (successorFence == null
+        || successorFence <= successor.get("old_owner_fence", Long.class)
+        || !Objects.equals(successorOwner, successor.get("successor_owner_id", String.class))
+        || !Objects.equals(
+            successorLease, successor.get("successor_lease_correlation", String.class)))
       throw unavailable();
     return new Completion(
         transferId,
