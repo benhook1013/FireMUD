@@ -14,11 +14,11 @@ def git(*args):return command(['git',*args])
 def save(name,obj): (OUT/name).write_text(json.dumps(obj,indent=2)+'\n')
 def readlines(name):return [json.loads(x) for x in (OUT/name).read_text().splitlines()]
 def filepin(path):return {'path':str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path),'bytes':path.stat().st_size,'sha256':sha(path.read_bytes())}
-def owned():return command(['docker','ps','-aq','--filter','label=firemud.proof=account-shared-abuse','--filter','label='+LABEL]).split()
+def owned():return command(['docker','ps','-aq','--filter','label=firemud.proof=account-shared-abuse-fixtures','--filter','label='+LABEL]).split()
 def event_check():
     assert os.environ['GITHUB_REPOSITORY']=='benhook1013/FireMUD'
     assert os.environ['GITHUB_EVENT_NAME']=='push'
-    assert os.environ['GITHUB_REF']=='refs/heads/dot/proof-account-shared-abuse-20261112'
+    assert os.environ['GITHUB_REF']=='refs/heads/dot/proof-account-shared-abuse-fixtures-20261112'
     event=json.loads(pathlib.Path(os.environ['GITHUB_EVENT_PATH']).read_text())
     assert event['ref']==os.environ['GITHUB_REF'] and not event.get('deleted',False)
     assert event['after']==os.environ['GITHUB_SHA']
@@ -74,7 +74,7 @@ def run(stage):
     source_check(); assert stage in EXPECTED['methods']
     before=shutil.disk_usage(ROOT).free;start=time.monotonic();peak=0;failure=None;observed={};written=0
     args=['bash','dev-tools/validation/run-gradle-with-dependency-recovery.sh','--runner','./gradlew','--','--no-daemon','--no-build-cache','--no-configuration-cache','--no-scan','--max-workers=1','-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8','-Pkotlin.compiler.execution.strategy=in-process','--console=plain','-I',str(HERE/'proof.init.gradle'),':account-service:integrationTest']
-    if stage=='shared-owner':args.insert(args.index('--max-workers=1'),'--rerun-tasks')
+    if stage=='receiving-fixtures':args.insert(args.index('--max-workers=1'),'--rerun-tasks')
     for name in EXPECTED['methods'][stage]:args+=['--tests',name]
     save(stage+'-command.json',args)
     env=dict(os.environ,PROOF_STAGE=stage)
@@ -84,7 +84,7 @@ def run(stage):
         with (OUT/(stage+'-gradle.log')).open('wb') as log:
             while sel.get_map():
                 elapsed=time.monotonic()-start;peak=max(peak,java_rss())
-                if elapsed> (1200 if stage=='shared-owner' else 300):failure='time-budget'
+                if elapsed> (1200 if stage=='receiving-fixtures' else 600):failure='time-budget'
                 if peak>6*1024**3 or mem_available()<256*1024**2:failure='memory-budget'
                 if shutil.disk_usage(ROOT).free<2*1024**3 or before-shutil.disk_usage(ROOT).free>10*1024**3:failure='disk-budget'
                 if sum(f.stat().st_size for f in OUT.rglob('*') if f.is_file())>MAX_OUTPUT:failure='artifact-budget'
@@ -144,8 +144,8 @@ def collect():
     for stage,expected in EXPECTED['methods'].items():
         try:
             execution=json.loads((OUT/(stage+'-execution.json')).read_text());assert execution['exit']==0 and execution['failure'] is None
-            assert len(execution['containers']) >= (1 if stage=='shared-owner' else 4), 'Missing physical container observation'
-            wanted=set(expected);events=readlines(stage+'-events.jsonl');starts=[];finishes=[]
+            assert len(execution['containers']) >= 4, 'Missing physical container observation'
+            wanted=EXPECTED['invocations'][stage];events=readlines(stage+'-events.jsonl');starts=[];finishes=[]
             for e in events:
                 if e['event'] in ['start','finish']:
                     name=e['className']+'.'+e['name'].removesuffix('()');(starts if e['event']=='start' else finishes).append(name)
@@ -159,14 +159,14 @@ def collect():
                     junit.append(test.attrib['classname']+'.'+test.attrib['name'].removesuffix('()'))
             assert collections.Counter(junit)==collections.Counter(wanted)
             tasks=readlines(stage+'-tasks.jsonl');assert sum(t['event']=='test-task-start' for t in tasks)==1;assert sum(t['event']=='test-task-finish' for t in tasks)==1
-            if stage=='shared-owner':
+            if stage=='receiving-fixtures':
                 taskmap={t['path']:t['outcome'] for t in tasks if t['event']=='task'}
                 for name in [':account-service:generateJooq',':account-service:generateProto',':account-service:compileJava',':account-service:compileTestFixturesJava',':account-service:compileIntegrationTestJava',':account-service:integrationTest']:
                     assert taskmap.get(name)=='EXECUTED',(name,taskmap.get(name))
             generated=json.loads((OUT/(stage+'-generated.json')).read_text());assert any(x['path'].endswith('/AccountsRecord.java') for x in generated);assert any(x['path'].endswith('/AuthLoginRequest.java') for x in generated)
             results[stage]={'passed':len(wanted),'methods':sorted(wanted),'execution':execution}
         except Exception as e:issues.append(stage+': '+repr(e))
-    save('summary.json',{'source':os.environ['SOURCE_SHA'],'base':EXPECTED['base_head'],'passed':not issues,'issues':issues,'results':results,'limits':'Controlled owner/storage fixture only; not registered HTTPS receiving or production policy delivery.'})
+    save('summary.json',{'source':os.environ['SOURCE_SHA'],'base':EXPECTED['base_head'],'passed':not issues,'issues':issues,'results':results,'limits':'Controlled receiving/transaction fixtures only; not deployed trust, platform policy delivery or production activation.'})
     pins=[filepin(f) for f in OUT.rglob('*') if f.is_file() and f.name!='checksums.json'];save('checksums.json',pins)
     assert sum(f.stat().st_size for f in OUT.rglob('*') if f.is_file())<=MAX_OUTPUT
     print((OUT/'summary.json').read_text());raise SystemExit(1 if issues else 0)

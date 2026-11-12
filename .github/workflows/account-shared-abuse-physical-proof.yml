@@ -1,8 +1,8 @@
-name: Account shared abuse isolated physical proof
+name: Account shared abuse receiving successor proof
 'on':
   push:
     branches:
-      - dot/proof-account-shared-abuse-20261112
+      - dot/proof-account-shared-abuse-fixtures-20261112
 permissions:
   contents: read
 concurrency:
@@ -10,11 +10,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prove:
-    if: github.repository == 'benhook1013/FireMUD' && github.event_name == 'push' && github.ref == 'refs/heads/dot/proof-account-shared-abuse-20261112'
+    if: github.repository == 'benhook1013/FireMUD' && github.event_name == 'push' && github.ref == 'refs/heads/dot/proof-account-shared-abuse-fixtures-20261112'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      SOURCE_SHA: 61eea5c1beea8b238bd846a2d3ab1a0edd621d27
+      SOURCE_SHA: 6faef24f127df7861725c5a721b2168d838ba7c9
       SOURCE_DIRECTORY: ${{ github.workspace }}/source
       TESTCONTAINERS_CHECKS_DISABLE: 'false'
       TESTCONTAINERS_REUSE_ENABLE: 'false'
@@ -33,9 +33,9 @@ jobs:
       - name: Check out exact isolated source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 61eea5c1beea8b238bd846a2d3ab1a0edd621d27
+          ref: 6faef24f127df7861725c5a721b2168d838ba7c9
           path: source
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - name: Set up Java 25
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
@@ -51,10 +51,10 @@ jobs:
         run: python3 harness/.github/proofs/account-shared-abuse/proof.py verify
       - name: Qualify seven actual shared-owner Redis methods first
         timeout-minutes: 21
-        run: python3 harness/.github/proofs/account-shared-abuse/proof.py run shared-owner
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py run receiving-fixtures
       - name: Qualify real password and OTP issuance with distinct Cache and Coordination
-        timeout-minutes: 6
-        run: python3 harness/.github/proofs/account-shared-abuse/proof.py run positive-owner
+        timeout-minutes: 11
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py run transaction-boundaries
       - name: Tear down only this run's labelled containers
         if: ${{ always() }}
         run: python3 harness/.github/proofs/account-shared-abuse/proof.py cleanup

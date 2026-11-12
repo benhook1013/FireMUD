@@ -46,6 +46,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   private final RedisClient accountClient;
   private final RedisURI receivingCoordinationUri;
   private final Path temporary;
+  private final Clock serviceClock;
   private IssuedCreator originalCreator;
 
   public AccountControlUiOriginalOrderFixture(
@@ -255,6 +256,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       FreshTenantCreationEvidence creationEvidence)
       throws Exception {
     this.temporary = temporary;
+    this.serviceClock = Objects.requireNonNull(serviceClock, "serviceClock");
     Objects.requireNonNull(actorClock, "actorClock");
     Objects.requireNonNull(serviceClock, "serviceClock");
     f =
@@ -360,22 +362,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
               f.fences,
               f.manager,
               actorClock);
-      issuance =
-          new AccountControlUiIssuanceService(
-              f.primary,
-              null, // No implicit shared abuse policy or admitting fallback.
-              operations,
-              f.authority,
-              f.fences,
-              lifecycle.signer,
-              new AccountControlUiResponseCryptography(
-                  new AccountControlUiKeyring(temporary.resolve("custody")), serviceClock),
-              coordination,
-              actors,
-              f.manager,
-              serviceClock,
-              300_000L,
-              AccountControlUiOwnerSourcesFixture.CALLER);
+      issuance = newIssuer(null);
     } catch (Exception | Error failure) {
       if (allocatedClient != null) {
         try {
@@ -391,6 +378,33 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       }
       throw failure;
     }
+  }
+
+  private AccountControlUiIssuanceService newIssuer(
+      net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService
+          sharedOwner) {
+    return new AccountControlUiIssuanceService(
+        f.primary,
+        sharedOwner,
+        operations,
+        f.authority,
+        f.fences,
+        signerFixture.signer,
+        new AccountControlUiResponseCryptography(
+            new AccountControlUiKeyring(temporary.resolve("custody")), serviceClock),
+        coordination,
+        actors,
+        f.manager,
+        serviceClock,
+        300_000L,
+        AccountControlUiOwnerSourcesFixture.CALLER);
+  }
+
+  /** Same real issuer for explicit physical transaction/concurrency tests. */
+  AccountControlUiIssuanceService accountIssuer(
+      net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService
+          sharedOwner) {
+    return newIssuer(Objects.requireNonNull(sharedOwner, "sharedOwner"));
   }
 
   /** The same persistence layout used by this fixture's genuine issuance and actor owners. */
@@ -482,7 +496,11 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   }
 
   /** Same-package reuse of genuine certified ACCOUNT issuance, separate from tenant creation. */
-  IssuedAccount issueCertifiedAccount(String password) {
+  IssuedAccount issueCertifiedAccount(
+      String password,
+      net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService
+          sharedOwner) {
+    var accountIssuer = newIssuer(Objects.requireNonNull(sharedOwner, "sharedOwner"));
     var account = f.createCertifiedGlobalAccount(password);
     var request =
         new AccountControlUiIssuanceService.AccountSignInRequest(
@@ -495,7 +513,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     try (var peer =
             AccountControlUiOwnerSourcesFixture.withPeer(
                 AccountControlUiOwnerSourcesFixture.CALLER);
-        var issued = issuance.issueAccount(request)) {
+        var issued = accountIssuer.issueAccount(request)) {
       compact = new String(issued.compactBytes(), StandardCharsets.US_ASCII);
     }
     assertThat(actors.authenticateAccount(compact).accountId()).isEqualTo(account.getAccountUuid());
