@@ -555,6 +555,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
               }
               return true;
             });
+    DSLContext dsl = source(provider);
     long started = System.nanoTime();
     try {
       assertThatThrownBy(
@@ -563,7 +564,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       CLOCK,
                       CLOCK.millis() + 250,
                       budget -> {
-                        var sql = budget.sql(source(provider));
+                        var sql = budget.sql(dsl);
                         execute(sql);
                         return execute(sql);
                       }))
