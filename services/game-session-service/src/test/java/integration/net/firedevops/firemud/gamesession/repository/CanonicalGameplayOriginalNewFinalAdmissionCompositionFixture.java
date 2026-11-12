@@ -802,6 +802,14 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result reservation,
       Runnable bindOriginal) {}
 
+  /** Exact physical SQL witness; absence grants no execution or capacity outcome authority. */
+  public long capacityExecutionRowCount() {
+    return binding
+        .dsl()
+        .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+        .get(0, Long.class);
+  }
+
   /** Read-only images of the isolated fixture's actual admission SQL and Redis state. */
   public java.util.Map<String, String> capacityStateImage() {
     var result = new java.util.TreeMap<String, String>();

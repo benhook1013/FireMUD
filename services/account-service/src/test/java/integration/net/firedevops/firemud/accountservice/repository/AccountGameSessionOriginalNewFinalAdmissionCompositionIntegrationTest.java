@@ -443,6 +443,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.capacityImage()).isEqualTo(beforeDenial);
       assertProvisionalUnchanged(session, candidate);
     }
+  }
+
+  @Test
+  void actualPreInsertOwnerMovementRefusalKeepsCapacityHeldThroughRecoveryQuarantine()
+      throws Exception {
     try (Session session = session()) {
       var request = session.capacityRequest;
       byte[] candidate = session.gs.physicalSession();
@@ -458,6 +463,83 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(session.gs.capacityStateImage()).isEqualTo(movedGs);
       assertThat(session.gs.physicalSession()).containsExactly(candidate);
       assertThat(session.gs.finalReadCalls()).isZero();
+      assertThat(session.gs.capacityExecutionRowCount()).isZero();
+      assertThatThrownBy(
+              () ->
+                  session.capacityRead.readExact(
+                      request, fault.reservation(), CLOCK.instant().plusSeconds(5)))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(((StatusRuntimeException) failure).getStatus().getCode())
+                      .isEqualTo(Status.Code.UNAVAILABLE));
+      var recovery =
+          new net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker(
+              session.capacityOwner, session.dsl, session.capacityRead, CLOCK);
+      TenantCapacityAdmission.Result result = fault.reservation();
+      for (int attempt = 1; attempt <= 12; attempt++) {
+        result =
+            recovery.reconcile(
+                request,
+                net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                    .NoCommitAction.RELEASE);
+        assertThat(result.identity()).isEqualTo(fault.reservation().identity());
+        assertThat(result.admissionAttemptId()).isEqualTo(fault.reservation().admissionAttemptId());
+        assertThat(result.capacityRearmFence()).isEqualTo(fault.reservation().capacityRearmFence());
+        assertThat(result.reservationId()).isEqualTo(fault.reservation().reservationId());
+        assertThat(result.reservationFence()).isEqualTo(fault.reservation().reservationFence());
+        assertThat(result.state())
+            .isEqualTo(
+                attempt < 12
+                    ? TenantCapacityAdmission.State.RESERVED
+                    : TenantCapacityAdmission.State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION);
+        var usage =
+            session.dsl.fetchSingle(
+                "SELECT held_units,used_units FROM account_tenant_capacity_usage WHERE tenant_uuid=? AND owner_service='game-session-service'",
+                request.identity().tenantId());
+        assertThat(usage.get("held_units", Long.class)).isOne();
+        assertThat(usage.get("used_units", Long.class)).isZero();
+        assertThat(session.gs.capacityExecutionRowCount()).isZero();
+        assertThat(session.gs.capacityStateImage()).isEqualTo(movedGs);
+      }
+      var retained =
+          session.dsl.fetchSingle(
+              "SELECT recovery_attempt_count,recovery_claim_fence,execution_status,owner_readback,owner_readback_digest FROM account_tenant_capacity_reservations WHERE reservation_id=?",
+              result.reservationId());
+      assertThat(retained.get("recovery_attempt_count", Integer.class)).isEqualTo(12);
+      assertThat(retained.get("recovery_claim_fence", Long.class)).isEqualTo(12L);
+      assertThat(retained.get("execution_status", String.class))
+          .isEqualTo("OWNER_EXECUTION_PENDING");
+      assertThat(retained.get("owner_readback", byte[].class)).isNull();
+      assertThat(retained.get("owner_readback_digest", String.class)).isNull();
+      var observations =
+          session.dsl.fetch(
+              "SELECT recovery_attempt_number,outcome,canonical_readback,readback_digest FROM account_tenant_capacity_recovery_evidence WHERE admission_attempt_id=? ORDER BY recovery_attempt_number",
+              request.admissionAttemptId());
+      assertThat(observations).hasSize(12);
+      for (int index = 0; index < observations.size(); index++) {
+        var observed = observations.get(index);
+        assertThat(observed.get("recovery_attempt_number", Integer.class)).isEqualTo(index + 1);
+        assertThat(observed.get("outcome", String.class))
+            .isEqualTo(
+                index < 11 ? "SOURCE_UNAVAILABLE" : "QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION");
+        assertThat(observed.get("canonical_readback", byte[].class)).isNull();
+        assertThat(observed.get("readback_digest", String.class)).isNull();
+      }
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isOne();
+      String quarantined = session.capacityImage();
+      assertThat(
+              recovery.reconcile(
+                  request,
+                  net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                      .NoCommitAction.RELEASE))
+          .isEqualTo(result);
+      assertThat(session.capacityImage()).isEqualTo(quarantined);
+      assertThat(session.gs.capacityStateImage()).isEqualTo(movedGs);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
     }
   }
 
