@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -60,6 +61,7 @@ import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmission
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
+import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -335,7 +337,15 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
             "SELECT canonical_evidence, snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
             value.fields().get("evaluationIdentity"));
     assertThat(retained).isNotNull();
-    assertThat(retained.get("canonical_evidence", byte[].class)).isEqualTo(value.canonicalBytes());
+    byte[] retainedEvidence = retained.get("canonical_evidence", byte[].class);
+    assertThat(
+            new String(retainedEvidence, StandardCharsets.UTF_8).contains(f.scope.connectScopeId()))
+        .isFalse();
+    assertThat(retainedEvidence).containsExactly(value.canonicalBytes());
+    var decoded = RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(retainedEvidence);
+    assertThat(decoded.verifiedConnectScopeTokenHash())
+        .isEqualTo(AccountJoinDigest.tokenHash(f.scope.connectScopeId()));
+    assertThat(decoded.fields()).doesNotContainKey("verifiedConnectScopeId");
     assertThat(retained.get("snapshot_identity", String.class))
         .isEqualTo(value.fields().get("snapshotIdentity"));
     assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
