@@ -29,6 +29,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -127,7 +128,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             .readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
       }
     } else if (retained.state() == CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED) {
-      requireCommittedOriginReplay(source, origin, retained);
+      requireResumableOriginReplay(source, origin, retained);
     } else {
       throw unavailable();
     }
@@ -138,10 +139,13 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return origin;
   }
 
-  private void requireCommittedOriginReplay(
+  private void requireResumableOriginReplay(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
       CanonicalGameplayCapacityOrigin origin,
       CanonicalGameplayCapacityOriginRepository.Retained retained) {
+    if (retained.state() != CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED
+        || !origin.selectedOwnerId().equals(retained.ownerId())
+        || origin.selectedOwnerFence() != retained.ownerFence()) throw unavailable();
     var execution =
         CanonicalGameplayRegionOwnerTransferRepository.decode(retained.accountResolution());
     CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
@@ -156,9 +160,17 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     String status = row.get("status", String.class);
     if (!"AUTHORIZED".equals(status) && !"COMMITTED".equals(status)) throw unavailable();
     originRedis().readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
-    // Existing authorization is insufficient: an exact replay must observe the prior FINAL.
-    exactPhysicalBinding(
-        readExecution(execution, origin.tenantGameplayTag()), execution, "COMMITTED");
+    var physical = readExecution(execution, origin.tenantGameplayTag());
+    String state = text(physical.get("state"));
+    boolean canResumeFinal =
+        "AUTHORIZED".equals(state)
+            && "AUTHORIZED".equals(status)
+            && source.transitionStatus()
+                == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL
+            && execution.reservation().state() == State.RESERVED
+            && clock.instant().isBefore(execution.reservation().expiresAt());
+    if (!"COMMITTED".equals(state) && !canResumeFinal) throw unavailable();
+    exactPhysicalBinding(physical, execution, state);
   }
 
   /**
@@ -168,11 +180,12 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       beginOriginObservation(Request request, long deadline) {
     noSql();
     if (budget == null)
-      return within(deadline, owner -> owner.beginOriginObservation(request, deadline));
-    budget.check();
+      return withinBackground(deadline, owner -> owner.beginOriginObservation(request, deadline));
     var repository = new CanonicalGameplayCapacityOriginRepository(sql());
     return repository.admitObservation(
-        repository.readOrigin(request), clock.instant(), java.time.Instant.ofEpochMilli(deadline));
+        repository.readOrigin(request),
+        clock.instant(),
+        java.time.Instant.ofEpochMilli(budget.absoluteDeadlineMillis()));
   }
 
   /** Called only by the separate authenticated receiving composition, never by readExact. */
@@ -183,7 +196,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       long deadline) {
     noSql();
     if (budget == null) {
-      within(
+      withinBackground(
           deadline,
           owner -> {
             owner.receiveOriginResolution(resolution, permit, deadline);
@@ -256,7 +269,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (retained == null) throw unavailable();
     long physicalDeadline =
         Math.min(
-            deadline,
+            budget.absoluteDeadlineMillis(),
             Math.min(
                 permit.deadline().toEpochMilli(),
                 resolution.continuationPolicy().deadline().toEpochMilli()));
@@ -561,6 +574,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   return true;
                 });
     // A lost SQL commit reply intentionally loses dispatch permission; retries only inspect.
+    if (!dispatch && origin != null) {
+      requireResumableOriginReplay(
+          source, origin, new CanonicalGameplayCapacityOriginRepository(sql()).read(origin));
+      return;
+    }
     if (dispatch) {
       if (origin != null)
         originRedis()
@@ -859,15 +877,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   /** Authenticated transport calls this read-only method. Absence and contradictions throw. */
   public Snapshot readExact(Request request, Result reservation) {
-    noSql();
-    if (budget != null) return readExact(request, reservation, false);
-    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
-        clock,
-        Long.MAX_VALUE,
-        scoped ->
-            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                    dsl, redis, scripts, clock, tags, scoped, null)
-                .readExact(request, reservation, false));
+    return withinBackground(Long.MAX_VALUE, owner -> owner.readExact(request, reservation, false));
   }
 
   private Snapshot readExact(Request request, Result reservation, boolean verifyForRetention) {
@@ -1364,6 +1374,22 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return operation.apply(this);
     }
     return CanonicalGameplayOriginalNewCapacityExecutionBudget.run(
+        clock,
+        deadline,
+        scoped ->
+            operation.apply(
+                new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                    dsl, redis, scripts, clock, tags, scoped, null)));
+  }
+
+  private <T> T withinBackground(
+      long deadline, Function<CanonicalGameplayOriginalNewCapacityExecutionOwner, T> operation) {
+    noSql();
+    if (budget != null) {
+      budget.check();
+      return operation.apply(this);
+    }
+    return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
         clock,
         deadline,
         scoped ->
