@@ -42,6 +42,7 @@ import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionL
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.OriginalNewCredential;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -49,6 +50,7 @@ import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.gamesession.client.AccountGameplayAdmissionLeaseClient;
+import net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient.CapacityRefusedException;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -762,13 +764,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                       session.capacityClient,
                       denied))
           .isInstanceOf(IllegalStateException.class)
-          .hasCauseInstanceOf(StatusRuntimeException.class)
+          .hasCauseInstanceOf(CapacityRefusedException.class)
           .satisfies(
               failure ->
-                  assertCapacityFailure(
-                      (StatusRuntimeException) failure.getCause(),
-                      Status.Code.RESOURCE_EXHAUSTED,
-                      "TENANT_BILLING_BLOCKED"));
+                  assertThat(((CapacityRefusedException) failure.getCause()).code())
+                      .isEqualTo(Failure.TENANT_BILLING_BLOCKED));
       assertThat(session.capacityImage()).isEqualTo(beforeDenial);
       assertProvisionalUnchanged(session, candidate);
     }
@@ -874,11 +874,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat(candidate).isNotNull();
       String before = session.capacityImage() + session.durableImage();
       for (int attempt = 0; attempt < 2; attempt++) {
-        StatusRuntimeException failure =
+        CapacityRefusedException failure =
             assertThrows(
-                StatusRuntimeException.class,
+                CapacityRefusedException.class,
                 () -> session.capacityClient.commit(denied, CLOCK.millis() + 5_000L));
-        assertCapacityFailure(failure, Status.Code.RESOURCE_EXHAUSTED, "TENANT_BILLING_BLOCKED");
+        assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED);
         assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
         assertProvisionalUnchanged(session, candidate);
       }
@@ -891,8 +891,17 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var request = session.retainControlledEvaluation(true, "0");
       assertThat(request.evidence().permitsCreation()).isTrue();
       assertThat(request.evidence().quota()).isZero();
-      assertCapacityRefusalWithoutMutation(
-          session, request, Status.Code.RESOURCE_EXHAUSTED, "CAPACITY_QUOTA_EXCEEDED");
+      byte[] candidate = session.gs.physicalSession();
+      assertThat(candidate).isNotNull();
+      String before = session.capacityImage() + session.durableImage();
+      assertThat(
+              assertThrows(
+                      CapacityRefusedException.class,
+                      () -> session.capacityClient.commit(request, CLOCK.millis() + 5_000L))
+                  .code())
+          .isEqualTo(Failure.CAPACITY_QUOTA_EXCEEDED);
+      assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
+      assertProvisionalUnchanged(session, candidate);
     }
   }
 
@@ -940,8 +949,18 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertCapacityFailure(failure, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       assertCapacityRefusalWithoutMutation(
           session, wrongScope, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
-      assertThat(session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L))
-          .isEqualTo(first);
+      var player = (TenantCapacityAdmission.PlayerContext) session.capacityRequest.context();
+      session.serializable.executeWithoutResult(
+          status -> {
+            assertThat(
+                    session.dsl.fetchOne(
+                        "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                        player.accountId()))
+                .isNotNull();
+            assertThat(
+                    session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L))
+                .isEqualTo(first);
+          });
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
       assertProvisionalUnchanged(session, candidate);
     }
