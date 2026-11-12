@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -330,6 +331,12 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .containsExactlyEntriesOf(Map.of(f.tenantId.toString(), "2"));
     assertThat(value.membershipSource().membershipAuthorityGeneration()).isEqualTo("1");
     assertThat(value.membershipSource().gameplayAdmissionAllowed()).isTrue();
+    assertThat(value.verifiedConnectScopeTokenHash())
+        .isEqualTo(AccountJoinDigest.tokenHash(f.scope.connectScopeId()));
+    assertThat(
+            new String(value.canonicalBytes(), StandardCharsets.UTF_8)
+                .contains(f.scope.connectScopeId()))
+        .isFalse();
     var binding = (Map<?, ?>) value.fields().get("target");
     assertThat(binding.get("realmId")).isEqualTo(f.scope.realmId().toString());
     assertThat(binding.get("playableStateNamespaceId"))

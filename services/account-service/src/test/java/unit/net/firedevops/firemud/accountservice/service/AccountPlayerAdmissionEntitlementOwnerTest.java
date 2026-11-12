@@ -134,6 +134,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.fields()).containsEntry("variant", "PLAYER_ADMISSION");
     assertThat(value.fields().get("requestId")).isEqualTo(f.request.requestId().toString());
     assertThat(value.fields().get("callerWorkload")).isEqualTo(PEER);
+    assertThat(
+            new String(value.canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                .contains(f.scope.connectScopeId()))
+        .isFalse();
     assertThat(value.membershipSource().accountId()).isEqualTo(ACCOUNT.toString());
     assertThat(value.membershipSource().tenantId()).isEqualTo(TENANT.toString());
     assertThat(value.membershipSource().membershipExists()).isFalse();
@@ -145,7 +149,9 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.membershipSource().authorityTuple().membershipAuthorityGeneration())
         .containsExactlyEntriesOf(Map.of(TENANT.toString(), "1"));
     assertThat(value.fields())
-        .containsEntry("verifiedConnectScopeId", f.scope.connectScopeId())
+        .containsEntry(
+            "verifiedConnectScopeTokenHash", AccountJoinDigest.tokenHash(f.scope.connectScopeId()))
+        .doesNotContainKey("verifiedConnectScopeId")
         .containsEntry("sourceKind", "NON_PAID_DEMO");
     var binding = (Map<?, ?>) value.fields().get("target");
     assertThat(binding.get("realmId")).isEqualTo(f.scope.realmId().toString());
