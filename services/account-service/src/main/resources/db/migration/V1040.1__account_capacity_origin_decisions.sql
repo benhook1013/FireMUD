@@ -1,4 +1,5 @@
--- PRIVATE RECEIVING DDL ONLY. Not in Flyway discovery. No migration version or activation.
+-- Retain the exact Account decision before a new reservation or rearm can commit.
+-- Existing reservation identities and terminal evidence are left intact.
 CREATE TABLE account_capacity_origin_decisions (
   tenant_uuid uuid NOT NULL,
   request_id uuid NOT NULL,
@@ -13,6 +14,7 @@ CREATE TABLE account_capacity_origin_decisions (
   CHECK (decision <> 'NO_ACCEPT' OR capacity_rearm_fence = 1)
 );
 
+-- [jooq ignore start]
 CREATE FUNCTION account_capacity_origin_decision_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -87,3 +89,4 @@ CREATE CONSTRAINT TRIGGER account_capacity_origin_decision_completion_guard
 AFTER INSERT ON account_capacity_origin_decisions
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION account_capacity_origin_decision_completion_guard();
+-- [jooq ignore stop]

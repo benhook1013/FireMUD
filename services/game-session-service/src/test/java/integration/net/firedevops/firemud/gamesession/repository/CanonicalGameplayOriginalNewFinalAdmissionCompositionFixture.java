@@ -652,7 +652,8 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             CLOCK,
             capacityClient,
             new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                binding.dsl(), coordination, scripts, CLOCK, tags),originReceivingEnabled);
+                binding.dsl(), coordination, scripts, CLOCK, tags),
+            originReceivingEnabled);
     var result =
         coordinator.completeOriginalNew(
             decision, originalLoginJwt, regionInstallation, 120_000L, deadline, capacityRequest);
@@ -664,69 +665,120 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         result.finalSessionSha256());
   }
 
-  /** Test-only opt-in: no schema is added to Flyway or normal receiver registration. */
-  public void enableOriginReceiving() throws Exception {
-    originReceivingEnabled=true;
-    for (String name : java.util.List.of("game-session-origin-custody.sql", "origin-transfer-custody.sql")) {
-      try (var input = getClass().getClassLoader().getResourceAsStream("origin-receiving/" + name)) {
-        if (input == null) throw new IllegalStateException("Missing private receiving schema");
-        binding.dsl().execute(new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
-      }
-    }
-    scripts = RedisScriptCatalog.fromContributions(List.of(
-        new CanonicalGameplayAccountInitialBarrierRedisScriptContribution(),
-        new CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
-        new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution(),
-        new CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
-        new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
-        new CanonicalGameplayRegionLeaseRedisScriptContribution(),
-        new CanonicalGameplayRegionBindingBridgeRedisScriptContribution(),
-        new net.firedevops.firemud.gamesession.service.CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
-        new net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution()));
+  /** Compose the origin recovery scripts for the controlled receiver. */
+  public void enableOriginReceiving() {
+    originReceivingEnabled = true;
+    scripts =
+        RedisScriptCatalog.fromContributions(
+            List.of(
+                new CanonicalGameplayAccountInitialBarrierRedisScriptContribution(),
+                new CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
+                new CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution(),
+                new CanonicalGameplayOriginalNewCandidateRedisScriptContribution(),
+                new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
+                new CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                new CanonicalGameplayRegionBindingBridgeRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution()));
   }
 
-  public void prepareReceivingOrigin(net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
-    var source = new CanonicalGameplayBindingInventoryRepository(binding.dsl()).readOriginalNewFinalAdmissionSource(decision);
+  public void prepareReceivingOrigin(
+      net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
+    var source =
+        new CanonicalGameplayBindingInventoryRepository(binding.dsl())
+            .readOriginalNewFinalAdmissionSource(decision);
     originExecutionOwner(CLOCK).prepareOrigin(source, request, CLOCK.millis() + 5000);
   }
 
   private CanonicalGameplayOriginalNewCapacityExecutionOwner originExecutionOwner(Clock clock) {
-    return new CanonicalGameplayOriginalNewCapacityExecutionOwner(binding.dsl(), coordination, scripts, clock, tags);
+    return new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+        binding.dsl(), coordination, scripts, clock, tags);
   }
 
-  public net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayCapacityOriginRecoveryReceiver originReceiver(Clock clock) {
-    return new net.firedevops.firemud.gamesession.service.impl.CanonicalGameplayCapacityOriginRecoveryReceiver(originExecutionOwner(clock), "test", clock);
+  public net.firedevops.firemud.gamesession.service.impl
+          .CanonicalGameplayCapacityOriginRecoveryReceiver
+      originReceiver(Clock clock) {
+    return new net.firedevops.firemud.gamesession.service.impl
+        .CanonicalGameplayCapacityOriginRecoveryReceiver(
+        originExecutionOwner(clock), "test", clock);
   }
 
-  public java.util.Map<String,Object> originBudgetImage() {
-    var row=binding.dsl().fetchSingle("SELECT recovery_deadline,recovery_max_observations,recovery_observations,last_observation_deadline,reservation_policy_applied,custody_owner_id,custody_owner_fence,state FROM game_session_original_new_capacity_origin");
+  public java.util.Map<String, Object> originBudgetImage() {
+    var row =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT recovery_deadline,recovery_max_observations,recovery_observations,last_observation_deadline,reservation_policy_applied,custody_owner_id,custody_owner_fence,state FROM game_session_original_new_capacity_origin");
     return new java.util.LinkedHashMap<>(row.intoMap());
   }
 
-  public java.util.Map<String,String> originPhysicalImage() {
-    var row=binding.dsl().fetchSingle("SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
-    String key="session:game:capacity-origin:{"+row.get("tenant_gameplay_tag",String.class)+"}:"+row.get("admission_attempt_id",java.util.UUID.class);
-    var result=new java.util.LinkedHashMap<String,String>();
-    administration.sync().hgetall(ascii(key)).forEach((k,v)->result.put(new String(k,StandardCharsets.UTF_8),new String(v,StandardCharsets.UTF_8)));
-    result.put("pttl",Long.toString(administration.sync().pttl(ascii(key))));
+  public java.util.Map<String, String> originPhysicalImage() {
+    var row =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
+    String key =
+        "session:game:capacity-origin:{"
+            + row.get("tenant_gameplay_tag", String.class)
+            + "}:"
+            + row.get("admission_attempt_id", java.util.UUID.class);
+    var result = new java.util.LinkedHashMap<String, String>();
+    administration
+        .sync()
+        .hgetall(ascii(key))
+        .forEach(
+            (k, v) ->
+                result.put(
+                    new String(k, StandardCharsets.UTF_8), new String(v, StandardCharsets.UTF_8)));
+    result.put("pttl", Long.toString(administration.sync().pttl(ascii(key))));
     return result;
   }
 
   public void corruptOriginDigestForFault() {
-    var row=binding.dsl().fetchSingle("SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
-    String key="session:game:capacity-origin:{"+row.get("tenant_gameplay_tag",String.class)+"}:"+row.get("admission_attempt_id",java.util.UUID.class);
-    administration.sync().hset(ascii(key),ascii("origin"),ascii("sha256:"+"0".repeat(64)));
+    var row =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
+    String key =
+        "session:game:capacity-origin:{"
+            + row.get("tenant_gameplay_tag", String.class)
+            + "}:"
+            + row.get("admission_attempt_id", java.util.UUID.class);
+    administration.sync().hset(ascii(key), ascii("origin"), ascii("sha256:" + "0".repeat(64)));
   }
 
   public void handoffReceivingOrigin() throws Exception {
     var repository = new CanonicalGameplayRegionOwnerTransferRepository(binding.dsl(), CLOCK, tags);
-    var receiver = new CanonicalGameplayControlledRegionTransferObservationFixture().receiver(repository, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
     var origins = new CanonicalGameplayCapacityOriginTransferRepository(repository);
-    var originReceiver = new CanonicalGameplayControlledOriginTransferObservationFixture().receiver(origins,tags);
-    var transfer = new CanonicalGameplayRegionOwnerTransferCoordinator(binding.dsl(),CLOCK,repository,originExecutionOwner(CLOCK),receiver,originReceiver);
-    administration.sync().pexpire(ascii(regionInstallation.grant.key()),0);
-    regionInstallation=CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(binding.dsl(),coordination,scripts,regionInstallation,sources.resolver,
-        CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture::controlledRegionIncarnation,transfer,CLOCK.millis()+5000);
+    var originReceiver =
+        new CanonicalGameplayControlledOriginTransferObservationFixture().receiver(origins, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            binding.dsl(),
+            CLOCK,
+            repository,
+            originExecutionOwner(CLOCK),
+            receiver,
+            originReceiver);
+    administration.sync().pexpire(ascii(regionInstallation.grant.key()), 0);
+    regionInstallation =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            binding.dsl(),
+            coordination,
+            scripts,
+            regionInstallation,
+            sources.resolver,
+            CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
+                ::controlledRegionIncarnation,
+            transfer,
+            CLOCK.millis() + 5000);
   }
 
   public Candidate candidate() {

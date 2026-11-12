@@ -108,147 +108,274 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
-  void actualTamperedOriginRefusesClosureWithoutNegativeProofOrCandidateMutation() throws Exception {
-    try(Session session=session()) {
-      session.enableOriginReceiving();session.gs.prepareReceivingOrigin(session.capacityRequest);
-      var permit=session.beginOriginObservation(CLOCK);
-      var reservation=session.capacityOwner.commit(session.capacityRequest,GS);
-      var resolution=session.capacityOwner.resolveOrigin(session.capacityRequest,GS,false);
-      byte[] candidate=session.gs.physicalSession();
-      session.gs.corruptOriginDigestForFault();var physical=session.gs.originPhysicalImage();
-      assertThatThrownBy(()->session.deliverOriginResolution(resolution,permit,CLOCK)).isInstanceOf(StatusRuntimeException.class);
+  void actualTamperedOriginRefusesClosureWithoutNegativeProofOrCandidateMutation()
+      throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var permit = session.beginOriginObservation(CLOCK);
+      var reservation = session.capacityOwner.commit(session.capacityRequest, GS);
+      var resolution = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, false);
+      byte[] candidate = session.gs.physicalSession();
+      session.gs.corruptOriginDigestForFault();
+      var physical = session.gs.originPhysicalImage();
+      assertThatThrownBy(() -> session.deliverOriginResolution(resolution, permit, CLOCK))
+          .isInstanceOf(StatusRuntimeException.class);
       assertThat(session.gs.originPhysicalImage()).isEqualTo(physical);
       assertThat(session.gs.physicalSession()).containsExactly(candidate);
-      assertThatThrownBy(()->session.capacityRead.readExact(session.capacityRequest,reservation,CLOCK.instant().plusSeconds(5))).isInstanceOf(StatusRuntimeException.class);
-      assertThat(session.gs.dsl().fetchSingle("SELECT status FROM game_session_original_new_capacity_execution").get("status",String.class)).isEqualTo("CLOSURE_CLAIMED");
+      assertThatThrownBy(
+              () ->
+                  session.capacityRead.readExact(
+                      session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5)))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle("SELECT status FROM game_session_original_new_capacity_execution")
+                  .get("status", String.class))
+          .isEqualTo("CLOSURE_CLAIMED");
     }
   }
 
   @Test
-  void actualOriginCallbackRacesOwnerMovementWithoutLosingDenialOrReplenishingBudget() throws Exception {
-    try(Session session=session()) {
-      session.enableOriginReceiving();session.gs.prepareReceivingOrigin(session.capacityRequest);
-      var permit=session.beginOriginObservation(CLOCK);
-      var denied=session.capacityOwner.resolveOrigin(session.capacityRequest,GS,true);
-      var start=new java.util.concurrent.CountDownLatch(1);
-      try(var executor=java.util.concurrent.Executors.newFixedThreadPool(2)) {
-        var callback=executor.submit(()->{start.await();try{session.deliverOriginResolution(denied,permit,CLOCK);return true;}catch(StatusRuntimeException refusal){return false;}});
-        var movement=executor.submit(()->{start.await();session.gs.handoffReceivingOrigin();return true;});
-        start.countDown();assertThat(movement.get(10,TimeUnit.SECONDS)).isTrue();
-        boolean received=callback.get(10,TimeUnit.SECONDS);
-        var image=session.gs.originBudgetImage();
+  void actualOriginCallbackRacesOwnerMovementWithoutLosingDenialOrReplenishingBudget()
+      throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var permit = session.beginOriginObservation(CLOCK);
+      var denied = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, true);
+      var start = new java.util.concurrent.CountDownLatch(1);
+      try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+        var callback =
+            executor.submit(
+                () -> {
+                  start.await();
+                  try {
+                    session.deliverOriginResolution(denied, permit, CLOCK);
+                    return true;
+                  } catch (StatusRuntimeException refusal) {
+                    return false;
+                  }
+                });
+        var movement =
+            executor.submit(
+                () -> {
+                  start.await();
+                  session.gs.handoffReceivingOrigin();
+                  return true;
+                });
+        start.countDown();
+        assertThat(movement.get(10, TimeUnit.SECONDS)).isTrue();
+        boolean received = callback.get(10, TimeUnit.SECONDS);
+        var image = session.gs.originBudgetImage();
         assertThat(image.get("recovery_observations")).isEqualTo(1);
-        assertThat((Long)image.get("custody_owner_fence")).isGreaterThan(permit.custodyFence());
-        if(received)assertThat(image.get("state")).isEqualTo("DENIED");
-        var successor=session.beginOriginObservation(CLOCK);assertThat(successor.ordinal()).isEqualTo(2);
-        session.deliverOriginResolution(denied,successor,CLOCK);
-        assertThat(session.gs.originPhysicalImage()).containsEntry("state","DENIED").containsEntry("pttl","-1");
-        assertThat(session.dsl.fetchCount(org.jooq.impl.DSL.table("account_tenant_capacity_reservations"))).isZero();
+        assertThat((Long) image.get("custody_owner_fence")).isGreaterThan(permit.custodyFence());
+        if (received) assertThat(image.get("state")).isEqualTo("DENIED");
+        var successor = session.beginOriginObservation(CLOCK);
+        assertThat(successor.ordinal()).isEqualTo(2);
+        session.deliverOriginResolution(denied, successor, CLOCK);
+        assertThat(session.gs.originPhysicalImage())
+            .containsEntry("state", "DENIED")
+            .containsEntry("pttl", "-1");
+        assertThat(
+                session.dsl.fetchCount(
+                    org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+            .isZero();
       }
     }
   }
 
   @Test
   void actualExpiredOriginPolicyRetainsBudgetAndRejectsFurtherObservation() throws Exception {
-    try(Session session=session()) {
-      session.enableOriginReceiving();session.gs.prepareReceivingOrigin(session.capacityRequest);
-      var permit=session.beginOriginObservation(CLOCK);
-      var image=session.gs.originBudgetImage();
-      var expired=Clock.fixed(((java.time.OffsetDateTime)image.get("recovery_deadline")).toInstant().plusNanos(1000),java.time.ZoneOffset.UTC);
-      assertThatThrownBy(()->session.beginOriginObservation(expired)).isInstanceOf(StatusRuntimeException.class);
-      var unknown=session.capacityOwner.resolveOrigin(session.capacityRequest,GS,false);
-      assertThatThrownBy(()->session.deliverOriginResolution(unknown,permit,expired)).isInstanceOf(StatusRuntimeException.class);
-      assertThat(session.gs.originBudgetImage()).isEqualTo(image);
-      assertThat(session.gs.originPhysicalImage()).containsEntry("state","OPEN");
-    }
-  }
-
-  @Test
-  void actualOriginCallbackConstructsDualStoreClosedFromRetainedAccountReservation() throws Exception {
-    try(Session session=session()) {
+    try (Session session = session()) {
       session.enableOriginReceiving();
       session.gs.prepareReceivingOrigin(session.capacityRequest);
-      var permit=session.beginOriginObservation(CLOCK);
-      var reservation=session.capacityOwner.commit(session.capacityRequest,GS);
-      var resolution=session.capacityOwner.resolveOrigin(session.capacityRequest,GS,false);
+      var permit = session.beginOriginObservation(CLOCK);
+      var image = session.gs.originBudgetImage();
+      var expired =
+          Clock.fixed(
+              ((java.time.OffsetDateTime) image.get("recovery_deadline"))
+                  .toInstant()
+                  .plusNanos(1000),
+              java.time.ZoneOffset.UTC);
+      assertThatThrownBy(() -> session.beginOriginObservation(expired))
+          .isInstanceOf(StatusRuntimeException.class);
+      var unknown = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, false);
+      assertThatThrownBy(() -> session.deliverOriginResolution(unknown, permit, expired))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(session.gs.originBudgetImage()).isEqualTo(image);
+      assertThat(session.gs.originPhysicalImage()).containsEntry("state", "OPEN");
+    }
+  }
+
+  @Test
+  void actualOriginCallbackConstructsDualStoreClosedFromRetainedAccountReservation()
+      throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var permit = session.beginOriginObservation(CLOCK);
+      var reservation = session.capacityOwner.commit(session.capacityRequest, GS);
+      var resolution = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, false);
       assertThat(resolution.reservation()).isEqualTo(reservation);
-      session.deliverOriginResolution(resolution,permit,CLOCK);
-      var budget=session.gs.originBudgetImage();
+      session.deliverOriginResolution(resolution, permit, CLOCK);
+      var budget = session.gs.originBudgetImage();
       assertThat(budget.get("recovery_observations")).isEqualTo(1);
       assertThat(budget.get("reservation_policy_applied")).isEqualTo(true);
-      assertThat(budget.get("recovery_deadline")).isEqualTo(java.time.OffsetDateTime.ofInstant(resolution.continuationPolicy().deadline(),java.time.ZoneOffset.UTC));
-      assertThat(session.gs.dsl().fetchSingle("SELECT status FROM game_session_original_new_capacity_execution").get("status",String.class)).isEqualTo("CLOSED");
-      var read=session.capacityRead.readExact(session.capacityRequest,reservation,CLOCK.instant().plusSeconds(5));
-      assertThat(read.disposition()).isEqualTo(net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker.Disposition.NOT_EXECUTED_AFTER_AUTHORIZATION);
-      assertThat(session.gs.originPhysicalImage()).containsEntry("state","CLOSURE_CLAIMED").containsEntry("pttl","-1");
+      assertThat(budget.get("recovery_deadline"))
+          .isEqualTo(
+              java.time.OffsetDateTime.ofInstant(
+                  resolution.continuationPolicy().deadline(), java.time.ZoneOffset.UTC));
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle("SELECT status FROM game_session_original_new_capacity_execution")
+                  .get("status", String.class))
+          .isEqualTo("CLOSED");
+      var read =
+          session.capacityRead.readExact(
+              session.capacityRequest, reservation, CLOCK.instant().plusSeconds(5));
+      assertThat(read.disposition())
+          .isEqualTo(
+              net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker
+                  .Disposition.NOT_EXECUTED_AFTER_AUTHORIZATION);
+      assertThat(session.gs.originPhysicalImage())
+          .containsEntry("state", "CLOSURE_CLAIMED")
+          .containsEntry("pttl", "-1");
       assertThat(session.gs.finalReadCalls()).isZero();
-      var physical=session.gs.originPhysicalImage();
-      assertThatThrownBy(()->session.gs.complete(session.client,session.jwks,session.jwt,CLOCK.millis()+5000,session.capacityClient,session.capacityRequest)).isInstanceOf(RuntimeException.class);
+      var physical = session.gs.originPhysicalImage();
+      assertThatThrownBy(
+              () ->
+                  session.gs.complete(
+                      session.client,
+                      session.jwks,
+                      session.jwt,
+                      CLOCK.millis() + 5000,
+                      session.capacityClient,
+                      session.capacityRequest))
+          .isInstanceOf(RuntimeException.class);
       assertThat(session.gs.originPhysicalImage()).isEqualTo(physical);
-      assertThat(session.gs.dsl().fetchSingle("SELECT status FROM game_session_original_new_capacity_execution").get("status",String.class)).isEqualTo("CLOSED");
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchSingle("SELECT status FROM game_session_original_new_capacity_execution")
+                  .get("status", String.class))
+          .isEqualTo("CLOSED");
     }
   }
 
   @Test
-  void actualUnknownOriginCallbackConsumesDurableBudgetWithoutInventingReservation() throws Exception {
-    try(Session session=session()) {
-      session.enableOriginReceiving();session.gs.prepareReceivingOrigin(session.capacityRequest);
-      var permit=session.beginOriginObservation(CLOCK);
-      var unknown=session.capacityOwner.resolveOrigin(session.capacityRequest,GS,false);
+  void actualUnknownOriginCallbackConsumesDurableBudgetWithoutInventingReservation()
+      throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var permit = session.beginOriginObservation(CLOCK);
+      var unknown = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, false);
       assertThat(unknown.status().name()).isEqualTo("UNKNOWN");
-      assertThatThrownBy(()->session.deliverOriginResolution(unknown,permit,CLOCK)).isInstanceOf(StatusRuntimeException.class);
-      assertThat(session.gs.originBudgetImage()).containsEntry("recovery_observations",1).containsEntry("state","OPEN");
-      assertThat(session.gs.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_original_new_capacity_execution"))).isZero();
-      assertThat(session.dsl.fetchCount(org.jooq.impl.DSL.table("account_tenant_capacity_reservations"))).isZero();
-      var next=session.beginOriginObservation(CLOCK);assertThat(next.ordinal()).isEqualTo(2);
+      assertThatThrownBy(() -> session.deliverOriginResolution(unknown, permit, CLOCK))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(session.gs.originBudgetImage())
+          .containsEntry("recovery_observations", 1)
+          .containsEntry("state", "OPEN");
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchCount(
+                      org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
+          .isZero();
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
+      var next = session.beginOriginObservation(CLOCK);
+      assertThat(next.ordinal()).isEqualTo(2);
     }
   }
 
   @Test
-  void actualNoAcceptOriginCallbackRetiresOnlyExactCustodyAndExcludesDelayedCommit() throws Exception {
-    try(Session session=session()) {
-      session.enableOriginReceiving();session.gs.prepareReceivingOrigin(session.capacityRequest);
-      var permit=session.beginOriginObservation(CLOCK);
-      var denied=session.capacityOwner.resolveOrigin(session.capacityRequest,GS,true);
+  void actualNoAcceptOriginCallbackRetiresOnlyExactCustodyAndExcludesDelayedCommit()
+      throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var permit = session.beginOriginObservation(CLOCK);
+      var denied = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, true);
       assertThat(denied.status().name()).isEqualTo("NO_ACCEPT_RETAINED");
-      session.deliverOriginResolution(denied,permit,CLOCK);
-      assertThat(session.gs.originPhysicalImage()).containsEntry("state","DENIED").containsEntry("pttl","-1");
-      assertThatThrownBy(()->session.capacityOwner.commit(session.capacityRequest,GS)).isInstanceOf(RuntimeException.class);
-      assertThat(session.dsl.fetchCount(org.jooq.impl.DSL.table("account_tenant_capacity_reservations"))).isZero();
-      assertThat(session.gs.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_original_new_capacity_execution"))).isZero();
+      session.deliverOriginResolution(denied, permit, CLOCK);
+      assertThat(session.gs.originPhysicalImage())
+          .containsEntry("state", "DENIED")
+          .containsEntry("pttl", "-1");
+      assertThatThrownBy(() -> session.capacityOwner.commit(session.capacityRequest, GS))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchCount(
+                      org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
+          .isZero();
     }
   }
 
   @Test
   void actualOriginHandoffPreservesBudgetAndRefusesStillLiveOldCustodyCallback() throws Exception {
-    try(Session session=session()) {
-      session.enableOriginReceiving();session.gs.prepareReceivingOrigin(session.capacityRequest);
-      var permit=session.beginOriginObservation(CLOCK);
-      var denied=session.capacityOwner.resolveOrigin(session.capacityRequest,GS,true);
-      var before=session.gs.originBudgetImage();
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var permit = session.beginOriginObservation(CLOCK);
+      var denied = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, true);
+      var before = session.gs.originBudgetImage();
       session.gs.handoffReceivingOrigin();
-      var moved=session.gs.originBudgetImage();
-      for(String field:List.of("recovery_deadline","recovery_max_observations","recovery_observations","last_observation_deadline","reservation_policy_applied"))assertThat(moved.get(field)).isEqualTo(before.get(field));
-      assertThat((Long)moved.get("custody_owner_fence")).isGreaterThan((Long)before.get("custody_owner_fence"));
+      var moved = session.gs.originBudgetImage();
+      for (String field :
+          List.of(
+              "recovery_deadline",
+              "recovery_max_observations",
+              "recovery_observations",
+              "last_observation_deadline",
+              "reservation_policy_applied"))
+        assertThat(moved.get(field)).isEqualTo(before.get(field));
+      assertThat((Long) moved.get("custody_owner_fence"))
+          .isGreaterThan((Long) before.get("custody_owner_fence"));
       assertThat(CLOCK.instant()).isBefore(permit.deadline());
-      var physical=session.gs.originPhysicalImage();
-      assertThatThrownBy(()->session.deliverOriginResolution(denied,permit,CLOCK)).isInstanceOf(StatusRuntimeException.class);
-      assertThat(session.gs.originBudgetImage()).isEqualTo(moved);assertThat(session.gs.originPhysicalImage()).isEqualTo(physical);
-      var successor=session.beginOriginObservation(CLOCK);assertThat(successor.ordinal()).isEqualTo(2);
-      session.deliverOriginResolution(denied,successor,CLOCK);
-      assertThat(session.gs.originPhysicalImage()).containsEntry("state","DENIED");
+      var physical = session.gs.originPhysicalImage();
+      assertThatThrownBy(() -> session.deliverOriginResolution(denied, permit, CLOCK))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(session.gs.originBudgetImage()).isEqualTo(moved);
+      assertThat(session.gs.originPhysicalImage()).isEqualTo(physical);
+      var successor = session.beginOriginObservation(CLOCK);
+      assertThat(successor.ordinal()).isEqualTo(2);
+      session.deliverOriginResolution(denied, successor, CLOCK);
+      assertThat(session.gs.originPhysicalImage()).containsEntry("state", "DENIED");
     }
   }
 
   @Test
-  void actualOriginObservationExhaustionRetainsHoldAndCannotResetOnRecreatedReceiver() throws Exception {
-    try(Session session=session()) {
-      session.enableOriginReceiving();session.gs.prepareReceivingOrigin(session.capacityRequest);
-      for(int ordinal=1;ordinal<=12;ordinal++)assertThat(session.beginOriginObservation(CLOCK).ordinal()).isEqualTo(ordinal);
-      var before=session.gs.originBudgetImage();
-      assertThatThrownBy(()->session.beginOriginObservation(CLOCK)).isInstanceOf(StatusRuntimeException.class);
-      assertThat(session.gs.originBudgetImage()).isEqualTo(before).containsEntry("state","OPEN");
-      assertThat(session.dsl.fetchCount(org.jooq.impl.DSL.table("account_tenant_capacity_reservations"))).isZero();
+  void actualOriginObservationExhaustionRetainsHoldAndCannotResetOnRecreatedReceiver()
+      throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      for (int ordinal = 1; ordinal <= 12; ordinal++)
+        assertThat(session.beginOriginObservation(CLOCK).ordinal()).isEqualTo(ordinal);
+      var before = session.gs.originBudgetImage();
+      assertThatThrownBy(() -> session.beginOriginObservation(CLOCK))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(session.gs.originBudgetImage()).isEqualTo(before).containsEntry("state", "OPEN");
+      assertThat(
+              session.dsl.fetchCount(
+                  org.jooq.impl.DSL.table("account_tenant_capacity_reservations")))
+          .isZero();
     }
   }
 
@@ -851,25 +978,38 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
     private CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector targetSelector;
 
     private void enableOriginReceiving() throws Exception {
-      try(var input=getClass().getClassLoader().getResourceAsStream("origin-receiving/account_capacity_origin_decisions.proposed.sql")) {
-        if(input==null)throw new IllegalStateException("Missing Account receiving schema");
-        dsl.execute(new String(input.readAllBytes(),StandardCharsets.UTF_8));
-      }
       gs.enableOriginReceiving();
     }
 
-    private net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation.Permit beginOriginObservation(Clock clock) throws Exception {
-      var receiver=gs.originReceiver(clock);
-      return OriginReceivingMtlsTestBridge.call(pki.keyManagerFactory(pki.identity("gs")),pki.trustManagerFactory(),pki.keyManagerFactory(pki.identity("account-client")),
-          net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(capacityRequest),
-          headers->receiver.beginObservation(capacityRequest,clock.instant().plusSeconds(5),headers));
+    private net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation.Permit
+        beginOriginObservation(Clock clock) throws Exception {
+      var receiver = gs.originReceiver(clock);
+      return OriginReceivingMtlsTestBridge.call(
+          pki.keyManagerFactory(pki.identity("gs")),
+          pki.trustManagerFactory(),
+          pki.keyManagerFactory(pki.identity("account-client")),
+          net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest.preimage(
+              capacityRequest),
+          headers ->
+              receiver.beginObservation(capacityRequest, clock.instant().plusSeconds(5), headers));
     }
 
-    private void deliverOriginResolution(net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution resolution,
-        net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation.Permit permit,Clock clock) throws Exception {
-      var receiver=gs.originReceiver(clock);
-      OriginReceivingMtlsTestBridge.call(pki.keyManagerFactory(pki.identity("gs")),pki.trustManagerFactory(),pki.keyManagerFactory(pki.identity("account-client")),resolution.canonicalBytes(),
-          headers->{receiver.receiveExact(resolution,permit,headers);return null;});
+    private void deliverOriginResolution(
+        net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution resolution,
+        net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation.Permit
+            permit,
+        Clock clock)
+        throws Exception {
+      var receiver = gs.originReceiver(clock);
+      OriginReceivingMtlsTestBridge.call(
+          pki.keyManagerFactory(pki.identity("gs")),
+          pki.trustManagerFactory(),
+          pki.keyManagerFactory(pki.identity("account-client")),
+          resolution.canonicalBytes(),
+          headers -> {
+            receiver.receiveExact(resolution, permit, headers);
+            return null;
+          });
     }
 
     private Session(Clock capacityClock) throws Exception {

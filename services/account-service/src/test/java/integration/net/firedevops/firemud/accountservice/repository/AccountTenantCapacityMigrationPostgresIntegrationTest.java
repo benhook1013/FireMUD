@@ -81,6 +81,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
           .isNotNull();
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
       assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
+      assertThat(dsl.fetchCount(DSL.table("account_capacity_origin_decisions"))).isZero();
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }
