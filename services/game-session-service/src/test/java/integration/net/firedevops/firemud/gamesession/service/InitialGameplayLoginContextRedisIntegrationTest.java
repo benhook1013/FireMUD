@@ -653,7 +653,10 @@ class InitialGameplayLoginContextRedisIntegrationTest {
       throws Exception {
     var authority = new ControlledAuthority();
     var provider = new TracedProvider(writer);
-    var contexts = client(provider, authority, 1);
+    // Positive composition requires replica fsync under shared-runner load.
+    // Keep insufficient-acknowledgement tests on their separate short failure deadline.
+    var contexts =
+        client(provider, authority, new AcknowledgementPolicy(Profile.REPLICATED, 1, 1, 3_000));
     var account = mock(CanonicalGameplayLoginAccountClient.class);
     var cleanup = cleanup(contexts, account);
     var owner = new InitialGameplayLoginOwner(contexts, cleanup, account);
