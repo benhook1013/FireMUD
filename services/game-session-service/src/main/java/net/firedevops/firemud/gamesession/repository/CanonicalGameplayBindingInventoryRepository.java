@@ -1080,37 +1080,62 @@ public final class CanonicalGameplayBindingInventoryRepository {
   /** Only an explicitly observed COMMITTED original selects the strict terminal source path. */
   Optional<OriginalNewFinalAdmissionSource> readRegionTransferCommittedSource(
       UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    return switch (readRegionTransferOriginalStatus(transitionId, expectedOriginal)) {
+      case PROVISIONAL -> Optional.empty();
+      case COMMITTED -> Optional.of(readRegionTransferCommittedSource(expectedOriginal));
+      default -> throw conflict("Region transfer original has no current installation lifecycle");
+    };
+  }
+
+  /**
+   * Selects retained topology for an already pinned transfer without minting admission evidence.
+   */
+  Optional<RegionTransferTerminalSource> readRegionTransferTerminalSource(
+      UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    return switch (readRegionTransferOriginalStatus(transitionId, expectedOriginal)) {
+      case PROVISIONAL -> Optional.empty();
+      case COMMITTED -> Optional.of(readRegionTransferCommittedSource(expectedOriginal));
+      case ABORTED -> Optional.of(readRegionTransferAbortedSource(expectedOriginal));
+      default -> throw conflict("Region transfer original has no current installation lifecycle");
+    };
+  }
+
+  private CanonicalGameplayBindingTransitionSnapshot.Status readRegionTransferOriginalStatus(
+      UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
     requireNoAmbientTransaction();
     Objects.requireNonNull(expectedOriginal, "pinned original transfer candidate");
     if (!expectedOriginal.bindingDecisionId().equals(transitionId)) {
       throw conflict("Region transfer changed its original transition");
     }
-    boolean committed =
-        dsl.transactionResult(
-            configuration -> {
-              var transaction = DSL.using(configuration);
-              transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-              Record row = readTransition(transaction, transitionId);
-              if (row == null) throw conflict("Region transfer original transition is missing");
-              String status = row.get("status", String.class);
-              if ("COMMITTED".equals(status)) return true;
-              if (!"PROVISIONAL".equals(status)) {
-                throw conflict("Region transfer original has no current installation lifecycle");
-              }
-              var provisional = loadProvisionalCasEvidence(transaction, transitionId, false);
-              var decision = toAdmissionDecision(row, provisional);
-              if (!expectedOriginal.equals(
-                  CanonicalGameplayOriginalNewCandidate.fromOriginalSources(
-                      provisional, decision))) {
-                throw conflict(
-                    "Region transfer original differs from its current provisional source");
-              }
-              return false;
-            });
-    if (!committed) return Optional.empty();
+    return dsl.transactionResult(
+        configuration -> {
+          var transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          Record row = readTransition(transaction, transitionId);
+          if (row == null) throw conflict("Region transfer original transition is missing");
+          String status = row.get("status", String.class);
+          if ("COMMITTED".equals(status))
+            return CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED;
+          if ("ABORTED".equals(status))
+            return CanonicalGameplayBindingTransitionSnapshot.Status.ABORTED;
+          if (!"PROVISIONAL".equals(status)) {
+            throw conflict("Region transfer original has no current installation lifecycle");
+          }
+          var provisional = loadProvisionalCasEvidence(transaction, transitionId, false);
+          var decision = toAdmissionDecision(row, provisional);
+          if (!expectedOriginal.equals(
+              CanonicalGameplayOriginalNewCandidate.fromOriginalSources(provisional, decision))) {
+            throw conflict("Region transfer original differs from its current provisional source");
+          }
+          return CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL;
+        });
+  }
+
+  private OriginalNewFinalAdmissionSource readRegionTransferCommittedSource(
+      CanonicalGameplayOriginalNewCandidate expectedOriginal) {
     var decision =
         new CanonicalGameplayAdmissionDecision(
-            transitionId,
+            expectedOriginal.bindingDecisionId(),
             expectedOriginal.leaseEvidence(),
             expectedOriginal.bindingIdentity(),
             expectedOriginal.transition().bindingGeneration(),
@@ -1121,7 +1146,52 @@ public final class CanonicalGameplayBindingInventoryRepository {
         || !expectedOriginal.equals(current.candidate())) {
       throw conflict("Region transfer committed source differs from the pinned original");
     }
-    return Optional.of(current);
+    return current;
+  }
+
+  AbortedRegionTransferSource readRegionTransferAbortedSource(
+      CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    requireNoAmbientTransaction();
+    UUID transitionId = expectedOriginal.bindingDecisionId();
+    return dsl.transactionResult(
+        configuration -> {
+          var transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          var abort =
+              readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
+                  transaction, transitionId, false);
+          var row = readTransition(transaction, transitionId);
+          byte[] bytes = row.get("original_new_candidate_bytes", byte[].class);
+          String readbackDigest = row.get("original_new_candidate_readback_digest", String.class);
+          var reservation =
+              CanonicalGameplayOriginalNewCandidateCodec.reservationSource(abort.reservation());
+          if (!expectedOriginal.matchesOriginalDecision(abort.originalDecision())
+              || !expectedOriginal
+                  .transition()
+                  .candidateAccountIndexFence()
+                  .equals(abort.transition().candidateAccountIndexFence())
+              || !expectedOriginal.reservation().equals(reservation)
+              || !"READBACK_CONFIRMED".equals(row.get("original_new_candidate_state", String.class))
+              || !expectedOriginal.exactlyMatches(bytes)
+              || !CanonicalGameplayIssuerMemberV2Codec.sha256(bytes)
+                  .equals(row.get("original_new_candidate_digest", String.class))
+              || row.get("original_new_capacity_execution_digest", String.class) != null
+              || readbackDigest == null
+              || !readbackDigest.matches("sha256:[0-9a-f]{64}")) {
+            throw conflict("Region transfer abort differs from the exact retained original");
+          }
+          requireNoOriginalNewFinalAdmissionReceipt(row);
+          var mapping =
+              transaction.fetchOne(
+                  "SELECT tenant_gameplay_tag FROM game_session_canonical_tenant_gameplay_tag WHERE tenant_id=?",
+                  expectedOriginal.bindingIdentity().tenantId());
+          if (mapping == null) throw conflict("Retained capacity execution mapping is unavailable");
+          return new AbortedRegionTransferSource(
+              expectedOriginal,
+              abort.orphanCleanupId(),
+              readbackDigest,
+              mapping.get("tenant_gameplay_tag", String.class));
+        });
   }
 
   /** Revalidates actual final lifecycle/receipts; never presents COMMITTED as provisional work. */
@@ -6259,11 +6329,23 @@ public final class CanonicalGameplayBindingInventoryRepository {
     HISTORICAL_READBACK_CONFIRMED
   }
 
+  sealed interface RegionTransferTerminalSource
+      permits OriginalNewFinalAdmissionSource, AbortedRegionTransferSource {
+    CanonicalGameplayOriginalNewCandidate candidate();
+  }
+
+  record AbortedRegionTransferSource(
+      CanonicalGameplayOriginalNewCandidate candidate,
+      UUID orphanCleanupId,
+      String candidateReadbackDigest,
+      String tenantGameplayTag)
+      implements RegionTransferTerminalSource {}
+
   /**
    * Durable SQL source for final admission. Its candidate installation is explicitly historical;
    * this capability contains no claim that the non-admitting preimage remains in Redis.
    */
-  static final class OriginalNewFinalAdmissionSource {
+  static final class OriginalNewFinalAdmissionSource implements RegionTransferTerminalSource {
     private final CanonicalGameplayOriginalNewCandidate candidate;
     private final String candidateDigest;
     private final String originalCandidateReadbackDigest;
@@ -6304,7 +6386,8 @@ public final class CanonicalGameplayBindingInventoryRepository {
       }
     }
 
-    CanonicalGameplayOriginalNewCandidate candidate() {
+    @Override
+    public CanonicalGameplayOriginalNewCandidate candidate() {
       return candidate;
     }
 
