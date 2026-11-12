@@ -1,10 +1,16 @@
 -- Renews only the exact live lease and a structurally complete separate metadata epoch.
 local leaseKey = KEYS[1]
 local metaKey = KEYS[2]
-if #KEYS ~= 2 or #ARGV ~= 4 or ARGV[1] ~= 'gs_region_lease/v1' then return -1 end
+if #KEYS ~= 2 or #ARGV ~= 5 or ARGV[1] ~= 'gs_region_lease/v2' then return -1 end
 local token = ARGV[2]
 local expectedEpoch = ARGV[3]
 local ttl = ARGV[4]
+local deadlineText = ARGV[5]
+if deadlineText ~= '0' and (not string.match(deadlineText, '^[1-9][0-9]*$')
+    or #deadlineText > 16 or (#deadlineText == 16 and deadlineText > '9007199254740991')) then
+  return -1
+end
+local deadline = tonumber(deadlineText)
 
 local function validUuid(value)
   return string.len(value) == 36
@@ -60,5 +66,11 @@ if not validMeta() then return 0 end
 if redis.call('TYPE', leaseKey).ok ~= 'string'
   or redis.call('PTTL', leaseKey) <= 0
   or redis.call('GET', leaseKey) ~= token then return 0 end
+if deadline > 0 then
+  local now = redis.call('TIME')
+  if tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) >= deadline then
+    return 0
+  end
+end
 redis.call('PEXPIRE', leaseKey, ttl)
 return 1

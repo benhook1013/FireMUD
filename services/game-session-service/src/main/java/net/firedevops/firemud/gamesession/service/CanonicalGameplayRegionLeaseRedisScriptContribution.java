@@ -13,8 +13,8 @@ import tools.jackson.databind.json.JsonMapper;
 /** Passive descriptor contribution for the manually composed region lease scripts. */
 public final class CanonicalGameplayRegionLeaseRedisScriptContribution
     implements RedisScriptContribution {
-  public static final String ACQUIRE_ID = "game-session.region-lease-acquire.v1";
-  public static final String RENEW_ID = "game-session.region-lease-renew.v1";
+  public static final String ACQUIRE_ID = "game-session.region-lease-acquire.v2";
+  public static final String RENEW_ID = "game-session.region-lease-renew.v2";
   public static final String READ_ID = "game-session.region-lease-read.v1";
   public static final String TIMELINE_INITIALIZE_ID = "game-session.region-timeline-initialize.v1";
   public static final String ACQUIRE_PATH = "redis/lua/game-session-region-lease-acquire.lua";
