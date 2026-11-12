@@ -18,14 +18,14 @@ final class CanonicalGameplayCapacityOriginRepository {
   }
 
   /** Persist before Account RPC. A replay cannot replace the selected origin or gain dispatch. */
-  Retained prepare(CanonicalGameplayCapacityOrigin origin) {
+  Preparation prepare(CanonicalGameplayCapacityOrigin origin) {
     return sql.transactionResult(
         configuration -> {
           var tx = DSL.using(configuration);
           lockCurrent(tx, origin, origin.selectedOwnerId(), origin.selectedOwnerFence());
           refuseFrozen(tx, origin);
           Record old = find(tx, origin, true);
-          if (old != null) return exact(old, origin);
+          if (old != null) return new Preparation(exact(old, origin), false);
           if (tx.fetchExists(
               DSL.selectOne()
                   .from("game_session_original_new_capacity_execution")
@@ -75,7 +75,7 @@ final class CanonicalGameplayCapacityOriginRepository {
                   policy.deadline().toString(),
                   policy.maxObservations());
           if (inserted != 1) throw unavailable();
-          return exact(find(tx, origin, true), origin);
+          return new Preparation(exact(find(tx, origin, true), origin), true);
         });
   }
 
@@ -353,6 +353,8 @@ final class CanonicalGameplayCapacityOriginRepository {
       return accountResolution == null ? null : accountResolution.clone();
     }
   }
+
+  record Preparation(Retained retained, boolean insertedByThisCall) {}
 
   private static IllegalStateException unavailable() {
     return new IllegalStateException("Exact capacity origin custody unavailable");

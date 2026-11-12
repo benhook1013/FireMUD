@@ -88,6 +88,71 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     return advance(source, prior, deadline, original);
   }
 
+  /**
+   * Starts only a new intent; a known frozen transfer must use its process-private continuation.
+   */
+  UUID beginNewIntent(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      long deadline) {
+    return repository.within(deadline, ignored -> repository.beginNew(transferId, source, prior));
+  }
+
+  boolean hasFrozenIntent(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      long deadline) {
+    return repository.within(deadline, ignored -> repository.hasFrozenIntent(source, prior));
+  }
+
+  void requireUnreservedFrozenIntent(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      long deadline) {
+    repository.within(
+        deadline,
+        ignored -> {
+          repository.requireUnreservedFrozenIntent(transferId, source, prior);
+          return null;
+        });
+  }
+
+  /** Finds the exact process-owned FROZEN intent without creating a transfer or lease. */
+  UUID frozenIntent(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String successorOwner,
+      String successorLeaseCorrelation,
+      long deadline) {
+    return repository.within(
+        deadline,
+        ignored ->
+            repository.frozenIntent(source, prior, successorOwner, successorLeaseCorrelation));
+  }
+
+  /** Continues only the exact retained FROZEN intent and its same live successor capability. */
+  UUID advanceFrozen(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String successorOwner,
+      String successorLeaseCorrelation,
+      long deadline) {
+    return repository.within(
+        deadline,
+        budget -> {
+          repository.requireFrozenIntent(
+              transferId,
+              source,
+              prior,
+              successorOwner,
+              successorLeaseCorrelation);
+          return advanceFrozen(budget, transferId);
+        });
+  }
+
   /** A bounded step; incomplete progress remains durable and the caller must resume this intent. */
   UUID advance(
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
@@ -108,29 +173,34 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           UUID transfer =
               original == null ? repository.begin(source, prior) : original.transferId();
           if (transfer == null) return null;
-          origins.capture(transfer);
-          origins.requireCaptured(transfer);
-          var owner = capacity.forTransferBudget(budget);
-          for (var item : repository.capture(transfer)) {
-            var before = observe(item, budget.absoluteDeadlineMillis());
-            var physical = owner.fenceForTransfer(item, budget.absoluteDeadlineMillis());
-            var after = observe(item, budget.absoluteDeadlineMillis());
-            repository.retainFence(item, physical, before, after);
-          }
-          // A verification round re-reads every retained marker, including older generations,
-          // through bounded restartable pages. It never reinstalls a missing retained fence.
-          long cursor = repository.verificationCursor(transfer);
-          List<CanonicalGameplayRegionOwnerTransferRepository.Item> page =
-              repository.page(transfer, cursor);
-          for (var item : page) {
-            var before = observe(item, budget.absoluteDeadlineMillis());
-            var actual = owner.readTransferFence(item, budget.absoluteDeadlineMillis());
-            var after = observe(item, budget.absoluteDeadlineMillis());
-            repository.retainVerification(item, actual, before, after);
-          }
-          if (!repository.finishVerification(transfer)) throw held();
-          return transfer;
+          return advanceFrozen(budget, transfer);
         });
+  }
+
+  private UUID advanceFrozen(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget, UUID transfer) {
+    origins.capture(transfer);
+    origins.requireCaptured(transfer);
+    var owner = capacity.forTransferBudget(budget);
+    for (var item : repository.capture(transfer)) {
+      var before = observe(item, budget.absoluteDeadlineMillis());
+      var physical = owner.fenceForTransfer(item, budget.absoluteDeadlineMillis());
+      var after = observe(item, budget.absoluteDeadlineMillis());
+      repository.retainFence(item, physical, before, after);
+    }
+    // A verification round re-reads every retained marker, including older generations,
+    // through bounded restartable pages. It never reinstalls a missing retained fence.
+    long cursor = repository.verificationCursor(transfer);
+    List<CanonicalGameplayRegionOwnerTransferRepository.Item> page =
+        repository.page(transfer, cursor);
+    for (var item : page) {
+      var before = observe(item, budget.absoluteDeadlineMillis());
+      var actual = owner.readTransferFence(item, budget.absoluteDeadlineMillis());
+      var after = observe(item, budget.absoluteDeadlineMillis());
+      repository.retainVerification(item, actual, before, after);
+    }
+    if (!repository.finishVerification(transfer)) throw held();
+    return transfer;
   }
 
   CanonicalGameplayRegionRuntimeStatus install(

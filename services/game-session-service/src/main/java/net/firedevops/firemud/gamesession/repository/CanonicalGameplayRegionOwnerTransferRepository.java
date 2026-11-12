@@ -274,6 +274,171 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             });
   }
 
+  /** Inserts only a new intent; a prior FROZEN row must use its process-private continuation. */
+  UUID beginNew(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    noSql();
+    Objects.requireNonNull(transferId, "transferId");
+    String sourceDigest = sourceDigest(source, prior);
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record old =
+                  tx.fetchOne(
+                      "SELECT transfer_id FROM " + TRANSFER + " WHERE old_owner_fence=?",
+                      prior.executorFence().longValueExact());
+              if (old != null) throw unavailable();
+              if (!exists(
+                      tx,
+                      "SELECT 1" + PENDING,
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.regionId())
+                  && !CanonicalGameplayCapacityOriginTransferRepository.pending(
+                      tx, source.tenantId(), source.gameInstanceId(), source.regionId()))
+                return null;
+              String intentDigest =
+                  digest(bytes("region-owner-transfer/v1/" + transferId + "/" + sourceDigest));
+              if (tx.execute(
+                      "INSERT INTO "
+                          + TRANSFER
+                          + " (transfer_id,tenant_id,game_instance_id,region_id,region_epoch,old_owner_id,old_owner_fence,old_lease_correlation,source_digest,intent_digest,state) VALUES (?,?,?,?,?,?,?,?,?,?,'FROZEN')",
+                      transferId,
+                      source.tenantId(),
+                      source.gameInstanceId(),
+                      source.regionId(),
+                      prior.regionEpoch(),
+                      prior.ownerInstanceId(),
+                      prior.executorFence().longValueExact(),
+                      prior.leaseTokenCorrelation(),
+                      sourceDigest,
+                      intentDigest)
+                  != 1) throw unavailable();
+              return transferId;
+            });
+  }
+
+  /**
+   * Finds only the exact current frozen intent; unlike begin, this path never inserts one.
+   * Protected-incarnation identity is requalified from physical reads during advance; the lease
+   * owner's stable-evidence digest uses a different canonical domain from that retained digest.
+   */
+  UUID frozenIntent(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String expectedSuccessorOwner,
+      String expectedSuccessorLeaseCorrelation) {
+    noSql();
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record candidate =
+                  tx.fetchOne(
+                      "SELECT transfer_id FROM " + TRANSFER + " WHERE old_owner_fence=?",
+                      prior.executorFence().longValueExact());
+              if (candidate == null) throw unavailable();
+              UUID transferId = candidate.get("transfer_id", UUID.class);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(
+                  frozen,
+                  source,
+                  prior,
+                  expectedSuccessorOwner,
+                  expectedSuccessorLeaseCorrelation)) throw unavailable();
+              return transferId;
+            });
+  }
+
+  /** Read-only fresh-entry guard: an existing frozen intent cannot be adopted by a new grant. */
+  boolean hasFrozenIntent(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    noSql();
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record candidate =
+                  tx.fetchOne(
+                      "SELECT transfer_id FROM " + TRANSFER + " WHERE old_owner_fence=?",
+                      prior.executorFence().longValueExact());
+              if (candidate == null) return false;
+              UUID transferId = candidate.get("transfer_id", UUID.class);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(frozen, source, prior, null, null))
+                throw unavailable();
+              return true;
+            });
+  }
+
+  /** Allows the legacy exact-original continuation only while no successor has been reserved. */
+  void requireUnreservedFrozenIntent(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior) {
+    noSql();
+    sql()
+        .transaction(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(frozen, source, prior, null, null)
+                  || frozen.get("successor_owner_id", String.class) != null
+                  || frozen.get("successor_owner_fence", Long.class) != null
+                  || frozen.get("successor_lease_correlation", String.class) != null)
+                throw unavailable();
+            });
+  }
+
+  /**
+   * Rechecks a known intent against the unchanged predecessor and exact frozen source.
+   * The subsequent advance/install path performs protected-incarnation requalification.
+   */
+  void requireFrozenIntent(
+      UUID transferId,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String expectedSuccessorOwner,
+      String expectedSuccessorLeaseCorrelation) {
+    noSql();
+    sql()
+        .transaction(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              requireOldOwner(tx, source, prior);
+              Record frozen = current(tx, transferId, true);
+              if (!matchesFrozenIntent(
+                  frozen,
+                  source,
+                  prior,
+                  expectedSuccessorOwner,
+                  expectedSuccessorLeaseCorrelation)) throw unavailable();
+            });
+  }
+
+  private static boolean matchesFrozenIntent(
+      Record frozen,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      String expectedSuccessorOwner,
+      String expectedSuccessorLeaseCorrelation) {
+    String retainedSuccessorOwner = frozen.get("successor_owner_id", String.class);
+    String retainedSuccessorLease = frozen.get("successor_lease_correlation", String.class);
+    return sourceDigest(source, prior).equals(frozen.get("source_digest", String.class))
+        && (retainedSuccessorOwner == null
+            || expectedSuccessorOwner == null && expectedSuccessorLeaseCorrelation == null
+            || Objects.equals(expectedSuccessorOwner, retainedSuccessorOwner)
+                && Objects.equals(expectedSuccessorLeaseCorrelation, retainedSuccessorLease));
+  }
+
   boolean completedForCurrent(
       CanonicalGameplayRegionRuntimeStatus prior, String requestingOwner, long deadline) {
     return within(
