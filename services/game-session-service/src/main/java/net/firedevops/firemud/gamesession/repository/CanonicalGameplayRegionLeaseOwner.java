@@ -18,6 +18,9 @@ import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingRegion
 import net.firedevops.firemud.gamesession.binding.CanonicalGameplayBindingTransitionSnapshot;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRuntimeActorReference;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryRepository.AbortedRegionTransferSource;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameplayBindingInventoryRepository.RegionTransferTerminalSource;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver;
 import net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -149,8 +152,7 @@ final class CanonicalGameplayRegionLeaseOwner {
     CanonicalGameplayRegionLeaseRedisOwner handoffRedisOwner =
         transferOwner == null ? redisOwner : redisOwner.forHandoffDeadline(clock, handoffDeadline);
     UUID transferId = null;
-    CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource =
-        retainedOriginal;
+    RegionTransferTerminalSource transferSource = retainedOriginal;
     CanonicalGameplayOriginalNewCandidate transferCandidate =
         retainedOriginal == null ? null : retainedOriginal.candidate();
     PendingTransfer transferContinuation = null;
@@ -359,15 +361,15 @@ final class CanonicalGameplayRegionLeaseOwner {
               } else {
                 transferOwner.resume(frozenOriginal, source, prior, handoffDeadline);
               }
-              // Advance may retain a COMMITTED winner and activate its SQL inventory row. Keep
-              // that exact terminal source separate from provisional binding authority.
+              // Advance may retain a COMMITTED winner or encounter a definitive Account abort.
+              // Each terminal source supplies only topology to this transfer.
               var selectedCandidate = transferCandidate;
               transferSource =
                   readInstallationInventory(
                           transferOwner,
                           handoffDeadline,
                           inventory ->
-                              inventory.readRegionTransferCommittedSource(
+                              inventory.readRegionTransferTerminalSource(
                                   transitionId, selectedCandidate))
                       .orElse(null);
               transferContinuation = transferContinuation.withTransferSource(transferSource);
@@ -510,7 +512,7 @@ final class CanonicalGameplayRegionLeaseOwner {
 
       var candidate = requireTransferCandidate(continuation, deadline);
       continuation = continuation.withCandidate(candidate);
-      var retainedSource = readCommittedTransferSource(continuation, deadline);
+      var retainedSource = readTerminalTransferSource(continuation, deadline);
       continuation = continuation.withTransferSource(retainedSource);
       requireSameSource(
           pending.source(),
@@ -553,7 +555,7 @@ final class CanonicalGameplayRegionLeaseOwner {
               pending.grant().tokenCorrelation(),
               deadline);
 
-      retainedSource = readCommittedTransferSource(continuation, deadline);
+      retainedSource = readTerminalTransferSource(continuation, deadline);
       continuation = continuation.withTransferSource(retainedSource);
       requireSameSource(
           pending.source(),
@@ -564,7 +566,7 @@ final class CanonicalGameplayRegionLeaseOwner {
               pending.transferOwner(),
               deadline,
               worldDeadline));
-      if (retainedSource != null && retainedSource.finalReceipt().isPresent()) {
+      if (retainedSource != null) {
         continuation = continuation.withEvidence(null);
       }
       handoffRedisOwner.renew(pending.grant(), leaseTtl);
@@ -590,17 +592,16 @@ final class CanonicalGameplayRegionLeaseOwner {
                 pending.transitionId(), pending.evidence()));
   }
 
-  private CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
-      readCommittedTransferSource(PendingTransfer pending, long deadline) {
+  private RegionTransferTerminalSource readTerminalTransferSource(
+      PendingTransfer pending, long deadline) {
+    if (pending.transferSource() instanceof AbortedRegionTransferSource aborted) return aborted;
     var candidate = requireTransferCandidate(pending, deadline);
-    var committed =
-        readInstallationInventory(
-                pending.transferOwner(),
-                deadline,
-                inventory ->
-                    inventory.readRegionTransferCommittedSource(pending.transitionId(), candidate))
-            .orElse(null);
-    return committed == null ? pending.transferSource() : committed;
+    return readInstallationInventory(
+            pending.transferOwner(),
+            deadline,
+            inventory ->
+                inventory.readRegionTransferTerminalSource(pending.transitionId(), candidate))
+        .orElse(pending.transferSource());
   }
 
   private Installation installFrozenTransfer(
@@ -687,7 +688,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       CanonicalGameplayRegionRuntimeStatusRepository.TimelinePreparation preparation,
       CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant,
       CanonicalGameplayRegionRuntimeStatus installed,
-      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource,
+      RegionTransferTerminalSource transferSource,
       CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
       long handoffDeadline,
       Deadline worldDeadline) {
@@ -1158,7 +1159,7 @@ final class CanonicalGameplayRegionLeaseOwner {
   private CanonicalGameplayRegionRuntimeStatusRepository.Source resolveCurrentInstallationSource(
       CanonicalInitialPlayerLocationRequest request,
       CanonicalGameplayBindingProvisionalCasEvidence original,
-      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource,
+      RegionTransferTerminalSource transferSource,
       CanonicalGameplayRegionOwnerTransferCoordinator transferOwner,
       long handoffDeadline,
       Deadline worldDeadline) {
@@ -1173,15 +1174,22 @@ final class CanonicalGameplayRegionLeaseOwner {
       return resolveExactBridgeSource(request, current.candidate().identity(), worldDeadline)
           .source;
     }
-    var current =
-        readInstallationInventory(
-            transferOwner,
-            handoffDeadline,
-            inventory ->
-                inventory.readRegionTransferOriginalSource(
-                    transferSource.candidate().bindingDecisionId(), transferSource));
-    return resolveExactBridgeSource(request, current.candidate().bindingIdentity(), worldDeadline)
-        .source;
+    var candidate = transferSource.candidate();
+    readInstallationInventory(
+        transferOwner,
+        handoffDeadline,
+        inventory ->
+            switch (transferSource) {
+              case OriginalNewFinalAdmissionSource committed ->
+                  inventory.readRegionTransferOriginalSource(
+                      candidate.bindingDecisionId(), committed);
+              case AbortedRegionTransferSource aborted -> {
+                var current = inventory.readRegionTransferAbortedSource(candidate);
+                if (!aborted.equals(current)) throw unavailable();
+                yield current;
+              }
+            });
+    return resolveExactBridgeSource(request, candidate.bindingIdentity(), worldDeadline).source;
   }
 
   private <T> T readInstallationInventory(
@@ -1328,7 +1336,7 @@ final class CanonicalGameplayRegionLeaseOwner {
       long expectedRegionEpoch,
       CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant,
       CanonicalGameplayOriginalNewCandidate transferCandidate,
-      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource transferSource) {
+      RegionTransferTerminalSource transferSource) {
     PendingTransfer withTransferId(UUID value) {
       return new PendingTransfer(
           owner,
@@ -1365,15 +1373,14 @@ final class CanonicalGameplayRegionLeaseOwner {
           transferSource);
     }
 
-    PendingTransfer withTransferSource(
-        CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource value) {
+    PendingTransfer withTransferSource(RegionTransferTerminalSource value) {
       return new PendingTransfer(
           owner,
           transferId,
           transferOwner,
           transitionId,
           worldRequest,
-          evidence,
+          value instanceof AbortedRegionTransferSource ? null : evidence,
           source,
           prior,
           incarnation,
