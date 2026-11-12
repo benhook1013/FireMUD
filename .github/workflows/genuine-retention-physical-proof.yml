@@ -1,0 +1,407 @@
+name: Temporary genuine historical retention proof
+run-name: Genuine historical retention proof ${{ github.run_id }}
+'on':
+  push:
+    branches:
+    - codex/proof-genuine-retention-20261112
+permissions:
+  contents: read
+concurrency:
+  group: genuine-historical-retention-proof
+  cancel-in-progress: false
+jobs:
+  genuine-retention-proof:
+    if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/codex/proof-genuine-retention-20261112'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: da12c18406b3048749e439490630aaf98ea136e9
+      PROVENANCE_EXPECTED: '{"historical_commit":"c8dab91d050082d7c989900b4b2d44d7a812f275","historical_tree":"dd4ccf036f3a74912920d80decc540dbf4b29f7d","candidate_commit":null,"candidate_tree":"d30b927672c12d8cca6b23200dcf4240a318c8f1","changed_paths":["services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/AccountHostingSubscriptionDispatchPostgresIntegrationTest.java"],"preimage_blob":"2de7e05f08833ddb941f4e7ad9770df40d91bd64","preimage_sha256":"a0036237b50e90f16b05764979f42d8315e672e4b9b4dd049513bb985077932b","postimage_blob":"7aeabd7d3054aed86509d7a5e59249f1e9440690","postimage_sha256":"3e0531b0f977a158b222a3b29a6ddf9eea6dcf5ebf67d15a7af3913904340bc4","patch_sha256":"2404fed5835c77dfef2b29ed7c125ca77ef56a0061bfe9cc60f8797e56a0dcc5","producer_body_sha256":"bdab688ce89a081c2854950a00c89784bb8483f223e26b4b43951e1c2c283fe3","producer_body_unchanged":true,"patch_apply":"passed private index","source_format_compile_runtime":"Historical default formatter passed; exact historical source-closure compile blocked by absent generated sources/annotation processing; no physical run","shared_objects_indexes_refs_unchanged":true,"qualification_summary":"qualification-v2/summary.json","source_files":[{"path":"services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/AccountHostingSubscriptionDispatchPostgresIntegrationTest.java","preimage_blob":"2de7e05f08833ddb941f4e7ad9770df40d91bd64","preimage_sha256":"a0036237b50e90f16b05764979f42d8315e672e4b9b4dd049513bb985077932b","postimage_blob":"7aeabd7d3054aed86509d7a5e59249f1e9440690","postimage_sha256":"3e0531b0f977a158b222a3b29a6ddf9eea6dcf5ebf67d15a7af3913904340bc4"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountHostingSubscriptionProvisioningService.java","preimage_blob":"3460cbe732e7dd50c0a8455bfb59a54afc4706f4","preimage_sha256":"2c02ac8d7535353d960bbbc01a77ff917e67f1c84a13dbd95e218fed791241d3","postimage_blob":"3460cbe732e7dd50c0a8455bfb59a54afc4706f4","postimage_sha256":"2c02ac8d7535353d960bbbc01a77ff917e67f1c84a13dbd95e218fed791241d3"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountHostingSubscriptionLifecycleService.java","preimage_blob":"37d8f302209eaf83511e320e0ddf44b7725222f8","preimage_sha256":"bf7953d0fccec989fdc653d31c69104f74c6c76e69ccb38789c76c3355258e05","postimage_blob":"37d8f302209eaf83511e320e0ddf44b7725222f8","postimage_sha256":"bf7953d0fccec989fdc653d31c69104f74c6c76e69ccb38789c76c3355258e05"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/repository/AccountHostingSubscriptionLifecycleRepository.java","preimage_blob":"246fc7383b66d38da7bdc9e9af40ba6b8036791c","preimage_sha256":"1a25d28e93f6f04a7133e16f9cdbb6c9cb7f849aa49a264af373f71b5ee229eb","postimage_blob":"246fc7383b66d38da7bdc9e9af40ba6b8036791c","postimage_sha256":"1a25d28e93f6f04a7133e16f9cdbb6c9cb7f849aa49a264af373f71b5ee229eb"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/repository/AccountSubscriptionIntentRepository.java","preimage_blob":"f92bedbf5fc434b5e0f83d1bd31399af6156e2ae","preimage_sha256":"bd083f601624e8315c64e82a7daad96264c25174d37ccdbbe4ba0997297c92bd","postimage_blob":"f92bedbf5fc434b5e0f83d1bd31399af6156e2ae","postimage_sha256":"bd083f601624e8315c64e82a7daad96264c25174d37ccdbbe4ba0997297c92bd"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/client/StripeHostingSubscriptionProvisioner.java","preimage_blob":"f49194949493ee56f04664c7cee9324089028ee8","preimage_sha256":"764dbfbd5594f8095d2315e5686658a9ec06fa1d24d438593b10127ac8f75d2e","postimage_blob":"f49194949493ee56f04664c7cee9324089028ee8","postimage_sha256":"764dbfbd5594f8095d2315e5686658a9ec06fa1d24d438593b10127ac8f75d2e"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/client/StripeHostingSubscriptionObserver.java","preimage_blob":"c23d83b4547e3cc6618561c4bd43de392a72099b","preimage_sha256":"bc68e80abe152bb7fb324470d02690e6a54bbd5c3a45a4e67890b76641c8c672","postimage_blob":"c23d83b4547e3cc6618561c4bd43de392a72099b","postimage_sha256":"bc68e80abe152bb7fb324470d02690e6a54bbd5c3a45a4e67890b76641c8c672"},{"path":"buildSrc/src/main/kotlin/net/firedevops/firemud/FiremudServiceConventionsPlugin.kt","preimage_blob":"0fd6f93dab5dd1268d4b96d29e5a11959f620d98","preimage_sha256":"d29d42dff7028c6daef395c2d2880d008027310e465a6c63982035ff7f7d3d8e","postimage_blob":"0fd6f93dab5dd1268d4b96d29e5a11959f620d98","postimage_sha256":"d29d42dff7028c6daef395c2d2880d008027310e465a6c63982035ff7f7d3d8e"},{"path":"services/common-test-support/src/testFixtures/java/net/firedevops/firemud/test/TestContainerImages.java","preimage_blob":"678ef96ba2836f740cb1021b177fbb079c796e25","preimage_sha256":"1bfb8b278ab8417057053e0f1d390bd8ddb87fe95732967d0ffba3ceea45e4d3","postimage_blob":"678ef96ba2836f740cb1021b177fbb079c796e25","postimage_sha256":"1bfb8b278ab8417057053e0f1d390bd8ddb87fe95732967d0ffba3ceea45e4d3"},{"path":"gradle/wrapper/gradle-wrapper.properties","preimage_blob":"910c6f79b728106a2add89562aa1c368319b6fad","preimage_sha256":"f7b3da9d2a4a4d96c9579cfcc7ee597b431e572737f85871df1e6da6ed5b6a0c","postimage_blob":"910c6f79b728106a2add89562aa1c368319b6fad","postimage_sha256":"f7b3da9d2a4a4d96c9579cfcc7ee597b431e572737f85871df1e6da6ed5b6a0c"},{"path":".python-version","preimage_blob":"861845e450f570a6e923d43052feb4773ecabb88","preimage_sha256":"673e2ba07f95bfcfe0a543258b8e267954e403d1f466481c546f467f86b31d46","postimage_blob":"861845e450f570a6e923d43052feb4773ecabb88","postimage_sha256":"673e2ba07f95bfcfe0a543258b8e267954e403d1f466481c546f467f86b31d46"},{"path":".github/actions/setup-python/action.yml","preimage_blob":"3059db20f7059d87441eed837703cf2e61abfd6e","preimage_sha256":"634bef004d351dbd79dad93fe7d21e84be1699170152c2ddf0a8d2aa02ba8a82","postimage_blob":"3059db20f7059d87441eed837703cf2e61abfd6e","postimage_sha256":"634bef004d351dbd79dad93fe7d21e84be1699170152c2ddf0a8d2aa02ba8a82"},{"path":"services/account-service/build.gradle.kts","preimage_blob":"a561467fa3f7fe05aeda64600df86df52e47c835","preimage_sha256":"a44e868ee9640de2bb7f093711cf785b744f36fd56c959dc7dfe49c79e31b18b","postimage_blob":"a561467fa3f7fe05aeda64600df86df52e47c835","postimage_sha256":"a44e868ee9640de2bb7f093711cf785b744f36fd56c959dc7dfe49c79e31b18b"},{"path":"gradle/libs.versions.toml","preimage_blob":"2e68ca069a27b2527b660815dd247eec996f1db7","preimage_sha256":"b3b089f66dce01f1d15302c8862af7c9bbe2efe3cb385ecb588d428c579e5d90","postimage_blob":"2e68ca069a27b2527b660815dd247eec996f1db7","postimage_sha256":"b3b089f66dce01f1d15302c8862af7c9bbe2efe3cb385ecb588d428c579e5d90"}],"migrations":{"head":"123a4b9e82aa3ddbd15ebc3aa64f9470c2902b23","tree":"da5f10fdf2a8d7c0768363e221c86574b2193435","aggregate_sha256":"f45c025196d6422a40518969ad891a87ff0f70a0960ad076ca6626b7a087267e","encoding":"sorted relative UTF-8 path, NUL, exact file bytes, NUL","files":[{"path":"services/account-service/src/main/resources/db/migration/V1003__original_start_session_source_protections.sql","relative_path":"V1003__original_start_session_source_protections.sql","sha256":"0a65783bec2dc18c1974b828c9af08629a0ba54c42416449a90ff39dac486376","git_blob":"3c33b4a44c427948bf6a3f335c4e3076d517908f"},{"path":"services/account-service/src/main/resources/db/migration/V1004.1__activation_settlement_monotonic_lifecycle_counters.sql","relative_path":"V1004.1__activation_settlement_monotonic_lifecycle_counters.sql","sha256":"daa9b522d3015e20e42f5be44a4c495b51b78a1a24a05629eb50ef678e597c4f","git_blob":"dd40ebe6bc104471c8835114db4a8306e250465e"},{"path":"services/account-service/src/main/resources/db/migration/V1004.2__activation_settlement_retained_lifecycle_integrity.sql","relative_path":"V1004.2__activation_settlement_retained_lifecycle_integrity.sql","sha256":"27c20c1f5b5fef92381906239fedb3a7f459f8d4bd26d635a905c342c9f1ec4e","git_blob":"c489fa81e555c6a9c5c114a878ea569b146c2e87"},{"path":"services/account-service/src/main/resources/db/migration/V1004.3__activation_acquisition_canonical_carriers.sql","relative_path":"V1004.3__activation_acquisition_canonical_carriers.sql","sha256":"0b202009649524f191b2e8e3c29d969522b6486a22b76b2dc9a277acc9d7c9b6","git_blob":"793342c4b9077415bd1d9c36f3fd8eb4bfe873e9"},{"path":"services/account-service/src/main/resources/db/migration/V1004__activation_settlement_lifecycle_integrity.sql","relative_path":"V1004__activation_settlement_lifecycle_integrity.sql","sha256":"1a4a5a9d748f465ba5e6663725e500dac2fad39cbf12ae428f4f29f01f9f4df2","git_blob":"5d4a0ed3611beac7322151ed22eee065c33c4f5a"},{"path":"services/account-service/src/main/resources/db/migration/V1005__initial_gameplay_login_disposal.sql","relative_path":"V1005__initial_gameplay_login_disposal.sql","sha256":"34f9d084643c6f22dcbd847e3285603e1309e401ead53e4ef15eb19f7895abec","git_blob":"66499c37b65fe04e22cb20cb9d8a558ec63b48b0"},{"path":"services/account-service/src/main/resources/db/migration/V1006__world_activation_terminal_digest_alignment.sql","relative_path":"V1006__world_activation_terminal_digest_alignment.sql","sha256":"744c3277f7428d39fd63efb5902bd17134365ec37b2833e31c9544302cabaca5","git_blob":"79816fec75d1939a11ccc2703c1990970db5ab97"},{"path":"services/account-service/src/main/resources/db/migration/V1007__selected_owner_intake_source_reservations.sql","relative_path":"V1007__selected_owner_intake_source_reservations.sql","sha256":"d3574a21ca89a20fde8e867cd85dc3c524ff42230305d2f1c5194709299dcda2","git_blob":"72f9d61fc99588faabf48e0cd5665db5d89664e5"},{"path":"services/account-service/src/main/resources/db/migration/V1008__selected_owner_intake_final_authorizations.sql","relative_path":"V1008__selected_owner_intake_final_authorizations.sql","sha256":"315061d7eadce69ac9073589576e93ead0db1b188e666d4bb3b503896582869a","git_blob":"2035ae015c2a44c62ae3d58d8dd700e69da57909"},{"path":"services/account-service/src/main/resources/db/migration/V1009__selected_owner_intake_terminal_settlement.sql","relative_path":"V1009__selected_owner_intake_terminal_settlement.sql","sha256":"fd5882bf82c742d49b93f8a768a3e83a48716162a56627dc29160e5f66e88d44","git_blob":"b437b921b8f123e7f231e06246c7e58398a17ace"},{"path":"services/account-service/src/main/resources/db/migration/V100__account_jwt_signer_materialization_readback.sql","relative_path":"V100__account_jwt_signer_materialization_readback.sql","sha256":"291269affd751d230a91d1e8cf301b53133360a521ca2d5ed9204aea05e1f1ac","git_blob":"acb940fa59aa545a85833e9d8eee3da8772c99a7"},{"path":"services/account-service/src/main/resources/db/migration/V1010__entity_selected_owner_intake_terminal_settlement.sql","relative_path":"V1010__entity_selected_owner_intake_terminal_settlement.sql","sha256":"912b86f3207eecf5c74dd970d91111d3b5f5d472271ef223189b672003a71bc1","git_blob":"07f6e22bcc67186a0c353a770ad6b4beeec6db59"},{"path":"services/account-service/src/main/resources/db/migration/V1011__selected_publication_closure_inventory.sql","relative_path":"V1011__selected_publication_closure_inventory.sql","sha256":"3c07b7c089e478f264dbddd027516faf1167c77bc43169fe993e9cb44eb565c6","git_blob":"2168ef26f44ec88f2333a332427677ae575f7034"},{"path":"services/account-service/src/main/resources/db/migration/V1012__account_original_new_bound_gameplay_credentials.sql","relative_path":"V1012__account_original_new_bound_gameplay_credentials.sql","sha256":"2571c5de1b5ac37260c5e17fd1b96673d5bc28af1a403857a21d797c87a7a9fc","git_blob":"92acbbd69392823efaefeae8e947e0288c9f310c"},{"path":"services/account-service/src/main/resources/db/migration/V1013__account_original_ack_pg18_historical_recovery.sql","relative_path":"V1013__account_original_ack_pg18_historical_recovery.sql","sha256":"7ecc44d75326b017534682655d085e19b7ec2959f5ab4181d7fabd37b6f582b4","git_blob":"67c22cbe7bbfbc4c327a0b3c442de5cb69b5a71f"},{"path":"services/account-service/src/main/resources/db/migration/V1014__account_unknown_abort_decision_resolution.sql","relative_path":"V1014__account_unknown_abort_decision_resolution.sql","sha256":"077e73f965ca2ebd167c48b0e75c42b7059f0a1b631aac1a4ae0e5fb3ed81376","git_blob":"bc96f0f7ccaffbba482fd0f2be334dc5976ed02a"},{"path":"services/account-service/src/main/resources/db/migration/V1015__account_never_admitted_abort_resolution.sql","relative_path":"V1015__account_never_admitted_abort_resolution.sql","sha256":"7dfa4d7a948fe41f209480865014e48e611daa247cca9dcdbda51aa2718158b0","git_blob":"ef2cc06a75c12d523f60340b651b7e32c3f6ea39"},{"path":"services/account-service/src/main/resources/db/migration/V1016__account_recent_reauthentication_evidence.sql","relative_path":"V1016__account_recent_reauthentication_evidence.sql","sha256":"d8472217e96a85bf35586d21c99677983b4c39ee3e86cf4f313d9f5f555592d3","git_blob":"4f257ec82f38bbe56367bb7c505319649a6bd416"},{"path":"services/account-service/src/main/resources/db/migration/V1017__account_global_control_ui_issuance_scope.sql","relative_path":"V1017__account_global_control_ui_issuance_scope.sql","sha256":"2acf12cfe8c9a8f01f26c1318a53814fad97b4ddfc5a7a41254dfbacbe965577","git_blob":"43cc5a133108c8aa7a935223826341072ceeab17"},{"path":"services/account-service/src/main/resources/db/migration/V1018.1__recent_reauthentication_replay_credentials.sql","relative_path":"V1018.1__recent_reauthentication_replay_credentials.sql","sha256":"6678eabccd8d0f540e792050a4abed96e09c24b56a551633beed52a3bfddeec8","git_blob":"6a990fdaeb574638852c5f961f886d36a2f92b9c"},{"path":"services/account-service/src/main/resources/db/migration/V1018.2__recent_reauthentication_replay_failure_budget.sql","relative_path":"V1018.2__recent_reauthentication_replay_failure_budget.sql","sha256":"2408747ea402680660e963ac44b55400e56f63a5078e5ce8744429e05b495ee2","git_blob":"e78bf6e65e309e5b6699f3e51a66e7aa536336dc"},{"path":"services/account-service/src/main/resources/db/migration/V1018__account_fresh_enrollment_certification.sql","relative_path":"V1018__account_fresh_enrollment_certification.sql","sha256":"43ada14128df37261cb771465fe6fdfb7ff5e6ac6636b6da21a6ee0b95d2c842","git_blob":"4dc0042f4c98b9ccf2932c2618eb321460b02034"},{"path":"services/account-service/src/main/resources/db/migration/V1019__initial_tenant_billing_owner.sql","relative_path":"V1019__initial_tenant_billing_owner.sql","sha256":"f1eb41666bec7ff1dfc9f74952827fa9cb981da3c50cefa1af443c9bdbc43e5d","git_blob":"b27d0754adc57d0900a5f709fc9e7eadd88318a2"},{"path":"services/account-service/src/main/resources/db/migration/V101__account_jwt_jwks_prepublication.sql","relative_path":"V101__account_jwt_jwks_prepublication.sql","sha256":"b138adfad4cac116e791c4861923c9d4546616ccfaaf1c67793225b6e07567bb","git_blob":"6da03d99d7cbc41c43bd5959f9b885b4754dffa4"},{"path":"services/account-service/src/main/resources/db/migration/V1020__recent_reauthentication_policy_source_ordering.sql","relative_path":"V1020__recent_reauthentication_policy_source_ordering.sql","sha256":"5c850baa02d4153a8a3854d95ebbc5dd27ecb03736d3b06c4fbe855cfab7871d","git_blob":"64c1086232f803590216556ad8da738531162312"},{"path":"services/account-service/src/main/resources/db/migration/V1021__tenant_creation_original_intents.sql","relative_path":"V1021__tenant_creation_original_intents.sql","sha256":"5461263af21ab2f072a99674065d950baac8422c52662d7f1a99343860a66ea8","git_blob":"3f5ca2f5c33293667741e4915e8cc5b35165d015"},{"path":"services/account-service/src/main/resources/db/migration/V1022__tenant_creation_original_admissions.sql","relative_path":"V1022__tenant_creation_original_admissions.sql","sha256":"3da32c45a12052b1be890448ca8d7cda231ad3a2d060b24a063cb6a528d8de9b","git_blob":"885f7aac4681be600a42702a9f057af313e79802"},{"path":"services/account-service/src/main/resources/db/migration/V1023__tenant_creation_source_ordering.sql","relative_path":"V1023__tenant_creation_source_ordering.sql","sha256":"9356598d9fa473dee6fd2d8b0102ffe2de57bbf76b7a5c36c8ab078db2fbde12","git_blob":"3227d31a31acb6d8adabf340712d430052e0df2e"},{"path":"services/account-service/src/main/resources/db/migration/V1024__tenant_creation_final_completions.sql","relative_path":"V1024__tenant_creation_final_completions.sql","sha256":"b09c8c0c6291a518d4e4396f41589a0f33682d28b6ed40fac9fa6d8fd4be35f0","git_blob":"39549d4205afb0cbb299bc3e09cf933a91238450"},{"path":"services/account-service/src/main/resources/db/migration/V1025__tenant_creation_dispatch_intents.sql","relative_path":"V1025__tenant_creation_dispatch_intents.sql","sha256":"66dbbcb69ca04a9b4cfa6682b06d3b1e3327ee8a211f3b66857515e33e6c867e","git_blob":"e18c999343ef2cbffb3815f9ffe842d10dfe5910"},{"path":"services/account-service/src/main/resources/db/migration/V1026__stripe_event_inbox.sql","relative_path":"V1026__stripe_event_inbox.sql","sha256":"1f8365036152729c09068c1fa5f9df764bcf898c62f2bc3f58e2f5465a624190","git_blob":"cd91c5e1303c578711c375cc5f6da79fa1415645"},{"path":"services/account-service/src/main/resources/db/migration/V1027.1__billing_customer_first_dispatch_claim.sql","relative_path":"V1027.1__billing_customer_first_dispatch_claim.sql","sha256":"214b80ae1bf6c99039275d04ef585a3c3b4c2b90b23b6ca1a14f6237b7d366bb","git_blob":"d0145604a6089a3bea0345d6a51e3782da8dbdc7"},{"path":"services/account-service/src/main/resources/db/migration/V1027.2__lifecycle_bound_realm_grant_authority.sql","relative_path":"V1027.2__lifecycle_bound_realm_grant_authority.sql","sha256":"055a02eb32d519870c6a2b45f173bb9848571fc3c172fa9acaf732597f6750fd","git_blob":"3861facc66b3d9698898b56790745acbdb1d8d20"},{"path":"services/account-service/src/main/resources/db/migration/V1027__account_billing_customer_and_instrument_owners.sql","relative_path":"V1027__account_billing_customer_and_instrument_owners.sql","sha256":"c796ac353f87dec2db542c40207e2f127c649231ece42f23e6534cb95cd8c922","git_blob":"23e8af4dcdddf7197981d3b70453d194f0694908"},{"path":"services/account-service/src/main/resources/db/migration/V1028__retain_non_authorizing_subscription_evidence.sql","relative_path":"V1028__retain_non_authorizing_subscription_evidence.sql","sha256":"93c3cff8c95923264eb33a6f89bedbe35f2f9c079bec3f323cd89c4a799e76e2","git_blob":"c5d5ff151db4e221d4088aaa805d8e6b09a955b7"},{"path":"services/account-service/src/main/resources/db/migration/V1029__canonical_subscription_intent_and_provider_history.sql","relative_path":"V1029__canonical_subscription_intent_and_provider_history.sql","sha256":"f54025fb8b9d466540f4e175b20b585a0ededa4eca9d34bf70befd631c7e869e","git_blob":"c2418e52a700bdc446c683c1d2e80cbc8338a5fb"},{"path":"services/account-service/src/main/resources/db/migration/V1030__hosting_subscription_provisioning_claims.sql","relative_path":"V1030__hosting_subscription_provisioning_claims.sql","sha256":"e37a212dbc1e1cb0f9d64eb4f43ef128bbbdac38dae9960ac0c96c278c81c36d","git_blob":"20fd82966c12e8210a38a994c5c99ede0ed561d3"},{"path":"services/account-service/src/main/resources/db/migration/V1032__hosting_subscription_first_provider_dispatch.sql","relative_path":"V1032__hosting_subscription_first_provider_dispatch.sql","sha256":"d4bf5614bc5b3076c9475a92d43867404c95634274e92df2b9ba99b091cbf43e","git_blob":"f5884ad7cc54a1eadd11b8711e4f9df898677af9"},{"path":"services/account-service/src/main/resources/db/migration/V1036__hosting_subscription_terminal_resolution.sql","relative_path":"V1036__hosting_subscription_terminal_resolution.sql","sha256":"f913dca819521bf7d046d900da6e57a96807cd84b76d7105b583dac64e8b733f","git_blob":"11bb675ceb5bed20149cca8e2d448a31b9057227"},{"path":"services/account-service/src/main/resources/db/migration/V1037__canonical_join_failure_and_attempt_diagnostics.sql","relative_path":"V1037__canonical_join_failure_and_attempt_diagnostics.sql","sha256":"760db8ba49867fe5c16eb0cfa8c0256cd6ee2ea615b2410a4c7e79d5fd2e3094","git_blob":"8f8e183945e43f865c277e0466e75ed54a922491"},{"path":"services/account-service/src/main/resources/db/migration/V1038__canonical_join_existing_membership_terminal.sql","relative_path":"V1038__canonical_join_existing_membership_terminal.sql","sha256":"807ee1ac146a83745ff7f49026a0103d75c196aa0c8b62c127a382415f38c277","git_blob":"d39f7983339e329730fc77eb9a91287287fc198e"},{"path":"services/account-service/src/main/resources/db/migration/V1039__hosting_unclaimed_wallet_settlement.sql","relative_path":"V1039__hosting_unclaimed_wallet_settlement.sql","sha256":"7eec0eae9fb8a179ed70b7fba575517864ff9544a28f23b7abd7b008cd1bac96","git_blob":"fcd77e48286e09043f85c9bec8d4cbe0ccb894ca"},{"path":"services/account-service/src/main/resources/db/migration/V103__account_jwt_readiness_probes.sql","relative_path":"V103__account_jwt_readiness_probes.sql","sha256":"e5d8eeb767a90450be8ff3b9a6b64452da49ac030f7534f345d5581c2fa86c8c","git_blob":"611ce071cf148588ed903ed3c74fa5b3701d8296"},{"path":"services/account-service/src/main/resources/db/migration/V1040__account_tenant_capacity_owner.sql","relative_path":"V1040__account_tenant_capacity_owner.sql","sha256":"b4f3d08e6272eb1757331fcfed187ab3035fdbc900274506b1d710ac5daf543e","git_blob":"ceec667db84ca04393dd2f32a73eaecee3cd012e"},{"path":"services/account-service/src/main/resources/db/migration/V1041__hosting_first_invoice_completion.sql","relative_path":"V1041__hosting_first_invoice_completion.sql","sha256":"542d574b8c0064e09c4e74499d6b54739d3a3612ed295c2d2f52b58fc2a27569","git_blob":"b579626f52a029117126ff965721254f56c29f5e"},{"path":"services/account-service/src/main/resources/db/migration/V1042__account_tenant_capacity_state_change_checks.sql","relative_path":"V1042__account_tenant_capacity_state_change_checks.sql","sha256":"0387fdf43fedbf184ba22a39ee8f37880adc1be69bf52befe6f351dbe11e3169","git_blob":"0322c4a9760a741d54cb153bfabfc232c0ae1614"},{"path":"services/account-service/src/main/resources/db/migration/V1043__hosting_first_invoice_operation_fence.sql","relative_path":"V1043__hosting_first_invoice_operation_fence.sql","sha256":"2b7532945da20f93d65c2f6ac8b5d3742a0d13d3b60a3cd13ee72c1c015cdce4","git_blob":"ca475e4f71e69a932dc5e4ba2ded1442ea7323cd"},{"path":"services/account-service/src/main/resources/db/migration/V1044__account_tenant_capacity_incremental_conservation.sql","relative_path":"V1044__account_tenant_capacity_incremental_conservation.sql","sha256":"75e3b3c695e13e3c19cff0c73fbab44f652ac7d5cf367ed5d049e5a1353b248c","git_blob":"c7047ea1732f6a07b70943ca0fdfffb419d928c0"},{"path":"services/account-service/src/main/resources/db/migration/V1045__account_capacity_evaluation_retention.sql","relative_path":"V1045__account_capacity_evaluation_retention.sql","sha256":"425a75ae50d172ec69399d65de51ea45da61314a09b691b843e0b31aa8adb6bf","git_blob":"c541f7879ff907b6b48f47ccc7b175841ec37ea9"},{"path":"services/account-service/src/main/resources/db/migration/V1046.1__hosting_retained_positive_completion_gate.sql","relative_path":"V1046.1__hosting_retained_positive_completion_gate.sql","sha256":"9a422c87b5f2c633fd64e85f9296d3f54797bcdfa3a497ca1a60df0f20efa7c4","git_blob":"8c0d5a1061785eda0d0b59180a5e34f7a9961695"},{"path":"services/account-service/src/main/resources/db/migration/V1046__account_capacity_attempt_write_freshness.sql","relative_path":"V1046__account_capacity_attempt_write_freshness.sql","sha256":"707e796b93a40e0165dd15b824e2e2b481ccfdb172618a7f67fd5e80a4525340","git_blob":"0b25acddace172619fbb32740c9fd08b23e05e54"},{"path":"services/account-service/src/main/resources/db/migration/V106__account_jwt_signer_promotion_lifecycle.sql","relative_path":"V106__account_jwt_signer_promotion_lifecycle.sql","sha256":"0688a1cd8cdff3a470c9b7deeb3389df2331f6d39e6d50be9fb8f5ee3118b916","git_blob":"d867d0d0b8c0a57b53ee215739488df3b7d0db35"},{"path":"services/account-service/src/main/resources/db/migration/V107__account_jwt_readiness_single_delivery_claims.sql","relative_path":"V107__account_jwt_readiness_single_delivery_claims.sql","sha256":"a72bd9c9d1a354dfb187e9bf42a55a1e2c016ced8a637737c08d3cc3d111ec20","git_blob":"65c13414a56296ff1a88196bef8c36f0817d23c7"},{"path":"services/account-service/src/main/resources/db/migration/V109__account_jwt_validator_inventory_snapshots.sql","relative_path":"V109__account_jwt_validator_inventory_snapshots.sql","sha256":"7c8212de93457c08d42232cfb8c7059e9d7d91805999faa0655f381cf53b0e41","git_blob":"1fd619b3c6034b8c4281439b245b52225ade65ee"},{"path":"services/account-service/src/main/resources/db/migration/V10__platform_fee.sql","relative_path":"V10__platform_fee.sql","sha256":"3c8359d343068a35a119eee265dacae522ca5779eb9aad07a965c9b2e34c7a20","git_blob":"06bf168546fb1aaa2f49a6f612fde865be708da4"},{"path":"services/account-service/src/main/resources/db/migration/V11__donation_flag.sql","relative_path":"V11__donation_flag.sql","sha256":"147cff4c020adf10a8068a46acd11014f3bc8f6114d28a0b0de54bbfeeb8de0b","git_blob":"4be9543e1d3a44cc95b4ec1f0e82f598c5a66966"},{"path":"services/account-service/src/main/resources/db/migration/V123__account_jwt_readiness_per_pod_closure.sql","relative_path":"V123__account_jwt_readiness_per_pod_closure.sql","sha256":"9a43a9d2a94246d77f4ef658274b3841fd4b5f63ad34956878e5ffb47e703ddd","git_blob":"bf62bc372edca67e702599228488ab969a400d22"},{"path":"services/account-service/src/main/resources/db/migration/V124__account_jwt_readiness_version_aware_delivery_claim_guard.sql","relative_path":"V124__account_jwt_readiness_version_aware_delivery_claim_guard.sql","sha256":"e95be40b9cc9ef81f17de3b729aaf74345dab81e8ac3ff661bd24a83870aa3cc","git_blob":"7fbc6992abf409a9f4726e01b7937d318b3aaa08"},{"path":"services/account-service/src/main/resources/db/migration/V125__account_jwt_signer_promotion_receipt_binding.sql","relative_path":"V125__account_jwt_signer_promotion_receipt_binding.sql","sha256":"9b3b627b659ac71cebc1385f5ec3e5b5466fb1ce33e9c45c6ada5411802d5d12","git_blob":"748300ef3f5456c4e9192c6f4abe16121bcb82ee"},{"path":"services/account-service/src/main/resources/db/migration/V126.1__start_session_operator_response_envelope_erasure.sql","relative_path":"V126.1__start_session_operator_response_envelope_erasure.sql","sha256":"465a1041002695501a9af659b693d62f0b5566413f6a89b27bcb5826a94080fd","git_blob":"b7d89002d7bcef72915fd48ca2b710dfe0b77696"},{"path":"services/account-service/src/main/resources/db/migration/V126.2__account_control_ui_registry_cleanup_deadline.sql","relative_path":"V126.2__account_control_ui_registry_cleanup_deadline.sql","sha256":"a6ce53894d54626f2a1d4216a573a327eae978cc17bac99c760299791e301180","git_blob":"1647862a34a75e00050d926ef0be725af2bd48ac"},{"path":"services/account-service/src/main/resources/db/migration/V126.3__start_session_response_envelope_bounds.sql","relative_path":"V126.3__start_session_response_envelope_bounds.sql","sha256":"024e29c454bab4ddfd44d23002a11ba093554c327ecf8dbdb4555269ef7ad6cf","git_blob":"d04bc50eb428868b91b4ca13f0f1688e0b152155"},{"path":"services/account-service/src/main/resources/db/migration/V126__start_session_operator_authorization.sql","relative_path":"V126__start_session_operator_authorization.sql","sha256":"6ae30220f68f1953483fba06fcdb566ef3178c6c14d146b6174a6f3f52f9f0ed","git_blob":"0b58352821dab2e535d7f1d9fb0bc6fa15478f57"},{"path":"services/account-service/src/main/resources/db/migration/V12__virtual_currency.sql","relative_path":"V12__virtual_currency.sql","sha256":"b1982df3af08f1a79236ae8acbdd6007f957ffe3b27901b78b01cb8cfbb47da8","git_blob":"db33f54fef980f307335875b3b86570f82410779"},{"path":"services/account-service/src/main/resources/db/migration/V137.1__account_platform_restriction_lifecycle_consistency.sql","relative_path":"V137.1__account_platform_restriction_lifecycle_consistency.sql","sha256":"8deba448b62974ec94d601a2327a410fc5d60486a8ab9d832fcd627cfe7988d8","git_blob":"ac0625f1bbcbf0f17b95a1181f838339ed2b5a4c"},{"path":"services/account-service/src/main/resources/db/migration/V137.2__account_platform_restriction_outbox_column_qualification.sql","relative_path":"V137.2__account_platform_restriction_outbox_column_qualification.sql","sha256":"fd750d897e9baf0d3e2680290ffbeec022af4fbd2ac183ddd2dc3704905d7918","git_blob":"cfec841a57a5c3fc902d3d60707e932ed8f2821a"},{"path":"services/account-service/src/main/resources/db/migration/V137.3__account_security_guard_source_row_type.sql","relative_path":"V137.3__account_security_guard_source_row_type.sql","sha256":"2c0bb839b459cde06ea735236c4ddfdef272d9b4cf0410a813a56490c2c19315","git_blob":"58d8d6c68e9b9596af1baa36e8b69e7b37476350"},{"path":"services/account-service/src/main/resources/db/migration/V137__account_platform_restriction_revision_receipts.sql","relative_path":"V137__account_platform_restriction_revision_receipts.sql","sha256":"a3d653745fa8bad8d07ca55097198e5b10a83e7509b934f5f4814bdcc6db87bb","git_blob":"8895d8e79f0e5962cef8bf8a98218a89b2308f0e"},{"path":"services/account-service/src/main/resources/db/migration/V13__creator_share.sql","relative_path":"V13__creator_share.sql","sha256":"3b3e7a10e2fbbffb2f2bb3e93048c60e9ef19540aa2334c3c14f74e9ac2cc99f","git_blob":"c080c1c09dd3fe3d353337cdfb4ca167622c440d"},{"path":"services/account-service/src/main/resources/db/migration/V140__account_gameplay_admission_lease_operations.sql","relative_path":"V140__account_gameplay_admission_lease_operations.sql","sha256":"75d8acbef29143f902cccf650791db0b161b467e0dc7f2b75c970d3eb4c9b6fc","git_blob":"c2675aded2f7b834454feef6c444ca2306198c06"},{"path":"services/account-service/src/main/resources/db/migration/V141__account_admission_unknown_decision_abort.sql","relative_path":"V141__account_admission_unknown_decision_abort.sql","sha256":"038284fc609284ed1051f9932894f6e49ccd123bf909b1549cc112ae1348fdf9","git_blob":"20ed2b8443610c4404236b672666c8dae93bf263"},{"path":"services/account-service/src/main/resources/db/migration/V142__account_admission_durable_commit_confirmation.sql","relative_path":"V142__account_admission_durable_commit_confirmation.sql","sha256":"26cb29104c0b76c4f0b310afd35cf71a11374368b26b7ffa10828ad5df21469b","git_blob":"579800746af9d1aea10f071930004392316eea73"},{"path":"services/account-service/src/main/resources/db/migration/V143__account_global_pending_admission_fences.sql","relative_path":"V143__account_global_pending_admission_fences.sql","sha256":"8dfd76b451a76ab036dd8663e765839f1b5bcc2fc0fbedd8b4576ccfe51c076d","git_blob":"007bf4ea03bcac9155a0d7aef7bc323201fc5989"},{"path":"services/account-service/src/main/resources/db/migration/V144__account_admission_original_ack_receipt.sql","relative_path":"V144__account_admission_original_ack_receipt.sql","sha256":"c4f66ce16c77514717cbc9d2e0d65bc8c8ee0882239371d8518f587a0ef53490","git_blob":"431fcc9a56507fa62f1612a4fb8c60842228456d"},{"path":"services/account-service/src/main/resources/db/migration/V145__retire_experimental_admission_confirmation_writes.sql","relative_path":"V145__retire_experimental_admission_confirmation_writes.sql","sha256":"8eed289232ed8a31d4285068af8014b24af99654432d66a1291683fca1b35126","git_blob":"ae140c93e9c7c9d7e4f476244149fdeb3b1fbaa3"},{"path":"services/account-service/src/main/resources/db/migration/V146__account_original_ack_pg18_fresh_insert.sql","relative_path":"V146__account_original_ack_pg18_fresh_insert.sql","sha256":"25b6d2ca981f338c4e697ab72562a26460f5bb022009932a12aa35e77a991afb","git_blob":"437e9ba23bb1e315456e1037ea5392440b191ad7"},{"path":"services/account-service/src/main/resources/db/migration/V147__account_gameplay_delegation_issuance.sql","relative_path":"V147__account_gameplay_delegation_issuance.sql","sha256":"3ed208251476c4767805dd2664ab588100234df0b9956ad03a790f5c83fc1805","git_blob":"058ed771b4b67947dd06afcefa59de6293e6a0bf"},{"path":"services/account-service/src/main/resources/db/migration/V148__account_auth_evidence_bundles.sql","relative_path":"V148__account_auth_evidence_bundles.sql","sha256":"4d1fc20867e1f56428b96d8b8f9eda763df17704fddc7a2611ca640e7c626f91","git_blob":"8760d48546f0c5066e06ad3034371873316d4342"},{"path":"services/account-service/src/main/resources/db/migration/V149__account_gameplay_delegation_encrypted_response.sql","relative_path":"V149__account_gameplay_delegation_encrypted_response.sql","sha256":"702682fbd00c7653f59aa43709b6b8016138c2317448cca9e8e0976f405af555","git_blob":"c0f450fcc588de60f95ea4059788acf6aa22dbeb"},{"path":"services/account-service/src/main/resources/db/migration/V14__tenant_indexes.sql","relative_path":"V14__tenant_indexes.sql","sha256":"5f157a04c0ed67b9754be539a0a598847a4cb728a1217d4e943ca2f42c5fa180","git_blob":"9f651ba01e00489eda39dc4844aab728850c1411"},{"path":"services/account-service/src/main/resources/db/migration/V150__account_gameplay_delegation_committed_issuance.sql","relative_path":"V150__account_gameplay_delegation_committed_issuance.sql","sha256":"2f4a9f606812d4a68906a6a017769bead1c3c37e44927ee670134a621ceee509","git_blob":"22f833342ceec0bea694ceeae3e2a3cca17d0a8c"},{"path":"services/account-service/src/main/resources/db/migration/V151__account_gameplay_token_identity_fences.sql","relative_path":"V151__account_gameplay_token_identity_fences.sql","sha256":"88a1722d23373f34e3081f079ad0f0b21fbb12242fbab379f1201b4a9450a87a","git_blob":"00b9ddbbdb0d43248185904ed5aaf6887cec5700"},{"path":"services/account-service/src/main/resources/db/migration/V152__account_gameplay_login_credential_request_binding.sql","relative_path":"V152__account_gameplay_login_credential_request_binding.sql","sha256":"5b2f193e3c52dd2d4eca8e52866a04fb1974e76e51e67a8ac5cd75a93532c5ae","git_blob":"17f416099c3468387c1bfe363867b32d270ed3a4"},{"path":"services/account-service/src/main/resources/db/migration/V153__account_gameplay_delegation_decimal_source_versions.sql","relative_path":"V153__account_gameplay_delegation_decimal_source_versions.sql","sha256":"d62e7e1b5fefbcba5ea340224e77c6a067b32c0141a81749f93ba9541fc4d702","git_blob":"6f9ff7f36f9bdf24d006afa29ccd4f2e9dddd30f"},{"path":"services/account-service/src/main/resources/db/migration/V154__account_auth_evidence_checkpoint_key_count.sql","relative_path":"V154__account_auth_evidence_checkpoint_key_count.sql","sha256":"ddb316b01f5651e61997fe81d926e3900f369a20a2cb131ba43db2a7ebce2649","git_blob":"81b0ca2af640b45248b8dfa3af0bfa4cd6567213"},{"path":"services/account-service/src/main/resources/db/migration/V155__account_auth_evidence_shared_issuer_guard.sql","relative_path":"V155__account_auth_evidence_shared_issuer_guard.sql","sha256":"58c9743fd3a2498e98b97727c6e5b4692ecd99ddd1721b22fc9287b7562a0b51","git_blob":"bec4ba5947bb5a765ee735122093876511fdf444"},{"path":"services/account-service/src/main/resources/db/migration/V156__account_gameplay_commit_bundle_source_fence.sql","relative_path":"V156__account_gameplay_commit_bundle_source_fence.sql","sha256":"e51e6c469b0594d506ffb7a3a1596a40f295d89dbab45b457413f1034c15e15c","git_blob":"5763382e7876d831a69174a95186ad6854900527"},{"path":"services/account-service/src/main/resources/db/migration/V157.1__account_gameplay_token_fence_truncate_guard.sql","relative_path":"V157.1__account_gameplay_token_fence_truncate_guard.sql","sha256":"5ac01a0dda30dd6d58a99f9f6cfb1515dcdbb20556ac4084af070432b0ff8611","git_blob":"02aa6c12546cf63a01de89e248ba8f7cfc9664b8"},{"path":"services/account-service/src/main/resources/db/migration/V157__account_gameplay_authority_shared_issuer_guard.sql","relative_path":"V157__account_gameplay_authority_shared_issuer_guard.sql","sha256":"477a2e1d379de8f59a8db584461db20c1ecf9246f6752dfaa0eec344c94395ef","git_blob":"b2e2c3a5c1aaa50140ea624f795a2d8fca007528"},{"path":"services/account-service/src/main/resources/db/migration/V158__account_start_session_authority_captures.sql","relative_path":"V158__account_start_session_authority_captures.sql","sha256":"d7dec0cd83a7407fc180a9eed0f022eebe71b7e2e15f95ffd57fd420d16c039a","git_blob":"7986eb96bfb73ff5c935b9ad9eb6b18067753159"},{"path":"services/account-service/src/main/resources/db/migration/V159__start_session_world_participation.sql","relative_path":"V159__start_session_world_participation.sql","sha256":"2ea4a16c26245d484a300586ba6d06937a0aaaa817b35cb71cab1755d0330a87","git_blob":"16fbdad0f0c26a8382d44a50a9aad181aa59be31"},{"path":"services/account-service/src/main/resources/db/migration/V15__account_tenant_membership.sql","relative_path":"V15__account_tenant_membership.sql","sha256":"143a179411666ddf027dbe6b03d11251733156784bbb1db7817da45531383596","git_blob":"1ba92c20478e7c9595a70135242e185308596173"},{"path":"services/account-service/src/main/resources/db/migration/V160.1__start_session_operator_bundle_source_fence.sql","relative_path":"V160.1__start_session_operator_bundle_source_fence.sql","sha256":"35f872bd0f877a9316a651b8062b70dee7b711bee3547d2739d008581efb0294","git_blob":"6e659424ca9b4f332d853e4d304e49af2329b9c5"},{"path":"services/account-service/src/main/resources/db/migration/V160__start_session_world_original_attempt_evidence.sql","relative_path":"V160__start_session_world_original_attempt_evidence.sql","sha256":"a2f2394fd25ac714d5f78978a72f8dcac03ba60bd99df9c53ee7441a0a72e60e","git_blob":"8ab48f8541608ec9fa281eef34277af0cb8e130f"},{"path":"services/account-service/src/main/resources/db/migration/V16__profile_presence_visibility.sql","relative_path":"V16__profile_presence_visibility.sql","sha256":"a389c4f58242e1bfd04a97e24d9dc374a1c13d1733182fc2c4a0992c3b3f09e1","git_blob":"f805863f967f9d7fd8ccaa66e7f5cf7922e43c62"},{"path":"services/account-service/src/main/resources/db/migration/V17__account_realm_access_grants.sql","relative_path":"V17__account_realm_access_grants.sql","sha256":"779f69a4f602606ef4654111e6d085b5fc5267db6998658cfa98ee2d563b04b7","git_blob":"a32c62564950f46b90decba4c59bc704eb0b40e4"},{"path":"services/account-service/src/main/resources/db/migration/V18__account_email_login_challenges.sql","relative_path":"V18__account_email_login_challenges.sql","sha256":"4dc1d3ae7dbfe1344039953d13c246652afe2c66be85c25ed915438b405e4efc","git_blob":"50e13debb29e24bc7005f6ddd2c141ab292d5ce9"},{"path":"services/account-service/src/main/resources/db/migration/V19__account_login_auth_modes.sql","relative_path":"V19__account_login_auth_modes.sql","sha256":"0ac60f279e6173459bfd1888e7105066bd1a3d8a953a0a3ee16b22f9ac3f7cf6","git_blob":"03e1f50aab8598354eb7be4d7fb27677fadd7680"},{"path":"services/account-service/src/main/resources/db/migration/V1__init.sql","relative_path":"V1__init.sql","sha256":"e0260978f17e4cb074015e74b33dcd3a071cccff42266527e50390a0c1986518","git_blob":"691d1f654989688da010cae4c3248f73c9264702"},{"path":"services/account-service/src/main/resources/db/migration/V20__account_lifecycle_state.sql","relative_path":"V20__account_lifecycle_state.sql","sha256":"e81d691e413a01871083da51dfe82663e6b58304b0e35d27b997d30505e1b9d8","git_blob":"b69d84ccf795ef01d621d4ae6a7e0a48dcc38b6c"},{"path":"services/account-service/src/main/resources/db/migration/V21__validate_account_lifecycle_state.sql","relative_path":"V21__validate_account_lifecycle_state.sql","sha256":"14f621caf85fdac625e36238ef48ecba80a0fb51184865a893d1ccd6784b1e9b","git_blob":"1999f4ea104d2d40da3adddf4c6c4624dc8c787e"},{"path":"services/account-service/src/main/resources/db/migration/V22__canonicalize_account_emails.sql","relative_path":"V22__canonicalize_account_emails.sql","sha256":"79f902e5b54b2901a52581154d47e7762b55eacdde8d48a6f03bf1b768db7db6","git_blob":"c7c284e61c29aec8def5d9e6d76c9f165f696382"},{"path":"services/account-service/src/main/resources/db/migration/V23__validate_account_email_canonical_check.sql","relative_path":"V23__validate_account_email_canonical_check.sql","sha256":"40ce1fe14123c397fc1127b10c96ca85d8aad00d532c09160dd8bc85d11675fc","git_blob":"0d0c4a0d99d7bcdab82e1cbeb65c6d919738c142"},{"path":"services/account-service/src/main/resources/db/migration/V24__account_credential_expiry_indexes.sql","relative_path":"V24__account_credential_expiry_indexes.sql","sha256":"994c31c1f95986c7f54656645a80c12bc327c35a7e9d911416a96faeeb57a9c1","git_blob":"184f49a931d61a916c7fb47b35f2dec08aaac9cd"},{"path":"services/account-service/src/main/resources/db/migration/V25__scope_profile_identity.sql","relative_path":"V25__scope_profile_identity.sql","sha256":"8bd31aa8cbf142fef9478831b7741ba871f66740db3be7e08a5350fc976235a8","git_blob":"748e3eea4d761352cbecc9d17d567f4d7c468c68"},{"path":"services/account-service/src/main/resources/db/migration/V26__global_registration_join_evidence.sql","relative_path":"V26__global_registration_join_evidence.sql","sha256":"d06594a4a7dcf74dafc9c1ef280d36bc91e239c52eccc0b00977cf46a25b52fd","git_blob":"7a9d11b724732cd87dcf59a571aba8a89265909e"},{"path":"services/account-service/src/main/resources/db/migration/V27__retain_join_connect_scopes.sql","relative_path":"V27__retain_join_connect_scopes.sql","sha256":"bc71fd1a1e3495262ea9c60cb363f0a6fefd0a82bfb070aa93af369314b5dbb2","git_blob":"000416cd8617bce06aad863fbda450b85a3095b9"},{"path":"services/account-service/src/main/resources/db/migration/V28__account_audit_delivery_backoff.sql","relative_path":"V28__account_audit_delivery_backoff.sql","sha256":"3c9ae7901ba0109b5120b6aad398d1e8e6f38c39c332eb1f5b227b31d9fed0fb","git_blob":"b4e14f76ae510f9919a1e4821dc02ef9acfac630"},{"path":"services/account-service/src/main/resources/db/migration/V29__account_identity_uuid_bridge.sql","relative_path":"V29__account_identity_uuid_bridge.sql","sha256":"d4ee7ebf2f6464d0c25bcaf8c3e5c3347d452e032c59c89e9067446c3d61af00","git_blob":"28323b9cfb54eee683ab306a0fe31ff5f719f4c3"},{"path":"services/account-service/src/main/resources/db/migration/V2__payment_tables.sql","relative_path":"V2__payment_tables.sql","sha256":"0282cd2a44a1facc5281edbc68f936cd98c7b0b39d3d50f12981fa2a434b7ab5","git_blob":"1da047dbe188832678b3460b3852b61c873d46aa"},{"path":"services/account-service/src/main/resources/db/migration/V30__approved_legacy_tenant_associations.sql","relative_path":"V30__approved_legacy_tenant_associations.sql","sha256":"bde7aba8aea5fcb5944ec4743c1e21d1c7a65846331d102b39d4dae148f76e53","git_blob":"2d64e1381b664eebff5bed22057e8a524035b13b"},{"path":"services/account-service/src/main/resources/db/migration/V31__subscription_authority_generation.sql","relative_path":"V31__subscription_authority_generation.sql","sha256":"9c853b17fe29764081167cd7bb7fca570fd80f2cf9638dc3aa1fccf0009e6be2","git_blob":"4c1c0876a507bba5996ee8df5a47ff13dbd87dcf"},{"path":"services/account-service/src/main/resources/db/migration/V32__realm_grant_currentness.sql","relative_path":"V32__realm_grant_currentness.sql","sha256":"ed0e67f6e8b5ad54279bccf2a9fdc759febd5d29e0d04b813697b41b0413fa0f","git_blob":"fb74c3255db35b188d28d6cfaa280fc621d27f50"},{"path":"services/account-service/src/main/resources/db/migration/V33__fresh_tenant_identity_associations.sql","relative_path":"V33__fresh_tenant_identity_associations.sql","sha256":"0fd2fa8f982f0f25026d7b7fc62920e3529297d32de6b983ccf6131ea29a07a0","git_blob":"a560e2ab1c752b5cccc1015a8bba9acc92af1afb"},{"path":"services/account-service/src/main/resources/db/migration/V34__account_membership_pair_authority.sql","relative_path":"V34__account_membership_pair_authority.sql","sha256":"4c9ba04b9112ca1fb4c26edfff306e2c9e80aca8181ece382476c1980b55970d","git_blob":"0a82c78d95d61dcd84e2650badbb34d4666805ac"},{"path":"services/account-service/src/main/resources/db/migration/V35__canonical_uuid_membership_identity.sql","relative_path":"V35__canonical_uuid_membership_identity.sql","sha256":"f1a2c9bcf627204ef124578cc87d6a0fbf8ba6ede480cfd02f63b90dbc8331df","git_blob":"1c998a44dbfdd6d9de71a13573a4eb2dd3b3f019"},{"path":"services/account-service/src/main/resources/db/migration/V36__account_auth_authority_generations.sql","relative_path":"V36__account_auth_authority_generations.sql","sha256":"6c3b0d27729ec3611ed8dfd06919d0053e32a6ba02e51cf56976ed96b6630562","git_blob":"623a7b9d84f086d6eca22a77be1a3f1d08e0b22c"},{"path":"services/account-service/src/main/resources/db/migration/V37__canonical_first_join_scope_and_intent.sql","relative_path":"V37__canonical_first_join_scope_and_intent.sql","sha256":"151c21d79fc50a12bee6f6610c0179da6aa0b3666bda189eccd070dbd630966e","git_blob":"41f91ed7e30ad9eaa99ce6cf1b2884a98a44a36d"},{"path":"services/account-service/src/main/resources/db/migration/V38__account_first_join_authority_outbox_and_roles.sql","relative_path":"V38__account_first_join_authority_outbox_and_roles.sql","sha256":"658f8deda648f4c7daa2be171476b3776bf57c2fe19880ee721781be2df4044f","git_blob":"63c85e0af656c1849b2e0b5b6d12b4459267d7b6"},{"path":"services/account-service/src/main/resources/db/migration/V39__canonical_first_join_terminal_receipt.sql","relative_path":"V39__canonical_first_join_terminal_receipt.sql","sha256":"8e21edadac73e4ff3877b30e438c6c89fbdd076d0153ad2f8d6936910d20292b","git_blob":"b9c690c01f9c2787dd54d7e1f28f8053b0a7d0f5"},{"path":"services/account-service/src/main/resources/db/migration/V3__tenant_columns.sql","relative_path":"V3__tenant_columns.sql","sha256":"72fa7f50ec6ebdc9522ae4198b0439ce99d035c6c0ee27651661768afe7e3a71","git_blob":"65d4c67ab00cba3fac250a56066fe304845a812e"},{"path":"services/account-service/src/main/resources/db/migration/V40.1__retained_tenant_approval_payload_references.sql","relative_path":"V40.1__retained_tenant_approval_payload_references.sql","sha256":"0e5468c9f2295711d8c69e5f3ec4de271737210dccbddef3a99b894bb8811601","git_blob":"934f269f0b9c0f3cf220d24b873abf34ff96c0fb"},{"path":"services/account-service/src/main/resources/db/migration/V40__account_authority_source_baselines.sql","relative_path":"V40__account_authority_source_baselines.sql","sha256":"02dbce0eb1ea26f85abba55e8768d9ba545cd0bcd35a70a4e131b2f16c45900b","git_blob":"1f00539f3a788c48a0b458a93aaf410f85fda0db"},{"path":"services/account-service/src/main/resources/db/migration/V4__roles_2fa.sql","relative_path":"V4__roles_2fa.sql","sha256":"98301d0fb0a0bd42f11d22958de81f3eb45223ce0737ded804fa0ac84d610109","git_blob":"106f76e8b22ccf07f8a1e8d995b29df703143392"},{"path":"services/account-service/src/main/resources/db/migration/V53__account_protected_demo_entitlements.sql","relative_path":"V53__account_protected_demo_entitlements.sql","sha256":"a1b78e12908bce17e3e29c0af81e59a12dec8c7dd13aa8cee8709c3a6f3bc3d5","git_blob":"3c9fdf95bb9aeb9479e614273bb40a4dac1ed67b"},{"path":"services/account-service/src/main/resources/db/migration/V5__payment_tenant_columns.sql","relative_path":"V5__payment_tenant_columns.sql","sha256":"ea98ac4ec7d681c05d14fe8aa61479acc23af92427f777eaabcedfd5654eb824","git_blob":"6d0751f4c6857f75ff808f0d12db3308987f0bd8"},{"path":"services/account-service/src/main/resources/db/migration/V6__password_reset_token.sql","relative_path":"V6__password_reset_token.sql","sha256":"06fa2c6380e1e1f950e6f22732c703c9eeb8792d7116382bc0f061ee6beae0bb","git_blob":"00559891cf4fad137f594601bd7e7bd88386d720"},{"path":"services/account-service/src/main/resources/db/migration/V73__account_tenant_authority_source_bridge.sql","relative_path":"V73__account_tenant_authority_source_bridge.sql","sha256":"b9ff67394b4a55ed5c3c95d98efc34b8468f521c0282488be433c3a0c9312fb0","git_blob":"2bb9424e7c04b017cc93fa3ef979603e898df587"},{"path":"services/account-service/src/main/resources/db/migration/V74__account_global_role_source.sql","relative_path":"V74__account_global_role_source.sql","sha256":"012ddb199a3c7db387cdc69b3aa30b6a35403c2663e474abc7c0ca9f66c495ba","git_blob":"78047e079094d9de17ded83b178b7635e51ff5ce"},{"path":"services/account-service/src/main/resources/db/migration/V75__draft_commit_authorization_fences.sql","relative_path":"V75__draft_commit_authorization_fences.sql","sha256":"f437621f35fd31f3169a4928636edc3ca27f1dedea9ed6621371466dc15f53a8","git_blob":"6cfd73f8562b58fcd19fb40f645749e4856019fe"},{"path":"services/account-service/src/main/resources/db/migration/V76__account_draft_required_owner_fence.sql","relative_path":"V76__account_draft_required_owner_fence.sql","sha256":"74d2981822d95c9118ed9f90cff29b3836e9c91643cd5a14d27812c3ec364bc0","git_blob":"e9c94764f28280cdc225c3e0dbf45170de9d4df1"},{"path":"services/account-service/src/main/resources/db/migration/V77__account_password_reset_operation_receipts.sql","relative_path":"V77__account_password_reset_operation_receipts.sql","sha256":"4936d4d356b6f26b935ba44e854b7db0f981883207a4139f08eb46df0026e211","git_blob":"bf506f0fa29fede4355b22df1eeb8bca6d1abe45"},{"path":"services/account-service/src/main/resources/db/migration/V78__account_logout_all_operation_receipts.sql","relative_path":"V78__account_logout_all_operation_receipts.sql","sha256":"e8ec619e83e711651b88c5ef43d14949401c5b0f026f0c2a73cb03bc2d9b8d40","git_blob":"2a2e13dcf63319e617730f8a5696a276c65c5376"},{"path":"services/account-service/src/main/resources/db/migration/V79__account_security_state_operations.sql","relative_path":"V79__account_security_state_operations.sql","sha256":"c60fa4b319d29acfcdd8f9aa363b0f9b394c4c6af0accd8ee7e55cc9927b2eea","git_blob":"04253717cdb549f6cd102d8d47a7c6dcc061afda"},{"path":"services/account-service/src/main/resources/db/migration/V7__external_account.sql","relative_path":"V7__external_account.sql","sha256":"168b224813ad01d21b1e7c3e4381c13b80b0f6887aa4a76cb120cfbcecdd0a22","git_blob":"3e2ad8d57a31efbf1bd52f2192f24512a6374e1c"},{"path":"services/account-service/src/main/resources/db/migration/V80__account_security_event_source_guard.sql","relative_path":"V80__account_security_event_source_guard.sql","sha256":"8ffe20d4fc6cf749d9c439584a87819e080d21fd58f13c54dfc9683b598e6b6d","git_blob":"7fd53611810267e989d674ae582abb3610669777"},{"path":"services/account-service/src/main/resources/db/migration/V81__account_platform_restriction_birth_sources.sql","relative_path":"V81__account_platform_restriction_birth_sources.sql","sha256":"1ba1cfb53425c99147c1af5c1ddaacbd2b5481341f46db71d570acf866e7c555","git_blob":"eb6d9daf0d45e049a23a76f207dee51c499d6d57"},{"path":"services/account-service/src/main/resources/db/migration/V82__creator_membership_provenance.sql","relative_path":"V82__creator_membership_provenance.sql","sha256":"5ef8675ad4fef7aeb167d480205a61f4164ad6f495dc6725356a5b906affbb99","git_blob":"bb724346c7ea7a0b060926bcb75e7e3fc0c12362"},{"path":"services/account-service/src/main/resources/db/migration/V83__account_tenant_creation_bootstrap.sql","relative_path":"V83__account_tenant_creation_bootstrap.sql","sha256":"c2a556f36bcd9f3ea7209ac332cd026555a26c686b8bc36140a2a16ccea59c3f","git_blob":"22c8b8548d510894b1610769a6d63eefad91ac3a"},{"path":"services/account-service/src/main/resources/db/migration/V84__individual_creator_party_sources.sql","relative_path":"V84__individual_creator_party_sources.sql","sha256":"ba2fe963d76d912a16ba6955add116873cea06b2c81fb3a9bd6324aee4b73d12","git_blob":"1485f13b036ee02cdc88da9382ebf474241eef43"},{"path":"services/account-service/src/main/resources/db/migration/V85__account_hosted_terms_acceptance_workflow.sql","relative_path":"V85__account_hosted_terms_acceptance_workflow.sql","sha256":"9fb0d876b44d1e2a853db5e33e1c86bda5e3fb9e1166174896c7c48293dd1e8c","git_blob":"4215797d4338e9478a23d1cdbf25575f4fe1290e"},{"path":"services/account-service/src/main/resources/db/migration/V86__account_hosted_terms_environment_binding.sql","relative_path":"V86__account_hosted_terms_environment_binding.sql","sha256":"36948f14ec122224faa42ae7b0a6072bee37d971cdcc78896fea48a450c6bbc7","git_blob":"a2020281109ed3073af84070fc1c2d08d34d1e93"},{"path":"services/account-service/src/main/resources/db/migration/V87__account_control_ui_owner_source_guards.sql","relative_path":"V87__account_control_ui_owner_source_guards.sql","sha256":"65a4ee81291f6148d24cb9fa2c0db5103fbc2606ba77d85dbfb3785151881e77","git_blob":"5321fd5b97ef445169547c757eb0e132e89cc4ba"},{"path":"services/account-service/src/main/resources/db/migration/V88__account_logout_all_pending_draft_source_changes.sql","relative_path":"V88__account_logout_all_pending_draft_source_changes.sql","sha256":"0437adec6362a9790ac65cea589f54ff146045c66a9a56c8f6c437b4ba333f38","git_blob":"175b31692e091892857334072a49256dbbe89a49"},{"path":"services/account-service/src/main/resources/db/migration/V89__account_password_reset_pending_draft_source_changes.sql","relative_path":"V89__account_password_reset_pending_draft_source_changes.sql","sha256":"90cb35f67dceccdbab8196285750ee5017ef506b5e0ddcca6e993d27e5afac35","git_blob":"3ea00737b64c78ece4490ad8fd021407ff767181"},{"path":"services/account-service/src/main/resources/db/migration/V8__email_verification.sql","relative_path":"V8__email_verification.sql","sha256":"7a40300bc09bd763ab7848086b55adfbd83664cd985d9cec62784c2d2a0e6858","git_blob":"fa9c6ead116e3a44070f65a2f90a418127006f45"},{"path":"services/account-service/src/main/resources/db/migration/V90__account_control_ui_committed_issuance.sql","relative_path":"V90__account_control_ui_committed_issuance.sql","sha256":"2f41f1ae2ccfe7056a86371b8023da8081dbd4976d3c127964e8e76511556273","git_blob":"d1da3e468f6a798a61501ab986529e4f70b0f45e"},{"path":"services/account-service/src/main/resources/db/migration/V91__account_selected_publication_authorization.sql","relative_path":"V91__account_selected_publication_authorization.sql","sha256":"8fe3150cadf93201c4d81a234f0c79664a75f3f8e4e2fc3a1a80d6c35c9caafd","git_blob":"9dce2681093746685e11e44a9f0c37236586b4f4"},{"path":"services/account-service/src/main/resources/db/migration/V92__account_publication_pre_freeze_order.sql","relative_path":"V92__account_publication_pre_freeze_order.sql","sha256":"960b93900f09e0b58ff481b6ba7fec8455e38185a867ba15c84f8545337dd782","git_blob":"dd79acb0391b7db91c584f456d2af78721e50efe"},{"path":"services/account-service/src/main/resources/db/migration/V93__account_selected_publication_settlement.sql","relative_path":"V93__account_selected_publication_settlement.sql","sha256":"1efd7e2687f5f1b943f554d85d82fc5e4c9a4f4915d2511dd50f3dc0ede30b36","git_blob":"83bbcd9d752740471980f7856b98ebbe3350b02c"},{"path":"services/account-service/src/main/resources/db/migration/V94__selected_publication_inventory_v2.sql","relative_path":"V94__selected_publication_inventory_v2.sql","sha256":"8454e13cf9703f3ca61e8d4543a1e4b4157bca99fba88c3827a58808c95a17e2","git_blob":"2def145a6ac8405d9b52bb263e1cacbb109faa00"},{"path":"services/account-service/src/main/resources/db/migration/V95__game_logic_intake_authorization.sql","relative_path":"V95__game_logic_intake_authorization.sql","sha256":"3a4e2013a95ac7a0aeff8f0bc59d99bb96b64afbc17c4e8d69736eff9a4d7b1e","git_blob":"82cfbdbc36de44965baaf4c5fb76a44182cfe4bb"},{"path":"services/account-service/src/main/resources/db/migration/V96__game_logic_intake_terminal_settlement.sql","relative_path":"V96__game_logic_intake_terminal_settlement.sql","sha256":"b9a01dab08570cb5c335acc00487f2dce5034820a9529bb7fbcdf0d70f73416a","git_blob":"bb9059cf443ec38277df8efa0a6ab0d0f57df3e1"},{"path":"services/account-service/src/main/resources/db/migration/V97__game_logic_intake_source_read_reservation.sql","relative_path":"V97__game_logic_intake_source_read_reservation.sql","sha256":"8c2a61afd50c016d81c733546bc5f9865b06a8c5b42bd1f7a9f4fa51efa3f483","git_blob":"b5eb4a41754ee6ee4fa9039be6b2b1c017ddcd95"},{"path":"services/account-service/src/main/resources/db/migration/V98__account_hosted_terms_disclosure_handoffs.sql","relative_path":"V98__account_hosted_terms_disclosure_handoffs.sql","sha256":"9947ae7f8a5a8d34ed94642fbda96398ac7a8ba50dd543c45af6708e5fbe01bd","git_blob":"d69854cbec1050bfc41c3f5451b408fe85e8c916"},{"path":"services/account-service/src/main/resources/db/migration/V99__account_jwt_signer_desired_state.sql","relative_path":"V99__account_jwt_signer_desired_state.sql","sha256":"4b670f4c692eca4beb2749dec4a9e33e683b82f7ae4bedfff7a701e8a77cc9a5","git_blob":"9048e940f851d1d34b55a5c01ed0d68ae02b4d06"},{"path":"services/account-service/src/main/resources/db/migration/V9__payment_provider_id.sql","relative_path":"V9__payment_provider_id.sql","sha256":"e8669eb4f1bab5dbfd605ec6262342deb0d69406dfdf6a4c1b18d195c1d9c7cf","git_blob":"733361cabe47ad2771b85fddc8447e101741b2e0"}]}}'
+      TESTCONTAINERS_CHECKS_DISABLE: 'false'
+    steps:
+    - name: Set isolated proof directories
+      shell: bash
+      run: |-
+        set -euo pipefail
+        printf 'PROOF_DIR=%s/genuine-retention-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+        printf 'SOURCE_DIRECTORY=%s/historical-source\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        printf 'MIGRATION_SOURCE_DIRECTORY=%s/migration-source\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        printf 'FIREMUD_RETAINED_POSITIVE_MIGRATION_DIRECTORY=%s/migration-source/services/account-service/src/main/resources/db/migration\n' "$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        mkdir "$RUNNER_TEMP/genuine-retention-proof"
+    - name: Harden runner
+      uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
+      with:
+        egress-policy: audit
+    - name: Check out pinned genuine historical witness
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: da12c18406b3048749e439490630aaf98ea136e9
+        path: historical-source
+        fetch-depth: 2
+        persist-credentials: false
+    - name: Check out pinned current migration source separately
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: 123a4b9e82aa3ddbd15ebc3aa64f9470c2902b23
+        path: migration-source
+        sparse-checkout: services/account-service/src/main/resources/db/migration
+        persist-credentials: false
+    - name: Set up repository-pinned Python for isolated checkout
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+      with:
+        python-version-file: historical-source/.python-version
+    - name: Set up Java 25
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+      with:
+        distribution: temurin
+        java-version: '25'
+    - name: Set up Gradle without caching or scan publication
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+      with:
+        cache-disabled: true
+        build-scan-publish: false
+    - name: Verify both immutable sources and Docker
+      shell: bash
+      run: |
+        set -euo pipefail
+        test ! -e "$SOURCE_DIRECTORY/services/account-service/build/test-results/integrationTest"
+        cat > "$RUNNER_TEMP/verify-provenance.py" <<'PROOF_VERIFY_PROVENANCE_PY'
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import subprocess
+        import sys
+
+        # Immutable expected manifest is embedded by the workflow renderer, not read from test output.
+        EXPECTED = json.loads(os.environ['PROVENANCE_EXPECTED'])
+        SOURCE = Path(os.environ['SOURCE_DIRECTORY']).resolve()
+        MIGRATIONS = Path(os.environ['MIGRATION_SOURCE_DIRECTORY']).resolve()
+        OUT = Path(os.environ['PROOF_DIR'])
+
+
+        def git(root, *args, raw=False):
+            data = subprocess.check_output(['git', '-C', str(root), *args])
+            return data if raw else data.decode().strip()
+
+
+        def sha(data):
+            return hashlib.sha256(data).hexdigest()
+
+
+        def check():
+            expected = EXPECTED
+            source_sha = os.environ['SOURCE_SHA']
+            assert source_sha != '0' * 40, 'Parent must publish and pin the immutable witness source commit'
+            assert git(SOURCE, 'rev-parse', 'HEAD') == source_sha
+            assert git(SOURCE, 'rev-parse', 'HEAD^{tree}') == expected['candidate_tree']
+            assert git(SOURCE, 'show', '-s', '--format=%P', 'HEAD') == expected['historical_commit']
+            assert git(SOURCE, 'rev-parse', expected['historical_commit'] + '^{tree}') == expected['historical_tree']
+            changed = git(SOURCE, 'diff-tree', '--no-commit-id', '--name-only', '-r', expected['historical_commit'], 'HEAD').splitlines()
+            assert changed == expected['changed_paths'], ('unexpected historical source changes', changed)
+            assert not git(SOURCE, 'status', '--porcelain', '--untracked-files=no'), 'tracked historical source changed'
+            observed_source = []
+            for item in expected['source_files']:
+                path = item['path']
+                data = (SOURCE / path).read_bytes()
+                blob = git(SOURCE, 'rev-parse', 'HEAD:' + path)
+                assert blob == item['postimage_blob'] == git(SOURCE, 'hash-object', path)
+                assert sha(data) == item['postimage_sha256']
+                old = git(SOURCE, 'show', expected['historical_commit'] + ':' + path, raw=True)
+                assert sha(old) == item['preimage_sha256']
+                assert git(SOURCE, 'rev-parse', expected['historical_commit'] + ':' + path) == item['preimage_blob']
+                observed_source.append({'path': path, 'blob': blob, 'sha256': sha(data)})
+            witness = (SOURCE / expected['changed_paths'][0]).read_text()
+            old = git(SOURCE, 'show', expected['historical_commit'] + ':' + expected['changed_paths'][0], raw=True).decode()
+            method = old.index('  void paymentRequiredSdkCreateCannotCommitUntilProviderConfirmsFirstInvoice()')
+            body = old[old.index('    Fixture f = fixture("1032");', method):old.index('\n  }', method)]
+            assert sha(body.encode()) == expected['producer_body_sha256'] and body in witness
+            migration = expected['migrations']
+            assert git(MIGRATIONS, 'rev-parse', 'HEAD') == migration['head']
+            assert git(MIGRATIONS, 'rev-parse', 'HEAD^{tree}') == migration['tree']
+            assert not git(MIGRATIONS, 'status', '--porcelain', '--untracked-files=no'), 'tracked migration source changed'
+            relative_root = 'services/account-service/src/main/resources/db/migration/'
+            directory = MIGRATIONS / relative_root
+            assert directory == Path(os.environ['FIREMUD_RETAINED_POSITIVE_MIGRATION_DIRECTORY']).resolve()
+            inventory = sorted(p.relative_to(directory).as_posix() for p in directory.rglob('*') if p.is_file())
+            assert inventory == [item['relative_path'] for item in migration['files']]
+            assert len(inventory) == 157
+            digest = hashlib.sha256()
+            observed_migrations = []
+            for item in migration['files']:
+                path = directory / item['relative_path']
+                assert not path.is_symlink()
+                data = path.read_bytes()
+                assert sha(data) == item['sha256']
+                assert git(MIGRATIONS, 'rev-parse', 'HEAD:' + item['path']) == item['git_blob']
+                assert git(MIGRATIONS, 'hash-object', item['path']) == item['git_blob']
+                digest.update(item['relative_path'].encode() + b'\0' + data + b'\0')
+                observed_migrations.append({'path': item['path'], 'blob': item['git_blob'], 'sha256': sha(data)})
+            assert digest.hexdigest() == migration['aggregate_sha256']
+            old_inventory = git(SOURCE, 'ls-tree', '-r', '--name-only', expected['historical_commit'], '--', relative_root).splitlines()
+            assert len(old_inventory) == 150
+            for path in old_inventory:
+                assert git(SOURCE, 'show', expected['historical_commit'] + ':' + path, raw=True) == (MIGRATIONS / path).read_bytes()
+            return {'historical_commit': expected['historical_commit'], 'historical_tree': expected['historical_tree'],
+                    'source_commit': source_sha, 'source_tree': expected['candidate_tree'],
+                    'source_files': observed_source, 'migration_commit': migration['head'], 'migration_tree': migration['tree'],
+                    'migration_files': observed_migrations, 'migration_aggregate_sha256': digest.hexdigest(),
+                    'historical_migration_continuity': 150, 'producer_body_sha256': expected['producer_body_sha256']}
+
+
+        if __name__ == '__main__':
+            phase = sys.argv[1]
+            assert phase in ('before', 'after')
+            result = check()
+            result['nonce'] = os.environ['GITHUB_RUN_ID'] + ':' + os.environ['GITHUB_RUN_ATTEMPT']
+            (OUT / ('provenance-' + phase + '.json')).write_text(json.dumps(result, indent=2) + '\n')
+            print('Verified historical source, genuine producer, all 157 current migrations and 150 unchanged predecessors: ' + phase)
+        PROOF_VERIFY_PROVENANCE_PY
+        cat > "$RUNNER_TEMP/capture-log.py" <<'PROOF_CAPTURE_LOG_PY'
+        """Drain stdout without applying file-size limits to Gradle or dependency downloads."""
+        import hashlib
+        import json
+        import os
+        from pathlib import Path
+        import re
+        import sys
+
+        out = Path(os.environ['PROOF_DIR'])
+        digest = hashlib.sha256()
+        tail = bytearray()
+        window = b''
+        count = 0
+        bad_task = False
+        pattern = rb'^> Task :account-service:integrationTest (?:FROM-CACHE|UP-TO-DATE|SKIPPED|NO-SOURCE)'
+        while True:
+            block = sys.stdin.buffer.read(65536)
+            if not block:
+                break
+            digest.update(block)
+            count += len(block)
+            window = window[-4096:] + block
+            bad_task |= re.search(pattern, window, re.M) is not None
+            tail.extend(block)
+            del tail[:-262144]
+        (out / 'gradle-tail.txt').write_bytes(tail)
+        (out / 'gradle-log.json').write_text(json.dumps({'sha256': digest.hexdigest(), 'bytes': count,
+            'retained_tail_bytes': len(tail), 'tail_limit_bytes': 262144,
+            'cached_or_skipped_integration_task': bad_task, 'capture_complete': True}, indent=2) + '\n')
+        PROOF_CAPTURE_LOG_PY
+        cat > "$RUNNER_TEMP/collect-proof.py" <<'PROOF_COLLECT_PROOF_PY'
+        import hashlib
+        import importlib.util
+        import json
+        import os
+        from pathlib import Path
+        import sys
+        import xml.etree.ElementTree as ET
+
+        out = Path(os.environ['PROOF_DIR'])
+        source = Path(os.environ['SOURCE_DIRECTORY'])
+        nonce = os.environ['GITHUB_RUN_ID'] + ':' + os.environ['GITHUB_RUN_ATTEMPT']
+        expected_pair = ['net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionDispatchPostgresIntegrationTest',
+                         'genuineOldOwnerSurvivesV1046AndRefusesV1046Point1WithoutEvidenceRewrite']
+        issues = []
+        records = []
+        originals = []
+        compact = ET.Element('testsuite', name='genuine-retained-positive-physical-proof')
+        sha = lambda data: hashlib.sha256(data).hexdigest()
+        try:
+            spec = importlib.util.spec_from_file_location('provenance', Path(__file__).with_name('verify-provenance.py'))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            after = module.check()
+            after['nonce'] = nonce
+            (out / 'provenance-after.json').write_text(json.dumps(after, indent=2) + '\n')
+            before = json.loads((out / 'provenance-before.json').read_text())
+            if before != after:
+                issues.append('before/after source or migration provenance differs')
+        except Exception as exc:
+            issues.append('provenance failed: ' + str(exc)[:2048])
+        result_dir = source / 'services/account-service/build/test-results/integrationTest'
+        xmls = sorted(result_dir.glob('*.xml'))
+        if len(xmls) != 1:
+            issues.append('expected exactly one fresh JUnit XML file')
+        for path in xmls:
+            raw = path.read_bytes()
+            originals.append({'file': path.name, 'sha256': sha(raw), 'bytes': len(raw)})
+            try:
+                tree = ET.fromstring(raw)
+                if tree.tag != 'testsuite' or tree.get('tests') != '1':
+                    issues.append('unexpected JUnit suite or test count')
+                for key in ('failures', 'errors', 'skipped'):
+                    if tree.get(key, '0') != '0':
+                        issues.append('JUnit suite reports ' + key)
+            except ET.ParseError:
+                issues.append('invalid JUnit XML')
+                continue
+            for case in tree.iter('testcase'):
+                name = case.get('name', '')
+                method = name[:-2] if name.endswith('()') else name
+                record = {'classname': case.get('classname'), 'method': method,
+                          'skipped': case.find('skipped') is not None,
+                          'failed': case.find('failure') is not None or case.find('error') is not None,
+                          'seconds': case.get('time')}
+                records.append(record)
+                copied = ET.SubElement(compact, 'testcase', **case.attrib)
+                for child in case:
+                    if child.tag in ('failure', 'error', 'skipped'):
+                        leaf = ET.SubElement(copied, child.tag, **{k: v[:4096] for k, v in child.attrib.items()})
+                        leaf.text = (child.text or '')[:65536]
+            # Retain exact original XML when small. Never silently call compact XML the original.
+            if len(raw) <= 512 * 1024:
+                (out / 'junit-original.xml').write_bytes(raw)
+        if [[r['classname'], r['method']] for r in records] != [expected_pair]:
+            issues.append('expected exactly the selected genuine method once, with no extras')
+        if any(r['skipped'] or r['failed'] for r in records):
+            issues.append('skipped, failed, aborted, or errored testcase')
+        for marker in ('integration-started.txt', 'integration-completed.txt'):
+            if not (out / marker).is_file() or (out / marker).read_text().strip() != nonce:
+                issues.append('missing or stale task marker: ' + marker)
+        try:
+            events = [json.loads(line) for line in (out / 'test-events.jsonl').read_text().splitlines()]
+        except Exception:
+            events = []
+        expected_events = [{'classname': expected_pair[0], 'method': expected_pair[1], 'phase': phase, 'nonce': nonce}
+                           for phase in ('started', 'SUCCESS')]
+        if events != expected_events:
+            issues.append('expected exactly ordered fresh started and SUCCESS events for the selected method')
+        for status in ('gradle-exit.txt', 'capture-exit.txt'):
+            if not (out / status).is_file() or (out / status).read_text().strip() != '0':
+                issues.append('missing or unsuccessful ' + status)
+        try:
+            log = json.loads((out / 'gradle-log.json').read_text())
+            if not log.get('capture_complete') or log.get('cached_or_skipped_integration_task'):
+                issues.append('incomplete log or cached/skipped integration task')
+        except Exception:
+            log = None
+            issues.append('missing or invalid bounded log capture')
+        compact.set('tests', str(len(records)))
+        compact.set('failures', str(sum(r['failed'] for r in records)))
+        compact.set('skipped', str(sum(r['skipped'] for r in records)))
+        ET.ElementTree(compact).write(out / 'junit-compact.xml', encoding='utf-8', xml_declaration=True)
+        summary = {'passed': not issues, 'issues': issues, 'requested_pairs': [expected_pair], 'cases': records,
+                   'original_junit': originals, 'original_xml_retained': (out / 'junit-original.xml').is_file(),
+                   'compact_xml_system_output_omitted': True, 'failure_text_limit': 65536, 'gradle_log': log,
+                   'workflow_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],
+                   'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'nonce': nonce,
+                   'scope': 'controlled genuine historical ACTIVE, preservation to V1046, and atomic V1046.1 refusal only',
+                   'not_proven': ['production Stripe', 'current owner execution', 'runtime registration',
+                                  'finite retention policy', 'cleanup or erasure', 'backup/restore', 'admission']}
+        (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+        files = sorted(p for p in out.iterdir() if p.is_file() and p.name != 'sha256sums.txt')
+        assert files and all(not p.is_symlink() for p in files)
+        (out / 'sha256sums.txt').write_text(''.join(sha(p.read_bytes()) + '  ' + p.name + '\n' for p in files))
+        assert sum(p.stat().st_size for p in out.iterdir()) <= 2 * 1024 * 1024, 'proof exceeds 2 MiB'
+        print(json.dumps(summary, indent=2))
+        raise SystemExit(1 if issues else 0)
+        PROOF_COLLECT_PROOF_PY
+        cat > "$RUNNER_TEMP/genuine-retention.init.gradle" <<'PROOF_GENUINE_RETENTION_INIT_GRADLE'
+        import org.gradle.api.tasks.testing.Test
+        import groovy.json.JsonOutput
+
+        def workspace = System.getenv('SOURCE_DIRECTORY')
+        if (!workspace) {
+            throw new GradleException('Proof requires SOURCE_DIRECTORY identity')
+        }
+        def proofRoot = new File(workspace).canonicalFile
+        def isProofBuild = {
+            gradle.rootProject.rootDir.canonicalFile == proofRoot
+        }
+
+        gradle.projectsEvaluated {
+            if (!isProofBuild()) { return }
+            def service = gradle.rootProject.findProject(':account-service')
+            if (service == null) {
+                throw new GradleException('Verified proof build lacks :account-service')
+            }
+            def target = service.tasks.named('integrationTest', Test).get()
+            target.filter.failOnNoMatchingTests = true
+            target.outputs.upToDateWhen { false }
+            target.outputs.cacheIf { false }
+            target.maxParallelForks = 1
+            target.reports.junitXml.outputPerTestCase = true
+            target.reports.junitXml.includeSystemOutLog = false
+            target.reports.junitXml.includeSystemErrLog = false
+            target.systemProperty 'junit.jupiter.execution.parallel.enabled', 'false'
+            def event = { descriptor, phase ->
+                def method = descriptor.name.replaceFirst(/\(\)$/, '')
+                def entry = [classname: descriptor.className, method: method, phase: phase,
+                    nonce: System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT')]
+                new File(System.getenv('PROOF_DIR'), 'test-events.jsonl').append(JsonOutput.toJson(entry) + '\n')
+            }
+            target.beforeTest { descriptor -> event(descriptor, 'started') }
+            target.afterTest { descriptor, result -> event(descriptor, result.resultType.toString()) }
+            target.doFirst {
+                new File(System.getenv('PROOF_DIR'), 'integration-started.txt').text = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\n'
+            }
+            target.doLast {
+                new File(System.getenv('PROOF_DIR'), 'integration-completed.txt').text = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\n'
+            }
+        }
+        gradle.taskGraph.whenReady { graph ->
+            if (!isProofBuild()) { return }
+            if (gradle.rootProject.findProject(':account-service') == null) {
+                throw new GradleException('Verified proof build lacks :account-service')
+            }
+            def tests = graph.allTasks.findAll { it instanceof Test }
+            if (tests.collect { it.path } != [':account-service:integrationTest']) {
+                throw new GradleException('Proof requires exactly one integration Test task: ' + tests.collect { it.path })
+            }
+        }
+        PROOF_GENUINE_RETENTION_INIT_GRADLE
+        python3 "$RUNNER_TEMP/verify-provenance.py" before
+        java -version 2> "$PROOF_DIR/java-version.txt"
+        docker version --format '{{.Server.Version}}' > "$PROOF_DIR/docker-version.txt"
+        docker info --format '{{.OSType}}' > "$PROOF_DIR/docker-os.txt"
+        test "$(cat "$PROOF_DIR/docker-os.txt")" = linux
+    - name: Run only the genuine historical physical method
+      shell: bash
+      working-directory: ${{ github.workspace }}/historical-source
+      run: |
+        set -euo pipefail
+        # Stream-hash all output and retain only a bounded tail. Never set a process-wide file cap.
+        set +e
+        timeout --signal=TERM --kill-after=30s 15m \
+          bash dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- \
+          --no-daemon --no-build-cache --no-configuration-cache --no-scan --rerun-tasks \
+          --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
+          --console=plain -I "$RUNNER_TEMP/genuine-retention.init.gradle" \
+          :account-service:integrationTest -PfullCheck \
+          --tests 'net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionDispatchPostgresIntegrationTest.genuineOldOwnerSurvivesV1046AndRefusesV1046Point1WithoutEvidenceRewrite' \
+          2>&1 | python3 "$RUNNER_TEMP/capture-log.py"
+        statuses=("${PIPESTATUS[@]}")
+        set -e
+        printf '%s\n' "${statuses[0]}" > "$PROOF_DIR/gradle-exit.txt"
+        printf '%s\n' "${statuses[1]}" > "$PROOF_DIR/capture-exit.txt"
+        tail -n 60 "$PROOF_DIR/gradle-tail.txt"
+        test "${statuses[1]}" = 0
+        exit "${statuses[0]}"
+    - name: Require fresh non-skipped XML and events; reverify both sources
+      if: ${{ always() }}
+      shell: bash
+      run: python3 "$RUNNER_TEMP/collect-proof.py"
+    - name: Enforce compact artifact size
+      id: bound
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        python3 - <<'PYBOUND'
+        import os
+        from pathlib import Path
+        p = Path(os.environ['PROOF_DIR'])
+        files = list(p.glob('*'))
+        assert files and all(f.is_file() and not f.is_symlink() for f in files), 'missing or unsupported proof files'
+        assert sum(f.stat().st_size for f in files) <= 2 * 1024 * 1024, 'proof exceeds 2 MiB'
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write('ok=true\n')
+        PYBOUND
+    - name: Upload compact physical qualification evidence
+      if: ${{ always() && steps.bound.outputs.ok == 'true' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: genuine-retention-physical-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/genuine-retention-proof/
+        if-no-files-found: error
+        retention-days: 7
