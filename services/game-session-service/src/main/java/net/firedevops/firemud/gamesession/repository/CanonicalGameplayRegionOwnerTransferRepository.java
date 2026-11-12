@@ -346,11 +346,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               UUID transferId = candidate.get("transfer_id", UUID.class);
               Record frozen = current(tx, transferId, true);
               if (!matchesFrozenIntent(
-                  frozen,
-                  source,
-                  prior,
-                  expectedSuccessorOwner,
-                  expectedSuccessorLeaseCorrelation)) throw unavailable();
+                  frozen, source, prior, expectedSuccessorOwner, expectedSuccessorLeaseCorrelation))
+                throw unavailable();
               return transferId;
             });
   }
@@ -372,8 +369,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               if (candidate == null) return false;
               UUID transferId = candidate.get("transfer_id", UUID.class);
               Record frozen = current(tx, transferId, true);
-              if (!matchesFrozenIntent(frozen, source, prior, null, null))
-                throw unavailable();
+              if (!matchesFrozenIntent(frozen, source, prior, null, null)) throw unavailable();
               return true;
             });
   }
@@ -399,8 +395,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   }
 
   /**
-   * Rechecks a known intent against the unchanged predecessor and exact frozen source.
-   * The subsequent advance/install path performs protected-incarnation requalification.
+   * Rechecks a known intent against the unchanged predecessor and exact frozen source. The
+   * subsequent advance/install path performs protected-incarnation requalification.
    */
   void requireFrozenIntent(
       UUID transferId,
@@ -416,11 +412,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               requireOldOwner(tx, source, prior);
               Record frozen = current(tx, transferId, true);
               if (!matchesFrozenIntent(
-                  frozen,
-                  source,
-                  prior,
-                  expectedSuccessorOwner,
-                  expectedSuccessorLeaseCorrelation)) throw unavailable();
+                  frozen, source, prior, expectedSuccessorOwner, expectedSuccessorLeaseCorrelation))
+                throw unavailable();
             });
   }
 
@@ -713,8 +706,7 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !Objects.equals(successorOwner, successor.get("successor_owner_id", String.class))
         || !Objects.equals(
             successorLease, successor.get("successor_lease_correlation", String.class))
-        || clock.millis() >= evidenceDeadline)
-      throw unavailable();
+        || clock.millis() >= evidenceDeadline) throw unavailable();
     return new Completion(
         transferId,
         transfer.get("source_digest", String.class),

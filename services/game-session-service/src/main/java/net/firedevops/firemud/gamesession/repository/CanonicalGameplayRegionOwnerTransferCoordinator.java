@@ -144,11 +144,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
         deadline,
         budget -> {
           repository.requireFrozenIntent(
-              transferId,
-              source,
-              prior,
-              successorOwner,
-              successorLeaseCorrelation);
+              transferId, source, prior, successorOwner, successorLeaseCorrelation);
           return advanceFrozen(budget, transferId);
         });
   }
