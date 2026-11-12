@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
+import java.util.function.Function;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
@@ -315,6 +315,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(deadline, owner -> owner.readOriginTransferCustody(item, deadline));
     budget.check();
+    if (transferReadConnection != null) {
+      return originRedis()
+          .readExact(
+              transferReadConnection.async(),
+              item.origin(),
+              item.newOwner(),
+              item.newFence(),
+              item.state());
+    }
     return originRedis().readExact(item.origin(), item.newOwner(), item.newFence(), item.state());
   }
 
@@ -969,14 +978,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   /** Keeps one authenticated non-reconnecting connection for the current transfer readback. */
-  void withTransferReadback(Consumer<CanonicalGameplayOriginalNewCapacityExecutionOwner> read) {
+  <T> T withTransferReadback(Function<CanonicalGameplayOriginalNewCapacityExecutionOwner, T> read) {
     noSql();
     if (budget == null || transferReadConnection != null) throw unavailable();
     budget.check();
     var connection = connectForRead();
     try {
       principal(connection.async());
-      read.accept(
+      return read.apply(
           new CanonicalGameplayOriginalNewCapacityExecutionOwner(
               dsl, redis, scripts, clock, tags, budget, connection));
     } finally {
