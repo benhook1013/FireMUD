@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import io.grpc.Deadline;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -25,10 +26,20 @@ public final class CanonicalRegionBootstrapAssignmentResolver {
    */
   public Assignment resolve(
       WorldCanonicalInstanceLifecycleEvidence.Request request, UUID canonicalRegionId) {
+    return resolve(request, canonicalRegionId, null);
+  }
+
+  public Assignment resolve(
+      WorldCanonicalInstanceLifecycleEvidence.Request request,
+      UUID canonicalRegionId,
+      Deadline operationDeadline) {
     Objects.requireNonNull(request, "request");
     requireNonNil(canonicalRegionId, "canonicalRegionId");
 
-    WorldCanonicalInstanceLifecycleEvidence evidence = lifecycleClient.read(request);
+    WorldCanonicalInstanceLifecycleEvidence evidence =
+        operationDeadline == null
+            ? lifecycleClient.read(request)
+            : lifecycleClient.read(request, operationDeadline);
     if (evidence == null) {
       throw new IllegalStateException("World lifecycle client returned no owner evidence");
     }
