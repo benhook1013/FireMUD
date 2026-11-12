@@ -66,8 +66,22 @@ jobs:
         import org.gradle.api.tasks.testing.Test
         import groovy.json.JsonOutput
 
+        def workspace = System.getenv('GITHUB_WORKSPACE')
+        if (!workspace) {
+            throw new GradleException('Proof requires GITHUB_WORKSPACE identity')
+        }
+        def proofRoot = new File(workspace).canonicalFile
+        def isProofBuild = {
+            gradle.rootProject.rootDir.canonicalFile == proofRoot
+        }
+
         gradle.projectsEvaluated {
-            def target = gradle.rootProject.project(':game-session-service').tasks.named('integrationTest', Test).get()
+            if (!isProofBuild()) { return }
+            def service = gradle.rootProject.findProject(':game-session-service')
+            if (service == null) {
+                throw new GradleException('Verified proof build lacks :game-session-service')
+            }
+            def target = service.tasks.named('integrationTest', Test).get()
             target.filter.failOnNoMatchingTests = true
             target.outputs.upToDateWhen { false }
             target.outputs.cacheIf { false }
@@ -89,6 +103,10 @@ jobs:
             }
         }
         gradle.taskGraph.whenReady { graph ->
+            if (!isProofBuild()) { return }
+            if (gradle.rootProject.findProject(':game-session-service') == null) {
+                throw new GradleException('Verified proof build lacks :game-session-service')
+            }
             def tests = graph.allTasks.findAll { it instanceof Test }
             if (tests.collect { it.path } != [':game-session-service:integrationTest']) {
                 throw new GradleException('Proof requires exactly one integration Test task: ' + tests.collect { it.path })
