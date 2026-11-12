@@ -347,7 +347,9 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     requireAvailable(OwnerKind.ORIGIN_OWNER_TRANSFER);
     CurrentContext before = loadOriginOwnerTransferCurrentContext(transferId, ordinal, deadline);
     return observeCurrentContext(
-        before, () -> loadOriginOwnerTransferCurrentContext(transferId, ordinal, deadline), deadline);
+        before,
+        () -> loadOriginOwnerTransferCurrentContext(transferId, ordinal, deadline),
+        deadline);
   }
 
   private VerifiedIncarnation observeCurrentContext(
@@ -610,7 +612,8 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
       throw new ObservationRejectedException("Protected transfer observation source differs");
     }
     CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
-        originOwnerTransferSource.readAssignment(context.transitionId(), tenantTagRepository, deadline);
+        originOwnerTransferSource.readAssignment(
+            context.transitionId(), tenantTagRepository, deadline);
     if (assignment == null
         || !assignment.isBindingTransition()
         || !context.transitionId().equals(assignment.transitionId())
