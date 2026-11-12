@@ -99,6 +99,16 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     this.transferReadConnection = transferReadConnection;
   }
 
+  void requireOrdinaryAdmission(Request request, long deadline) {
+    within(
+        deadline,
+        owner -> {
+          CanonicalGameplayCapacityOriginRepository.requireNoRetainedOrigin(
+              owner.sql(), request.admissionAttemptId());
+          return null;
+        });
+  }
+
   /** Manual receiving path: persist exact custody and its physical fence before Account RPC. */
   CanonicalGameplayCapacityOrigin prepareOrigin(
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
@@ -538,9 +548,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                   if (origin != null)
                     CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
                   requireSelectedOwner(tx, source.candidate(), execution);
-                  if (origin != null)
+                  if (origin == null) {
+                    // Origin preparation locks the same region before inserting custody. Recheck
+                    // under that lock before an ordinary dispatch or an existing-row replay.
+                    CanonicalGameplayCapacityOriginRepository.requireNoRetainedOrigin(
+                        tx, execution.request().admissionAttemptId());
+                  } else {
                     CanonicalGameplayCapacityOriginRepository.claimDispatchInTransaction(
                         tx, origin, execution);
+                  }
                   Record row = find(tx, execution);
                   if (row != null) {
                     exact(row, execution);
