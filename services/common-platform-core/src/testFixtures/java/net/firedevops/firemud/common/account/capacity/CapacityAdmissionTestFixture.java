@@ -92,8 +92,8 @@ public final class CapacityAdmissionTestFixture {
             player.requestId(),
             TenantCapacityAdmission.expectedWorkload(
                 namespace, TenantCapacityAdmission.Owner.GAME_SESSION),
-            "controlled-scope",
-            membership(player.accountId(), player.tenantId(), player.requestId()),
+            RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash("controlled-scope"),
+            admittingMembership(player.accountId(), player.tenantId(), player.requestId()),
             target,
             facts(),
             source,
@@ -198,7 +198,14 @@ public final class CapacityAdmissionTestFixture {
       Map<String, Object> source,
       Instant at) {
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-        REQUEST, PEER, "controlled-scope", membership(), target, facts, source, at);
+        REQUEST,
+        PEER,
+        RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash("controlled-scope"),
+        membership(),
+        target,
+        facts,
+        source,
+        at);
   }
 
   private static Map<String, Object> target() {
@@ -274,10 +281,15 @@ public final class CapacityAdmissionTestFixture {
   }
 
   private static Snapshot membership() {
-    return membership(ACCOUNT, TENANT, REQUEST);
+    return membership(ACCOUNT, TENANT, REQUEST, false);
   }
 
-  private static Snapshot membership(UUID account, UUID tenantId, UUID requestId) {
+  private static Snapshot admittingMembership(UUID account, UUID tenantId, UUID requestId) {
+    return membership(account, tenantId, requestId, true);
+  }
+
+  private static Snapshot membership(
+      UUID account, UUID tenantId, UUID requestId, boolean admitted) {
     String requestDigest =
         GameTenantCreationDigest.requestDigest("prod", requestId, "world", "World", null);
     var source =
@@ -330,29 +342,89 @@ public final class CapacityAdmissionTestFixture {
                 Map.of(
                     tenantId.toString(),
                     new TenantBillingCutoff("2", "1", event.outboxStreamKey(), "1"))));
+    String membershipStream = prefix + "membership/" + account + "/" + tenantId;
+    var tenantSource =
+        new SourceEvidence(
+            event.outboxStreamKey(),
+            "1",
+            event.eventId().toString(),
+            event.eventDigest(),
+            new String(event.payload(), StandardCharsets.UTF_8));
+    List<SourceEvidence> sourceEvidence;
+    if (admitted) {
+      Map<String, Object> eventFields = new LinkedHashMap<>();
+      eventFields.put("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
+      eventFields.put("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE);
+      eventFields.put("eventId", "membership-event-" + requestId);
+      eventFields.put("requestId", requestId.toString());
+      eventFields.put("outboxStreamKey", membershipStream);
+      eventFields.put("outboxSequence", "1");
+      eventFields.put("sourceScope", "membership/" + account + "/" + tenantId);
+      eventFields.put("accountId", account.toString());
+      eventFields.put("tenantId", tenantId.toString());
+      eventFields.put("membershipExists", true);
+      eventFields.put("membershipLifecycleState", "ACTIVE");
+      eventFields.put("membershipVersion", Map.of(tenantId.toString(), "1"));
+      eventFields.put("membershipAuthorityGeneration", "1");
+      eventFields.put(
+          "authorityTuple",
+          Map.of(
+              "issuerAuthGeneration",
+              "1",
+              "accountAuthorityGeneration",
+              "1",
+              "tenantAuthorityGeneration",
+              Map.of(tenantId.toString(), "2"),
+              "membershipAuthorityGeneration",
+              Map.of(tenantId.toString(), "1"),
+              "privateRealmGrantVersions",
+              List.of(),
+              "tenantBillingCutoff",
+              Map.of(
+                  tenantId.toString(),
+                  Map.of(
+                      "tenantAuthorityGeneration",
+                      "2",
+                      "tenantBillingSequence",
+                      "1",
+                      "outboxStreamKey",
+                      event.outboxStreamKey(),
+                      "outboxSequence",
+                      "1"))));
+      eventFields.put("issuanceFence", "1");
+      eventFields.put("roles", List.of("player"));
+      eventFields.put("gameplayAdmissionAllowed", true);
+      eventFields.put("callerBoundAuthorityInvalidated", false);
+      var membershipEvent = MembershipAuthorityEventV1Codec.seal(eventFields);
+      sourceEvidence =
+          List.of(
+              new SourceEvidence(
+                  membershipStream,
+                  "1",
+                  membershipEvent.eventId(),
+                  membershipEvent.eventDigest(),
+                  membershipEvent.canonicalJson()),
+              tenantSource);
+    } else {
+      sourceEvidence = List.of(tenantSource);
+    }
     return new Snapshot(
         "firemud-account-service",
         account.toString(),
         tenantId.toString(),
-        false,
-        "MISSING",
-        false,
+        admitted,
+        admitted ? "ACTIVE" : "MISSING",
+        admitted,
         Map.of(tenantId.toString(), "1"),
         "1",
-        List.of(),
+        admitted ? List.of("player") : List.of(),
         tuple,
         "1",
         List.of(
             new Checkpoint(prefix + "account/" + account, "0"),
             new Checkpoint(prefix + "issuer/firemud-account-service", "0"),
-            new Checkpoint(prefix + "membership/" + account + "/" + tenantId, "0"),
+            new Checkpoint(membershipStream, admitted ? "1" : "0"),
             new Checkpoint(event.outboxStreamKey(), "1")),
-        List.of(
-            new SourceEvidence(
-                event.outboxStreamKey(),
-                "1",
-                event.eventId().toString(),
-                event.eventDigest(),
-                new String(event.payload(), StandardCharsets.UTF_8))));
+        sourceEvidence);
   }
 }

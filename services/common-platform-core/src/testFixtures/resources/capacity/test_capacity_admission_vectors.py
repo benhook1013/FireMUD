@@ -169,6 +169,28 @@ class CapacityAdmissionVectors(unittest.TestCase):
     def test_player_golden_preimage_and_each_player_identity(self):
         corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
         request, candidate = corpus["playerRequest"], corpus["playerVector"]
+        encoded_evidence = request["canonicalAccountEvidenceBase64"]
+        decoded_evidence = json.loads(
+            base64.b64decode(evidence(encoded_evidence, "PLAYER_ADMISSION")))
+        self.assertEqual(decoded_evidence["bundleVersion"], "2")
+        self.assertNotIn("verifiedConnectScopeId", decoded_evidence)
+        scope_hash = "sha256:" + hashlib.sha256(b"controlled-scope").hexdigest()
+        self.assertEqual(decoded_evidence["verifiedConnectScopeTokenHash"], scope_hash)
+        snapshot = copy.deepcopy(decoded_evidence)
+        for key in ("snapshotIdentity", "requestId", "evaluatedAt", "evaluationIdentity"):
+            snapshot.pop(key)
+        snapshot_identity = "sha256:" + hashlib.sha256(
+            canonical_json_bytes(snapshot)).hexdigest()
+        self.assertEqual(decoded_evidence["snapshotIdentity"], snapshot_identity)
+        evaluation = {
+            "snapshotIdentity": snapshot_identity,
+            "requestId": decoded_evidence["requestId"],
+            "callerWorkload": decoded_evidence["callerWorkload"],
+            "evaluatedAt": decoded_evidence["evaluatedAt"],
+        }
+        evaluation_identity = "sha256:" + hashlib.sha256(
+            canonical_json_bytes(evaluation)).hexdigest()
+        self.assertEqual(decoded_evidence["evaluationIdentity"], evaluation_identity)
         context_ids = [item for key, item in request["ownerContext"].items() if key.endswith("Id")]
         self.assertEqual(len(context_ids), len(set(context_ids)))
         encoded = preimage(request, candidate)

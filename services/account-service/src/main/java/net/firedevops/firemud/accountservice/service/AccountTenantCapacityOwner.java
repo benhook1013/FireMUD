@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
-import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
@@ -224,10 +223,10 @@ public final class AccountTenantCapacityOwner {
         || !issuance.commitProofSha256().equals(source.get("callerCommitProofSha256"))
         || now.getEpochSecond() < issuance.identity().notBeforeEpochSecond()
         || now.getEpochSecond() >= issuance.identity().expiresAtEpochSecond()) throw unavailable();
-    String connect = (String) fields.get("verifiedConnectScopeId");
     var scope =
         qualifiedSource(
-                () -> scopes.findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(connect)))
+                () ->
+                    scopes.findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash()))
             .orElseThrow(AccountTenantCapacityRepository::unavailable);
     if (!scope.accountUuid().equals(player.accountId())
         || !scope.tenantUuid().equals(player.tenantId())

@@ -263,10 +263,13 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     if (absoluteDeadlineMillis <= clock.millis()) {
       throw new ObservationUnavailableException("Protected transfer observation deadline expired");
     }
-    CurrentContext before = loadRegionOwnerTransferCurrentContext(transferId, targetOrdinal);
+    CurrentContext before =
+        loadRegionOwnerTransferCurrentContext(transferId, targetOrdinal, absoluteDeadlineMillis);
     return observeCurrentContext(
         before,
-        () -> loadRegionOwnerTransferCurrentContext(transferId, targetOrdinal),
+        () ->
+            loadRegionOwnerTransferCurrentContext(
+                transferId, targetOrdinal, absoluteDeadlineMillis),
         absoluteDeadlineMillis);
   }
 
@@ -467,17 +470,18 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
   }
 
   private CurrentContext loadRegionOwnerTransferCurrentContext(
-      UUID transferId, long targetOrdinal) {
+      UUID transferId, long targetOrdinal, long deadline) {
     requireNoAmbientTransaction();
     CanonicalGameplayRegionOwnerTransferObservationSource.Context context =
-        regionOwnerTransferSource.readCurrent(transferId, targetOrdinal);
+        regionOwnerTransferSource.readCurrent(transferId, targetOrdinal, deadline);
     if (context == null
         || !transferId.equals(context.transferId())
         || targetOrdinal != context.targetOrdinal()) {
       throw new ObservationRejectedException("Protected transfer observation source differs");
     }
     CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
-        regionOwnerTransferSource.readAssignment(context.transitionId(), tenantTagRepository);
+        regionOwnerTransferSource.readAssignment(
+            context.transitionId(), tenantTagRepository, deadline);
     if (assignment == null
         || !assignment.isBindingTransition()
         || !context.transitionId().equals(assignment.transitionId())

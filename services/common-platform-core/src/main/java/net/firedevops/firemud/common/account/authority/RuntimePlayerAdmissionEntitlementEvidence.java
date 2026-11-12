@@ -38,6 +38,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class RuntimePlayerAdmissionEntitlementEvidence {
   public static final String SCHEMA = RuntimeTenantOperationEntitlementEvidence.SCHEMA;
   public static final String VARIANT = "PLAYER_ADMISSION";
+  private static final String BUNDLE_VERSION = "2";
   public static final int MAX_CANONICAL_BYTES = 256 * 1024;
   public static final int MAX_CONNECT_SCOPE_CHARS = 16384;
   private static final JsonMapper JSON =
@@ -115,7 +116,7 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
   public static RuntimePlayerAdmissionEntitlementEvidence fromOwnerEvaluation(
       UUID requestId,
       String callerWorkload,
-      String verifiedConnectScopeId,
+      String verifiedConnectScopeTokenHash,
       Snapshot membership,
       Map<String, Object> target,
       Map<String, Object> facts,
@@ -145,10 +146,9 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
                     value.uri().equals(callerWorkload)
                         && "game-session-service".equals(value.service()))
             .orElseThrow(() -> invalid("Exact Game Session caller required"));
-    if (verifiedConnectScopeId == null
-        || verifiedConnectScopeId.isBlank()
-        || verifiedConnectScopeId.length() > MAX_CONNECT_SCOPE_CHARS)
-      throw invalid("Verified connect scope required");
+    if (verifiedConnectScopeTokenHash == null
+        || !verifiedConnectScopeTokenHash.matches("sha256:[0-9a-f]{64}"))
+      throw invalid("Verified connect scope token hash required");
     exact(target, TARGET_FIELDS);
     exact(facts, FACT_FIELDS);
     exact(source, SOURCE_FIELDS);
@@ -209,13 +209,13 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
     Map<String, Object> fields = new LinkedHashMap<>();
     fields.put("schema", SCHEMA);
     fields.put("variant", VARIANT);
-    fields.put("bundleVersion", "1");
+    fields.put("bundleVersion", BUNDLE_VERSION);
     fields.put("authorityAvailability", "AVAILABLE");
     fields.put("issuer", membership.issuerId());
     fields.put("tenantId", membership.tenantId());
     fields.put("callerAccountId", membership.accountId());
     fields.put("callerWorkload", callerWorkload);
-    fields.put("verifiedConnectScopeId", verifiedConnectScopeId);
+    fields.put("verifiedConnectScopeTokenHash", verifiedConnectScopeTokenHash);
     fields.put("target", target);
     fields.putAll(facts);
     fields.put("membershipExists", membership.membershipExists());
@@ -290,6 +290,10 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
               .decode(ByteBuffer.wrap(bytes))
               .toString();
       Map<String, Object> fields = JSON.readValue(json, new TypeReference<>() {});
+      if (!BUNDLE_VERSION.equals(fields.get("bundleVersion"))
+          || !VARIANT.equals(fields.get("variant"))
+          || fields.containsKey("verifiedConnectScopeId"))
+        throw invalid("Unsupported player evidence format");
       Map<String, Object> authority = object(fields.get("authorityTuple"));
       Set<String> requiredTuple =
           Set.of(
@@ -402,7 +406,7 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
           fromOwnerEvaluation(
               UUID.fromString(text(fields.get("requestId"))),
               text(fields.get("callerWorkload")),
-              text(fields.get("verifiedConnectScopeId")),
+              text(fields.get("verifiedConnectScopeTokenHash")),
               membership,
               object(fields.get("target")),
               facts,
@@ -549,6 +553,17 @@ public final class RuntimePlayerAdmissionEntitlementEvidence {
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 unavailable", impossible);
     }
+  }
+
+  /** Correlates the exact authenticated request token with the non-secret evidence binding. */
+  public static String connectScopeTokenHash(String token) {
+    if (token == null || token.isBlank() || token.length() > MAX_CONNECT_SCOPE_CHARS)
+      throw invalid("Exact connect scope token required");
+    return digestBytes(token.getBytes(StandardCharsets.UTF_8));
+  }
+
+  public String verifiedConnectScopeTokenHash() {
+    return text(fields().get("verifiedConnectScopeTokenHash"));
   }
 
   public Instant evaluatedAt() {
