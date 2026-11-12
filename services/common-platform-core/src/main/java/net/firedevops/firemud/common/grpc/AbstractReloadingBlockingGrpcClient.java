@@ -161,11 +161,12 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       newChannel.shutdown();
       throw e;
     }
-    if (channel != null) {
-      channel.shutdown();
-    }
+    ManagedChannel previous = channel;
     channel = newChannel;
     stub = newStub;
+    if (previous != null) {
+      previous.shutdown();
+    }
   }
 
   protected final TStub stub() {

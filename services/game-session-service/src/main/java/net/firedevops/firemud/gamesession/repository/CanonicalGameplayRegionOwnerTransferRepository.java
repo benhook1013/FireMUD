@@ -633,17 +633,18 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     if (exists(tx, "SELECT 1" + PENDING, prior.tenantId(), prior.gameInstanceId(), prior.regionId())
         || CanonicalGameplayCapacityOriginTransferRepository.pending(
             tx, prior.tenantId(), prior.gameInstanceId(), prior.regionId())) throw unavailable();
-    tx.execute(
-        "UPDATE "
-            + TRANSFER
-            + " SET state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=? AND old_owner_fence=? AND state='FROZEN'",
-        newOwner,
-        newFence,
-        newLease,
-        prior.tenantId(),
-        prior.gameInstanceId(),
-        prior.regionId(),
-        prior.executorFence().longValueExact());
+    if (tx.execute(
+            "UPDATE "
+                + TRANSFER
+                + " SET state='COMPLETED',new_owner_id=?,new_owner_fence=?,new_lease_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=? AND old_owner_fence=? AND state='FROZEN'",
+            newOwner,
+            newFence,
+            newLease,
+            prior.tenantId(),
+            prior.gameInstanceId(),
+            prior.regionId(),
+            prior.executorFence().longValueExact())
+        != 1) throw unavailable();
   }
 
   @Override
