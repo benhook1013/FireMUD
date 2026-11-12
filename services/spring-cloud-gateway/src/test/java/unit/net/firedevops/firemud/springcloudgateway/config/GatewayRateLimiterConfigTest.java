@@ -102,8 +102,7 @@ class GatewayRateLimiterConfigTest {
     assertThat(arguments.burstCapacity()).isEqualTo(Long.MAX_VALUE);
     assertThat(arguments.requestedTokens()).isEqualTo(Integer.MAX_VALUE);
     assertThat(
-            GatewayRateLimiterConfig.defaultRequestRateLimiterArguments(equality)
-                .requestedTokens())
+            GatewayRateLimiterConfig.defaultRequestRateLimiterArguments(equality).requestedTokens())
         .isEqualTo(40);
   }
 

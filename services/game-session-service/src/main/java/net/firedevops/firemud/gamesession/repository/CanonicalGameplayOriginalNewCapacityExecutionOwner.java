@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -58,6 +59,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   private final CanonicalGameplayTenantGameplayTagRepository tags;
   private final RedisScriptCatalog scripts;
   private final CanonicalGameplayOriginalNewCapacityExecutionBudget budget;
+  private final StatefulRedisConnection<byte[], byte[]> transferReadConnection;
 
   public CanonicalGameplayOriginalNewCapacityExecutionOwner(
       DSLContext dsl,
@@ -65,7 +67,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       RedisScriptCatalog scripts,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tags) {
-    this(dsl, redis, scripts, clock, tags, null);
+    this(dsl, redis, scripts, clock, tags, null, null);
   }
 
   private CanonicalGameplayOriginalNewCapacityExecutionOwner(
@@ -74,13 +76,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       RedisScriptCatalog scripts,
       Clock clock,
       CanonicalGameplayTenantGameplayTagRepository tags,
-      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget,
+      StatefulRedisConnection<byte[], byte[]> transferReadConnection) {
     this.dsl = Objects.requireNonNull(dsl);
     this.redis = Objects.requireNonNull(redis);
     this.clock = Objects.requireNonNull(clock);
     this.tags = Objects.requireNonNull(tags);
     this.scripts = Objects.requireNonNull(scripts);
     this.budget = budget;
+    this.transferReadConnection = transferReadConnection;
   }
 
   OriginalNewCapacityExecution bind(
@@ -478,7 +482,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         Long.MAX_VALUE,
         scoped ->
             new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                    dsl, redis, scripts, clock, tags, scoped)
+                    dsl, redis, scripts, clock, tags, scoped, null)
                 .readExact(request, reservation, false));
   }
 
@@ -636,7 +640,23 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   CanonicalGameplayOriginalNewCapacityExecutionOwner forTransferBudget(
       CanonicalGameplayOriginalNewCapacityExecutionBudget operationBudget) {
     return new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-        dsl, redis, scripts, clock, tags, operationBudget);
+        dsl, redis, scripts, clock, tags, operationBudget, null);
+  }
+
+  /** Keeps one authenticated non-reconnecting connection for the current transfer readback. */
+  void withTransferReadback(Consumer<CanonicalGameplayOriginalNewCapacityExecutionOwner> read) {
+    noSql();
+    if (budget == null || transferReadConnection != null) throw unavailable();
+    budget.check();
+    var connection = connectForRead();
+    try {
+      principal(connection.async());
+      read.accept(
+          new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+              dsl, redis, scripts, clock, tags, budget, connection));
+    } finally {
+      connection.closeAsync();
+    }
   }
 
   /** Fences future work without resolving the retained original or its Account capacity hold. */
@@ -839,27 +859,36 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   private Map<String, byte[]> readExecution(OriginalNewCapacityExecution execution, String tag) {
+    if (transferReadConnection != null)
+      return readExecution(transferReadConnection.async(), execution, tag);
     StatefulRedisConnection<byte[], byte[]> connection = connectForRead();
     try {
       var commands = connection.async();
       principal(commands);
-      byte[] key =
-          bytes(
-              "session:game:capacity-execution:{"
-                  + tag
-                  + "}:"
-                  + execution.request().admissionAttemptId());
-      if (!persistent(commands, key, "hash")) throw unavailable();
-      Map<byte[], byte[]> raw = await(commands.hgetall(key));
-      Map<String, byte[]> result = new LinkedHashMap<>();
-      raw.forEach(
-          (name, value) -> {
-            if (result.put(text(name), value) != null) throw unavailable();
-          });
-      return result;
+      return readExecution(commands, execution, tag);
     } finally {
       connection.closeAsync();
     }
+  }
+
+  private Map<String, byte[]> readExecution(
+      RedisAsyncCommands<byte[], byte[]> commands,
+      OriginalNewCapacityExecution execution,
+      String tag) {
+    byte[] key =
+        bytes(
+            "session:game:capacity-execution:{"
+                + tag
+                + "}:"
+                + execution.request().admissionAttemptId());
+    if (!persistent(commands, key, "hash")) throw unavailable();
+    Map<byte[], byte[]> raw = await(commands.hgetall(key));
+    Map<String, byte[]> result = new LinkedHashMap<>();
+    raw.forEach(
+        (name, value) -> {
+          if (result.put(text(name), value) != null) throw unavailable();
+        });
+    return result;
   }
 
   /**
@@ -956,7 +985,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         scoped ->
             operation.apply(
                 new CanonicalGameplayOriginalNewCapacityExecutionOwner(
-                    dsl, redis, scripts, clock, tags, scoped)));
+                    dsl, redis, scripts, clock, tags, scoped, null)));
   }
 
   private static void exactPhysicalBinding(

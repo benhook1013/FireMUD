@@ -279,8 +279,7 @@ class AccountCheckoutGatewayControllerTest {
     var authClient = mock(AccountControlUiAuthenticationClient.class);
     var checkoutClient = mock(AccountCheckoutHttpClient.class);
     var controller = new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
-    byte[] payload =
-        "  { \n  \"id\" : \"evt_raw\" \t\n}  \n".getBytes(StandardCharsets.UTF_8);
+    byte[] payload = "  { \n  \"id\" : \"evt_raw\" \t\n}  \n".getBytes(StandardCharsets.UTF_8);
     when(checkoutClient.forward(eq(HttpMethod.POST), eq("/billing/hosting/webhook"), any(), any()))
         .thenReturn(
             Mono.just(
