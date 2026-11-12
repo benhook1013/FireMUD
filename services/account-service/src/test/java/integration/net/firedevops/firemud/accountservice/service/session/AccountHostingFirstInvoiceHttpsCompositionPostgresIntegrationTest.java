@@ -23,6 +23,7 @@ import javax.net.ssl.SSLContext;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceController;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.StripeEventInboxRepository;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.apache.catalina.startup.Tomcat;
@@ -51,7 +52,8 @@ import tools.jackson.databind.json.JsonMapper;
  * Test signer/policy/custody and Stripe SDK transport are controlled. No live charge, registration
  * or installed custody is established. This definition requires physical Docker execution.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
+@org.junit.jupiter.api.Timeout(180)
 @SuppressWarnings("resource")
 class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
   private static final String PASSWORD = "test-only-first-invoice-password";
@@ -60,11 +62,33 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(60))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(512L * 1024 * 1024)
+                      .withMemorySwap(512L * 1024 * 1024)
+                      .withPidsLimit(256L));
 
   @Container
   static final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .withNetworkAliases("first-invoice-primary")
           .withExposedPorts(6379)
@@ -74,6 +98,10 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -82,6 +110,17 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
   @Container
   static final GenericContainer<?> replica =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .dependsOn(redis)
           .withCommand(
@@ -90,6 +129,10 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -98,20 +141,26 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               "first-invoice-primary",
               "6379");
 
+  @Container
+  static final org.testcontainers.containers.GenericContainer<?> credentialCache =
+      AccountCredentialAbuseCacheFixture.container()
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures");
+
   @TempDir Path temporary;
 
   @Test
   void actualHttpsOwnerConsentScaAndExactSignedCompletionGrantAuthorityOnlyAfterReadback()
       throws Exception {
-    try (var owners =
-        new AccountControlUiOriginalOrderFixture(
-            postgres.getJdbcUrl(),
-            postgres.getUsername(),
-            postgres.getPassword(),
-            redis.getHost(),
-            redis.getMappedPort(6379),
-            temporary)) {
-      var issued = owners.issueCertifiedAccount(PASSWORD);
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var owners =
+            new AccountControlUiOriginalOrderFixture(
+                postgres.getJdbcUrl(),
+                postgres.getUsername(),
+                postgres.getPassword(),
+                redis.getHost(),
+                redis.getMappedPort(6379),
+                temporary)) {
+      var issued = owners.issueCertifiedAccount(PASSWORD, abuse.service());
       var hosting =
           CanonicalHostingSubscriptionTestFixture.createAwaitingPayment(
               Objects.requireNonNull(issued.sources().manager.getDataSource()), issued.account());
@@ -199,7 +248,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 hosting
                     .dsl()
                     .fetchSingle(
-                        "SELECT purpose FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                        "SELECT purpose FROM account_recent_reauthentication_evidence WHERE"
+                            + " evidence_id = ?",
                         evidence)
                     .get(0, String.class))
             .isEqualTo(AccountRecentReauthenticationPolicy.BILLING_PURPOSE);
@@ -270,8 +320,9 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         hosting
             .dsl()
             .execute(
-                "CREATE FUNCTION reject_first_invoice_authorization() RETURNS TRIGGER LANGUAGE plpgsql AS $$ "
-                    + "BEGIN RAISE EXCEPTION 'controlled first-invoice authorization rollback' USING ERRCODE='23514'; END; $$");
+                "CREATE FUNCTION reject_first_invoice_authorization() RETURNS TRIGGER LANGUAGE"
+                    + " plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled first-invoice authorization"
+                    + " rollback' USING ERRCODE='23514'; END; $$");
         hosting
             .dsl()
             .execute(
@@ -300,16 +351,18 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                   hosting
                       .dsl()
                       .fetchSingle(
-                          "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
-                              + "billing_context_digest, xmin::text AS row_xmin "
-                              + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                          "SELECT encode(request_payload, 'hex') AS request_payload_hex,"
+                              + " request_digest, billing_context_digest, xmin::text AS row_xmin"
+                              + " FROM account_recent_reauthentication_evidence WHERE evidence_id ="
+                              + " ?",
                           evidence))
               .isEqualTo(openingEvidenceBefore);
         } finally {
           hosting
               .dsl()
               .execute(
-                  "DROP TRIGGER reject_first_invoice_authorization ON subscription_first_invoice_authorizations");
+                  "DROP TRIGGER reject_first_invoice_authorization ON"
+                      + " subscription_first_invoice_authorizations");
           hosting.dsl().execute("DROP FUNCTION reject_first_invoice_authorization()");
         }
         hosting.loseNextFirstInvoiceConfirmationResponse();
@@ -355,8 +408,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 hosting
                     .dsl()
                     .fetchSingle(
-                        "SELECT provider_idempotency_id FROM subscription_first_invoice_confirmations "
-                            + "WHERE request_id = ?",
+                        "SELECT provider_idempotency_id FROM"
+                            + " subscription_first_invoice_confirmations WHERE request_id = ?",
                         confirmation)
                     .get("provider_idempotency_id", UUID.class)
                     .toString())
@@ -444,13 +497,15 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         hosting
             .dsl()
             .execute(
-                "CREATE FUNCTION reject_first_invoice_billing() RETURNS TRIGGER LANGUAGE plpgsql AS $$ "
-                    + "BEGIN RAISE EXCEPTION 'controlled first-invoice billing rollback' USING ERRCODE='23514'; END; $$");
+                "CREATE FUNCTION reject_first_invoice_billing() RETURNS TRIGGER LANGUAGE plpgsql AS"
+                    + " $$ BEGIN RAISE EXCEPTION 'controlled first-invoice billing rollback' USING"
+                    + " ERRCODE='23514'; END; $$");
         hosting
             .dsl()
             .execute(
-                "CREATE TRIGGER reject_first_invoice_billing BEFORE INSERT ON account_tenant_entitlement_outbox_events "
-                    + "FOR EACH ROW EXECUTE FUNCTION reject_first_invoice_billing()");
+                "CREATE TRIGGER reject_first_invoice_billing BEFORE INSERT ON"
+                    + " account_tenant_entitlement_outbox_events FOR EACH ROW EXECUTE FUNCTION"
+                    + " reject_first_invoice_billing()");
         try {
           assertThatThrownBy(() -> payments.completeSigned(signedPayload, signedHeader))
               .hasStackTraceContaining("controlled first-invoice billing rollback");
@@ -484,14 +539,16 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
           hosting
               .dsl()
               .execute(
-                  "DROP TRIGGER reject_first_invoice_billing ON account_tenant_entitlement_outbox_events");
+                  "DROP TRIGGER reject_first_invoice_billing ON"
+                      + " account_tenant_entitlement_outbox_events");
           hosting.dsl().execute("DROP FUNCTION reject_first_invoice_billing()");
         }
         var immutableIntake =
             hosting
                 .dsl()
                 .fetchSingle(
-                    "SELECT raw_payload, payload_sha256, xmin::text AS retained_xmin FROM stripe_event_inbox");
+                    "SELECT raw_payload, payload_sha256, xmin::text AS retained_xmin FROM"
+                        + " stripe_event_inbox");
         hosting.clock().advance(Duration.ofSeconds(12));
         assertThat(payments.completeSigned(signedPayload, signedHeader).state())
             .isEqualTo("COMMITTED");
@@ -499,7 +556,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 hosting
                     .dsl()
                     .fetchSingle(
-                        "SELECT raw_payload, payload_sha256, xmin::text AS retained_xmin FROM stripe_event_inbox"))
+                        "SELECT raw_payload, payload_sha256, xmin::text AS retained_xmin FROM"
+                            + " stripe_event_inbox"))
             .isEqualTo(immutableIntake);
         assertThat(hosting.firstInvoiceConfirmations()).isEqualTo(1);
         var complete = https.request("GET", path, issued.compact(), null);
@@ -509,9 +567,10 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
             hosting
                 .dsl()
                 .fetchSingle(
-                    "SELECT c.committed_transaction_id AS completion_tx, r.committed_transaction_id AS receipt_tx "
-                        + "FROM subscription_first_invoice_completions c JOIN subscription_lifecycle_receipts r "
-                        + "ON r.request_id=c.lifecycle_request_id WHERE c.subscription_id=?",
+                    "SELECT c.committed_transaction_id AS completion_tx, r.committed_transaction_id"
+                        + " AS receipt_tx FROM subscription_first_invoice_completions c JOIN"
+                        + " subscription_lifecycle_receipts r ON"
+                        + " r.request_id=c.lifecycle_request_id WHERE c.subscription_id=?",
                     hosting.creation().subscriptionId());
         assertThat(atomic.get("completion_tx", Long.class))
             .isEqualTo(atomic.get("receipt_tx", Long.class));
@@ -522,15 +581,16 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
   @Test
   void delayedOriginalConfirmationLosesToExplicitPreRowRenewalWithoutConsumingItsProof()
       throws Exception {
-    try (var owners =
-        new AccountControlUiOriginalOrderFixture(
-            postgres.getJdbcUrl(),
-            postgres.getUsername(),
-            postgres.getPassword(),
-            redis.getHost(),
-            redis.getMappedPort(6379),
-            temporary)) {
-      var issued = owners.issueCertifiedAccount(PASSWORD);
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var owners =
+            new AccountControlUiOriginalOrderFixture(
+                postgres.getJdbcUrl(),
+                postgres.getUsername(),
+                postgres.getPassword(),
+                redis.getHost(),
+                redis.getMappedPort(6379),
+                temporary)) {
+      var issued = owners.issueCertifiedAccount(PASSWORD, abuse.service());
       var hosting =
           CanonicalHostingSubscriptionTestFixture.createAwaitingPayment(
               Objects.requireNonNull(issued.sources().manager.getDataSource()), issued.account());
@@ -758,8 +818,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 hosting
                     .dsl()
                     .fetchSingle(
-                        "SELECT request_id, authorization_request_id, reauthentication_evidence_id FROM "
-                            + "subscription_first_invoice_authorizations")
+                        "SELECT request_id, authorization_request_id, reauthentication_evidence_id"
+                            + " FROM subscription_first_invoice_authorizations")
                     .get("request_id", UUID.class))
             .isEqualTo(originalRequestId);
         assertThat(
@@ -804,8 +864,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 hosting
                     .dsl()
                     .fetchSingle(
-                        "SELECT provider_idempotency_id FROM subscription_first_invoice_confirmations "
-                            + "WHERE request_id = ?",
+                        "SELECT provider_idempotency_id FROM"
+                            + " subscription_first_invoice_confirmations WHERE request_id = ?",
                         originalRequestId)
                     .get("provider_idempotency_id", UUID.class)
                     .toString())
@@ -835,9 +895,9 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 hosting
                     .dsl()
                     .fetchSingle(
-                        "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
-                            + "billing_context_digest, xmin::text AS row_xmin "
-                            + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                        "SELECT encode(request_payload, 'hex') AS request_payload_hex,"
+                            + " request_digest, billing_context_digest, xmin::text AS row_xmin FROM"
+                            + " account_recent_reauthentication_evidence WHERE evidence_id = ?",
                         openingEvidence))
             .isEqualTo(evidenceBefore);
         JsonNode after = JSON.readTree(https.request("GET", path, issued.compact(), null).body());
@@ -899,9 +959,9 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
                 hosting
                     .dsl()
                     .fetchSingle(
-                        "SELECT encode(request_payload, 'hex') AS request_payload_hex, request_digest, "
-                            + "billing_context_digest, xmin::text AS row_xmin "
-                            + "FROM account_recent_reauthentication_evidence WHERE evidence_id = ?",
+                        "SELECT encode(request_payload, 'hex') AS request_payload_hex,"
+                            + " request_digest, billing_context_digest, xmin::text AS row_xmin FROM"
+                            + " account_recent_reauthentication_evidence WHERE evidence_id = ?",
                         expiredEvidence))
             .isEqualTo(expiredEvidenceBefore);
         assertNoReceipt(hosting);
@@ -914,7 +974,8 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
     return hosting
         .dsl()
         .fetchSingle(
-            "SELECT count(*) FROM account_recent_reauthentication_consumptions WHERE evidence_id = ?",
+            "SELECT count(*) FROM account_recent_reauthentication_consumptions WHERE evidence_id ="
+                + " ?",
             evidenceId)
         .get(0, Long.class);
   }

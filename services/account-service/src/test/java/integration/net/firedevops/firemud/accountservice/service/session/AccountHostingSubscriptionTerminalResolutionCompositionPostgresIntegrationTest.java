@@ -20,6 +20,8 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.TransitionResult;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture.IssuedAccount;
 import net.firedevops.firemud.accountservice.service.session.AccountHostingSubscriptionTerminalResolutionService.Input;
@@ -42,7 +44,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  * cancellation, public registration, transfer, provider absence or runtime activation is
  * established.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
+@org.junit.jupiter.api.Timeout(180)
 @SuppressWarnings("resource")
 class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegrationTest {
   private static final String PASSWORD = "test-only-terminal-resolution-password";
@@ -51,11 +54,33 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
 
   @Container
   static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(60))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(512L * 1024 * 1024)
+                      .withMemorySwap(512L * 1024 * 1024)
+                      .withPidsLimit(256L));
 
   @Container
   static final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .withNetworkAliases("terminal-resolution-primary")
           .withExposedPorts(6379)
@@ -65,6 +90,10 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -73,6 +102,17 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   @Container
   static final GenericContainer<?> replica =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .dependsOn(redis)
           .withCommand(
@@ -81,6 +121,10 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -89,13 +133,19 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
               "terminal-resolution-primary",
               "6379");
 
+  @Container
+  static final org.testcontainers.containers.GenericContainer<?> credentialCache =
+      AccountCredentialAbuseCacheFixture.container()
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures");
+
   @TempDir Path temporary;
 
   @Test
   void actualAccountAndFreshOtpCommitOneAtomicCancellationAndAuthenticatedReplay()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
-      var failed = failedHosting(accountOwners);
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners()) {
+      var failed = failedHosting(accountOwners, abuse.service());
       var issued = failed.issued();
       var hosting = failed.hosting();
       var actor = issued.actors().authenticateAccount(issued.compact());
@@ -116,7 +166,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
               hosting
                   .dsl()
                   .fetchSingle(
-                      "SELECT count(*) FROM account_tenant_membership WHERE account_id = ? AND tenant_uuid = ?",
+                      "SELECT count(*) FROM account_tenant_membership WHERE account_id = ? AND"
+                          + " tenant_uuid = ?",
                       hosting.accountId(),
                       hosting.tenantId())
                   .get(0, Long.class))
@@ -149,8 +200,9 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
 
   @Test
   void wrongPrimaryCredentialRetainsFinancialFenceAndUnconsumedOtp() throws Exception {
-    try (var accountOwners = accountOwners()) {
-      var failed = failedHosting(accountOwners);
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners()) {
+      var failed = failedHosting(accountOwners, abuse.service());
       var issued = failed.issued();
       var challenge = issued.sources().installGlobalOtp(issued.account(), OTP);
       var before = financialImage(failed);
@@ -172,8 +224,9 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
 
   @Test
   void lateBillingSqlFailureRollsBackCancellationAndOtpThenSameOtpSucceeds() throws Exception {
-    try (var accountOwners = accountOwners()) {
-      var failed = failedHosting(accountOwners);
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners()) {
+      var failed = failedHosting(accountOwners, abuse.service());
       var issued = failed.issued();
       var hosting = failed.hosting();
       var challenge = issued.sources().installGlobalOtp(issued.account(), OTP);
@@ -181,13 +234,15 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
       hosting
           .dsl()
           .execute(
-              "CREATE FUNCTION reject_resolution_billing() RETURNS trigger LANGUAGE plpgsql AS $$ "
-                  + "BEGIN RAISE EXCEPTION 'controlled resolution billing failure' USING ERRCODE = '23514'; END; $$");
+              "CREATE FUNCTION reject_resolution_billing() RETURNS trigger LANGUAGE plpgsql AS $$"
+                  + " BEGIN RAISE EXCEPTION 'controlled resolution billing failure' USING ERRCODE ="
+                  + " '23514'; END; $$");
       hosting
           .dsl()
           .execute(
-              "CREATE TRIGGER reject_resolution_billing BEFORE INSERT ON account_tenant_entitlement_outbox_events "
-                  + "FOR EACH ROW EXECUTE FUNCTION reject_resolution_billing()");
+              "CREATE TRIGGER reject_resolution_billing BEFORE INSERT ON"
+                  + " account_tenant_entitlement_outbox_events FOR EACH ROW EXECUTE FUNCTION"
+                  + " reject_resolution_billing()");
       try {
         assertThatThrownBy(() -> resolve(failed, issued.account().getEmail(), OTP))
             .hasStackTraceContaining("controlled resolution billing failure");
@@ -199,7 +254,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
         hosting
             .dsl()
             .execute(
-                "DROP TRIGGER reject_resolution_billing ON account_tenant_entitlement_outbox_events");
+                "DROP TRIGGER reject_resolution_billing ON"
+                    + " account_tenant_entitlement_outbox_events");
         hosting.dsl().execute("DROP FUNCTION reject_resolution_billing()");
       }
       var result = resolve(failed, issued.account().getEmail(), OTP);
@@ -212,8 +268,9 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   @Test
   void missingFailedOperationCopyRejectsBeforeCurrentCasAndRollsBackAuditJournalAndOtp()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
-      var failed = failedHosting(accountOwners);
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners()) {
+      var failed = failedHosting(accountOwners, abuse.service());
       var issued = failed.issued();
       var hosting = failed.hosting();
       var challenge = issued.sources().installGlobalOtp(issued.account(), OTP);
@@ -221,13 +278,13 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
       hosting
           .dsl()
           .execute(
-              "CREATE FUNCTION suppress_resolution_operation() RETURNS trigger LANGUAGE plpgsql AS $$ "
-                  + "BEGIN RETURN NULL; END; $$");
+              "CREATE FUNCTION suppress_resolution_operation() RETURNS trigger LANGUAGE plpgsql AS"
+                  + " $$ BEGIN RETURN NULL; END; $$");
       hosting
           .dsl()
           .execute(
-              "CREATE TRIGGER suppress_resolution_operation BEFORE INSERT ON subscription_lifecycle_operations "
-                  + "FOR EACH ROW WHEN (NEW.request_id = '"
+              "CREATE TRIGGER suppress_resolution_operation BEFORE INSERT ON"
+                  + " subscription_lifecycle_operations FOR EACH ROW WHEN (NEW.request_id = '"
                   + failed.input().resolutionRequestId()
                   + "'::uuid) EXECUTE FUNCTION suppress_resolution_operation()");
       try {
@@ -257,8 +314,9 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   @Test
   void genericAccountAuthorityAdvanceDuringSdkReadMakesSourceUnavailableAndKeepsOtp()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
-      var failed = failedHosting(accountOwners);
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners()) {
+      var failed = failedHosting(accountOwners, abuse.service());
       var issued = failed.issued();
       var hosting = failed.hosting();
       var challenge = issued.sources().installGlobalOtp(issued.account(), OTP);
@@ -308,9 +366,11 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   @Test
   void otherCertifiedAccountsFreshOtpCannotAuthorizeBillingOwnerAndConsumptionRollsBack()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
-      var failed = failedHosting(accountOwners);
-      var other = accountOwners.issueCertifiedAccount("test-only-other-account-password");
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners()) {
+      var failed = failedHosting(accountOwners, abuse.service());
+      var other =
+          accountOwners.issueCertifiedAccount("test-only-other-account-password", abuse.service());
       assertThat(other.actors().authenticateAccount(other.compact()).accountId())
           .isNotEqualTo(failed.hosting().accountUuid());
       var challenge = other.sources().installGlobalOtp(other.account(), OTP);
@@ -335,8 +395,10 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
         temporary);
   }
 
-  private static FailedHosting failedHosting(AccountControlUiOriginalOrderFixture accountOwners) {
-    var issued = accountOwners.issueCertifiedAccount(PASSWORD);
+  private static FailedHosting failedHosting(
+      AccountControlUiOriginalOrderFixture accountOwners,
+      AccountCredentialAbuseService sharedOwner) {
+    var issued = accountOwners.issueCertifiedAccount(PASSWORD, sharedOwner);
     var hosting =
         CanonicalHostingSubscriptionTestFixture.create(
             Objects.requireNonNull(issued.sources().manager.getDataSource()), issued.account());
@@ -432,7 +494,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
         hosting
             .dsl()
             .fetchSingle(
-                "SELECT *, xmin::text AS row_xmin FROM subscription_lifecycle_receipts WHERE request_id = ?",
+                "SELECT *, xmin::text AS row_xmin FROM subscription_lifecycle_receipts WHERE"
+                    + " request_id = ?",
                 input.resolutionRequestId());
     assertThat(receipt.get("status", String.class)).isEqualTo("canceled");
     assertThat(receipt.get("receipt_digest", String.class))
@@ -456,7 +519,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
         hosting
             .dsl()
             .fetchSingle(
-                "SELECT *, xmin::text AS row_xmin FROM subscription_instrument_reservations WHERE request_id = ?",
+                "SELECT *, xmin::text AS row_xmin FROM subscription_instrument_reservations WHERE"
+                    + " request_id = ?",
                 input.creationRequestId());
     assertThat(reservation.get("released_at")).isNotNull();
     assertThat(reservation.get("terminal_resolution_id", UUID.class))
@@ -465,7 +529,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
         hosting
             .dsl()
             .fetchSingle(
-                "SELECT *, xmin::text AS row_xmin FROM subscription_provider_terminal_resolutions WHERE resolution_id = ?",
+                "SELECT *, xmin::text AS row_xmin FROM subscription_provider_terminal_resolutions"
+                    + " WHERE resolution_id = ?",
                 subscription.get("terminal_resolution_id", UUID.class));
     assertThat(terminal.get("outcome", String.class)).isEqualTo("CANCELED");
     assertThat(terminal.get("provider_subscription_id", String.class))
@@ -474,7 +539,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
         hosting
             .dsl()
             .fetchSingle(
-                "SELECT *, xmin::text AS row_xmin FROM account_audit_outbox WHERE audit_event_id = ?",
+                "SELECT *, xmin::text AS row_xmin FROM account_audit_outbox WHERE audit_event_id ="
+                    + " ?",
                 input.auditEventId());
     assertThat(audit.get("event_type", String.class))
         .isEqualTo("HOSTING_SUBSCRIPTION_TERMINAL_RESOLVED");
@@ -522,9 +588,10 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
         .hosting()
         .dsl()
         .fetchSingle(
-            "SELECT to_jsonb(operation)::text || operation.xmin::text || to_jsonb(notice)::text || notice.xmin::text "
-                + "FROM subscription_lifecycle_operations operation JOIN subscription_lifecycle_operator_outbox notice "
-                + "USING (request_id) WHERE request_id = ?",
+            "SELECT to_jsonb(operation)::text || operation.xmin::text || to_jsonb(notice)::text ||"
+                + " notice.xmin::text FROM subscription_lifecycle_operations operation JOIN"
+                + " subscription_lifecycle_operator_outbox notice USING (request_id) WHERE"
+                + " request_id = ?",
             failed.input().failedRequestId())
         .get(0, String.class);
   }
@@ -561,8 +628,9 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
       image.put(
           table,
           dsl.fetchSingle(
-                  "SELECT coalesce(jsonb_agg(snapshot ORDER BY snapshot::text)::text, '[]') FROM "
-                      + "(SELECT to_jsonb(value) || jsonb_build_object('xmin',value.xmin::text) AS snapshot FROM "
+                  "SELECT coalesce(jsonb_agg(snapshot ORDER BY snapshot::text)::text, '[]') FROM"
+                      + " (SELECT to_jsonb(value) || jsonb_build_object('xmin',value.xmin::text) AS"
+                      + " snapshot FROM "
                       + table
                       + " value WHERE outbox_stream_key = ?) retained",
                   stream)
@@ -573,8 +641,9 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
 
   private static String rows(DSLContext dsl, String table, String where) {
     return dsl.fetchSingle(
-            "SELECT coalesce(jsonb_agg(snapshot ORDER BY snapshot::text)::text, '[]') FROM "
-                + "(SELECT to_jsonb(value) || jsonb_build_object('xmin',value.xmin::text) AS snapshot FROM "
+            "SELECT coalesce(jsonb_agg(snapshot ORDER BY snapshot::text)::text, '[]') FROM (SELECT"
+                + " to_jsonb(value) || jsonb_build_object('xmin',value.xmin::text) AS snapshot FROM"
+                + " "
                 + table
                 + " value"
                 + where

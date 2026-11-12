@@ -41,6 +41,8 @@ import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicatio
 import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPlatformRestrictionOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.impl.AccountControlUiAuthenticationGrpcService;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -99,7 +101,8 @@ import tools.jackson.databind.json.JsonMapper;
  * explicitly controlled upstream inputs. This supplies no live payment, privacy, PKI or deployment
  * qualification.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
+@org.junit.jupiter.api.Timeout(180)
 @SuppressWarnings("resource")
 class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
   private static final String NAMESPACE = "firemud-prod";
@@ -109,11 +112,33 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
+      new PostgreSQLContainer<>(TestContainerImages.postgres())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(60))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(512L * 1024 * 1024)
+                      .withMemorySwap(512L * 1024 * 1024)
+                      .withPidsLimit(256L));
 
   @Container
   static final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .withNetworkAliases("checkout-receiving-primary")
           .withExposedPorts(6379)
@@ -123,6 +148,10 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -131,6 +160,17 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
   @Container
   static final GenericContainer<?> replica =
       new GenericContainer<>(TestContainerImages.redis())
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures")
+          .withLabel(
+              "firemud.proof.run", System.getenv().getOrDefault("GITHUB_RUN_ID", "local-unrun"))
+          .withStartupTimeout(java.time.Duration.ofSeconds(30))
+          .withCreateContainerCmdModifier(
+              command ->
+                  command
+                      .getHostConfig()
+                      .withMemory(256L * 1024 * 1024)
+                      .withMemorySwap(256L * 1024 * 1024)
+                      .withPidsLimit(128L))
           .withNetwork(NETWORK)
           .dependsOn(redis)
           .withCommand(
@@ -139,6 +179,10 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
               "0.0.0.0",
               "--protected-mode",
               "no",
+              "--maxmemory",
+              "64mb",
+              "--maxmemory-policy",
+              "noeviction",
               "--appendonly",
               "yes",
               "--appendfsync",
@@ -146,6 +190,11 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
               "--replicaof",
               "checkout-receiving-primary",
               "6379");
+
+  @Container
+  static final GenericContainer<?> credentialCache =
+      AccountCredentialAbuseCacheFixture.container()
+          .withLabel("firemud.proof", "account-shared-abuse-fixtures");
 
   @TempDir Path temporary;
 
@@ -354,6 +403,22 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                         hosting.creation().subscriptionId())
                     .get(0, Long.class))
             .isOne();
+        // Real cache connection outage refuses new credentials but neither exact replay nor the
+        // existing authenticated session depends on creating a new shared abuse admission.
+        receiving.abuse.disconnectApplication();
+        var fresh = new HashMap<String, Object>(login);
+        fresh.put("requestId", UUID.randomUUID());
+        var outage = receiving.request("POST", "/api/account/auth/login", null, fresh);
+        assertThat(outage.statusCode()).isEqualTo(503);
+        assertThat(outage.headers().firstValue("cache-control")).contains("no-store");
+        assertThat(outage.body())
+            .contains("AUTH_ABUSE_CONTROL_UNAVAILABLE")
+            .doesNotContain(bearer, account.getEmail());
+        var replayDuringOutage = receiving.request("POST", "/api/account/auth/login", null, login);
+        assertThat(replayDuringOutage.statusCode()).isEqualTo(200);
+        assertThat(JSON.readTree(replayDuringOutage.body()).path("data").path("authToken").asText())
+            .isEqualTo(bearer);
+        assertThat(receiving.request("GET", path, bearer, null).statusCode()).isEqualTo(200);
         var admin =
             io.lettuce.core.RedisClient.create(
                 io.lettuce.core.RedisURI.Builder.redis(redis.getHost(), redis.getMappedPort(6379))
@@ -400,6 +465,7 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
 
   private static final class RegisteredChain implements AutoCloseable {
     private GenericWebApplicationContext account;
+    private AccountCredentialAbuseCacheFixture abuse;
     private Tomcat tomcat;
     private Server grpc;
     private AnnotationConfigApplicationContext gateway;
@@ -493,6 +559,8 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         account.registerBean(
             AccountPlatformRestrictionOperationRepository.class, () -> f.restrictionOperations);
         account.registerBean(AccountServiceImpl.class, () -> f.primary);
+        abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        account.registerBean(AccountCredentialAbuseService.class, abuse::service);
         account.registerBean(AccountJwtSignerDesiredStateRepository.class, () -> signer.desired);
         account.registerBean(AccountJwtJwksPublicationRepository.class, () -> signer.publication);
         account.registerBean(AccountJwtSignerMaterializerTrustBinding.class, () -> signer.trust);
@@ -730,7 +798,11 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
         tomcat.stop();
         tomcat.destroy();
       }
-      if (account != null) account.close();
+      try {
+        if (account != null) account.close();
+      } finally {
+        if (abuse != null) abuse.close();
+      }
     }
   }
 

@@ -25,6 +25,7 @@ public final class AccountCredentialAbuseCacheFixture implements AutoCloseable {
   private StatefulRedisConnection<byte[], byte[]> connection;
   private AccountCredentialAbuseSubjectKeys.DigestKey key;
   private AccountCredentialAbuseService service;
+  private AccountCredentialAbusePolicySource policySource;
 
   public static GenericContainer<?> container() {
     return new GenericContainer<>(TestContainerImages.redis())
@@ -132,11 +133,10 @@ public final class AccountCredentialAbuseCacheFixture implements AutoCloseable {
               List.of(
                   new AccountCredentialAbusePolicy.Rule(3, 2, 0, Duration.ofSeconds(1)),
                   new AccountCredentialAbusePolicy.Rule(3, 2, 10, Duration.ofSeconds(5))));
+      policySource = AccountCredentialAbusePolicySource.controlled(policy, key);
       service =
           AccountCredentialAbuseConfiguration.controlled(
-              AccountCredentialAbusePolicySource.controlled(policy, key),
-              connection,
-              Clock.systemUTC());
+              policySource, connection, Clock.systemUTC());
     } catch (RuntimeException | Error failure) {
       try {
         close();
@@ -150,6 +150,57 @@ public final class AccountCredentialAbuseCacheFixture implements AutoCloseable {
   public AccountCredentialAbuseService service() {
     return service;
   }
+
+  /** Observation/fault boundaries always delegate to the real store; no synthetic signals. */
+  public AccountCredentialAbuseService observedService(
+      java.util.function.Consumer<BackendObservation> observer) {
+    java.util.Objects.requireNonNull(observer);
+    var actual = new AccountCredentialAbuseRedisStore(connection);
+    return new AccountCredentialAbuseService(
+        policySource,
+        new AccountCredentialAbuseService.Backend() {
+          @Override
+          public AccountCredentialAbusePolicy.Signals admit(
+              AccountCredentialAbusePolicy policy,
+              AccountCredentialAbuseService.Buckets buckets,
+              Instant now) {
+            observer.accept(new BackendObservation(BackendPhase.BEFORE_ADMISSION, buckets));
+            var result = actual.admit(policy, buckets, now);
+            observer.accept(new BackendObservation(BackendPhase.AFTER_ADMISSION, buckets));
+            return result;
+          }
+
+          @Override
+          public boolean recordFailure(
+              AccountCredentialAbusePolicy policy,
+              AccountCredentialAbuseService.Buckets buckets,
+              Instant now) {
+            observer.accept(new BackendObservation(BackendPhase.BEFORE_FAILURE, buckets));
+            boolean result = actual.recordFailure(policy, buckets, now);
+            observer.accept(new BackendObservation(BackendPhase.AFTER_FAILURE, buckets));
+            return result;
+          }
+        },
+        Clock.systemUTC());
+  }
+
+  public String candidateImage(AccountCredentialAbuseService.Buckets buckets) {
+    byte[] value =
+        connection
+            .sync()
+            .get(buckets.candidate().redisKey().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    return value == null ? null : new String(value, java.nio.charset.StandardCharsets.US_ASCII);
+  }
+
+  public enum BackendPhase {
+    BEFORE_ADMISSION,
+    AFTER_ADMISSION,
+    BEFORE_FAILURE,
+    AFTER_FAILURE
+  }
+
+  public record BackendObservation(
+      BackendPhase phase, AccountCredentialAbuseService.Buckets buckets) {}
 
   /** Close only this fixture's real application connection; no cache or Coordination reset. */
   public void disconnectApplication() {

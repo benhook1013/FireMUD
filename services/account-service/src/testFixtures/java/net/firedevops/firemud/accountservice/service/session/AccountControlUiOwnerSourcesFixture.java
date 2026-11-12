@@ -187,6 +187,32 @@ final class AccountControlUiOwnerSourcesFixture {
       boolean ownedCompositionConnections,
       FreshTenantCreationEvidence creationEvidence)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        root,
+        installNegativeIssuer,
+        tenant,
+        migrationTarget,
+        ownedCompositionConnections,
+        creationEvidence,
+        null);
+  }
+
+  /** Explicit shared Cache owner for global auth tests; never creates a policy or client. */
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget,
+      boolean ownedCompositionConnections,
+      FreshTenantCreationEvidence creationEvidence,
+      net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService sharedOwner)
+      throws Exception {
     this.creationEvidence = Objects.requireNonNull(creationEvidence, "creationEvidence");
     if (!creationEvidence.canonicalTenantId().equals(tenant)) {
       throw new IllegalArgumentException(
@@ -475,7 +501,7 @@ final class AccountControlUiOwnerSourcesFixture {
       service =
           new AccountControlUiIssuanceService(
               primary,
-              null, // No implicit shared abuse policy or admitting fallback.
+              sharedOwner, // Explicit test composition; absent inputs remain closed.
               operations,
               authority,
               fences,
