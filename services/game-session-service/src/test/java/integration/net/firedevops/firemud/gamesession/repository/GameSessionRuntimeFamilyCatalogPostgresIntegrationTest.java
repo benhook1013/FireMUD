@@ -1686,6 +1686,88 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
   }
 
   @Test
+  void historicalFinalObservationUpgradePreservesPopulatedV1065Point1AndSealsEpoch14() {
+    try (Fixture f = fixture("1065.1")) {
+      f.populatePredecessor();
+      assertThat(f.count("gameplay_command")).isPositive();
+      assertThat(f.count("game_session_canonical_account_coverage_control")).isPositive();
+      assertThat(f.count("saga_instance")).isPositive();
+      String observationFamily = "game_session_account_fence_final_observation";
+      assertThat(f.tables()).doesNotContain(observationFamily);
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(13);
+      assertThat(f.owner().readExact(original.request())).isEqualTo(original);
+
+      Map<String, String> predecessorRows = f.rows(f.tables());
+      predecessorRows.remove(f.history);
+      predecessorRows.remove(EPOCHS);
+      predecessorRows.remove(CLASSIFICATIONS);
+      var classifications = f.classificationRows();
+      var history = f.historyRows(false);
+      byte[] snapshot = f.evidence(original.request());
+      var predecessorEpochs =
+          f.dsl
+              .fetch(
+                  "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                      + EPOCHS
+                      + " e ORDER BY catalog_epoch")
+              .getValues(0, String.class);
+
+      migration(f.source, f.schema, f.history, "1065.2").migrate();
+
+      assertThat(f.rows(predecessorRows.keySet())).isEqualTo(predecessorRows);
+      assertThat(f.classificationRows())
+          .containsAllEntriesOf(classifications)
+          .containsKey(observationFamily)
+          .hasSize(classifications.size() + 1);
+      var installedHistory = f.historyRows(false);
+      assertThat(installedHistory).hasSize(history.size() + 1);
+      assertThat(installedHistory.subList(0, history.size())).isEqualTo(history);
+      var installed =
+          f.dsl.fetchSingle(
+              "SELECT type,script,success FROM " + f.history + " WHERE version='1065.2'");
+      assertThat(installed.get("type", String.class)).isEqualTo("SQL");
+      assertThat(installed.get("script", String.class))
+          .isEqualTo("V1065.2__account_fence_historical_final_observation.sql");
+      assertThat(installed.get("success", Boolean.class)).isTrue();
+      assertThat(
+              f.dsl
+                  .fetch(
+                      "SELECT to_jsonb(e)::text||':'||xmin::text FROM "
+                          + EPOCHS
+                          + " e WHERE catalog_epoch<=13 ORDER BY catalog_epoch")
+                  .getValues(0, String.class))
+          .isEqualTo(predecessorEpochs);
+      assertThat(f.evidence(original.request())).isEqualTo(snapshot);
+      assertThatThrownBy(() -> f.owner().readExact(original.request()))
+          .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
+      assertThat(f.count(observationFamily)).isZero();
+
+      assertThat(f.count(EPOCHS)).isEqualTo(predecessorEpochs.size() + 1L);
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(14);
+      assertThat(current.catalog().families())
+          .anySatisfy(
+              family -> {
+                assertThat(family.familyId()).isEqualTo(observationFamily);
+                assertThat(family.role()).isEqualTo(Role.CONTROL);
+                assertThat(family.retentionDisposition())
+                    .isEqualTo(RetentionDisposition.OWNER_POLICY_RETAINED);
+              });
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(14) FROM "
+                          + EPOCHS
+                          + " WHERE catalog_epoch=14")
+                  .get(0, Boolean.class))
+          .isTrue();
+      migration(f.source, f.schema, f.history, "1065.2").validate();
+    }
+  }
+
+  @Test
   void
       genuineV1065Point0Point1ToPoint0Point2UpgradeRetainsPopulatedCatalogAndAddsFrozenInsertGuard() {
     try (Fixture f = fixture("1065.0.1")) {
