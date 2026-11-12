@@ -205,6 +205,13 @@ final class CanonicalGameplayCapacityOriginRepository {
           var retained = exact(row, origin);
           if (!retained.ownerId().equals(current.ownerId())
               || retained.ownerFence() != current.ownerFence()) throw unavailable();
+          var lastDeadline = row.get("last_observation_deadline", java.time.OffsetDateTime.class);
+          Long issuingFence = row.get("last_observation_custody_fence", Long.class);
+          // Keep the live permit until expiry unless custody has advanced past its issuing fence.
+          if (lastDeadline != null
+              && now.isBefore(lastDeadline.toInstant())
+              && (issuingFence == null || issuingFence >= retained.ownerFence()))
+            throw unavailable();
           var policy =
               new net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation
                   .Policy(
@@ -218,9 +225,10 @@ final class CanonicalGameplayCapacityOriginRepository {
           if (tx.execute(
                   "UPDATE "
                       + TABLE
-                      + " SET recovery_observations=?,last_observation_deadline=?::timestamptz WHERE admission_attempt_id=? AND recovery_observations=?",
+                      + " SET recovery_observations=?,last_observation_deadline=?::timestamptz,last_observation_custody_fence=? WHERE admission_attempt_id=? AND recovery_observations=?",
                   admission.ordinal(),
                   admission.deadline().toString(),
+                  retained.ownerFence(),
                   origin.request().admissionAttemptId(),
                   consumed)
               != 1) throw unavailable();
@@ -250,8 +258,11 @@ final class CanonicalGameplayCapacityOriginRepository {
     refuseFrozen(tx, origin);
     Record row = find(tx, origin, true);
     var retained = exact(row, origin);
+    Long issuingFence = row.get("last_observation_custody_fence", Long.class);
     if (!retained.ownerId().equals(permit.custodyOwner())
         || retained.ownerFence() != permit.custodyFence()
+        || issuingFence == null
+        || issuingFence != permit.custodyFence()
         || row.get("recovery_observations", Integer.class) != permit.ordinal()
         || !row.get("last_observation_deadline", java.time.OffsetDateTime.class)
             .toInstant()
