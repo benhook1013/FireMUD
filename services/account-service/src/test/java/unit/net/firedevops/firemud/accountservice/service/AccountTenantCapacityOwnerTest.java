@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -21,6 +22,7 @@ import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
@@ -129,21 +131,29 @@ class AccountTenantCapacityOwnerTest {
     var result = f.owner.commit(f.request, f.request.evidence().callerWorkload());
     assertThat(result.reservationId()).isEqualTo(f.reservation);
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload())).isEqualTo(result);
-    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verifyNoInteractions(f.accounts, f.memberships, f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
 
   @Test
   void repeatedSerializationFailuresRetryAndReplayInAFreshTransaction() throws Exception {
     var f = new Fixture(true);
+    f.existing = false;
     var aborted = serializationFailure();
+    var abortedAttempts = new AtomicInteger();
     when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
-        .thenThrow(aborted, aborted)
-        .thenReturn(Optional.of(new Account()));
+        .thenAnswer(
+            invocation -> {
+              if (abortedAttempts.incrementAndGet() == 2) f.existing = true;
+              throw aborted;
+            });
 
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload()).reservationId())
         .isEqualTo(f.reservation);
-    verify(f.accounts, times(3)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
+    verify(f.accounts, times(2)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
+    verify(f.dsl, times(3))
+        .fetchOne(
+            startsWith("SELECT * FROM account_tenant_capacity_reservations "), any(Object[].class));
     verifyNoInteractions(f.memberships, f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
@@ -151,6 +161,7 @@ class AccountTenantCapacityOwnerTest {
   @Test
   void repeatedSerializationFailuresStopAtTheAttemptLimit() throws Exception {
     var f = new Fixture(true);
+    f.existing = false;
     var aborted = serializationFailure();
     when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
         .thenThrow(aborted);
@@ -164,6 +175,7 @@ class AccountTenantCapacityOwnerTest {
   @Test
   void cancelledCallDoesNotRetryAnAbortedTransaction() throws Exception {
     var f = new Fixture(true);
+    f.existing = false;
     var aborted = serializationFailure();
     try (var caller = Context.current().withCancellation()) {
       when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
@@ -290,6 +302,16 @@ class AccountTenantCapacityOwnerTest {
         .isInstanceOfSatisfying(
             AccountTenantCapacityRepository.CapacityException.class,
             failure -> assertThat(failure.code()).isEqualTo(Failure.PERMISSION_DENIED));
+    verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes);
+  }
+
+  @Test
+  void authenticatedWorldRequestCannotReplayWhileWorldCapacityRemainsHeld() throws Exception {
+    var f = new Fixture(false, CapacityAdmissionTestFixture.worldRequest(1L));
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.ENTITLEMENT_UNAVAILABLE));
     verifyNoInteractions(f.accounts, f.dsl, f.memberships, f.issuances, f.scopes);
   }
 
