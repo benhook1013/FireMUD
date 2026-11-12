@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.at;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.conflict;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.number;
+import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.requireCurrentLifetime;
 import static net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.unavailable;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -11,7 +12,6 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -106,7 +106,7 @@ public final class AccountTenantCapacityOwner {
           if (!request.evidence().permitsCreation())
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
           originDecisions.accept(request);
-          return capacity.create(request, request.evidence().expiresAt());
+          return capacity.create(request, request.evidence().expiresAt(), clock);
         });
   }
 
@@ -185,6 +185,7 @@ public final class AccountTenantCapacityOwner {
           current(next);
           requireSupportedShape(next);
           originDecisions.accept(next);
+          requireCurrentLifetime(next.evidence(), clock.instant());
           int history =
               dsl.execute(
                   "INSERT INTO account_tenant_capacity_attempt_history "
@@ -230,10 +231,7 @@ public final class AccountTenantCapacityOwner {
     var evidence = request.evidence();
     capacity.requireRetained(evidence);
     Instant now = clock.instant();
-    // PostgreSQL stores microseconds. Floor the bound, never round an expiry forward.
-    if (now.isBefore(evidence.evaluatedAt())
-        || !now.isBefore(evidence.expiresAt().truncatedTo(ChronoUnit.MICROS)))
-      throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
+    requireCurrentLifetime(evidence, now);
     if (!(request.context() instanceof PlayerContext player)) throw unavailable();
     var parsed =
         RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(

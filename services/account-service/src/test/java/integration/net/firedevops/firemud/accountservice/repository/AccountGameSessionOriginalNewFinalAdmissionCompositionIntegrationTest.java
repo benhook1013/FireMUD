@@ -361,6 +361,22 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void originOnlyCompletedHandoffRecoversWithTheSameLivePrivateGrant() throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var before = session.gs.originBudgetImage();
+      session.gs.handoffReceivingOriginAfterLostConfirmation();
+      var after = session.gs.originBudgetImage();
+      assertThat((Long) after.get("custody_owner_fence"))
+          .isGreaterThan((Long) before.get("custody_owner_fence"));
+      assertThat(after.get("recovery_observations")).isEqualTo(before.get("recovery_observations"));
+      assertThat(session.gs.dsl().fetchCount(
+          org.jooq.impl.DSL.table("game_session_original_new_capacity_execution"))).isZero();
+    }
+  }
+
+  @Test
   void actualOriginObservationExhaustionRetainsHoldAndCannotResetOnRecreatedReceiver()
       throws Exception {
     try (Session session = session()) {

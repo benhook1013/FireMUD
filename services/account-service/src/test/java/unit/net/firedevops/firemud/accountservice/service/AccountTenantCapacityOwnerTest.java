@@ -80,7 +80,10 @@ class AccountTenantCapacityOwnerTest {
           assertThatThrownBy(
                   () ->
                       new AccountTenantCapacityRepository(dsl)
-                          .create(request, request.evidence().expiresAt()))
+                          .create(
+                              request,
+                              request.evidence().expiresAt(),
+                              Clock.fixed(request.evidence().evaluatedAt(), ZoneOffset.UTC)))
               .as(vector.path("name").asText())
               .hasMessage(vector.path("expected").asText());
           verify(dsl, never()).execute(anyString(), any(Object[].class));
@@ -89,6 +92,30 @@ class AccountTenantCapacityOwnerTest {
         }
       }
     }
+  }
+
+  @Test
+  void expiryWhileWaitingForUsageDoesNotReserveCapacity() {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    DSLContext dsl = mock(DSLContext.class);
+    Clock clock = mock(Clock.class);
+    when(clock.instant()).thenThrow(new AssertionError("read before acquiring usage row"));
+    when(dsl.fetchOne(anyString(), any(Object[].class)))
+        .thenAnswer(
+            invocation -> {
+              org.mockito.Mockito.doReturn(request.evidence().expiresAt()).when(clock).instant();
+              return mock(Record.class);
+            });
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThatThrownBy(
+            () ->
+                new AccountTenantCapacityRepository(dsl)
+                    .create(request, request.evidence().expiresAt(), clock))
+        .isInstanceOfSatisfying(
+            AccountTenantCapacityRepository.CapacityException.class,
+            failure -> assertThat(failure.code()).isEqualTo(Failure.CAPACITY_ADMISSION_STALE));
+    verify(dsl, never()).execute(anyString(), any(Object[].class));
   }
 
   @Test

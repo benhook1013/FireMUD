@@ -357,7 +357,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertPhysicalImage(original, before, 6);
 
     Map<String, byte[]> denied = physicalImage(original);
-    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(5L);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(8L);
     assertPhysicalImage(original, denied, 7);
   }
 
@@ -367,6 +367,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     ScriptCase original = seed();
     Map<String, byte[]> before = physicalImage(original);
 
+    assertThat(eval(action(original, "INSTALL"))).isEqualTo(6L);
+    assertPhysicalImage(original, before, 7);
     assertThat(eval(action(original, "FENCE"))).isEqualTo(5L);
     assertHash(original.keys()[6], capacityPhysicalFields(original, "FENCED_INDETERMINATE"));
     assertPhysicalImage(original, before, 6);
@@ -378,8 +380,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(eval(action(original, "INSTALL"))).isEqualTo(-1L);
     assertThat(eval(original)).isEqualTo(-1L);
     assertThat(eval(action(original, "CLOSE"))).isEqualTo(-1L);
-    assertThat(eval(action(original, "FENCE"))).isEqualTo(5L);
-    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(5L);
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(8L);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(8L);
     assertPhysicalImage(original, denied, 7);
     for (String key : original.keys()) assertThat(admin.pttl(ascii(key))).isEqualTo(-1L);
   }
@@ -403,12 +405,13 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(eval(original)).isEqualTo(1L);
     Map<String, byte[]> committed = physicalImage(original);
 
-    assertThat(eval(action(original, "FENCE"))).isEqualTo(2L);
-    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(2L);
+    assertThat(eval(action(original, "INSTALL"))).isEqualTo(9L);
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(9L);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(9L);
     byte[][] credentialFree = action(original, "FENCE").arguments().clone();
     credentialFree[11] = ascii("1");
-    assertThat(eval(new ScriptCase(original.keys(), credentialFree))).isEqualTo(2L);
-    assertThat(eval(expired(new ScriptCase(original.keys(), credentialFree)))).isEqualTo(2L);
+    assertThat(eval(new ScriptCase(original.keys(), credentialFree))).isEqualTo(9L);
+    assertThat(eval(expired(new ScriptCase(original.keys(), credentialFree)))).isEqualTo(9L);
     assertThat(eval(preFenceScriptSha, original)).isEqualTo(2L);
     assertPhysicalImage(original, committed, 7);
     assertThat(admin.hlen(ascii(original.keys()[6]))).isEqualTo(6L);
@@ -421,8 +424,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(eval(action(original, "CLOSE"))).isEqualTo(4L);
     Map<String, byte[]> closed = physicalImage(original);
 
-    assertThat(eval(action(original, "FENCE"))).isEqualTo(4L);
-    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(4L);
+    assertThat(eval(action(original, "FENCE"))).isEqualTo(7L);
+    assertThat(eval(expired(action(original, "FENCE")))).isEqualTo(7L);
     assertPhysicalImage(original, closed, 7);
     assertHash(original.keys()[6], capacityPhysicalFields(original, "CLOSED"));
   }
@@ -749,7 +752,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
         .containsExactly(ascii(HexFormatHolder.sha1(actual)));
     byte[][] expiredClose = action(original, "CLOSE").arguments().clone();
     expiredClose[14] = ascii(Long.toString(System.currentTimeMillis() - 1L));
-    assertThat(eval(new ScriptCase(original.keys(), expiredClose))).isEqualTo(2L);
+    assertThat(eval(new ScriptCase(original.keys(), expiredClose))).isEqualTo(9L);
     assertThat(eval(original)).isEqualTo(2L);
     assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(actual);
     assertThat(admin.hget(ascii(original.keys()[6]), ascii("admissionAt")))
@@ -784,7 +787,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     assertThat(eval(new ScriptCase(original.keys(), fresh))).isEqualTo(4L);
     execution.put("state", ascii("CLOSED"));
     assertHash(original.keys()[6], execution);
-    assertThat(eval(late)).isEqualTo(4L);
+    assertThat(eval(late)).isEqualTo(7L);
     assertHash(original.keys()[6], execution);
     assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(original.arguments()[8]);
   }
@@ -795,9 +798,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     eval(action(original, "CLOSE")); // Lose the successful reply deliberately.
     assertThat(admin.hget(ascii(original.keys()[6]), ascii("state")))
         .containsExactly(ascii("CLOSED"));
-    assertThat(eval(action(original, "CLOSE"))).isEqualTo(4L);
-    assertThat(eval(action(original, "INSTALL"))).isEqualTo(4L);
-    assertThat(eval(original)).isEqualTo(4L);
+    assertThat(eval(action(original, "CLOSE"))).isEqualTo(7L);
+    assertThat(eval(action(original, "INSTALL"))).isEqualTo(7L);
+    assertThat(eval(original)).isEqualTo(7L);
     assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(original.arguments()[8]);
     assertThat(admin.hlen(ascii(original.keys()[6]))).isEqualTo(3L);
   }
@@ -832,17 +835,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     long finalResult = finalized.get(5, java.util.concurrent.TimeUnit.SECONDS);
     long closeResult = closed.get(5, java.util.concurrent.TimeUnit.SECONDS);
     if (finalResult == 1L) {
-      assertThat(closeResult).isEqualTo(2L);
+      assertThat(closeResult).isEqualTo(9L);
       assertThat(admin.hget(ascii(original.keys()[6]), ascii("state")))
           .containsExactly(ascii("COMMITTED"));
       assertThat(eval(original)).isEqualTo(2L);
       assertThat(admin.hget(ascii(original.keys()[6]), ascii("sessionSha1")))
           .containsExactly(ascii(HexFormatHolder.sha1(admin.get(ascii(original.keys()[0])))));
     } else {
-      assertThat(finalResult).isEqualTo(4L);
+      assertThat(finalResult).isEqualTo(7L);
       assertThat(closeResult).isEqualTo(4L);
       assertThat(admin.get(ascii(original.keys()[0]))).containsExactly(original.arguments()[8]);
-      assertThat(eval(original)).isEqualTo(4L);
+      assertThat(eval(original)).isEqualTo(7L);
     }
   }
 

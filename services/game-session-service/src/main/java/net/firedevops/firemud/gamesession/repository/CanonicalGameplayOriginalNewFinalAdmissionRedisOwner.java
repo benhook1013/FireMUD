@@ -42,6 +42,14 @@ import tools.jackson.databind.json.JsonMapper;
  * issuer flow.
  */
 final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
+  static final long CAPACITY_EXECUTION_AUTHORIZED = 3L;
+  static final long CAPACITY_EXECUTION_CLOSED = 4L;
+  static final long CAPACITY_EXECUTION_FENCED_INDETERMINATE = 5L;
+  static final long CAPACITY_EXECUTION_AUTHORIZED_OBSERVED = 6L;
+  static final long CAPACITY_EXECUTION_CLOSED_OBSERVED = 7L;
+  static final long CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED = 8L;
+  static final long CAPACITY_EXECUTION_COMMITTED_OBSERVED = 9L;
+
   private static final String PRINCIPAL = "gamesession_coord_app";
   private static final int MAX_SCRIPT_BYTES = 48 * 1024;
   private static final int MAX_BARRIER_JSON_BYTES = 16 * 1024;
@@ -114,6 +122,22 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
               "CAPACITY_EXECUTION_FENCED_INDETERMINATE",
               RedisScriptDescriptor.OutcomeCategory.SUCCESS,
               RedisScriptDescriptor.MutationEffect.MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_AUTHORIZED_OBSERVED",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_CLOSED_OBSERVED",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
+          outcome(
+              "CAPACITY_EXECUTION_COMMITTED_OBSERVED",
+              RedisScriptDescriptor.OutcomeCategory.REPLAY,
+              RedisScriptDescriptor.MutationEffect.NON_MUTATING),
           outcome(
               "CURRENT_PHYSICAL_STATE_REFUSED",
               RedisScriptDescriptor.OutcomeCategory.STALE,
@@ -222,6 +246,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     CanonicalGameplayOriginalNewAuthenticatedSession.Finalized finalized = null;
     try {
       CanonicalGameplayOriginalNewCandidate candidate = requireSource(source);
+      requireExecutionBinding(source, execution);
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment =
           tenantTags.assignmentForTransition(candidate.transition().transitionId());
       requireAssignment(assignment, candidate);
@@ -345,10 +370,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution) {
     requireNoAmbientTransaction();
     var candidate = requireSource(source);
-    if (!candidate.transition().transitionId().equals(execution.transitionId())
-        || !source.candidateDigest().equals(execution.candidateDigest())
-        || execution.selectedOwnerFence()
-            != source.regionAcknowledgement().executorFence().longValueExact()) throw unavailable();
+    requireExecutionBinding(source, execution);
     var assignment = tenantTags.assignmentForTransition(execution.transitionId());
     requireAssignment(assignment, candidate);
     String accountKey =
@@ -365,11 +387,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     CanonicalGameplayOriginalNewAuthenticatedSession.Finalized finalized = null;
     try {
       finalized = CanonicalGameplayOriginalNewAuthenticatedSession.parseFinalized(bytes, clock);
-      if (!candidate.equals(finalized.candidate())
-          || !execution
-              .digest()
-              .equals(JSON.readTree(bytes).get("capacityExecutionDigest").textValue()))
-        throw unavailable();
+      if (!candidate.equals(finalized.candidate())) throw unavailable();
       Readback readback = new Readback(source, finalized, execution);
       finalized = null;
       return readback;
@@ -397,12 +415,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
-    if (!candidate.bindingDecisionId().equals(execution.transitionId())
-        || !candidate.bindingIdentity().tenantId().equals(execution.request().identity().tenantId())
-        || !execution
-            .candidateDigest()
-            .equals(CanonicalGameplayIssuerMemberV2Codec.sha256(candidate.canonicalBytes())))
-      throw unavailable();
+    requireExecutionBinding(candidate, execution);
     String accountKey =
         ACCOUNT_PREFIX
             + "{"
@@ -441,6 +454,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       long absoluteDeadlineMillis) {
     requireNoAmbientTransaction();
     requireAssignment(assignment, candidate);
+    requireExecutionBinding(candidate, execution);
     String accountKey =
         ACCOUNT_PREFIX
             + "{"
@@ -483,6 +497,7 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
     requireNoAmbientTransaction();
     if (!"INSTALL".equals(action)) throw unavailable();
     var candidate = requireSource(source);
+    requireExecutionBinding(source, execution);
     var assignment = tenantTags.assignmentForTransition(candidate.transition().transitionId());
     requireAssignment(assignment, candidate);
     Keys keys = requireKeys(candidate, assignment, accountOpen.key(), execution);
@@ -511,6 +526,25 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(script);
       wipe(bytes);
     }
+  }
+
+  static void requireExecutionBinding(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      OriginalNewCapacityExecution execution) {
+    requireExecutionBinding(source.candidate(), execution);
+    if (!source.candidateDigest().equals(execution.candidateDigest())
+        || execution.selectedOwnerFence()
+            != source.regionAcknowledgement().executorFence().longValueExact()) throw unavailable();
+  }
+
+  private static void requireExecutionBinding(
+      CanonicalGameplayOriginalNewCandidate candidate, OriginalNewCapacityExecution execution) {
+    if (!candidate.bindingDecisionId().equals(execution.transitionId())
+        || !candidate.bindingIdentity().tenantId().equals(execution.request().identity().tenantId())
+        || !execution
+            .candidateDigest()
+            .equals(CanonicalGameplayIssuerMemberV2Codec.sha256(candidate.canonicalBytes())))
+      throw unavailable();
   }
 
   private CanonicalGameplayOriginalNewCandidate requireSource(
@@ -1180,6 +1214,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       this.session = Objects.requireNonNull(session, "finalized session");
       byte[] exact = session.canonicalBytes();
       try {
+        if (!execution
+            .digest()
+            .equals(JSON.readTree(exact).get("capacityExecutionDigest").textValue()))
+          throw unavailable();
         this.finalSessionSha256 = digest("SHA-256", exact);
       } finally {
         wipe(exact);

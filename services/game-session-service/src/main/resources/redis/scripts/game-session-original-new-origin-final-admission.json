@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.original-new-origin-final-admission.v1",
   "resourcePath": "redis/lua/game-session-original-new-final-admission.lua",
-  "sha256": "848aa9569db14d28f7d1f83cc591d88fe70e1115f892cb4af6e9955a24e6b603",
+  "sha256": "a1148faad4fbc81c0be9382dd385dfcf188d3430677f724f8e1ceaaace5aaa9b",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -141,6 +141,26 @@
       "code": "CAPACITY_EXECUTION_FENCED_INDETERMINATE",
       "category": "SUCCESS",
       "effect": "MUTATING"
+    },
+    {
+      "code": "CAPACITY_EXECUTION_AUTHORIZED_OBSERVED",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CAPACITY_EXECUTION_CLOSED_OBSERVED",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CAPACITY_EXECUTION_FENCED_INDETERMINATE_OBSERVED",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CAPACITY_EXECUTION_COMMITTED_OBSERVED",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
     },
     {
       "code": "CURRENT_PHYSICAL_STATE_REFUSED",
