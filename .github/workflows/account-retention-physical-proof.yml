@@ -1,0 +1,255 @@
+name: Temporary Account retention physical proof
+run-name: Account retention physical proof ${{ github.run_id }}
+'on':
+  push:
+    branches:
+    - codex/proof-account-retention-20261112
+permissions:
+  contents: read
+concurrency:
+  group: account-retention-physical-proof
+  cancel-in-progress: false
+jobs:
+  capacity-proof:
+    if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/codex/proof-account-retention-20261112'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOURCE_SHA: 157c238aa4f429a66702e8d4d57a4eb5064331c6
+      SOURCE_TREE: 3d1980dad349ca4e70dd19b5c29d6809e03f8d5d
+      SOURCE_FILES: '[{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferRepository.java","postimage_blob":"1a22c2c4782b0980de43a85ecb1fbce6801facc9","postimage_sha256":"bd15a70403853c21fdc29dc1c27e9b675e488acb8d4a8002bcca76f8ba45db4e"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest.java","postimage_blob":"1fd780c820d3718a4cd2921f4d7ca1be306dd7f1","postimage_sha256":"05bab4ca07769de64bbf679ee72cd3b8e346f7864f1a653ff68d9284726ac433"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/service/InitialGameplayLoginContextRedisIntegrationTest.java","postimage_blob":"0c6aea2996be5419b29f0b57fbbb1e1e153afa07","postimage_sha256":"0f230a83a1b12982867b2d652f4e9ee9f3716a9d8dd87b88d2f976048fa3c707"},{"path":"services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/service/session/AccountTenantCreationCompletionPostgresIntegrationTest.java","postimage_blob":"c350259423106fc8ea102cae1d63bc2818c0de01","postimage_sha256":"3a76f801f7514bb08f501068148c35096cd7f7664221951a33acfabcd5b1c416"},{"path":"services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/repository/AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest.java","postimage_blob":"514890dfe6279185258059506ceb1207565a37fc","postimage_sha256":"5177b59e6a66b43f3153c31f29a0e4f7e6584e9d3db2cb88fc12523a7074a9a2"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/repository/AccountTenantCapacityRepository.java","postimage_blob":"ca9aa893fcb78484d1790c23ebcbc5d43f86fc29","postimage_sha256":"d1a9cda4ae840bf8409d40c4964647dfa261461fee6c016900cdb820415b7b42"},{"path":"services/account-service/src/main/resources/db/migration/V1040__account_tenant_capacity_owner.sql","postimage_blob":"ceec667db84ca04393dd2f32a73eaecee3cd012e","postimage_sha256":"b4f3d08e6272eb1757331fcfed187ab3035fdbc900274506b1d710ac5daf543e"},{"path":"services/account-service/src/main/resources/db/migration/V1046__account_capacity_attempt_write_freshness.sql","postimage_blob":"0b25acddace172619fbb32740c9fd08b23e05e54","postimage_sha256":"707e796b93a40e0165dd15b824e2e2b481ccfdb172618a7f67fd5e80a4525340"}]'
+      TESTCONTAINERS_CHECKS_DISABLE: 'false'
+    steps:
+    - name: Set isolated proof directory
+      shell: bash
+      run: printf 'PROOF_DIR=%s/account-retention-physical-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+    - name: Harden runner
+      uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43
+      with:
+        egress-policy: audit
+    - name: Check out immutable repaired source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: 157c238aa4f429a66702e8d4d57a4eb5064331c6
+        persist-credentials: false
+    - name: Set up repository-pinned Python
+      uses: ./.github/actions/setup-python
+      with:
+        requirements: none
+    - name: Set up Java 25
+      uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+      with:
+        distribution: temurin
+        java-version: '25'
+    - name: Set up Gradle without caching or scan publication
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+      with:
+        cache-disabled: true
+        build-scan-publish: false
+    - name: Verify exact source and Docker; prepare isolated proof
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir "$PROOF_DIR"
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        test "$(git rev-parse 'HEAD^{tree}')" = "$SOURCE_TREE"
+        test -z "$(git status --porcelain --untracked-files=no)"
+        test ! -d services/account-service/build/test-results/integrationTest
+        python3 - <<'VERIFY'
+        import os,json,hashlib,pathlib,subprocess
+        for f in json.loads(os.environ['SOURCE_FILES']):
+            for args in [('rev-parse','HEAD:'+f['path']),('hash-object',f['path'])]:
+                assert subprocess.check_output(['git',*args],text=True).strip()==f['postimage_blob']
+            assert hashlib.sha256(pathlib.Path(f['path']).read_bytes()).hexdigest()==f['postimage_sha256']
+        VERIFY
+        cat > "$RUNNER_TEMP/account-retention-physical.init.gradle" <<'GRADLE'
+        import org.gradle.api.tasks.testing.Test
+        import groovy.json.JsonOutput
+
+        def workspace = System.getenv('GITHUB_WORKSPACE')
+        if (!workspace) {
+            throw new GradleException('Proof requires GITHUB_WORKSPACE identity')
+        }
+        def proofRoot = new File(workspace).canonicalFile
+        def isProofBuild = {
+            gradle.rootProject.rootDir.canonicalFile == proofRoot
+        }
+
+        gradle.projectsEvaluated {
+            if (!isProofBuild()) { return }
+            def service = gradle.rootProject.findProject(':account-service')
+            if (service == null) {
+                throw new GradleException('Verified proof build lacks :account-service')
+            }
+            def target = service.tasks.named('integrationTest', Test).get()
+            target.filter.failOnNoMatchingTests = true
+            target.outputs.upToDateWhen { false }
+            target.outputs.cacheIf { false }
+            target.maxParallelForks = 1
+            target.systemProperty 'junit.jupiter.execution.parallel.enabled', 'false'
+            def event = { descriptor, phase ->
+                def method = descriptor.name.replaceFirst(/\(\)$/, '')
+                def entry = [classname: descriptor.className, method: method, phase: phase,
+                    nonce: System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT')]
+                new File(System.getenv('PROOF_DIR'), 'test-events.jsonl').append(JsonOutput.toJson(entry) + '\n')
+            }
+            target.beforeTest { descriptor -> event(descriptor, 'started') }
+            target.afterTest { descriptor, result -> event(descriptor, result.resultType.toString()) }
+            target.doFirst {
+                new File(System.getenv('PROOF_DIR'), 'integration-started.txt').text = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\n'
+            }
+            target.doLast {
+                new File(System.getenv('PROOF_DIR'), 'integration-completed.txt').text = System.getenv('GITHUB_RUN_ID') + ':' + System.getenv('GITHUB_RUN_ATTEMPT') + '\n'
+            }
+        }
+        gradle.taskGraph.whenReady { graph ->
+            if (!isProofBuild()) { return }
+            if (gradle.rootProject.findProject(':account-service') == null) {
+                throw new GradleException('Verified proof build lacks :account-service')
+            }
+            def tests = graph.allTasks.findAll { it instanceof Test }
+            if (tests.collect { it.path } != [':account-service:integrationTest']) {
+                throw new GradleException('Proof requires exactly one integration Test task: ' + tests.collect { it.path })
+            }
+        }
+        GRADLE
+        cat > "$RUNNER_TEMP/collect-capacity-proof.py" <<'PYTHON'
+        import collections, hashlib, json, os, pathlib, re, subprocess, sys
+        import xml.etree.ElementTree as ET
+        out = pathlib.Path(os.environ['PROOF_DIR'])
+        out.mkdir(parents=True, exist_ok=True)
+        expected = [['net.firedevops.firemud.accountservice.service.session.AccountTenantCreationCompletionPostgresIntegrationTest', 'firstRecoveryAfterDeadlineFinalizesAnExactPositiveOnce'], ['net.firedevops.firemud.accountservice.service.session.AccountTenantCreationCompletionPostgresIntegrationTest', 'firstLateNegativeMalformedUnavailableAndOverBudgetReadsQuarantineWithoutReleasing'], ['integration.net.firedevops.firemud.accountservice.repository.AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest', 'freshAndPopulatedForwardMigrationPreserveRowsAndGuardsWhileBoundingObservations'], ['integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityWriteFreshnessPostgresIntegrationTest', 'freshAndPopulatedUpgradePreservesPriorRowsHistoryAndGuardDefinitions'], ['integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityWriteFreshnessPostgresIntegrationTest', 'expiredOriginalAndRearmWritesRollbackTheirUsageAndHistoryAtCommit'], ['integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityWriteFreshnessPostgresIntegrationTest', 'expiryAfterInsertionStillRollsBackTheHoldUsingCommitTimeRatherThanTransactionStart']]
+        issues = []
+        records = []
+        originals = []
+        compact = ET.Element('testsuite', name='account-retention-physical-proof')
+        for path in sorted(pathlib.Path('services/account-service/build/test-results/integrationTest').glob('*.xml')):
+            raw = path.read_bytes()
+            originals.append({'file': path.name, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)})
+            try:
+                tree = ET.fromstring(raw)
+            except ET.ParseError:
+                issues.append('invalid JUnit XML: ' + path.name)
+                continue
+            for case in tree.iter('testcase'):
+                name = case.get('name', '')
+                method = name[:-2] if name.endswith('()') else name
+                record = {'classname': case.get('classname'), 'method': method,
+                          'skipped': case.find('skipped') is not None,
+                          'failed': case.find('failure') is not None or case.find('error') is not None,
+                          'seconds': case.get('time')}
+                records.append(record)
+                copied = ET.SubElement(compact, 'testcase', **case.attrib)
+                for child in case:
+                    if child.tag in ('failure', 'error', 'skipped'):
+                        leaf = ET.SubElement(copied, child.tag, **{k: v[:4096] for k, v in child.attrib.items()})
+                        leaf.text = (child.text or '')[:65536]
+        if collections.Counter((r['classname'],r['method']) for r in records) != collections.Counter(tuple(p) for p in expected):
+            issues.append('expected exactly six named class/method pairs once each, no extras')
+        if any(r['skipped'] or r['failed'] for r in records):
+            issues.append('skipped, failed, aborted, or errored testcase')
+        nonce = os.environ['GITHUB_RUN_ID'] + ':' + os.environ['GITHUB_RUN_ATTEMPT']
+        for marker in ('integration-started.txt', 'integration-completed.txt'):
+            if not (out / marker).is_file() or (out / marker).read_text().strip() != nonce:
+                issues.append('missing or stale fresh task marker: ' + marker)
+        events_path = out / 'test-events.jsonl'
+        events = [json.loads(line) for line in events_path.read_text().splitlines()] if events_path.exists() else []
+        for phase in ('started', 'SUCCESS'):
+            actual = [(e['classname'], e['method']) for e in events if e['phase'] == phase and e['nonce'] == nonce]
+            if collections.Counter(actual) != collections.Counter(tuple(p) for p in expected):
+                issues.append('expected exactly six fresh test events: ' + phase)
+        if len(events) != 12:
+            issues.append('extra or missing lifecycle events')
+        status_file = out / 'gradle-exit.txt'
+        if not status_file.is_file() or status_file.read_text().strip() != '0':
+            issues.append('Gradle did not complete successfully')
+        log_path = pathlib.Path(os.environ['RUNNER_TEMP']) / 'account-retention-physical-gradle.log'
+        log = log_path.read_bytes() if log_path.exists() else b''
+        text = log.decode('utf-8', errors='replace')
+        if re.search(r'^> Task :account-service:integrationTest (?:FROM-CACHE|UP-TO-DATE|SKIPPED|NO-SOURCE)', text, re.M):
+            issues.append('integration task was cached or skipped')
+        (out / 'gradle-tail.txt').write_bytes(log[-262144:])
+        sha = lambda value: hashlib.sha256(value).hexdigest()
+        git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+        identity = {'head': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'), 'files': []}
+        for key, env in [('head','SOURCE_SHA'),('tree','SOURCE_TREE')]:
+            if identity[key] != os.environ[env]: issues.append('source identity mismatch: ' + key)
+        for item in json.loads(os.environ['SOURCE_FILES']):
+            path = item['path']
+            observed = {'path':path, 'blob':git('rev-parse','HEAD:'+path), 'file_blob':git('hash-object',path), 'sha256':sha(pathlib.Path(path).read_bytes())}
+            identity['files'].append(observed)
+            if observed['blob'] != item['postimage_blob'] or observed['file_blob'] != item['postimage_blob'] or observed['sha256'] != item['postimage_sha256']:
+                issues.append('source file mismatch: ' + path)
+        if git('status', '--porcelain', '--untracked-files=no'):
+            issues.append('tracked source files changed during proof')
+        compact.set('tests', str(len(records)))
+        compact.set('failures', str(sum(r['failed'] for r in records)))
+        compact.set('skipped', str(sum(r['skipped'] for r in records)))
+        ET.ElementTree(compact).write(out / 'junit-compact.xml', encoding='utf-8', xml_declaration=True)
+        summary = {'source': identity, 'requested_pairs': expected, 'cases': records,
+                   'original_junit': originals, 'gradle_log_sha256': sha(log),
+                   'gradle_log_bytes': len(log), 'log_tail_limit': 262144,
+                   'junit_system_output_omitted': True, 'failure_text_limit': 65536,
+                   'workflow_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],
+                   'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'issues': issues,
+                   'passed': not issues}
+        (out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+        files = [p for p in out.iterdir() if p.is_file()]
+        if sum(p.stat().st_size for p in files) > 2 * 1024 * 1024:
+            raise SystemExit('compact proof exceeds 2 MiB; refusing oversized artifact')
+        (out / 'sha256sums.txt').write_text(''.join(sha(p.read_bytes()) + '  ' + p.name + '\n' for p in sorted(files)))
+        print(json.dumps(summary, indent=2))
+        raise SystemExit(1 if issues else 0)
+        PYTHON
+        java -version 2> "$PROOF_DIR/java-version.txt"
+        docker version --format '{{.Server.Version}}' > "$PROOF_DIR/docker-version.txt"
+        docker info --format '{{.OSType}}' > "$PROOF_DIR/docker-os.txt"
+        test "$(cat "$PROOF_DIR/docker-os.txt")" = linux
+    - name: Run only six fresh physical methods
+      shell: bash
+      run: |
+        set -euo pipefail
+        set +e
+        timeout --signal=TERM --kill-after=30s 15m \
+          bash dev-tools/validation/run-gradle-with-dependency-recovery.sh --runner ./gradlew -- \
+          --no-daemon --no-build-cache --no-configuration-cache --no-scan --rerun-tasks \
+          --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \
+          --console=plain -I "$RUNNER_TEMP/account-retention-physical.init.gradle" \
+          :account-service:integrationTest -PfullCheck \
+          --tests 'net.firedevops.firemud.accountservice.service.session.AccountTenantCreationCompletionPostgresIntegrationTest.firstRecoveryAfterDeadlineFinalizesAnExactPositiveOnce' \
+          --tests 'net.firedevops.firemud.accountservice.service.session.AccountTenantCreationCompletionPostgresIntegrationTest.firstLateNegativeMalformedUnavailableAndOverBudgetReadsQuarantineWithoutReleasing' \
+          --tests 'integration.net.firedevops.firemud.accountservice.repository.AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest.freshAndPopulatedForwardMigrationPreserveRowsAndGuardsWhileBoundingObservations' \
+          --tests 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityWriteFreshnessPostgresIntegrationTest.freshAndPopulatedUpgradePreservesPriorRowsHistoryAndGuardDefinitions' \
+          --tests 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityWriteFreshnessPostgresIntegrationTest.expiredOriginalAndRearmWritesRollbackTheirUsageAndHistoryAtCommit' \
+          --tests 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantCapacityWriteFreshnessPostgresIntegrationTest.expiryAfterInsertionStillRollsBackTheHoldUsingCommitTimeRatherThanTransactionStart' > "$RUNNER_TEMP/account-retention-physical-gradle.log" 2>&1
+        status=$?
+        set -e
+        printf '%s\n' "$status" > "$PROOF_DIR/gradle-exit.txt"
+        # Keep CI readable; the collector always retains a bounded tail and validates results.
+        tail -n 60 "$RUNNER_TEMP/account-retention-physical-gradle.log"
+        exit "$status"
+    - name: Verify exactly six started and passed cases
+      if: ${{ always() }}
+      shell: bash
+      run: python3 "$RUNNER_TEMP/collect-capacity-proof.py"
+    - name: Enforce compact artifact size
+      id: bound
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        python3 - <<'PYBOUND'
+        import os, pathlib
+        p=pathlib.Path(os.environ['PROOF_DIR'])
+        files=list(p.glob('*'))
+        assert files and all(f.is_file() and not f.is_symlink() for f in files), 'missing or unsupported proof files'
+        assert sum(f.stat().st_size for f in files) <= 2*1024*1024, 'proof exceeds 2 MiB'
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as out: out.write('ok=true\n')
+        PYBOUND
+    - name: Upload compact physical proof
+      if: ${{ always() && steps.bound.outputs.ok == 'true' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: account-retention-physical-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/account-retention-physical-proof/
+        if-no-files-found: error
+        retention-days: 7
