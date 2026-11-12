@@ -128,7 +128,7 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
   }
 
   @Test
-  void rejectsLegacyCredentialBearingResponseAndWrongCanonicalHashOrBinding() throws Exception {
+  void rejectsLegacyCredentialBearingResponseMalformedHashOrWrongTarget() throws Exception {
     var request = request(ACCOUNT, REQUEST);
     var value = capture(target(), facts(), sources(), NOW);
     var response = RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, value);
@@ -168,18 +168,35 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
                 .setCanonicalEvidence(
                     0,
                     ByteString.copyFromUtf8(
-                        canonical.replace(value.verifiedConnectScopeTokenHash(), "sha256:" + HASH)))
-                .build(),
-            response.toBuilder()
-                .setCanonicalEvidence(
-                    0,
-                    ByteString.copyFromUtf8(
                         canonical.replace(value.verifiedConnectScopeTokenHash(), SCOPE)))
                 .build())) {
       assertThatThrownBy(
               () -> RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
+  }
+
+  @Test
+  void rejectsValidCanonicalEvidenceForDifferentScope() {
+    var request = request(ACCOUNT, REQUEST);
+    var staleRequest =
+        new RuntimePlayerAdmissionEntitlementGrpcCodec.Request(request.target(), "stale-scope");
+    var exact = capture(target(), facts(), sources(), NOW);
+    var stale = capture(target(), facts(), sources(), NOW, staleRequest.connectScopeId());
+    var canonical = stale.canonicalBytes();
+    assertThat(RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(canonical))
+        .isEqualTo(stale);
+    assertThat(stale.verifiedConnectScopeTokenHash())
+        .isNotEqualTo(exact.verifiedConnectScopeTokenHash());
+    var response =
+        RuntimePlayerAdmissionEntitlementGrpcCodec.toResponse(request, exact).toBuilder()
+            .setCanonicalEvidence(0, ByteString.copyFrom(canonical))
+            .build();
+    assertThat(RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(staleRequest, response))
+        .isEqualTo(stale);
+    assertThatThrownBy(
+            () -> RuntimePlayerAdmissionEntitlementGrpcCodec.requireResponse(request, response))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -206,10 +223,19 @@ class RuntimePlayerAdmissionEntitlementGrpcCodecTest {
       Map<String, Object> facts,
       Map<String, Object> source,
       Instant at) {
+    return capture(target, facts, source, at, SCOPE);
+  }
+
+  private static RuntimePlayerAdmissionEntitlementEvidence capture(
+      Map<String, Object> target,
+      Map<String, Object> facts,
+      Map<String, Object> source,
+      Instant at,
+      String scope) {
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
         REQUEST,
         PEER,
-        RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(SCOPE),
+        RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash(scope),
         membership(),
         target,
         facts,
