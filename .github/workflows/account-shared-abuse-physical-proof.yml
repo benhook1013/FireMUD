@@ -1,0 +1,74 @@
+name: Account shared abuse isolated physical proof
+'on':
+  push:
+    branches:
+      - dot/proof-account-shared-abuse-20261112
+permissions:
+  contents: read
+concurrency:
+  group: account-shared-abuse-physical-proof
+  cancel-in-progress: false
+jobs:
+  prove:
+    if: github.repository == 'benhook1013/FireMUD' && github.event_name == 'push' && github.ref == 'refs/heads/dot/proof-account-shared-abuse-20261112'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      SOURCE_SHA: 2d587ac1571d82d36c5035a95f23f0a89ed4e4be
+      SOURCE_DIRECTORY: ${{ github.workspace }}/source
+      TESTCONTAINERS_CHECKS_DISABLE: 'false'
+      TESTCONTAINERS_REUSE_ENABLE: 'false'
+    steps:
+      - name: Set isolated proof and Gradle directories
+        shell: bash
+        run: |
+          printf 'PROOF_DIR=%s/account-shared-abuse-proof\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'GRADLE_USER_HOME=%s/account-shared-abuse-gradle\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Check out exact proof harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: harness
+          persist-credentials: false
+      - name: Check out exact isolated source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 2d587ac1571d82d36c5035a95f23f0a89ed4e4be
+          path: source
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Set up Java 25
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Set up Gradle without cache or scan publication
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+        with:
+          cache-disabled: true
+          build-scan-publish: false
+      - name: Verify immutable source, exact preimages and fresh build environment
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py verify
+      - name: Qualify seven actual shared-owner Redis methods first
+        timeout-minutes: 21
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py run shared-owner
+      - name: Qualify real password and OTP issuance with distinct Cache and Coordination
+        timeout-minutes: 6
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py run positive-owner
+      - name: Tear down only this run's labelled containers
+        if: ${{ always() }}
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py cleanup
+      - name: Require exact event and JUnit sets, generated-source evidence and clean teardown
+        if: ${{ always() }}
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py collect
+      - name: Package within the fixed artifact budget
+        if: ${{ always() }}
+        run: python3 harness/.github/proofs/account-shared-abuse/proof.py package
+      - name: Upload bounded proof including failures
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: account-shared-abuse-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/account-shared-abuse-proof-upload
+          if-no-files-found: error
+          retention-days: 7

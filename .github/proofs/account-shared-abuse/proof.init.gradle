@@ -1,0 +1,50 @@
+import groovy.json.JsonOutput
+import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.compile.JavaCompile
+
+def out = new File(System.getenv('PROOF_DIR'))
+def stage = System.getenv('PROOF_STAGE')
+def append = { String name, Object value ->
+    new File(out, name).append(JsonOutput.toJson(value) + '\n', 'UTF-8')
+}
+gradle.projectsEvaluated {
+    gradle.rootProject.allprojects { project ->
+        project.tasks.withType(Test).configureEach {
+            maxHeapSize = '1024m'
+            maxParallelForks = 1
+            systemProperty 'junit.jupiter.execution.parallel.enabled', 'false'
+            systemProperty 'junit.jupiter.execution.timeout.default', '180 s'
+        }
+        project.tasks.withType(JavaExec).configureEach { maxHeapSize = '1024m' }
+        project.tasks.withType(JavaCompile).configureEach { options.incremental = false }
+    }
+    def target = gradle.rootProject.project(':account-service').tasks.named('integrationTest', Test).get()
+    target.filter.failOnNoMatchingTests = true
+    target.outputs.upToDateWhen { false }
+    target.outputs.cacheIf { false }
+    target.doFirst {
+        def agents = target.classpath.files.findAll { it.name.startsWith('byte-buddy-agent-') && it.name.endsWith('.jar') }
+        if (agents.size() != 1) throw new GradleException('Exactly one resolved startup agent required')
+        target.jvmArgs('-javaagent:' + agents.first().absolutePath)
+        append(stage + '-tasks.jsonl', [event:'test-task-start', path:target.path])
+        new File(out, stage + '-classpath.txt').text = target.classpath.files.collect { it.canonicalPath }.sort().join('\n') + '\n'
+    }
+    target.beforeTest { descriptor ->
+        append(stage + '-events.jsonl', [event:'start', className:descriptor.className, name:descriptor.name])
+    }
+    target.afterTest { descriptor, result ->
+        append(stage + '-events.jsonl', [event:'finish', className:descriptor.className, name:descriptor.name, result:result.resultType.toString()])
+    }
+    target.afterSuite { descriptor, result ->
+        if (descriptor.parent == null) append(stage + '-events.jsonl', [event:'suite', total:result.testCount, passed:result.successfulTestCount, failed:result.failedTestCount, skipped:result.skippedTestCount])
+    }
+    target.doLast { append(stage + '-tasks.jsonl', [event:'test-task-finish', path:target.path]) }
+}
+gradle.taskGraph.whenReady { graph ->
+    def tests = graph.allTasks.findAll { it instanceof Test }.collect { it.path }
+    if (tests != [':account-service:integrationTest']) throw new GradleException('Unexpected Test tasks: ' + tests)
+}
+gradle.taskGraph.afterTask { task, state ->
+    append(stage + '-tasks.jsonl', [event:'task', path:task.path, outcome:state.failure ? 'FAILED' : state.skipped ? state.skipMessage : 'EXECUTED'])
+}
