@@ -663,17 +663,18 @@ final class CanonicalGameplayRegionLeaseOwner {
                 pending.grant().ownerInstanceId(),
                 pending.grant().tokenCorrelation(),
                 deadline);
+    var transferSource = readTerminalTransferSource(pending, deadline);
     if (clock.millis() >= deadline) throw unavailable();
     return verifyInstallation(
         pending.transitionId(),
         pending.worldRequest(),
-        pending.evidence(),
+        transferSource == null ? pending.evidence() : null,
         pending.source(),
         pending.incarnation(),
         pending.preparation(),
         pending.grant(),
         installed,
-        pending.transferSource(),
+        transferSource,
         pending.transferOwner(),
         deadline,
         worldDeadline);
