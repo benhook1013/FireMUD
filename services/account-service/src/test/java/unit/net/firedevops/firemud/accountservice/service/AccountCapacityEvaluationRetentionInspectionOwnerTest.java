@@ -67,6 +67,8 @@ class AccountCapacityEvaluationRetentionInspectionOwnerTest {
     assertThat(observation.sampleTruncated()).isTrue();
     assertThat(observation.governanceBlocker())
         .isEqualTo(Blocker.POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE);
+    assertThat(observation.scheduleVersion()).isEmpty();
+    assertThat(observation.candidates().rows()).isZero();
     assertThat(observation.blockers().get(Blocker.RETAINED_RESERVATION_SCOPE).evidenceBytes())
         .isEqualTo(262144);
     assertThat(observation.blockers().get(Blocker.RETAINED_RESERVATION_SCOPE).oldestEvaluatedAt())
@@ -121,6 +123,7 @@ class AccountCapacityEvaluationRetentionInspectionOwnerTest {
 
   private static Record row(Instant evaluated, Instant expires, boolean referenced, long bytes) {
     Record row = mock(Record.class);
+    when(row.get("evaluation_identity", String.class)).thenReturn("sha256:" + "a".repeat(64));
     when(row.get("evaluated_at", OffsetDateTime.class)).thenReturn(at(evaluated));
     when(row.get("expires_at", OffsetDateTime.class)).thenReturn(at(expires));
     when(row.get("scope_referenced", Boolean.class)).thenReturn(referenced);

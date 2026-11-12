@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jspecify.annotations.Nullable;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -32,22 +33,33 @@ public final class AccountCapacityEvaluationRetentionInspectionOwner {
   public enum Blocker {
     LIVE_EVALUATION,
     RETAINED_RESERVATION_SCOPE,
-    POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE
+    POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE,
+    HELD,
+    ABOVE_SAFE_WATERMARK,
+    RETENTION_WINDOW_OPEN
   }
 
   /**
    * Sample counts/bytes are lower bounds, never whole-table cardinality or deletion eligibility.
    */
-  public record BlockedWindow(int rows, long evidenceBytes, Optional<Instant> oldestEvaluatedAt) {
-    public BlockedWindow {
+  public record SampleWindow(int rows, long evidenceBytes, Optional<Instant> oldestEvaluatedAt) {
+    public SampleWindow {
       Objects.requireNonNull(oldestEvaluatedAt);
+    }
+
+    private SampleWindow include(Instant evaluated, long bytes) {
+      return new SampleWindow(
+          rows + 1,
+          Math.addExact(evidenceBytes, bytes),
+          oldestEvaluatedAt.or(() -> Optional.of(evaluated)));
     }
   }
 
   /**
    * Physical relation bytes include indexes and TOAST; the catalog row estimate may be unavailable
    * or stale. Only the oldest bounded sample is inspected, without reading evidence payload bytes
-   * or exposing tenant, caller or evaluation identities. There is no approved cleanup-lag horizon.
+   * or exposing tenant, caller or evaluation identities. Candidate counts describe this sample
+   * under the supplied policy inputs. They authorize no mutation.
    */
   public record Observation(
       Instant observedAt,
@@ -55,13 +67,16 @@ public final class AccountCapacityEvaluationRetentionInspectionOwner {
       OptionalLong estimatedTableRows,
       int sampledRows,
       boolean sampleTruncated,
-      Blocker governanceBlocker,
-      Map<Blocker, BlockedWindow> blockers) {
+      @Nullable Blocker governanceBlocker,
+      Map<Blocker, SampleWindow> blockers,
+      Optional<String> scheduleVersion,
+      SampleWindow candidates) {
     public Observation {
       Objects.requireNonNull(observedAt);
       Objects.requireNonNull(estimatedTableRows);
-      Objects.requireNonNull(governanceBlocker);
       blockers = Map.copyOf(blockers);
+      Objects.requireNonNull(scheduleVersion);
+      Objects.requireNonNull(candidates);
     }
   }
 
@@ -80,11 +95,22 @@ public final class AccountCapacityEvaluationRetentionInspectionOwner {
 
   /** One bounded consistent observation, not a sweep or a claim that the sample is erasable. */
   public Observation observe(int sampleRows) {
-    requireBound(sampleRows);
-    return Objects.requireNonNull(reads.execute(status -> readObservation(sampleRows)));
+    return observe(sampleRows, null, null);
   }
 
-  private Observation readObservation(int sampleRows) {
+  Observation observe(
+      int sampleRows,
+      AccountCapacityEvaluationRetentionPolicy.@Nullable Schedule schedule,
+      AccountCapacityEvaluationRetentionPolicy.@Nullable Safety safety) {
+    requireBound(sampleRows);
+    return Objects.requireNonNull(
+        reads.execute(status -> readObservation(sampleRows, schedule, safety)));
+  }
+
+  private Observation readObservation(
+      int sampleRows,
+      AccountCapacityEvaluationRetentionPolicy.@Nullable Schedule schedule,
+      AccountCapacityEvaluationRetentionPolicy.@Nullable Safety safety) {
     Record table =
         Objects.requireNonNull(
             dsl.fetchOne(
@@ -106,16 +132,18 @@ public final class AccountCapacityEvaluationRetentionInspectionOwner {
                 + "octet_length(canonical_evidence)::bigint AS evidence_bytes "
                 + "FROM account_tenant_capacity_evaluations "
                 + "ORDER BY evaluated_at, evaluation_identity LIMIT ?) "
-                + "SELECT sample.evaluated_at, sample.expires_at, sample.evidence_bytes, "
+                + "SELECT sample.evaluation_identity, sample.evaluated_at, sample.expires_at, sample.evidence_bytes, "
                 + "EXISTS (SELECT 1 FROM account_tenant_capacity_reservations reservation "
                 + "WHERE reservation.tenant_uuid = sample.tenant_uuid "
                 + "AND reservation.owner_service = sample.owner_service) AS scope_referenced "
                 + "FROM sample ORDER BY sample.evaluated_at, sample.evaluation_identity",
             sampleRows + 1);
-    Map<Blocker, BlockedWindow> windows = new EnumMap<>(Blocker.class);
+    var empty = new SampleWindow(0, 0, Optional.empty());
+    Map<Blocker, SampleWindow> windows = new EnumMap<>(Blocker.class);
     for (Blocker blocker : Blocker.values()) {
-      windows.put(blocker, new BlockedWindow(0, 0, Optional.empty()));
+      windows.put(blocker, empty);
     }
+    SampleWindow candidates = empty;
     int count = Math.min(rows.size(), sampleRows);
     for (int index = 0; index < count; index++) {
       Record row = rows.get(index);
@@ -123,30 +151,39 @@ public final class AccountCapacityEvaluationRetentionInspectionOwner {
           Objects.requireNonNull(row.get("evaluated_at", OffsetDateTime.class)).toInstant();
       Instant expires =
           Objects.requireNonNull(row.get("expires_at", OffsetDateTime.class)).toInstant();
-      Blocker blocker =
-          Boolean.TRUE.equals(row.get("scope_referenced", Boolean.class))
-              ? Blocker.RETAINED_RESERVATION_SCOPE
-              : observedAt.isBefore(expires)
-                  ? Blocker.LIVE_EVALUATION
-                  : Blocker.POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE;
-      BlockedWindow before = windows.get(blocker);
-      windows.put(
-          blocker,
-          new BlockedWindow(
-              before.rows() + 1,
-              Math.addExact(
-                  before.evidenceBytes(),
-                  Objects.requireNonNull(row.get("evidence_bytes", Long.class))),
-              before.oldestEvaluatedAt().or(() -> Optional.of(evaluated))));
+      long bytes = Objects.requireNonNull(row.get("evidence_bytes", Long.class));
+      var classification =
+          AccountCapacityEvaluationRetentionPolicy.classify(
+              schedule,
+              safety,
+              observedAt,
+              row.get("evaluation_identity", String.class),
+              evaluated,
+              expires,
+              row.get("scope_referenced", Boolean.class));
+      if (classification == AccountCapacityEvaluationRetentionPolicy.Classification.CANDIDATE) {
+        candidates = candidates.include(evaluated, bytes);
+      } else {
+        Blocker blocker = Blocker.valueOf(classification.name());
+        windows.put(
+            blocker, Objects.requireNonNull(windows.get(blocker)).include(evaluated, bytes));
+      }
     }
+    Optional<String> version =
+        schedule != null
+                && AccountCapacityEvaluationRetentionPolicy.current(schedule, safety, observedAt)
+            ? Optional.of(schedule.version())
+            : Optional.empty();
     return new Observation(
         observedAt,
         relationBytes,
         estimate < 0 ? OptionalLong.empty() : OptionalLong.of(estimate),
         count,
         rows.size() > sampleRows,
-        Blocker.POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE,
-        windows);
+        version.isPresent() ? null : Blocker.POLICY_AND_HOLD_AUTHORITY_UNAVAILABLE,
+        windows,
+        version,
+        candidates);
   }
 
   private static void requireBound(int rows) {
