@@ -5,10 +5,18 @@ import org.gradle.api.tasks.compile.JavaCompile
 
 def out = new File(System.getenv('PROOF_DIR'))
 def stage = System.getenv('PROOF_STAGE')
+def sourceDirectory = new File(System.getenv('SOURCE_DIRECTORY')).canonicalFile
+def isMainBuild = { gradle.rootProject.projectDir.canonicalFile == sourceDirectory }
+def requireMainTarget = {
+    def account = gradle.rootProject.findProject(':account-service')
+    if (account == null) throw new GradleException('Pinned main build is missing :account-service')
+    account.tasks.named('integrationTest', Test).get()
+}
 def append = { String name, Object value ->
     new File(out, name).append(JsonOutput.toJson(value) + '\n', 'UTF-8')
 }
 gradle.projectsEvaluated {
+    if (!isMainBuild()) return
     gradle.rootProject.allprojects { project ->
         project.tasks.withType(Test).configureEach {
             maxHeapSize = '1024m'
@@ -19,7 +27,7 @@ gradle.projectsEvaluated {
         project.tasks.withType(JavaExec).configureEach { maxHeapSize = '1024m' }
         project.tasks.withType(JavaCompile).configureEach { options.incremental = false }
     }
-    def target = gradle.rootProject.project(':account-service').tasks.named('integrationTest', Test).get()
+    def target = requireMainTarget()
     target.filter.failOnNoMatchingTests = true
     target.outputs.upToDateWhen { false }
     target.outputs.cacheIf { false }
@@ -42,9 +50,12 @@ gradle.projectsEvaluated {
     target.doLast { append(stage + '-tasks.jsonl', [event:'test-task-finish', path:target.path]) }
 }
 gradle.taskGraph.whenReady { graph ->
+    if (!isMainBuild()) return
+    requireMainTarget()
     def tests = graph.allTasks.findAll { it instanceof Test }.collect { it.path }
     if (tests != [':account-service:integrationTest']) throw new GradleException('Unexpected Test tasks: ' + tests)
 }
 gradle.taskGraph.afterTask { task, state ->
+    if (!isMainBuild()) return
     append(stage + '-tasks.jsonl', [event:'task', path:task.path, outcome:state.failure ? 'FAILED' : state.skipped ? state.skipMessage : 'EXECUTED'])
 }
