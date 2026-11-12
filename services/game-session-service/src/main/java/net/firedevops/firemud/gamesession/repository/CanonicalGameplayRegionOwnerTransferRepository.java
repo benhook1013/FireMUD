@@ -86,35 +86,81 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     return budget.sql(dsl);
   }
 
-  /** Read only an already captured original under its still-current frozen old owner. */
-  Item frozenOriginal(UUID transitionId) {
+  /**
+   * Pins the captured original or the exact terminal original that committed before capture.
+   * Neither path creates a transfer, an inventory item or provisional admission authority.
+   */
+  FrozenOriginal frozenOriginal(UUID transitionId) {
     noSql();
+    return readFrozenOriginal(sql(), transitionId);
+  }
+
+  private FrozenOriginal readFrozenOriginal(DSLContext tx, UUID transitionId) {
     var rows =
-        sql()
-            .fetch(
-                "SELECT i.transfer_id,i.target_ordinal,i.execution_digest FROM "
-                    + ITEM
-                    + " i JOIN "
-                    + TRANSFER
-                    + " t ON t.transfer_id=i.transfer_id"
-                    + " JOIN game_session_original_new_capacity_execution e ON e.execution_digest=i.execution_digest"
-                    + " WHERE e.transition_id=? AND t.state='FROZEN' LIMIT 2",
-                transitionId);
-    if (rows.isEmpty()) return null;
-    if (rows.size() != 1) throw unavailable();
-    Record row = rows.getFirst();
+        tx.fetch(
+            "SELECT i.transfer_id,i.target_ordinal,i.execution_digest FROM "
+                + ITEM
+                + " i JOIN "
+                + TRANSFER
+                + " t ON t.transfer_id=i.transfer_id"
+                + " JOIN game_session_original_new_capacity_execution e ON e.execution_digest=i.execution_digest"
+                + " WHERE e.transition_id=? AND t.state='FROZEN' LIMIT 2",
+            transitionId);
+    if (rows.size() > 1) throw unavailable();
+    if (rows.size() == 1) {
+      var row = rows.getFirst();
+      UUID id = row.get("transfer_id", UUID.class);
+      current(tx, id, false);
+      var item =
+          loadItem(
+              tx,
+              id,
+              row.get("target_ordinal", Long.class),
+              row.get("execution_digest", String.class));
+      return new FrozenOriginal(id, item.execution().digest(), item.candidate());
+    }
+
+    var terminalRows =
+        tx.fetch(
+            "SELECT t.transfer_id,e.execution_digest,e.canonical_execution,c.original_new_candidate_bytes"
+                + " FROM game_session_canonical_binding_transition c"
+                + " JOIN game_session_original_new_capacity_execution e ON e.transition_id=c.transition_id"
+                + " AND e.execution_digest=c.original_new_capacity_execution_digest"
+                + " JOIN game_session_canonical_binding_region_bridge_obligation b ON b.transition_id=c.transition_id"
+                + " JOIN "
+                + TRANSFER
+                + " t ON t.tenant_id=b.tenant_id AND t.game_instance_id=b.game_instance_id"
+                + " AND t.region_id=b.region_id AND t.region_epoch=b.region_epoch"
+                + " AND t.old_owner_id=e.selected_owner_id AND t.old_owner_fence=e.selected_owner_fence"
+                + " WHERE c.transition_id=? AND c.status='COMMITTED' AND e.status='COMMITTED'"
+                + " AND c.original_new_final_session_sha256 IS NOT NULL AND t.state='FROZEN' LIMIT 2",
+            transitionId);
+    if (terminalRows.isEmpty()) return null;
+    if (terminalRows.size() != 1) throw unavailable();
+    var row = terminalRows.getFirst();
     UUID id = row.get("transfer_id", UUID.class);
-    current(sql(), id, false);
-    return loadItem(
-        sql(),
-        id,
-        row.get("target_ordinal", Long.class),
-        row.get("execution_digest", String.class));
+    var transfer = current(tx, id, false);
+    byte[] candidateBytes = row.get("original_new_candidate_bytes", byte[].class);
+    var candidate = CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
+    var execution = decode(row.get("canonical_execution", byte[].class));
+    var binding = candidate.bindingIdentity();
+    if (!candidate.bindingDecisionId().equals(transitionId)
+        || !execution.transitionId().equals(transitionId)
+        || !execution.digest().equals(row.get("execution_digest", String.class))
+        || !execution.candidateDigest().equals(digest(candidateBytes))
+        || !execution.selectedOwnerId().equals(transfer.get("old_owner_id", String.class))
+        || execution.selectedOwnerFence() != transfer.get("old_owner_fence", Long.class)
+        || !binding.tenantId().equals(transfer.get("tenant_id", UUID.class))
+        || !binding.gameInstanceId().equals(transfer.get("game_instance_id", UUID.class))
+        || !binding.regionId().equals(transfer.get("region_id", UUID.class))
+        || binding.regionEpoch().longValueExact() != transfer.get("region_epoch", Long.class))
+      throw unavailable();
+    return new FrozenOriginal(id, execution.digest(), candidate);
   }
 
   /** Revalidate a pinned continuation without creating a replacement transfer intent. */
   void requireFrozenOriginal(
-      Item original,
+      FrozenOriginal original,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior) {
     noSql();
@@ -127,14 +173,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(tx);
               requireOldOwner(tx, source, prior);
               var row = current(tx, original.transferId(), true);
-              if (!sourceDigest(source, prior).equals(row.get("source_digest", String.class)))
-                throw unavailable();
-              var actual =
-                  loadItem(
-                      tx, original.transferId(), original.ordinal(), original.execution().digest());
-              if (!actual.candidate().equals(original.candidate())
-                  || !Arrays.equals(
-                      actual.execution().canonicalBytes(), original.execution().canonicalBytes()))
+              if (!sourceDigest(source, prior).equals(row.get("source_digest", String.class))
+                  || !original.equals(
+                      readFrozenOriginal(tx, original.candidate().bindingDecisionId())))
                 throw unavailable();
             });
   }
@@ -300,6 +341,24 @@ final class CanonicalGameplayRegionOwnerTransferRepository
         || !ownerInstance.equals(status.ownerInstanceId())
         || !correlation.equals(status.leaseTokenCorrelation())) throw unavailable();
     return new CompletedTransfer(status, completed.get("incarnation_digest", String.class));
+  }
+
+  /** Requalifies the existing no-item installation path without synthesizing an observation. */
+  void requireTerminalOnlyCompletion(UUID transferId, CompletedTransfer expected) {
+    var status = expected.status();
+    if (expected.incarnationDigest() != null
+        || exists(sql(), "SELECT 1 FROM " + ITEM + " WHERE transfer_id=?", transferId))
+      throw unavailable();
+    Record retained = requireCompleted(transferId);
+    if (retained.get("incarnation_digest") != null
+        || !status.equals(CanonicalGameplayRegionRuntimeStatusRepository.toStatus(retained))
+        || exists(
+            sql(),
+            "SELECT 1" + PENDING + " AND e.selected_owner_fence<=?",
+            status.tenantId(),
+            status.gameInstanceId(),
+            status.regionId(),
+            retained.get("old_owner_fence", Long.class))) throw unavailable();
   }
 
   private Record requireCompleted(UUID transferId) {
@@ -566,8 +625,14 @@ final class CanonicalGameplayRegionOwnerTransferRepository
 
   @Override
   public Context readCurrent(UUID transferId, long targetOrdinal) {
+    return readCurrent(transferId, targetOrdinal, Long.MAX_VALUE);
+  }
+
+  @Override
+  public Context readCurrent(UUID transferId, long targetOrdinal, long deadline) {
     if (admitted.get() == null)
-      return within(Long.MAX_VALUE, ignored -> readCurrent(transferId, targetOrdinal));
+      return within(deadline, ignored -> readCurrent(transferId, targetOrdinal, deadline));
+    if (deadline < admitted.get().absoluteDeadlineMillis()) throw unavailable();
     Record transfer = observationCurrent(sql(), transferId);
     Record row =
         sql()
@@ -608,8 +673,15 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   @Override
   public CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
       UUID transitionId, CanonicalGameplayTenantGameplayTagRepository sourceTags) {
+    return readAssignment(transitionId, sourceTags, Long.MAX_VALUE);
+  }
+
+  @Override
+  public CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
+      UUID transitionId, CanonicalGameplayTenantGameplayTagRepository sourceTags, long deadline) {
     if (admitted.get() == null)
-      return within(Long.MAX_VALUE, ignored -> readAssignment(transitionId, sourceTags));
+      return within(deadline, ignored -> readAssignment(transitionId, sourceTags, deadline));
+    if (deadline < admitted.get().absoluteDeadlineMillis()) throw unavailable();
     return sourceTags
         .withCapacityExecutionDsl(sql())
         .assignmentForRetainedCapacityExecution(transitionId);
@@ -999,6 +1071,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       return offset == data.length;
     }
   }
+
+  record FrozenOriginal(
+      UUID transferId, String executionDigest, CanonicalGameplayOriginalNewCandidate candidate) {}
 
   record Item(
       UUID transferId,

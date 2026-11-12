@@ -36,13 +36,13 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     return repository.completedForCurrent(prior, requestingOwner, deadline);
   }
 
-  CanonicalGameplayRegionOwnerTransferRepository.Item frozenOriginal(
+  CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal frozenOriginal(
       UUID transitionId, long deadline) {
     return repository.within(deadline, ignored -> repository.frozenOriginal(transitionId));
   }
 
   void requireFrozenOriginal(
-      CanonicalGameplayRegionOwnerTransferRepository.Item original,
+      CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal original,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior,
       long deadline) {
@@ -55,7 +55,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
   }
 
   UUID resume(
-      CanonicalGameplayRegionOwnerTransferRepository.Item original,
+      CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal original,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior,
       long deadline) {
@@ -74,7 +74,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior,
       long deadline,
-      CanonicalGameplayRegionOwnerTransferRepository.Item original) {
+      CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal original) {
     return repository.within(
         deadline,
         budget -> {
@@ -177,7 +177,10 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
         budget -> {
           var completed = repository.completedSuccessor(transferId, ownerInstance, correlation);
           var page = repository.completedPage(transferId, -1);
-          if (page.isEmpty()) throw held();
+          if (page.isEmpty()) {
+            repository.requireTerminalOnlyCompletion(transferId, completed);
+            return completed.status();
+          }
           var first = page.getFirst();
           var before = observe(first, budget.absoluteDeadlineMillis());
           if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();

@@ -10,6 +10,7 @@ import java.time.Clock;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
+import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
@@ -57,8 +58,8 @@ public final class AccountTenantCapacityClient
   /**
    * The caller must obtain its typed context from current owned player state, not text/metadata.
    * Retries retain this exact request. The Account call consumes the remaining absolute admission
-   * budget, capped at five seconds and the incoming deadline. A timeout is indeterminate and never
-   * allocates another ID.
+   * budget, capped at five seconds and the incoming deadline. A timeout or an inexact response
+   * leaves the commitment indeterminate. Retry with the original identity.
    */
   public Result commit(Request request, long absoluteDeadlineMillis) {
     long maximumMillis =
@@ -82,14 +83,21 @@ public final class AccountTenantCapacityClient
             .withDeadline(deadline)
             .withMaxOutboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_REQUEST_WIRE_BYTES)
             .withMaxInboundMessageSize(TenantCapacityAdmissionGrpcCodec.MAX_RESPONSE_WIRE_BYTES);
+    var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
+    CommitTenantCapacityAdmissionResponse response;
     try {
-      var wire = TenantCapacityAdmissionGrpcCodec.toRequest(request);
       if (deadline.isExpired()) throw Status.DEADLINE_EXCEEDED.asRuntimeException();
-      // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
-      return TenantCapacityAdmissionGrpcCodec.requireResponse(
-          request, stub.commitTenantCapacityAdmission(wire));
+      response = stub.commitTenantCapacityAdmission(wire);
     } catch (StatusRuntimeException failure) {
       throw TenantCapacityAdmissionGrpcCodec.validateFailure(failure);
+    }
+    try {
+      // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
+      return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
+    } catch (IllegalArgumentException inexactResponse) {
+      throw Status.UNKNOWN
+          .withDescription("Account capacity commitment response was inexact")
+          .asRuntimeException();
     }
   }
 

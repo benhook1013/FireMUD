@@ -346,7 +346,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     Map<String, byte[]> before = physicalImage(original);
 
     // No credential, template, OPEN barrier, candidate or index is needed to deny future execution.
-    byte[][] arguments = action(original, "FENCE").arguments().clone();
+    byte[][] arguments = original.arguments().clone();
     arguments[8] = ascii("unavailable-candidate");
     arguments[10] = ascii("unavailable-template");
     arguments[12] = ascii("unavailable-account");
@@ -525,7 +525,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   @Test
-  void fenceRequiresTheExactCompleteEnvelopeAndCanonicalKeyIdentityBeforeWriting()
+  void allActionsRequireTheExactCompleteEnvelopeAndCanonicalKeyIdentityBeforeWriting()
       throws Exception {
     for (String fault :
         List.of(
@@ -544,7 +544,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
             "wrong-key")) {
       admin.flushdb();
       ScriptCase original = seed(false);
-      byte[][] arguments = action(original, "FENCE").arguments().clone();
+      byte[][] arguments = original.arguments().clone();
       String[] keys = original.keys().clone();
       var envelope = (tools.jackson.databind.node.ObjectNode) JSON.readTree(arguments[16]);
       switch (fault) {
@@ -565,12 +565,19 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
         default -> throw new IllegalStateException("Unknown fixture fault: " + fault);
       }
       arguments[16] = canonicalBytes(envelope);
-      arguments[18] = ascii("sha256:" + HexFormatHolder.sha256(arguments[16]));
+      String digest = "sha256:" + HexFormatHolder.sha256(arguments[16]);
+      arguments[18] = ascii(digest);
+      var template = (tools.jackson.databind.node.ObjectNode) JSON.readTree(arguments[10]);
+      template.put("capacityExecutionDigest", digest);
+      arguments[10] = canonicalBytes(template);
       Map<String, byte[]> before = physicalImage(original);
 
-      assertThat(eval(new ScriptCase(keys, arguments))).as(fault).isEqualTo(-2L);
-      assertPhysicalImage(original, before, 7);
-      assertThat(admin.type(ascii(keys[6]))).isEqualTo("none");
+      ScriptCase malformed = new ScriptCase(keys, arguments);
+      for (String verb : List.of("INSTALL", "FINAL", "CLOSE", "FENCE")) {
+        assertThat(eval(action(malformed, verb))).as("%s %s", verb, fault).isEqualTo(-2L);
+        assertPhysicalImage(original, before, 7);
+        assertThat(admin.type(ascii(keys[6]))).isEqualTo("none");
+      }
     }
   }
 
