@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus;
@@ -47,6 +48,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
@@ -58,6 +63,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
+  private static final Logger LOGGER =
+      LoggerFactory.getLogger(CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest.class);
   private static final UUID TENANT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID OTHER_GAME_INSTANCE_ID =
       UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -725,6 +732,157 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void calibratesMixedRetainedExecutionHandoffAndRefusesLastMarkerLoss(boolean loseLastMarker)
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), proof.clock);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      // Only the real authorization above can FINAL. The extra envelopes deliberately reuse the
+      // fixture's original transition and model SQL dispatches that never reached Redis.
+      var undelivered = List.of(proof.newControlledExecution(), proof.newControlledExecution());
+      undelivered.forEach(proof::seedUndeliveredDispatch);
+      UUID transferId;
+      List<CanonicalGameplayRegionOwnerTransferRepository.Item> captured;
+      try (var finalReadback =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                  proof.redis, proof.scripts, proof.clock, proof.tags)
+              .finalizeOriginalNewOnce(
+                  proof.admission,
+                  template,
+                  account,
+                  issuer,
+                  proof.execution,
+                  transferDeadline())) {
+        transferId = proof.begin();
+        captured =
+            proof.transfers.within(
+                transferDeadline(), ignored -> proof.transfers.capture(transferId));
+        assertThat(captured)
+            .extracting(item -> item.execution().digest())
+            .containsExactlyInAnyOrder(
+                proof.execution.digest(),
+                undelivered.getFirst().digest(),
+                undelivered.getLast().digest());
+        new CanonicalGameplayBindingInventoryRepository(proof.sql)
+            .commitOriginalNewFinalAdmission(finalReadback);
+      }
+      assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
+      String originalReceipts = proof.originalImage();
+
+      var observationLatency = Duration.ofMillis(5);
+      var attestor =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(
+              proof.clock, observationLatency);
+      var transfer =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              proof.sql,
+              proof.clock,
+              proof.transfers,
+              proof.capacity(proof.sql),
+              attestor.receiver(proof.transfers, proof.tags));
+      var identity =
+          new RuntimeIdentity(
+              "game-session-service",
+              "mixed-transfer-calibration",
+              "localhost",
+              proof.clock.instant(),
+              "test",
+              "test",
+              "controlled-test-image");
+      var original = proof.region.installation();
+      try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+        assertThat(connection.sync().pexpire(ascii(original.grant.key()), 0L)).isTrue();
+      }
+      var leases = new CanonicalGameplayRegionLeaseRedisOwner(proof.redis, proof.scripts);
+      long deadline = transferDeadline();
+      long start = System.nanoTime();
+      var grant =
+          leases.acquire(proof.scope, proof.prior.regionEpoch(), Duration.ofSeconds(30), identity);
+      leases.requireGrantScope(grant, proof.scope, proof.prior.regionEpoch(), identity);
+      leases.verifyInitializedTimeline(grant, original.preparation);
+      leases.requireCurrent(grant);
+      assertThat(transfer.advance(proof.scope, proof.prior, deadline)).isEqualTo(transferId);
+      int advanceObservations = attestor.observationCount();
+      for (var execution : undelivered) {
+        assertThat(proof.physicalExecutionState(execution)).isEqualTo("FENCED_INDETERMINATE");
+      }
+      assertThat(proof.physicalExecutionState(proof.execution)).isEqualTo("COMMITTED");
+      String retainedItems = proof.itemImage(transferId);
+      var last = captured.getLast();
+      if (loseLastMarker) proof.losePhysicalExecution(last.execution());
+
+      leases.requireCurrent(grant);
+      long installStart = System.nanoTime();
+      CanonicalGameplayRegionRuntimeStatus installed = null;
+      if (loseLastMarker) {
+        assertThatThrownBy(
+                () -> proof.installCalibrationTransfer(transfer, transferId, grant, deadline))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW capacity execution is indeterminate");
+      } else {
+        installed = proof.installCalibrationTransfer(transfer, transferId, grant, deadline);
+      }
+      long finish = System.nanoTime();
+      long finishedAt = proof.clock.millis();
+      var installElapsed = Duration.ofNanos(finish - installStart);
+      var totalElapsed = Duration.ofNanos(finish - start);
+      int installObservations = attestor.observationCount() - advanceObservations;
+      LOGGER.info(
+          "Mixed retained handoff calibration: items={}, lastMarkerLost={},"
+              + " controlledObservationLatencyMs={}, advanceObservations={}, installObservations={},"
+              + " installElapsedMs={}, totalElapsedMs={}",
+          captured.size(),
+          loseLastMarker,
+          observationLatency.toMillis(),
+          advanceObservations,
+          installObservations,
+          installElapsed.toMillis(),
+          totalElapsed.toMillis());
+      assertThat(advanceObservations).isPositive();
+      assertThat(installObservations).isPositive();
+      assertThat(installElapsed)
+          .isGreaterThanOrEqualTo(observationLatency.multipliedBy(installObservations));
+      assertThat(finishedAt).isLessThan(deadline);
+      leases.requireCurrent(grant);
+      assertThat(proof.itemImage(transferId)).isEqualTo(retainedItems);
+      assertThat(proof.originalImage()).isEqualTo(originalReceipts);
+      if (loseLastMarker) {
+        assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+        assertThat(proof.transfers.readCurrent(transferId, last.ordinal()).controlState())
+            .isEqualTo("FROZEN");
+        assertThat(proof.physicalExecutionExists(last.execution())).isFalse();
+        assertThatThrownBy(
+                () ->
+                    proof.installCalibrationTransfer(
+                        transfer, transferId, grant, transferDeadline()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Original NEW capacity execution is indeterminate");
+        assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+        assertThat(proof.itemImage(transferId)).isEqualTo(retainedItems);
+        assertThat(proof.physicalExecutionExists(last.execution())).isFalse();
+      } else {
+        assertThat(installed).isNotNull();
+        assertThat(installed.ownerInstanceId()).isEqualTo(identity.serviceInstanceId());
+        assertThat(installed.leaseTokenCorrelation()).isEqualTo(grant.tokenCorrelation());
+        assertThat(installed.executorFence()).isGreaterThan(proof.prior.executorFence());
+        assertThat(proof.currentOwner()).isEqualTo(installed);
+        assertThat(proof.transfers.readCurrent(transferId, last.ordinal()).controlState())
+            .isEqualTo("COMPLETED");
+      }
+    }
+  }
+
   @Test
   void terminalOnlyTransferRecoversExactCompletedSuccessorAfterOriginalFinalReceipt()
       throws Exception {
@@ -1377,6 +1535,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                   new net.firedevops.firemud.gamesession.service
                       .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
                   new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayRegionLeaseRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
                       .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
       upstream =
           new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
@@ -1528,6 +1688,21 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           transferDeadline());
     }
 
+    private CanonicalGameplayRegionRuntimeStatus installCalibrationTransfer(
+        CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+        UUID transferId,
+        CanonicalGameplayRegionLeaseRedisOwner.LeaseGrant grant,
+        long deadline) {
+      return transfer.install(
+          transferId,
+          scope,
+          prior,
+          grant.tokenCorrelation(),
+          grant.ownerService(),
+          grant.ownerInstanceId(),
+          deadline);
+    }
+
     private CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
       var repository =
           new CanonicalGameplayIssuerAdmissionBarrierRepository(
@@ -1606,34 +1781,32 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private boolean physicalExecutionExists(OriginalNewCapacityExecution original) {
-      String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
-        return connection
-                .sync()
-                .exists(
-                    ascii(
-                        "session:game:capacity-execution:{"
-                            + tag
-                            + "}:"
-                            + original.request().admissionAttemptId()))
-            != 0;
+        return connection.sync().exists(physicalExecutionKey(original)) != 0;
+      }
+    }
+
+    private String physicalExecutionState(OriginalNewCapacityExecution original) {
+      try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
+        return new String(
+            connection.sync().hget(physicalExecutionKey(original), ascii("state")),
+            StandardCharsets.US_ASCII);
       }
     }
 
     private void losePhysicalExecution(OriginalNewCapacityExecution original) {
-      String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
       try (var connection = redis.connect(ByteArrayCodec.INSTANCE)) {
-        assertThat(
-                connection
-                    .sync()
-                    .del(
-                        ascii(
-                            "session:game:capacity-execution:{"
-                                + tag
-                                + "}:"
-                                + original.request().admissionAttemptId())))
-            .isEqualTo(1L);
+        assertThat(connection.sync().del(physicalExecutionKey(original))).isEqualTo(1L);
       }
+    }
+
+    private byte[] physicalExecutionKey(OriginalNewCapacityExecution original) {
+      String tag = tags.assignmentForTransition(original.transitionId()).tenantGameplayTag();
+      return ascii(
+          "session:game:capacity-execution:{"
+              + tag
+              + "}:"
+              + original.request().admissionAttemptId());
     }
 
     private void rawReplaceOwner(String owner, String correlation) {

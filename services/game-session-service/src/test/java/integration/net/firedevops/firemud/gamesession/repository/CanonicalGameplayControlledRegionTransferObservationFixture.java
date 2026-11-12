@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -25,16 +26,29 @@ final class CanonicalGameplayControlledRegionTransferObservationFixture {
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private final KeyPair keys;
   private final Clock clock;
+  private final Duration observationLatency;
+  private final AtomicInteger observationCount = new AtomicInteger();
 
   CanonicalGameplayControlledRegionTransferObservationFixture() throws Exception {
     this(Clock.systemUTC());
   }
 
   CanonicalGameplayControlledRegionTransferObservationFixture(Clock clock) throws Exception {
+    this(clock, Duration.ZERO);
+  }
+
+  CanonicalGameplayControlledRegionTransferObservationFixture(
+      Clock clock, Duration observationLatency) throws Exception {
     this.clock = Objects.requireNonNull(clock, "clock");
+    this.observationLatency = Objects.requireNonNull(observationLatency, "observationLatency");
+    if (observationLatency.isNegative()) throw new IllegalArgumentException();
     KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
     generator.initialize(2048);
     keys = generator.generateKeyPair();
+  }
+
+  int observationCount() {
+    return observationCount.get();
   }
 
   CanonicalGameplayProtectedIncarnationReceiver receiver(
@@ -82,6 +96,17 @@ final class CanonicalGameplayControlledRegionTransferObservationFixture {
         != CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.REGION_OWNER_TRANSFER) {
       throw new IllegalArgumentException("Controlled channel is limited to transfer observations");
     }
+    long observedAt = request.issuedAtEpochMillis();
+    if (!observationLatency.isZero()) {
+      try {
+        Thread.sleep(observationLatency);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException("Controlled transfer observation interrupted", interrupted);
+      }
+      observedAt = clock.millis();
+    }
+    observationCount.incrementAndGet();
     var transfer = context.regionOwnerTransferContext();
     Map<String, Object> owner = new LinkedHashMap<>();
     owner.put("ownerKind", context.ownerKind().name());
@@ -127,7 +152,7 @@ final class CanonicalGameplayControlledRegionTransferObservationFixture {
     root.put("acceptedAttestationDigest", request.acceptedAttestationDigest());
     root.put("observationNonce", request.nonce());
     root.put("observationIssuedAtEpochMillis", request.issuedAtEpochMillis());
-    root.put("observationObservedAtEpochMillis", request.issuedAtEpochMillis());
+    root.put("observationObservedAtEpochMillis", observedAt);
     root.put("observationExpiresAtEpochMillis", request.expiresAtEpochMillis());
     root.put("owner", owner);
     root.put("target", target);
