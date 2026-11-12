@@ -89,18 +89,20 @@ final class CanonicalGameplayRegionOwnerTransferRepository
   /** Read only an already captured original under its still-current frozen old owner. */
   Item frozenOriginal(UUID transitionId) {
     noSql();
-    Record row =
+    var rows =
         sql()
-            .fetchOne(
+            .fetch(
                 "SELECT i.transfer_id,i.target_ordinal,i.execution_digest FROM "
                     + ITEM
                     + " i JOIN "
                     + TRANSFER
                     + " t ON t.transfer_id=i.transfer_id"
                     + " JOIN game_session_original_new_capacity_execution e ON e.execution_digest=i.execution_digest"
-                    + " WHERE e.transition_id=? AND t.state='FROZEN'",
+                    + " WHERE e.transition_id=? AND t.state='FROZEN' LIMIT 2",
                 transitionId);
-    if (row == null) return null;
+    if (rows.isEmpty()) return null;
+    if (rows.size() != 1) throw unavailable();
+    Record row = rows.getFirst();
     UUID id = row.get("transfer_id", UUID.class);
     current(sql(), id, false);
     return loadItem(

@@ -432,6 +432,8 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
     var readStarted = new CountDownLatch(1);
     var resumeRead = new CountDownLatch(1);
     var calls = new AtomicInteger();
+    var secondWorkerCalls = new AtomicInteger();
+    var recoveryClock = Clock.fixed(f.request.evidence().evaluatedAt(), ZoneOffset.UTC);
     var recovery =
         new AccountTenantCapacityRecoveryWorker(
             f.owner,
@@ -449,7 +451,17 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
               return capacityObservation(
                   request, reservation, AccountTenantCapacityRecoveryWorker.Disposition.COMMITTED);
             },
-            Clock.fixed(Instant.now(), ZoneOffset.UTC));
+            recoveryClock);
+    var secondWorker =
+        new AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) -> {
+              secondWorkerCalls.incrementAndGet();
+              return capacityObservation(
+                  request, reservation, AccountTenantCapacityRecoveryWorker.Disposition.COMMITTED);
+            },
+            recoveryClock);
     var action = AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE;
     try (var executor = Executors.newSingleThreadExecutor()) {
       var pending = executor.submit(() -> recovery.reconcile(f.request, action));
@@ -459,6 +471,12 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
             .hasMessage("ENTITLEMENT_UNAVAILABLE");
         assertThatThrownBy(() -> recovery.rearm(f.request, next))
             .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThatThrownBy(() -> secondWorker.reconcile(f.request, action))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThatThrownBy(() -> secondWorker.rearm(f.request, next))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThat(calls).hasValue(1);
+        assertThat(secondWorkerCalls).hasValue(0);
       } finally {
         resumeRead.countDown();
       }
@@ -466,6 +484,7 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
       assertThat(result.state()).isEqualTo(TenantCapacityAdmission.State.FINALIZED);
       assertThat(recovery.reconcile(f.request, action)).isEqualTo(result);
       assertThat(calls).hasValue(1);
+      assertThat(secondWorkerCalls).hasValue(0);
     }
   }
 
