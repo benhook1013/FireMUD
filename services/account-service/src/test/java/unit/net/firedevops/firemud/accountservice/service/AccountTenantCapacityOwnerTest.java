@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Context;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -133,20 +134,58 @@ class AccountTenantCapacityOwnerTest {
   }
 
   @Test
-  void serializationFailureRetriesOnceAndReplaysInAFreshTransaction() throws Exception {
+  void repeatedSerializationFailuresRetryAndReplayInAFreshTransaction() throws Exception {
     var f = new Fixture(true);
-    var aborted =
-        new org.jooq.exception.DataAccessException(
-            "concurrent reservation", new SQLException("serialization failure", "40001"));
+    var aborted = serializationFailure();
     when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
-        .thenThrow(aborted)
+        .thenThrow(aborted, aborted)
         .thenReturn(Optional.of(new Account()));
 
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload()).reservationId())
         .isEqualTo(f.reservation);
-    verify(f.accounts, times(2)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
+    verify(f.accounts, times(3)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
     verifyNoInteractions(f.memberships, f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void repeatedSerializationFailuresStopAtTheAttemptLimit() throws Exception {
+    var f = new Fixture(true);
+    var aborted = serializationFailure();
+    when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
+        .thenThrow(aborted);
+
+    assertThatThrownBy(() -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+        .isSameAs(aborted);
+    verify(f.accounts, times(4)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void cancelledCallDoesNotRetryAnAbortedTransaction() throws Exception {
+    var f = new Fixture(true);
+    var aborted = serializationFailure();
+    try (var caller = Context.current().withCancellation()) {
+      when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
+          .thenAnswer(
+              invocation -> {
+                caller.cancel(null);
+                throw aborted;
+              });
+
+      caller.run(
+          () ->
+              assertThatThrownBy(
+                      () -> f.owner.commit(f.request, f.request.evidence().callerWorkload()))
+                  .isSameAs(aborted));
+    }
+    verify(f.accounts).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  private static org.jooq.exception.DataAccessException serializationFailure() {
+    return new org.jooq.exception.DataAccessException(
+        "concurrent reservation", new SQLException("serialization failure", "40001"));
   }
 
   @Test

@@ -181,6 +181,18 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
   }
 
   @Test
+  void missingCapacityRetentionReadbackRollsBackAsSourceUnavailable() throws Exception {
+    Fixture f = new Fixture(true);
+    f.missingCapacityRetentionReadback = true;
+    assertThatThrownBy(() -> f.owner.evaluate(f.request, "controlled-token"))
+        .isInstanceOf(AccountPlayerAdmissionEntitlementOwner.SourceUnavailableException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: current player source evidence is unavailable")
+        .hasNoCause();
+    assertThat(f.retainedCapacity).isEmpty();
+    assertThat(f.transactions.events).containsExactly("begin", "commit", "begin", "rollback");
+  }
+
+  @Test
   void existingMembershipCarriesItsIndependentVersionAndPositiveCheckpoint() throws Exception {
     Fixture f = new Fixture(true);
     var value = f.owner.evaluate(f.request, "controlled-token");
@@ -959,6 +971,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     private final RecordingTransactions transactions = new RecordingTransactions();
     private final Map<String, org.jooq.Record> retainedCapacity = new LinkedHashMap<>();
     private boolean refuseCapacityRetention;
+    private boolean missingCapacityRetentionReadback;
     private final java.util.concurrent.atomic.AtomicReference<Instant> time =
         new java.util.concurrent.atomic.AtomicReference<>(NOW);
     private final FreshTenantCreationEvidence source = source();
@@ -1056,6 +1069,7 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
                 if (refuseCapacityRetention)
                   throw new DataAccessException("Controlled capacity retention refusal");
                 assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+                if (missingCapacityRetentionReadback) return 0;
                 Object[] values = (Object[]) invocation.getRawArguments()[1];
                 String id = (String) values[0];
                 if (retainedCapacity.containsKey(id)) return 0;
