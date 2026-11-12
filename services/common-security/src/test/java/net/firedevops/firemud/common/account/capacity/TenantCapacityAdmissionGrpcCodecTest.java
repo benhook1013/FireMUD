@@ -20,8 +20,27 @@ class TenantCapacityAdmissionGrpcCodecTest {
   @Test
   void onlyCanonicalFailureDetailsSurviveWithoutChangingTransportStatus() {
     for (var failure : Failure.values()) {
-      var canonical = failure.toStatusException();
-      assertThat(TenantCapacityAdmissionGrpcCodec.validateFailure(canonical)).isSameAs(canonical);
+      if (failure.isDomainRefusal()) {
+        assertThatThrownBy(failure::toStatusException).isInstanceOf(IllegalArgumentException.class);
+        var oldTransport =
+            StatusProto.toStatusRuntimeException(
+                com.google.rpc.Status.newBuilder()
+                    .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
+                    .setMessage("Tenant capacity commitment did not complete")
+                    .addDetails(
+                        Any.pack(
+                            ErrorDetail.newBuilder()
+                                .setCode(failure.name())
+                                .setMessage("Tenant capacity commitment did not complete")
+                                .build()))
+                    .build());
+        var verified = TenantCapacityAdmissionGrpcCodec.validateFailure(oldTransport);
+        assertThat(verified.getStatus().getCode()).isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
+        assertThat(StatusProto.fromThrowable(verified).getDetailsList()).isEmpty();
+      } else {
+        var canonical = failure.toStatusException();
+        assertThat(TenantCapacityAdmissionGrpcCodec.validateFailure(canonical)).isSameAs(canonical);
+      }
     }
     var deadline = Status.DEADLINE_EXCEEDED.asRuntimeException();
     assertThat(TenantCapacityAdmissionGrpcCodec.validateFailure(deadline)).isSameAs(deadline);
@@ -34,6 +53,33 @@ class TenantCapacityAdmissionGrpcCodecTest {
     var verified = TenantCapacityAdmissionGrpcCodec.validateFailure(claimedFence);
     assertThat(verified.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE);
     assertThat(StatusProto.fromThrowable(verified).getDetailsList()).isEmpty();
+  }
+
+  @Test
+  void domainRefusalsRequireTheExactOriginalAndExclusiveResponseAlternative() {
+    Request request = CapacityAdmissionTestFixture.playerRequest(false);
+    var commitment = TenantCapacityAdmissionGrpcCodec.toResponse(request, result(request));
+    assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(request, commitment)).isEmpty();
+    for (var code : List.of(Failure.TENANT_BILLING_BLOCKED, Failure.CAPACITY_QUOTA_EXCEEDED)) {
+      var response = TenantCapacityAdmissionGrpcCodec.toRefusal(request, code);
+      assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(request, response)).contains(code);
+      assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.requireResponse(request, response))
+          .isInstanceOf(IllegalArgumentException.class);
+      for (var malformed :
+          List.of(
+              response.toBuilder().clearRefusal().build(),
+              response.toBuilder().addRefusal(response.getRefusal(0)).build(),
+              response.toBuilder().addCommitment(commitment.getCommitment(0)).build(),
+              response.toBuilder()
+                  .setRefusal(0, response.getRefusal(0).toBuilder().setCapacityRearmFence(0, 2))
+                  .build(),
+              response.toBuilder()
+                  .setRefusal(0, response.getRefusal(0).toBuilder().setCodeValue(0, 999))
+                  .build())) {
+        assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusal(request, malformed))
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+    }
   }
 
   @Test

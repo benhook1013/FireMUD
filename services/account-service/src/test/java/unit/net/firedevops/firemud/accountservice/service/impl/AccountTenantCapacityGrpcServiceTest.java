@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrp
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
@@ -90,6 +91,29 @@ class AccountTenantCapacityGrpcServiceTest {
           .commitTenantCapacityAdmission(
               TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
       assertFailure(observer, Failure.ENTITLEMENT_UNAVAILABLE);
+    }
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = Failure.class,
+      names = {"TENANT_BILLING_BLOCKED", "CAPACITY_QUOTA_EXCEEDED"})
+  void producedBillingAndQuotaDenialsReturnAnExactTypedResponse(Failure code) {
+    var request = CapacityAdmissionTestFixture.playerRequest();
+    try (var guards = authenticatedCaller()) {
+      AccountTenantCapacityOwner owner = mock();
+      when(owner.commit(request, CapacityAdmissionTestFixture.PEER))
+          .thenThrow(new CapacityException(code));
+      StreamObserver<CommitTenantCapacityAdmissionResponse> observer = mock();
+      new AccountTenantCapacityGrpcService(owner, "prod")
+          .commitTenantCapacityAdmission(
+              TenantCapacityAdmissionGrpcCodec.toRequest(request), observer);
+      var response = ArgumentCaptor.forClass(CommitTenantCapacityAdmissionResponse.class);
+      verify(observer).onNext(response.capture());
+      assertThat(TenantCapacityAdmissionGrpcCodec.readRefusal(request, response.getValue()))
+          .contains(code);
+      verify(observer).onCompleted();
+      verify(observer, never()).onError(any());
     }
   }
 
