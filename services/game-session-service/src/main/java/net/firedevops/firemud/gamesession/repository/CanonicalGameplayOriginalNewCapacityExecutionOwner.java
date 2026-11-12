@@ -10,9 +10,11 @@ import static net.firedevops.firemud.gamesession.repository.CanonicalGameplayOri
 
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Arrays;
@@ -1197,6 +1199,110 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return result;
     } finally {
       connection.closeAsync();
+    }
+  }
+
+  /** Observes only the retained tenant-slot fence for an exact admitted original. */
+  void requireAdmittedLogoutFence(
+      UUID logoutId, OriginalNewCapacityExecution execution, long deadline) {
+    noSql();
+    if (budget == null) {
+      CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          clock,
+          deadline,
+          scoped -> {
+            new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+                    dsl, redis, scripts, clock, tags, scoped)
+                .requireAdmittedLogoutFence(logoutId, execution, deadline);
+            return null;
+          });
+      return;
+    }
+    budget.check();
+    Record row = find(sql(), execution);
+    if (row == null || !"COMMITTED".equals(row.get("status", String.class))) throw unavailable();
+    exact(row, execution);
+    var intent =
+        new CanonicalGameplayOriginalNewAdmittedLogoutIntentRepository(sql())
+            .readExact(execution.digest(), logoutId);
+    Record finalTransition = transition(execution);
+    byte[] candidateBytes = finalTransition.get("original_new_candidate_bytes", byte[].class);
+    if (!"COMMITTED".equals(finalTransition.get("status", String.class))
+        || !execution.transitionId().equals(intent.transitionId())
+        || !execution
+            .digest()
+            .equals(finalTransition.get("original_new_capacity_execution_digest", String.class))
+        || !intent
+            .originalFinalSessionSha256()
+            .equals(finalTransition.get("original_new_final_session_sha256", String.class))
+        || candidateBytes == null
+        || !execution
+            .candidateDigest()
+            .equals("sha256:" + OriginalNewCapacityExecution.sha256(candidateBytes)))
+      throw unavailable();
+    var candidate = CanonicalGameplayOriginalNewCandidate.parseCanonical(candidateBytes);
+    if (!candidate.bindingDecisionId().equals(intent.transitionId())
+        || !candidate.transition().bindingGeneration().equals(intent.bindingGeneration()))
+      throw unavailable();
+    var assignment = scopedTags().assignmentForRetainedCapacityExecution(intent.transitionId());
+    String tag = assignment.tenantGameplayTag();
+    if (!tag.equals(row.get("tenant_gameplay_tag", String.class))) throw unavailable();
+    var binding = candidate.bindingIdentity();
+    var ref = binding.bindingRef();
+    byte[][] keys = {
+      bytes(CanonicalGameplaySessionRedisKeys.session(assignment, ref)),
+      bytes(CanonicalGameplaySessionRedisKeys.characterIndex(assignment, ref)),
+      bytes(CanonicalGameplaySessionRedisKeys.accountTenantIndex(assignment, ref)),
+      bytes(CanonicalGameplaySessionRedisKeys.tenantIndex(assignment, ref)),
+      bytes(
+          "session:game:capacity-execution:{"
+              + tag
+              + "}:"
+              + execution.request().admissionAttemptId())
+    };
+    byte[][] arguments = {
+      bytes(binding.tenantId().toString()),
+      bytes(binding.accountId().toString()),
+      bytes(binding.playableStateNamespaceId().toString()),
+      bytes(binding.characterId().toString()),
+      bytes(binding.gameInstanceId().toString()),
+      bytes(binding.sessionId()),
+      bytes(intent.bindingGeneration().toString()),
+      bytes(tag),
+      bytes(intent.executionDigest()),
+      bytes(intent.logoutId().toString()),
+      bytes(Long.toString(budget.absoluteDeadlineMillis())),
+      execution.canonicalBytes(),
+      bytes(intent.originalSessionSha1()),
+      bytes("OBSERVE")
+    };
+    byte[] script = admittedLogoutScript();
+    var connection = connectForRead();
+    try {
+      var commands = connection.async();
+      principal(commands);
+      String sha = await(commands.scriptLoad(script));
+      if (!sha1(script).equals(sha)) throw unavailable();
+      Long observation =
+          await(commands.evalshaReadOnly(sha, ScriptOutputType.INTEGER, keys, arguments));
+      if (!Long.valueOf(2).equals(observation)) throw unavailable();
+    } finally {
+      connection.closeAsync();
+    }
+    budget.check();
+  }
+
+  private static byte[] admittedLogoutScript() {
+    try (var input =
+        CanonicalGameplayOriginalNewCapacityExecutionOwner.class.getResourceAsStream(
+            "/redis/lua/game-session-original-new-admitted-logout.lua")) {
+      if (input == null) throw unavailable();
+      int maximumBytes = 16 * 1024;
+      byte[] script = input.readNBytes(maximumBytes + 1);
+      if (script.length == 0 || script.length > maximumBytes) throw unavailable();
+      return script;
+    } catch (IOException failure) {
+      throw unavailable();
     }
   }
 

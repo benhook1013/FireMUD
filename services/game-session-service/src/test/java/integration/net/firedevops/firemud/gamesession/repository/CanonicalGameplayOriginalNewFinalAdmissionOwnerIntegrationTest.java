@@ -11,6 +11,7 @@ import io.lettuce.core.AclSetuserArgs;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -395,6 +396,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
             .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
             .addCommand(CommandType.EVALSHA)
+            .addCommand(CommandType.EVALSHA_RO)
             .addCommand(CommandType.TYPE)
             .addCommand(CommandType.PTTL)
             .addCommand(CommandType.GET)
@@ -2162,6 +2164,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
     assertThatThrownBy(() -> intents.prepare(logout, admitted, execution, new byte[] {1}))
         .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(
+            () -> capacityOwner().requireAdmittedLogoutFence(logout, execution, deadline()))
+        .isInstanceOf(IllegalStateException.class);
     assertThat(physicalImage()).isEqualTo(physical);
     assertThatThrownBy(
             () ->
@@ -2171,7 +2176,53 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                         "DELETE FROM game_session_original_new_admitted_logout_intent WHERE logout_id = ?",
                         logout))
         .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    var binding = admitted.candidate().bindingIdentity();
+    var ref = binding.bindingRef();
+    try (var script =
+        getClass()
+            .getResourceAsStream("/redis/lua/game-session-original-new-admitted-logout.lua")) {
+      assertThat(script).isNotNull();
+      assertThat(
+              admin.<Long>eval(
+                  java.util.Objects.requireNonNull(script).readAllBytes(),
+                  ScriptOutputType.INTEGER,
+                  new byte[][] {
+                    ascii(sessionKey),
+                    ascii(CanonicalGameplaySessionRedisKeys.characterIndex(assignment, ref)),
+                    ascii(CanonicalGameplaySessionRedisKeys.accountTenantIndex(assignment, ref)),
+                    ascii(CanonicalGameplaySessionRedisKeys.tenantIndex(assignment, ref)),
+                    ascii(capacityKey(assignment))
+                  },
+                  ascii(binding.tenantId().toString()),
+                  ascii(binding.accountId().toString()),
+                  ascii(binding.playableStateNamespaceId().toString()),
+                  ascii(binding.characterId().toString()),
+                  ascii(binding.gameInstanceId().toString()),
+                  ascii(binding.sessionId()),
+                  ascii(retained.bindingGeneration().toString()),
+                  ascii(assignment.tenantGameplayTag()),
+                  ascii(retained.executionDigest()),
+                  ascii(logout.toString()),
+                  ascii(Long.toString(deadline())),
+                  execution.canonicalBytes(),
+                  ascii(retained.originalSessionSha1()),
+                  ascii("DISPATCH")))
+          .isEqualTo(1L);
+    }
+    var fenced = physicalImage();
+    var sql = sqlImage();
+    capacityOwner().requireAdmittedLogoutFence(logout, execution, deadline());
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .requireAdmittedLogoutFence(UUID.randomUUID(), execution, deadline()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(physicalImage()).isEqualTo(fenced);
+    assertThat(sqlImage()).isEqualTo(sql);
     controlledRemoveServingKeys(admitted, assignment);
+    assertThatThrownBy(
+            () -> capacityOwner().requireAdmittedLogoutFence(logout, execution, deadline()))
+        .isInstanceOf(IllegalStateException.class);
     assertThat(
             new CanonicalGameplayOriginalNewAdmittedLogoutIntentRepository(fixture.dsl())
                 .readExact(execution.digest(), logout))

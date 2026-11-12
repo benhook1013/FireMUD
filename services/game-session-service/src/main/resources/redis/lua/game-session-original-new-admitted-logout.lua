@@ -1,6 +1,6 @@
--- Tenant-slot part of admitted original NEW logout. The caller must hold the exact
--- selected incarnation and a durable logout intent, and independently confirm the postimage.
--- This script supplies no Account retirement, region cleanup, or durable SQL receipt.
+-- Tenant-slot part of admitted original NEW logout. DISPATCH requires the exact
+-- protected incarnation and durable logout intent. OBSERVE checks the postimage on
+-- the selected connection. Terminal settlement and retirement use separate owners.
 local function uuid(value)
   return type(value) == 'string' and #value == 36 and value == string.lower(value)
     and value ~= '00000000-0000-0000-0000-000000000000'
