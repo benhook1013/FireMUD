@@ -468,6 +468,45 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Connect timed out"
 assert_output_contains "refreshed-captured-jooq-resolution"
 
+write_jooq_handshake_cause() {
+  cat > "$CASE_DIR/jooq-cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of `org.gradle.process.internal.DefaultJavaExecSpec_Decorated` bean found in field `javaExecSpec` of task `:entity-management-service:generateJooq` of type `org.gradle.api.tasks.JavaExec`: error writing value of type 'org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection'
+> Could not resolve all files for configuration ':entity-management-service:jooqCodegen'.
+   > Could not download jooq-codegen-3.21.9.jar (org.jooq:jooq-codegen:3.21.9)
+      > Could not get resource 'https://repo.maven.apache.org/maven2/org/jooq/jooq-codegen/3.21.9/jooq-codegen-3.21.9.jar'.
+         > Could not GET 'https://repo.maven.apache.org/maven2/org/jooq/jooq-codegen/3.21.9/jooq-codegen-3.21.9.jar'.
+            > The server may not support the client's requested TLS protocol versions: (TLSv1.2, TLSv1.3). You may need to configure the client to allow other protocols to be used. For more on this, please refer to https://docs.gradle.org/9.9.0/userguide/build_environment.html#sec:gradle_system_properties in the Gradle documentation.
+               > Remote host terminated the handshake
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+new_case captured-jooq-maven-handshake
+write_jooq_handshake_cause
+write_jooq_wrapper ''
+run_case game-session-service 0
+assert_call_count 2
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :game-session-service:check -PfullCheck --profile --info --console=plain"
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "Maven handshake closure did not use one short delay"
+
+for mutation in wrong-host certificate-error generation-started; do
+  new_case "jooq-maven-handshake-invalid-$mutation"
+  write_jooq_handshake_cause
+  progress_line=""
+  case "$mutation" in
+    wrong-host) sed -i 's/repo.maven.apache.org/other.example.org/g' "$CASE_DIR/jooq-cause.log" ;;
+    certificate-error) sed -i 's/Remote host terminated the handshake/PKIX path building failed/' "$CASE_DIR/jooq-cause.log" ;;
+    generation-started) progress_line='> Task :entity-management-service:generateJooq' ;;
+  esac
+  write_jooq_wrapper "$progress_line"
+  run_case game-session-service 1
+  assert_no_retry
+done
+
 for mutation in repository configuration pin url host cache-family mixed unknown; do
   new_case "protoc-timeout-invalid-$mutation"
   write_jooq_protoc_timeout_cause

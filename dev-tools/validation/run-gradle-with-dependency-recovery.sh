@@ -184,6 +184,25 @@ classify_failure_body() {
         transient++
         next
       }
+      if (line ~ /^> Could not download jooq-codegen-[0-9][[:alnum:]_.-]*\.jar \(org\.jooq:jooq-codegen:[0-9][[:alnum:]_.-]*\)$/) {
+        version = line
+        sub(/^.*\(org\.jooq:jooq-codegen:/, "", version)
+        sub(/\)$/, "", version)
+        if (line != "> Could not download jooq-codegen-" version ".jar (org.jooq:jooq-codegen:" version ")") invalid++
+        jooq_jar_url = "https://repo.maven.apache.org/maven2/org/jooq/jooq-codegen/" version "/jooq-codegen-" version ".jar"
+        jooq_jar_downloads++
+        coordinates++
+        next
+      }
+      if (line ~ /^> The server may not support the client\047s requested TLS protocol versions: \(TLSv1\.2, TLSv1\.3\)\. You may need to configure the client to allow other protocols to be used\. For more on this, please refer to https:\/\/docs\.gradle\.org\/9\.[0-9]+\.[0-9]+\/userguide\/build_environment\.html#sec:gradle_system_properties in the Gradle documentation\.$/) {
+        jooq_tls_context++
+        next
+      }
+      if (line == "> Remote host terminated the handshake") {
+        jooq_tls_terminated++
+        transient++
+        next
+      }
 
       if (line == "1 problem was found storing the configuration cache.") {
         cache_summary++
@@ -311,6 +330,10 @@ classify_failure_body() {
           if (line == "> Could not get resource " quote protoc_pom_url quote ".") protoc_pom_resource++
           if (line == "> Could not GET " quote protoc_pom_url quote ".") protoc_pom_get++
         }
+        if (jooq_jar_url != "") {
+          if (line == "> Could not get resource " quote jooq_jar_url quote ".") jooq_jar_resource++
+          if (line == "> Could not GET " quote jooq_jar_url quote ".") jooq_jar_get++
+        }
         repository_requests++
         next
       }
@@ -351,6 +374,11 @@ classify_failure_body() {
             (mavenrepo_disabled != 1 || protoc_connect_timeout != 1 ||
              protoc_coordinates != 1 || protoc_pom_resource != 1 || protoc_pom_get != 1 ||
              coordinates != 2 || repository_requests != 2 || searched ||
+             jooq_wrapper_causes != 1)) ||
+          ((jooq_jar_downloads || jooq_tls_context || jooq_tls_terminated) &&
+            (jooq_jar_downloads != 1 || jooq_tls_context != 1 || jooq_tls_terminated != 1 ||
+             jooq_jar_resource != 1 || jooq_jar_get != 1 ||
+             coordinates != 1 || repository_requests != 2 || searched ||
              jooq_wrapper_causes != 1)) ||
           ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
             (buildsrc_configuration != 1 || buildsrc_context == 0 ||
@@ -470,7 +498,7 @@ retry_delay_seconds() {
 
   retry_after="$(failure_body "$log_path" | sed -nE 's/^.*[Rr]etry-[Aa]fter:[[:space:]]*(.*)$/\1/p')" || return 1
   if [[ -z "$retry_after" ]]; then
-    if failure_body "$log_path" | grep -Eq 'Connection reset|Connection timed out|Connect timed out|SocketTimeoutException|Received status code 429 from server|Received status code 5[0-9][0-9] from server'; then
+    if failure_body "$log_path" | grep -Eq 'Connection reset|Connection timed out|Connect timed out|SocketTimeoutException|Remote host terminated the handshake|Received status code 429 from server|Received status code 5[0-9][0-9] from server'; then
       printf '2\n'
     else
       printf '0\n'
