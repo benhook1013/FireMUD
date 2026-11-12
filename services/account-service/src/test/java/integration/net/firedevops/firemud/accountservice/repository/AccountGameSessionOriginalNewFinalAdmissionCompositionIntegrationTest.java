@@ -146,6 +146,35 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void expiredRedisBudgetCannotInitializeOriginWithLongerCallerDeadline() throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      // The actual Redis clock has passed the locally admitted five-second deadline.
+      var clockBehindRedis = Clock.offset(CLOCK, java.time.Duration.ofSeconds(-10));
+      long callerDeadline = CLOCK.millis() + 30_000L;
+      String accountCapacity = session.capacityImage();
+      assertThatThrownBy(
+              () ->
+                  session.gs.prepareReceivingOrigin(
+                      session.capacityRequest, clockBehindRedis, callerDeadline))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact physical capacity origin custody unavailable");
+      String retainedOrigin = session.gs.originSqlImage();
+      assertThat(retainedOrigin).contains("\"state\": \"OPEN\"");
+      assertThat(session.gs.originPhysicalImage())
+          .containsOnlyKeys("pttl")
+          .containsEntry("pttl", "-2");
+      assertThatThrownBy(() -> session.gs.prepareReceivingOrigin(session.capacityRequest))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(session.gs.originPhysicalImage())
+          .containsOnlyKeys("pttl")
+          .containsEntry("pttl", "-2");
+      assertThat(session.gs.originSqlImage()).isEqualTo(retainedOrigin);
+      assertThat(session.capacityImage()).isEqualTo(accountCapacity);
+    }
+  }
+
+  @Test
   void missingInstalledOriginMarkerRefusesRetryAndTransferWithoutRecreation() throws Exception {
     try (Session session = session()) {
       session.enableOriginReceiving();

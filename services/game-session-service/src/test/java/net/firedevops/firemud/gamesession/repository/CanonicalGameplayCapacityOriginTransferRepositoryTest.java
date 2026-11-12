@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 class CanonicalGameplayCapacityOriginTransferRepositoryTest {
   private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final String OTHER_DIGEST = "sha256:" + "b".repeat(64);
+  private static final String OLD_OWNER = "old-owner";
 
   @Test
   void unknownOpenOriginHasExactReadbackWithoutReservationOrExecution() {
@@ -47,8 +48,7 @@ class CanonicalGameplayCapacityOriginTransferRepositoryTest {
           List.of(
               new CanonicalGameplayCapacityOriginRedisOwner.Readback(
                   OTHER_DIGEST, "successor", 12L, state),
-              new CanonicalGameplayCapacityOriginRedisOwner.Readback(
-                  DIGEST, "old-owner", 11L, state),
+              new CanonicalGameplayCapacityOriginRedisOwner.Readback(DIGEST, OLD_OWNER, 12L, state),
               new CanonicalGameplayCapacityOriginRedisOwner.Readback(
                   DIGEST, "successor", 13L, state),
               new CanonicalGameplayCapacityOriginRedisOwner.Readback(
@@ -77,7 +77,7 @@ class CanonicalGameplayCapacityOriginTransferRepositoryTest {
                     open.transferId(),
                     0,
                     open.origin(),
-                    "old-owner",
+                    OLD_OWNER,
                     11,
                     "successor",
                     11,
@@ -97,7 +97,7 @@ class CanonicalGameplayCapacityOriginTransferRepositoryTest {
                 CanonicalGameplayCapacityOriginTransferRepository.exactReadback(
                     denied,
                     new CanonicalGameplayCapacityOriginRedisOwner.Readback(
-                        DIGEST, "old-owner", 11, CanonicalGameplayCapacityOrigin.State.OPEN)))
+                        DIGEST, OLD_OWNER, 11, CanonicalGameplayCapacityOrigin.State.OPEN)))
         .isInstanceOf(IllegalStateException.class);
     assertThat(
             CanonicalGameplayCapacityOriginTransferRepository.exactReadback(
@@ -217,7 +217,7 @@ class CanonicalGameplayCapacityOriginTransferRepositoryTest {
         UUID.fromString("10000000-0000-4000-8000-000000000001"),
         0,
         origin,
-        "old-owner",
+        OLD_OWNER,
         11,
         "successor",
         12,
@@ -237,7 +237,7 @@ class CanonicalGameplayCapacityOriginTransferRepositoryTest {
         0,
         DIGEST,
         DIGEST,
-        "old-owner",
+        OLD_OWNER,
         11,
         id,
         id,
