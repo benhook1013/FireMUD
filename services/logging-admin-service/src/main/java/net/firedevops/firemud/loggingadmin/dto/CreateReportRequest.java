@@ -13,7 +13,8 @@ public record CreateReportRequest(
     @NotNull @Size(max = 20) String type,
     @NotNull @Size(max = 255) String description) {
   public CreateReportRequest {
-    reporterAccountId = JwtClaims.requireCanonicalAccountUuid(reporterAccountId, "reporterAccountId");
+    reporterAccountId =
+        JwtClaims.requireCanonicalAccountUuid(reporterAccountId, "reporterAccountId");
     if (targetAccountId != null) {
       targetAccountId = JwtClaims.requireCanonicalAccountUuid(targetAccountId, "targetAccountId");
     }

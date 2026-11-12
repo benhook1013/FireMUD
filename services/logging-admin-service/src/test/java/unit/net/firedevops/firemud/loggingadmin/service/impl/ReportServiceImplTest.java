@@ -20,7 +20,14 @@ class ReportServiceImplTest {
     UnsupportedOperationException exception =
         assertThrows(
             UnsupportedOperationException.class,
-            () -> service.createReport(new CreateReportRequest(1L, "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1", "e830a76a-a786-43de-9416-5840fa6e0578", "BUG", "bad")));
+            () ->
+                service.createReport(
+                    new CreateReportRequest(
+                        1L,
+                        "b8d093f7-cb70-40ed-9fac-3c82d4bf28f1",
+                        "e830a76a-a786-43de-9416-5840fa6e0578",
+                        "BUG",
+                        "bad")));
 
     assertEquals(
         "Report creation is unavailable until the shared mutation gate is implemented",

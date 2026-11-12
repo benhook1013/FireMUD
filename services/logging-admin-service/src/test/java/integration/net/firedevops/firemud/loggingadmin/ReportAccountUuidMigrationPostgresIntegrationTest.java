@@ -38,7 +38,8 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
   private static final String MIGRATION_LOCATION = "classpath:db/migration";
 
   @Container
-  static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void freshSchemaMigratesWithCanonicalAccountUuidsAndNumericLocalIdentifiers() throws Exception {
@@ -54,11 +55,32 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
     assertThat(columnType(schema, "moderation_actions", "id")).isEqualTo("int8");
     assertThat(columnType(schema, "player_reports", "id")).isEqualTo("int8");
     assertThat(columnType(schema, "log_events", "account_id")).isEqualTo("int8");
-    execute(schema, "INSERT INTO player_reports (tenant_id, reporter_account_id, target_account_id, type, description) VALUES (1, 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1', NULL, 'BUG', 'canonical')");
-    assertThat(scalarLong(schema, "SELECT count(*) FROM player_reports WHERE reporter_account_id = 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1'::uuid AND target_account_id IS NULL")).isEqualTo(1L);
-    assertThrows(SQLException.class, () -> execute(schema, "INSERT INTO player_reports (tenant_id, reporter_account_id, type, description) VALUES (1, '00000000-0000-0000-0000-000000000000', 'BUG', 'nil reporter')"));
-    assertThrows(SQLException.class, () -> execute(schema, "INSERT INTO player_reports (tenant_id, reporter_account_id, target_account_id, type, description) VALUES (1, 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1', '00000000-0000-0000-0000-000000000000', 'BUG', 'nil target')"));
-    assertThrows(SQLException.class, () -> execute(schema, "INSERT INTO player_reports (tenant_id, reporter_account_id, type, description) VALUES (1, NULL, 'BUG', 'null reporter')"));
+    execute(
+        schema,
+        "INSERT INTO player_reports (tenant_id, reporter_account_id, target_account_id, type, description) VALUES (1, 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1', NULL, 'BUG', 'canonical')");
+    assertThat(
+            scalarLong(
+                schema,
+                "SELECT count(*) FROM player_reports WHERE reporter_account_id = 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1'::uuid AND target_account_id IS NULL"))
+        .isEqualTo(1L);
+    assertThrows(
+        SQLException.class,
+        () ->
+            execute(
+                schema,
+                "INSERT INTO player_reports (tenant_id, reporter_account_id, type, description) VALUES (1, '00000000-0000-0000-0000-000000000000', 'BUG', 'nil reporter')"));
+    assertThrows(
+        SQLException.class,
+        () ->
+            execute(
+                schema,
+                "INSERT INTO player_reports (tenant_id, reporter_account_id, target_account_id, type, description) VALUES (1, 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1', '00000000-0000-0000-0000-000000000000', 'BUG', 'nil target')"));
+    assertThrows(
+        SQLException.class,
+        () ->
+            execute(
+                schema,
+                "INSERT INTO player_reports (tenant_id, reporter_account_id, type, description) VALUES (1, NULL, 'BUG', 'null reporter')"));
     // Runtime discovery includes the unchanged service and Saga migration history.
     assertThat(history(schema)).hasSize(13);
   }
@@ -92,7 +114,9 @@ class ReportAccountUuidMigrationPostgresIntegrationTest {
   void existingCanonicalModerationRowsAreUntouchedByReportOnlyMigration() throws Exception {
     String schema = createSchema();
     migrateToVersion(schema, "1007");
-    execute(schema, "INSERT INTO moderation_actions (tenant_id, account_id, action, reason) VALUES (17, 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1', 'warning', 'retained action')");
+    execute(
+        schema,
+        "INSERT INTO moderation_actions (tenant_id, account_id, action, reason) VALUES (17, 'b8d093f7-cb70-40ed-9fac-3c82d4bf28f1', 'warning', 'retained action')");
     List<String> rowsBefore = rows(schema, "moderation_actions");
     List<String> historyBefore = history(schema);
     migrateToLatest(schema);

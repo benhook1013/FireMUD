@@ -47,5 +47,4 @@ public class TestDataSeeder implements ApplicationRunner {
     }
     logEventRepository.save(event);
   }
-
 }
