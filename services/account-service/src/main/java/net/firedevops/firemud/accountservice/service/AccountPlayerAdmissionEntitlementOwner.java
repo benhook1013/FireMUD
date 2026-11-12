@@ -573,7 +573,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())) throw targetPrecondition();
   }
 
-  private static RuntimePlayerAdmissionEntitlementEvidence capture(
+  private RuntimePlayerAdmissionEntitlementEvidence capture(
       Request request,
       CurrentPlayer player,
       PublishedRealmEvidence target,
@@ -632,15 +632,21 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
     sources.put("worldCaptureId", world.captureId().toString());
     sources.put("worldRowVersion", Long.toString(world.rowVersion()));
-    return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-        request.requestId(),
-        request.authenticatedCallerWorkload(),
-        scope.scopeTokenHash(),
-        player.snapshot(),
-        binding,
-        facts,
-        sources,
-        time);
+    var evidence =
+        RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+            request.requestId(),
+            request.authenticatedCallerWorkload(),
+            scope.scopeTokenHash(),
+            player.snapshot(),
+            binding,
+            facts,
+            sources,
+            time);
+    // Retain only inside this actual evaluator's final source transaction. A supplied bundle
+    // cannot register itself as capacity authority, and commit failure returns no evidence.
+    new net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository(dsl)
+        .retainPlayerEvaluation(evidence);
+    return evidence;
   }
 
   private static Map<String, Object> facts(
