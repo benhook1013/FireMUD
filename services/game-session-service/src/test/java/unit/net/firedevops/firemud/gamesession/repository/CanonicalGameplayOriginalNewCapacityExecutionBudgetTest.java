@@ -410,6 +410,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             });
     DSLContext source = source(provider);
     var callers = new ArrayList<CompletableFuture<Void>>();
+    var executor = Executors.newFixedThreadPool(maximum);
     try {
       for (int index = 0; index < maximum; index++)
         callers.add(
@@ -421,7 +422,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                                     CLOCK,
                                     CLOCK.millis() + 300,
                                     budget -> execute(budget.sql(source))))
-                        .isInstanceOf(IllegalStateException.class)));
+                        .isInstanceOf(IllegalStateException.class),
+                executor));
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
       CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
       assertThatThrownBy(
@@ -433,6 +435,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verifyNoInteractions(connection);
     } finally {
       release.countDown();
+      executor.shutdownNow();
       verify(provider, timeout(2000).times(maximum)).release(connection);
     }
   }
@@ -458,6 +461,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             });
     DSLContext source = source(provider);
     var callers = new ArrayList<CompletableFuture<Void>>();
+    var executor = Executors.newFixedThreadPool(maximum);
     try {
       for (int index = 0; index < backgroundMaximum; index++)
         callers.add(
@@ -469,7 +473,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                                     CLOCK,
                                     CLOCK.millis() + 1000,
                                     budget -> execute(budget.sql(source))))
-                        .isInstanceOf(IllegalStateException.class)));
+                        .isInstanceOf(IllegalStateException.class),
+                executor));
       assertThat(backgroundEntered.await(2, TimeUnit.SECONDS)).isTrue();
       var refused = new AtomicBoolean();
       assertThatThrownBy(
@@ -497,7 +502,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                                     CLOCK,
                                     CLOCK.millis() + 1000,
                                     budget -> execute(budget.sql(source))))
-                        .isInstanceOf(IllegalStateException.class)));
+                        .isInstanceOf(IllegalStateException.class),
+                executor));
       assertThat(allEntered.await(2, TimeUnit.SECONDS)).isTrue();
       CompletableFuture.allOf(callers.toArray(CompletableFuture[]::new)).get(2, TimeUnit.SECONDS);
       // Callers timed out, but blocked acquisition still owns all four permits.
@@ -510,6 +516,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
       verifyNoInteractions(connection);
     } finally {
       release.countDown();
+      executor.shutdownNow();
       verify(provider, timeout(2000).times(maximum)).release(connection);
     }
   }

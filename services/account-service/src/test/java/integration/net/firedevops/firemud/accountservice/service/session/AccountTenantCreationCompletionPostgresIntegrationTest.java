@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
@@ -57,11 +58,13 @@ import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssoc
 import net.firedevops.firemud.accountservice.repository.RetainedSubscriptionEvidenceRepository;
 import net.firedevops.firemud.accountservice.service.AccountCreatorMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountPasswordResetDraftSourceChangeRepository;
+import net.firedevops.firemud.accountservice.service.AccountTenantCapacityRecoveryWorker;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapAuthorizationSource;
 import net.firedevops.firemud.accountservice.service.AccountTenantCreationBootstrapService;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationAdmissionRepository.Admitted;
 import net.firedevops.firemud.accountservice.service.session.AccountTenantCreationIntentRepository.OriginalIntent;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
@@ -407,6 +410,63 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                         f.request.identity().tenantId()))
                 .get("used_units", Long.class))
         .isEqualTo(17);
+  }
+
+  @Test
+  void overlappingRecoveryCallsCannotInvalidateTheSameWorkersLiveClaim() throws Exception {
+    var f = capacityPersistenceFixture();
+    var next =
+        new TenantCapacityAdmission.Request(
+                f.request.identity(),
+                UUID.randomUUID(),
+                f.request.capacityRearmFence() + 1,
+                f.request.targetNamespace(),
+                f.request.context(),
+                f.request.operation(),
+                f.request.priorShape(),
+                f.request.requestedShape(),
+                f.request.evidence(),
+                f.request.capacityDelta(),
+                null)
+            .withDigest();
+    var readStarted = new CountDownLatch(1);
+    var resumeRead = new CountDownLatch(1);
+    var calls = new AtomicInteger();
+    var recovery =
+        new AccountTenantCapacityRecoveryWorker(
+            f.owner,
+            f.context.dsl,
+            (request, reservation, deadline) -> {
+              if (calls.incrementAndGet() == 1) {
+                readStarted.countDown();
+                try {
+                  assertThat(resumeRead.await(10, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                  throw new AssertionError("Interrupted while waiting to resume read", interrupted);
+                }
+              }
+              return capacityObservation(
+                  request, reservation, AccountTenantCapacityRecoveryWorker.Disposition.COMMITTED);
+            },
+            Clock.fixed(Instant.now(), ZoneOffset.UTC));
+    var action = AccountTenantCapacityRecoveryWorker.NoCommitAction.RELEASE;
+    try (var executor = Executors.newSingleThreadExecutor()) {
+      var pending = executor.submit(() -> recovery.reconcile(f.request, action));
+      try {
+        assertThat(readStarted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> recovery.reconcile(f.request, action))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+        assertThatThrownBy(() -> recovery.rearm(f.request, next))
+            .hasMessage("ENTITLEMENT_UNAVAILABLE");
+      } finally {
+        resumeRead.countDown();
+      }
+      var result = pending.get(10, TimeUnit.SECONDS);
+      assertThat(result.state()).isEqualTo(TenantCapacityAdmission.State.FINALIZED);
+      assertThat(recovery.reconcile(f.request, action)).isEqualTo(result);
+      assertThat(calls).hasValue(1);
+    }
   }
 
   @Test
@@ -786,7 +846,10 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                       .at(evidence.evaluatedAt()),
                   net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
                       .at(evidence.expiresAt()));
-              return repository.create(request, evidence.expiresAt());
+              return repository.create(
+                  request,
+                  evidence.expiresAt(),
+                  Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC));
             });
     var owner =
         new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(

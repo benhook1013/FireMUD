@@ -162,7 +162,9 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
               observations.observeForRegionOwnerTransfer(
                   transferId, first.getFirst().ordinal(), budget.absoluteDeadlineMillis());
           if (!after.incarnationDigest().equals(completed.incarnationDigest())) throw held();
-          owner.readTransferFence(first.getFirst(), budget.absoluteDeadlineMillis());
+          repository.requireRetainedPhysical(
+              first.getFirst(),
+              owner.readTransferFence(first.getFirst(), budget.absoluteDeadlineMillis()));
           return installed;
         });
   }

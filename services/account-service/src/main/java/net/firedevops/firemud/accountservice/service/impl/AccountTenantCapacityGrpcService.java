@@ -88,9 +88,6 @@ public final class AccountTenantCapacityGrpcService
         | org.springframework.transaction.TransactionException unavailable) {
       observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
       return;
-    } catch (IllegalArgumentException | ArithmeticException ownerEvidence) {
-      observer.onError(Failure.ENTITLEMENT_UNAVAILABLE.toStatusException());
-      return;
     } catch (RuntimeException internal) {
       observer.onError(Status.INTERNAL.asRuntimeException());
       return;
