@@ -276,6 +276,27 @@ class CapacityAdmissionDigestTest {
   }
 
   @Test
+  void nonExpandingRecoveryStillRequiresCreationEligibleEvidence() {
+    Request denied = CapacityAdmissionTestFixture.playerRequest(false);
+    Request recovery =
+        new Request(
+                denied.identity(),
+                denied.admissionAttemptId(),
+                denied.capacityRearmFence(),
+                denied.targetNamespace(),
+                denied.context(),
+                Operation.NON_EXPANDING_RECOVERY,
+                denied.priorShape(),
+                denied.priorShape(),
+                denied.evidence(),
+                0L,
+                null)
+            .withDigest();
+    recovery.requireStructurallyValid();
+    assertThatThrownBy(recovery::requireCommittable).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void boundReleasedAndQuarantinedResultsCannotAuthorizeOriginalExecution() {
     Request request = CapacityAdmissionTestFixture.playerRequest();
     for (var state :
