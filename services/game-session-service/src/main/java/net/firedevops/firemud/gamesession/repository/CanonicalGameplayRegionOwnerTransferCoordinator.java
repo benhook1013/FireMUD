@@ -243,7 +243,8 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
                   reader.readOriginTransferCustody(firstOrigins.getFirst(), absoluteDeadline);
                 } else {
                   repository.requireRetainedPhysical(
-                      first.getFirst(), reader.readTransferFence(first.getFirst(), absoluteDeadline));
+                      first.getFirst(),
+                      reader.readTransferFence(first.getFirst(), absoluteDeadline));
                 }
                 return installed;
               });
