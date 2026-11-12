@@ -51,13 +51,13 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     return repository.completedForCurrent(prior, requestingOwner, deadline);
   }
 
-  CanonicalGameplayRegionOwnerTransferRepository.Item frozenOriginal(
+  CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal frozenOriginal(
       UUID transitionId, long deadline) {
     return repository.within(deadline, ignored -> repository.frozenOriginal(transitionId));
   }
 
   void requireFrozenOriginal(
-      CanonicalGameplayRegionOwnerTransferRepository.Item original,
+      CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal original,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior,
       long deadline) {
@@ -70,7 +70,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
   }
 
   UUID resume(
-      CanonicalGameplayRegionOwnerTransferRepository.Item original,
+      CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal original,
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior,
       long deadline) {
@@ -89,7 +89,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior,
       long deadline,
-      CanonicalGameplayRegionOwnerTransferRepository.Item original) {
+      CanonicalGameplayRegionOwnerTransferRepository.FrozenOriginal original) {
     return repository.within(
         deadline,
         budget -> {
@@ -156,7 +156,8 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
             var originBefore = observeOrigin(item, budget.absoluteDeadlineMillis());
             var actual = owner.transferOriginCustody(item, budget.absoluteDeadlineMillis());
             var originAfter = observeOrigin(item, budget.absoluteDeadlineMillis());
-            origins.retainFence(item, actual, originBefore, originAfter);
+            origins.retainFence(
+                item, actual, originBefore, originAfter, budget.absoluteDeadlineMillis());
           }
           UUID originRound = origins.beginVerification(transferId);
           var firstOrigins = origins.page(transferId, -1);
@@ -182,7 +183,8 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
               var originBefore = observeOrigin(item, budget.absoluteDeadlineMillis());
               var actual = owner.readOriginTransferCustody(item, budget.absoluteDeadlineMillis());
               var originAfter = observeOrigin(item, budget.absoluteDeadlineMillis());
-              origins.retainVerification(item, originRound, actual, originBefore, originAfter);
+              origins.retainVerification(
+                  item, originRound, actual, originBefore, originAfter, budget.absoluteDeadlineMillis());
             }
             originPage = origins.page(transferId, originPage.getLast().ordinal());
           }
@@ -232,7 +234,11 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           var completed = repository.completedSuccessor(transferId, ownerInstance, correlation);
           var page = repository.completedPage(transferId, -1);
           var originPage = origins.page(transferId, -1);
-          if (page.isEmpty() && originPage.isEmpty()) throw held();
+          if (page.isEmpty() && originPage.isEmpty()) {
+            if (origins.hasItems(transferId)) throw held();
+            repository.requireTerminalOnlyCompletion(transferId, completed);
+            return completed.status();
+          }
           var first = page.isEmpty() ? null : page.getFirst();
           var firstOrigin = originPage.isEmpty() ? null : originPage.getFirst();
           var before =
@@ -290,7 +296,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     if (originObservations == null) throw held();
     var value =
         originObservations.observeForOriginTransfer(item.transferId(), item.ordinal(), deadline);
-    if (!origins.requireCurrent(item).equals(value.originTransferContext())
+    if (!origins.requireCurrent(item, deadline).equals(value.originTransferContext())
         || value.ownerKind()
             != CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.ORIGIN_OWNER_TRANSFER)
       throw held();

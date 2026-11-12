@@ -207,10 +207,11 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
         CanonicalGameplayCapacityOrigin.State.valueOf(row.get("captured_state", String.class)));
   }
 
-  Context readCurrent(UUID transferId, long targetOrdinal) {
+  Context readCurrent(UUID transferId, long targetOrdinal, long deadline) {
     return transfers.within(
-        Long.MAX_VALUE,
-        ignored -> {
+        deadline,
+        budget -> {
+          if (deadline < budget.absoluteDeadlineMillis()) throw held();
           Record transfer =
               CanonicalGameplayRegionOwnerTransferRepository.observationCurrent(
                   transfers.sql(), transferId);
@@ -270,16 +271,17 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
   }
 
   CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
-      UUID transitionId, CanonicalGameplayTenantGameplayTagRepository tags) {
-    return transfers.readAssignment(transitionId, tags);
+      UUID transitionId, CanonicalGameplayTenantGameplayTagRepository tags, long deadline) {
+    return transfers.readAssignment(transitionId, tags, deadline);
   }
 
   void retainFence(
       Item item,
       CanonicalGameplayCapacityOriginRedisOwner.Readback actual,
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before,
-      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after) {
-    requireObservation(item, before, after);
+      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after,
+      long deadline) {
+    requireObservation(item, before, after, deadline);
     byte[] readback = exactReadback(item, actual);
     transfers
         .sql()
@@ -343,8 +345,9 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
       UUID round,
       CanonicalGameplayCapacityOriginRedisOwner.Readback actual,
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before,
-      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after) {
-    requireObservation(item, before, after);
+      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after,
+      long deadline) {
+    requireObservation(item, before, after, deadline);
     byte[] readback = exactReadback(item, actual);
     transfers
         .sql()
@@ -448,8 +451,8 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
     if (changed != count) throw held();
   }
 
-  Context requireCurrent(Item item) {
-    var context = readCurrent(item.transferId(), item.ordinal());
+  Context requireCurrent(Item item, long deadline) {
+    var context = readCurrent(item.transferId(), item.ordinal(), deadline);
     if (!context.originDigest().equals(item.origin().digest())
         || !context.oldRegionOwnerId().equals(item.oldOwner())
         || context.oldRegionOwnerFence() != item.oldFence()
@@ -462,8 +465,9 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
   private void requireObservation(
       Item item,
       CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before,
-      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after) {
-    var context = requireCurrent(item);
+      CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation after,
+      long deadline) {
+    var context = requireCurrent(item, deadline);
     if (before.ownerKind()
             != CanonicalGameplayProtectedIncarnationReceiver.OwnerKind.ORIGIN_OWNER_TRANSFER
         || after.ownerKind()
