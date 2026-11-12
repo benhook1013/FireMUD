@@ -267,6 +267,14 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
 
   /** Real authenticated client decoding over controlled World/Entity response DTOs and test PKI. */
   static final class ControlledRegionSources implements AutoCloseable {
+    enum WorldRead {
+      PLACEMENT,
+      LIFECYCLE
+    }
+
+    final java.util.concurrent.CountDownLatch withheldReadEntered =
+        new java.util.concurrent.CountDownLatch(1);
+    volatile WorldRead withholdWorldRead;
     final net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request;
     final net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver
         resolver;
@@ -534,6 +542,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
                 response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
                 return;
               }
+              if (withholdWorldRead == WorldRead.PLACEMENT) {
+                withheldReadEntered.countDown();
+                return;
+              }
               response.onNext(controlled.observation());
               response.onCompleted();
             }
@@ -556,6 +568,10 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
               var controlled = bindingByLifecycleRequest.get(incomingRequest);
               if (!isPeer(caller) || controlled == null) {
                 response.onError(io.grpc.Status.PERMISSION_DENIED.asRuntimeException());
+                return;
+              }
+              if (withholdWorldRead == WorldRead.LIFECYCLE) {
+                withheldReadEntered.countDown();
                 return;
               }
               response.onNext(

@@ -1132,8 +1132,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           new DefaultExecuteListener() {
             @Override
             public void executeEnd(ExecuteContext context) {
-              if (context.sql() != null
-                  && context.sql().contains("pg_advisory_xact_lock")
+              String sql = context.sql();
+              if (sql != null
+                  && sql.contains("pg_advisory_xact_lock")
                   && expireAfterLock.compareAndSet(true, false)) wall.addAndGet(1_100);
             }
           };
