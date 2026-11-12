@@ -249,7 +249,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     long result =
         scopedFinalOwner()
             .forOrigin(origin, retained)
-            .closeCapacityExecutionOnce(execution, origin.candidate(), assignment, physicalDeadline);
+            .closeCapacityExecutionOnce(
+                execution, origin.candidate(), assignment, physicalDeadline);
     if (result != CAPACITY_EXECUTION_CLOSED && result != CAPACITY_EXECUTION_CLOSED_OBSERVED)
       throw unavailable();
     // Existing closure path independently checks physical CLOSED, candidate/index evidence and

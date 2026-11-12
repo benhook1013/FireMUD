@@ -881,7 +881,18 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
     for (String version :
-        List.of("1057", "1058", "1059", "1060", "1061", "1062", "1063", "1064", "1065", "1065.0.1", "1065.1")) {
+        List.of(
+            "1057",
+            "1058",
+            "1059",
+            "1060",
+            "1061",
+            "1062",
+            "1063",
+            "1064",
+            "1065",
+            "1065.0.1",
+            "1065.1")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -909,7 +920,18 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
     }
     for (String version :
-        List.of("1057", "1058", "1059", "1060", "1061", "1062", "1063", "1064", "1065", "1065.0.1", "1065.1")) {
+        List.of(
+            "1057",
+            "1058",
+            "1059",
+            "1060",
+            "1061",
+            "1062",
+            "1063",
+            "1064",
+            "1065",
+            "1065.0.1",
+            "1065.1")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "

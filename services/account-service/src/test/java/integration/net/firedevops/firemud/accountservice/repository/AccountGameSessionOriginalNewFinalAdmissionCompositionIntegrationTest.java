@@ -371,8 +371,13 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertThat((Long) after.get("custody_owner_fence"))
           .isGreaterThan((Long) before.get("custody_owner_fence"));
       assertThat(after.get("recovery_observations")).isEqualTo(before.get("recovery_observations"));
-      assertThat(session.gs.dsl().fetchCount(
-          org.jooq.impl.DSL.table("game_session_original_new_capacity_execution"))).isZero();
+      assertThat(
+              session
+                  .gs
+                  .dsl()
+                  .fetchCount(
+                      org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
+          .isZero();
     }
   }
 
