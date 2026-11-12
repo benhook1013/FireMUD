@@ -11,7 +11,9 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -19,6 +21,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -31,10 +34,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 final class CanonicalGameplayRegionLeaseRedisOwner {
   private static final String PRINCIPAL = "gamesession_coord_app";
   private static final String SCHEMA = "gs_region_lease/v1";
+  private static final String DEADLINE_SCHEMA = "gs_region_lease/v2";
   private static final int MAX_SCRIPT_BYTES = 16 * 1024;
   private static final long COMMAND_TIMEOUT_MILLIS = 5_000L;
   private static final List<String> LEASE_ARGUMENTS =
-      List.of("schema", "token", "expectedRegionEpoch", "leaseTtlMs");
+      List.of("schema", "token", "expectedRegionEpoch", "leaseTtlMs", "absoluteDeadlineMillis");
   private static final List<String> READ_ARGUMENTS =
       List.of("schema", "token", "expectedRegionEpoch");
   private static final List<RedisScriptDescriptor.KeySpec> EXPECTED_KEYS =
@@ -78,10 +82,24 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   private final RedisClient redisClient;
   private final RedisScriptCatalog catalog;
+  private final Clock handoffClock;
+  private final long handoffDeadlineMillis;
 
   CanonicalGameplayRegionLeaseRedisOwner(RedisClient redisClient, RedisScriptCatalog catalog) {
+    this(redisClient, catalog, null, 0L);
+  }
+
+  private CanonicalGameplayRegionLeaseRedisOwner(
+      RedisClient redisClient, RedisScriptCatalog catalog, Clock handoffClock, long deadline) {
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Coordination Redis client");
     this.catalog = Objects.requireNonNull(catalog, "Installed region lease script catalog");
+    this.handoffClock = handoffClock;
+    this.handoffDeadlineMillis = deadline;
+  }
+
+  CanonicalGameplayRegionLeaseRedisOwner forHandoffDeadline(Clock clock, long deadline) {
+    return new CanonicalGameplayRegionLeaseRedisOwner(
+        redisClient, catalog, Objects.requireNonNull(clock), deadline);
   }
 
   LeaseGrant acquire(
@@ -562,18 +580,48 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         };
     byte[][] arguments = grant.arguments(includeTtl ? ttlMillis : null);
     if (arguments.length != expectedArguments.size()) throw unavailable();
-    return executeInteger(source, keys, arguments);
+    return executeInteger(source, keys, arguments, includeTtl);
   }
 
   private long executeInteger(byte[] script, byte[][] keys, byte[][] arguments) {
+    return executeInteger(script, keys, arguments, false);
+  }
+
+  private long executeInteger(
+      byte[] script, byte[][] keys, byte[][] arguments, boolean hasLeaseDeadlineArgument) {
     requireNoAmbientTransaction();
+    if (handoffClock != null) {
+      return CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+          handoffClock,
+          handoffDeadlineMillis,
+          budget -> {
+            byte[][] scopedArguments = arguments;
+            if (hasLeaseDeadlineArgument) {
+              scopedArguments = Arrays.copyOf(arguments, arguments.length);
+              scopedArguments[arguments.length - 1] =
+                  ascii(Long.toString(budget.absoluteDeadlineMillis()));
+            }
+            return executeInteger(script, keys, scopedArguments, budget);
+          });
+    }
+    return executeInteger(script, keys, arguments, null);
+  }
+
+  private long executeInteger(
+      byte[] script,
+      byte[][] keys,
+      byte[][] arguments,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (budget != null) budget.check();
     try (StatefulRedisConnection<byte[], byte[]> connection =
         redisClient.connect(ByteArrayCodec.INSTANCE)) {
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
-      requirePrincipal(await(commands.aclWhoami()));
-      String loadedSha = await(commands.scriptLoad(script));
+      requirePrincipal(await(commands::aclWhoami, budget));
+      String loadedSha = await(() -> commands.scriptLoad(script), budget);
       if (!digest("SHA-1", script).equals(loadedSha)) throw unavailable();
-      Long result = await(commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, arguments));
+      Long result =
+          await(
+              () -> commands.evalsha(loadedSha, ScriptOutputType.INTEGER, keys, arguments), budget);
       if (result == null) throw unavailable();
       return result;
     } catch (RuntimeException failure) {
@@ -678,8 +726,22 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
   }
 
   private static <T> T await(RedisFuture<T> future) {
+    return await(future, COMMAND_TIMEOUT_MILLIS);
+  }
+
+  private static <T> T await(
+      Supplier<RedisFuture<T>> operation,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (budget == null) return await(operation.get());
+    long timeout = Math.min(COMMAND_TIMEOUT_MILLIS, budget.remainingMillis());
+    T result = await(operation.get(), timeout);
+    budget.check();
+    return result;
+  }
+
+  private static <T> T await(RedisFuture<T> future, long timeoutMillis) {
     try {
-      return future.get(COMMAND_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+      return future.get(timeoutMillis, TimeUnit.MILLISECONDS);
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       future.cancel(true);
@@ -763,7 +825,11 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
         return new byte[][] {ascii(SCHEMA), ascii(token), ascii(Long.toString(regionEpoch))};
       }
       return new byte[][] {
-        ascii(SCHEMA), ascii(token), ascii(Long.toString(regionEpoch)), ascii(ttlMillis.toString())
+        ascii(DEADLINE_SCHEMA),
+        ascii(token),
+        ascii(Long.toString(regionEpoch)),
+        ascii(ttlMillis.toString()),
+        ascii("0")
       };
     }
 

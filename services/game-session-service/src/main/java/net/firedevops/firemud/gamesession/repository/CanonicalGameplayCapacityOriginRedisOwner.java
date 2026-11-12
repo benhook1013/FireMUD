@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.repository;
 import io.lettuce.core.RedisFuture;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
+import io.lettuce.core.api.async.RedisAsyncCommands;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Objects;
@@ -84,25 +85,7 @@ final class CanonicalGameplayCapacityOriginRedisOwner {
                       bytes(expectedState.name()),
                       bytes(Long.toString(absoluteDeadlineMillis))));
       if (result == null || (result != 1L && result != 2L)) throw unavailable();
-      if (await(() -> commands.pttl(bytes(origin.redisKey()))) != -1L) throw unavailable();
-      Map<byte[], byte[]> raw = await(() -> commands.hgetall(bytes(origin.redisKey())));
-      var fields = new java.util.HashMap<String, String>();
-      for (var e : raw.entrySet())
-        if (fields.put(
-                new String(e.getKey(), StandardCharsets.US_ASCII),
-                new String(e.getValue(), StandardCharsets.US_ASCII))
-            != null) throw unavailable();
-      if (!fields.equals(
-          Map.of(
-              "origin",
-              origin.digest(),
-              "owner",
-              newOwner,
-              "fence",
-              Long.toString(newFence),
-              "state",
-              expectedState.name()))) throw unavailable();
-      return new Readback(origin.digest(), newOwner, newFence, expectedState);
+      return readPersistentMarker(commands, origin, newOwner, newFence, expectedState);
     } finally {
       connection.closeAsync();
     }
@@ -118,30 +101,45 @@ final class CanonicalGameplayCapacityOriginRedisOwner {
     remaining();
     var connection = admittedConnection.get();
     try {
-      var commands = connection.async();
-      if (!"gamesession_coord_app".equals(await(commands::aclWhoami))) throw unavailable();
-      if (await(() -> commands.pttl(bytes(origin.redisKey()))) != -1L) throw unavailable();
-      Map<byte[], byte[]> raw = await(() -> commands.hgetall(bytes(origin.redisKey())));
-      var fields = new java.util.HashMap<String, String>();
-      for (var e : raw.entrySet())
-        if (fields.put(
-                new String(e.getKey(), StandardCharsets.US_ASCII),
-                new String(e.getValue(), StandardCharsets.US_ASCII))
-            != null) throw unavailable();
-      if (!fields.equals(
-          Map.of(
-              "origin",
-              origin.digest(),
-              "owner",
-              owner,
-              "fence",
-              Long.toString(fence),
-              "state",
-              state.name()))) throw unavailable();
-      return new Readback(origin.digest(), owner, fence, state);
+      return readExact(connection.async(), origin, owner, fence, state);
     } finally {
       connection.closeAsync();
     }
+  }
+
+  Readback readExact(
+      RedisAsyncCommands<byte[], byte[]> commands,
+      CanonicalGameplayCapacityOrigin origin,
+      String owner,
+      long fence,
+      CanonicalGameplayCapacityOrigin.State state) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    if (!"gamesession_coord_app".equals(await(commands::aclWhoami))) throw unavailable();
+    return readPersistentMarker(commands, origin, owner, fence, state);
+  }
+
+  private Readback readPersistentMarker(
+      RedisAsyncCommands<byte[], byte[]> commands,
+      CanonicalGameplayCapacityOrigin origin,
+      String owner,
+      long fence,
+      CanonicalGameplayCapacityOrigin.State state) {
+    byte[] key = bytes(origin.redisKey());
+    if (await(() -> commands.pttl(key)) != -1L) throw unavailable();
+    Map<byte[], byte[]> raw = await(() -> commands.hgetall(key));
+    var fields = new java.util.HashMap<String, String>();
+    for (var entry : raw.entrySet())
+      if (fields.put(
+              new String(entry.getKey(), StandardCharsets.US_ASCII),
+              new String(entry.getValue(), StandardCharsets.US_ASCII))
+          != null) throw unavailable();
+    if (!fields.equals(
+        Map.of(
+            "origin", origin.digest(),
+            "owner", owner,
+            "fence", Long.toString(fence),
+            "state", state.name()))) throw unavailable();
+    return new Readback(origin.digest(), owner, fence, state);
   }
 
   private long remaining() {

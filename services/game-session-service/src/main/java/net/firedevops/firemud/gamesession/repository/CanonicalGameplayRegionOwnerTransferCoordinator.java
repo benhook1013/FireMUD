@@ -161,8 +161,8 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           }
           if (!"game-session-service".equals(ownerService)) throw held();
           var owner = capacity.forTransferBudget(budget);
-          UUID originRound = null;
-          List<CanonicalGameplayCapacityOriginTransferRepository.Item> firstOrigins = List.of();
+          UUID originRound;
+          List<CanonicalGameplayCapacityOriginTransferRepository.Item> firstOrigins;
           if (hasOriginItems) {
             // The physical origin custody CAS names this reserved successor.
             repository.prepareSuccessor(transferId, ownerInstanceId, leaseCorrelation);
@@ -177,83 +177,77 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
             }
             originRound = origins.beginVerification(transferId);
             firstOrigins = origins.page(transferId, -1);
-          }
-          var before =
-              first.isEmpty()
-                  ? observeOrigin(firstOrigins.getFirst(), budget.absoluteDeadlineMillis())
-                  : observe(first.getFirst(), budget.absoluteDeadlineMillis());
-          // Read every retained execution fence through one connection and the same deadline.
-          // Earlier receipts cannot replace a missing marker or a timed-out qualification.
-          if (!first.isEmpty()) {
-            owner.withTransferReadback(
-                reader -> {
-                  var page = first;
-                  while (!page.isEmpty()) {
-                    budget.check();
-                    for (var item : page) {
-                      var actual = reader.readTransferFence(item, budget.absoluteDeadlineMillis());
-                      repository.requireRetainedPhysical(item, actual);
-                    }
-                    page = repository.page(transferId, page.getLast().ordinal());
-                  }
-                });
-          }
-          var originPage = firstOrigins;
-          while (!originPage.isEmpty()) {
-            budget.check();
-            for (var item : originPage) {
-              var originBefore = observeOrigin(item, budget.absoluteDeadlineMillis());
-              var actual = owner.readOriginTransferCustody(item, budget.absoluteDeadlineMillis());
-              var originAfter = observeOrigin(item, budget.absoluteDeadlineMillis());
-              origins.retainVerification(
-                  item,
-                  originRound,
-                  actual,
-                  originBefore,
-                  originAfter,
-                  budget.absoluteDeadlineMillis());
-            }
-            originPage = origins.page(transferId, originPage.getLast().ordinal());
-          }
-          var after =
-              first.isEmpty()
-                  ? observeOrigin(firstOrigins.getFirst(), budget.absoluteDeadlineMillis())
-                  : observe(first.getFirst(), budget.absoluteDeadlineMillis());
-          var proof =
-              repository.qualify(
-                  transferId,
-                  before,
-                  after,
-                  originRound,
-                  ownerInstanceId,
-                  leaseCorrelation,
-                  budget.absoluteDeadlineMillis());
-          var installed =
-              new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl))
-                  .installOwner(
-                      source,
-                      prior.regionEpoch(),
-                      prior,
-                      leaseCorrelation,
-                      ownerService,
-                      ownerInstanceId,
-                      clock.instant(),
-                      proof);
-          // The protected source now independently checks the actual installed successor.
-          var completed =
-              first.isEmpty()
-                  ? observeOrigin(firstOrigins.getFirst(), budget.absoluteDeadlineMillis())
-                  : observe(first.getFirst(), budget.absoluteDeadlineMillis());
-          if (!after.incarnationDigest().equals(completed.incarnationDigest())) throw held();
-          if (first.isEmpty()) {
-            owner.readOriginTransferCustody(
-                firstOrigins.getFirst(), budget.absoluteDeadlineMillis());
           } else {
-            repository.requireRetainedPhysical(
-                first.getFirst(),
-                owner.readTransferFence(first.getFirst(), budget.absoluteDeadlineMillis()));
+            originRound = null;
+            firstOrigins = List.of();
           }
-          return installed;
+          return owner.withTransferReadback(
+              reader -> {
+                long absoluteDeadline = budget.absoluteDeadlineMillis();
+                var before =
+                    first.isEmpty()
+                        ? observeOrigin(firstOrigins.getFirst(), absoluteDeadline)
+                        : observe(first.getFirst(), absoluteDeadline);
+                // Both inventories use one authenticated non-reconnecting read connection.
+                var page = first;
+                while (!page.isEmpty()) {
+                  budget.check();
+                  for (var item : page) {
+                    repository.requireRetainedPhysical(
+                        item, reader.readTransferFence(item, absoluteDeadline));
+                  }
+                  page = repository.page(transferId, page.getLast().ordinal());
+                }
+                var originPage = firstOrigins;
+                while (!originPage.isEmpty()) {
+                  budget.check();
+                  for (var item : originPage) {
+                    var originBefore = observeOrigin(item, absoluteDeadline);
+                    var actual = reader.readOriginTransferCustody(item, absoluteDeadline);
+                    var originAfter = observeOrigin(item, absoluteDeadline);
+                    origins.retainVerification(
+                        item, originRound, actual, originBefore, originAfter, absoluteDeadline);
+                  }
+                  originPage = origins.page(transferId, originPage.getLast().ordinal());
+                }
+                var after =
+                    first.isEmpty()
+                        ? observeOrigin(firstOrigins.getFirst(), absoluteDeadline)
+                        : observe(first.getFirst(), absoluteDeadline);
+                var proof =
+                    repository.qualify(
+                        transferId,
+                        before,
+                        after,
+                        originRound,
+                        ownerInstanceId,
+                        leaseCorrelation,
+                        absoluteDeadline);
+                var installed =
+                    new CanonicalGameplayRegionRuntimeStatusRepository(budget.sql(dsl))
+                        .installOwner(
+                            source,
+                            prior.regionEpoch(),
+                            prior,
+                            leaseCorrelation,
+                            ownerService,
+                            ownerInstanceId,
+                            clock.instant(),
+                            proof);
+                var completed =
+                    first.isEmpty()
+                        ? observeOrigin(firstOrigins.getFirst(), absoluteDeadline)
+                        : observe(first.getFirst(), absoluteDeadline);
+                if (!after.incarnationDigest().equals(completed.incarnationDigest())) throw held();
+                if (first.isEmpty()) {
+                  reader.readOriginTransferCustody(firstOrigins.getFirst(), absoluteDeadline);
+                } else {
+                  repository.requireRetainedPhysical(
+                      first.getFirst(),
+                      reader.readTransferFence(first.getFirst(), absoluteDeadline));
+                }
+                return installed;
+              });
         });
   }
 
@@ -266,54 +260,53 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           long absoluteDeadline = budget.absoluteDeadlineMillis();
           var completed = repository.completedSuccessor(transferId, ownerInstance, correlation);
           var firstPage = repository.completedPage(transferId, -1);
-          var originPage = origins.page(transferId, -1);
-          if (firstPage.isEmpty() && originPage.isEmpty()) {
+          var firstOrigins = origins.page(transferId, -1);
+          if (firstPage.isEmpty() && firstOrigins.isEmpty()) {
             if (origins.hasItems(transferId)) throw held();
             repository.requireTerminalOnlyCompletion(transferId, completed);
             return completed.status();
           }
           var first = firstPage.isEmpty() ? null : firstPage.getFirst();
-          var firstOrigin = originPage.isEmpty() ? null : originPage.getFirst();
-          var before =
-              first == null
-                  ? observeOrigin(firstOrigin, absoluteDeadline)
-                  : observe(first, absoluteDeadline);
-          if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
+          var firstOrigin = firstOrigins.isEmpty() ? null : firstOrigins.getFirst();
           var owner = capacity.forTransferBudget(budget);
-          if (first != null) {
-            owner.withTransferReadback(
-                reader -> {
-                  var page = firstPage;
-                  while (!page.isEmpty()) {
-                    for (var item : page) {
-                      budget.check();
-                      repository.requireRetainedPhysical(
-                          item, reader.readTransferFence(item, absoluteDeadline));
-                    }
-                    page = repository.completedPage(transferId, page.getLast().ordinal());
+          return owner.withTransferReadback(
+              reader -> {
+                var before =
+                    first == null
+                        ? observeOrigin(firstOrigin, absoluteDeadline)
+                        : observe(first, absoluteDeadline);
+                if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
+                var page = firstPage;
+                while (!page.isEmpty()) {
+                  for (var item : page) {
+                    budget.check();
+                    repository.requireRetainedPhysical(
+                        item, reader.readTransferFence(item, absoluteDeadline));
                   }
-                });
-          }
-          while (!originPage.isEmpty()) {
-            for (var item : originPage) {
-              budget.check();
-              origins.requireRetainedPhysical(
-                  item,
-                  owner.readOriginTransferCustody(item, absoluteDeadline),
-                  completed.incarnationDigest());
-            }
-            originPage = origins.page(transferId, originPage.getLast().ordinal());
-          }
-          var after =
-              first == null
-                  ? observeOrigin(firstOrigin, absoluteDeadline)
-                  : observe(first, absoluteDeadline);
-          if (!after.incarnationDigest().equals(completed.incarnationDigest())
-              || !completed.equals(
-                  repository.completedSuccessor(transferId, ownerInstance, correlation))) {
-            throw held();
-          }
-          return completed.status();
+                  page = repository.completedPage(transferId, page.getLast().ordinal());
+                }
+                var originPage = firstOrigins;
+                while (!originPage.isEmpty()) {
+                  for (var item : originPage) {
+                    budget.check();
+                    origins.requireRetainedPhysical(
+                        item,
+                        reader.readOriginTransferCustody(item, absoluteDeadline),
+                        completed.incarnationDigest());
+                  }
+                  originPage = origins.page(transferId, originPage.getLast().ordinal());
+                }
+                var after =
+                    first == null
+                        ? observeOrigin(firstOrigin, absoluteDeadline)
+                        : observe(first, absoluteDeadline);
+                if (!after.incarnationDigest().equals(completed.incarnationDigest())
+                    || !completed.equals(
+                        repository.completedSuccessor(transferId, ownerInstance, correlation))) {
+                  throw held();
+                }
+                return completed.status();
+              });
         });
   }
 
