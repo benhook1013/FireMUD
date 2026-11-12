@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.UUID;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import org.jooq.DSLContext;
@@ -103,6 +104,15 @@ final class CanonicalGameplayCapacityOriginRepository {
 
   Retained read(CanonicalGameplayCapacityOrigin origin) {
     return exact(find(sql, origin, false), origin);
+  }
+
+  static void requireNoRetainedOrigin(DSLContext admittedSql, UUID admissionAttemptId) {
+    if (admittedSql.fetchExists(
+        DSL.selectOne()
+            .from(TABLE)
+            .where(DSL.field("admission_attempt_id").eq(admissionAttemptId)))) {
+      throw unavailable();
+    }
   }
 
   /**
