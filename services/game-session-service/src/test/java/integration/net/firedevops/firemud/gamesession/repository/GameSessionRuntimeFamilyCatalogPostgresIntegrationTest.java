@@ -885,7 +885,17 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     }
     for (String version :
         List.of(
-            "1057", "1058", "1059", "1060", "1061", "1062", "1063", "1064", "1065", "1065.0.1", "1065.1",
+            "1057",
+            "1058",
+            "1059",
+            "1060",
+            "1061",
+            "1062",
+            "1063",
+            "1064",
+            "1065",
+            "1065.0.1",
+            "1065.1",
             "1065.2")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
@@ -915,7 +925,17 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     }
     for (String version :
         List.of(
-            "1057", "1058", "1059", "1060", "1061", "1062", "1063", "1064", "1065", "1065.0.1", "1065.1",
+            "1057",
+            "1058",
+            "1059",
+            "1060",
+            "1061",
+            "1062",
+            "1063",
+            "1064",
+            "1065",
+            "1065.0.1",
+            "1065.1",
             "1065.2")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
