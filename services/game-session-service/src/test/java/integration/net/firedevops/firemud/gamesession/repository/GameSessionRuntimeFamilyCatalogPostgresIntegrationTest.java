@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(10);
+      assertThat(catalog.catalogEpoch()).isEqualTo(11);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -172,7 +172,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(catalog.schemaFacts())
           .anyMatch(fact -> fact.kind() == FactKind.ROUTINE)
           .anyMatch(fact -> fact.kind() == FactKind.MIGRATION)
-          .anyMatch(fact -> fact.kind() == FactKind.TRIGGER)
+          .anyMatch(
+              fact ->
+                  fact.kind() == FactKind.TRIGGER
+                      && fact.identity()
+                          .equals(
+                              "game_session_region_owner_transfer.gs_region_owner_transfer_frozen_insert"))
           .anyMatch(fact -> fact.kind() == FactKind.SEQUENCE);
       assertThat(
               catalog.schemaFacts().stream()
@@ -189,7 +194,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1063",
               "catalog-installation:1064",
               "catalog-installation:1065",
-              "catalog-installation:1065.0.1")
+              "catalog-installation:1065.0.1",
+              "catalog-installation:1065.0.2")
           .noneMatch(
               identity ->
                   identity.contains(":1057:")
@@ -201,7 +207,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1063:")
                       || identity.contains(":1064:")
                       || identity.contains(":1065:")
-                      || identity.contains(":1065.0.1:"));
+                      || identity.contains(":1065.0.1:")
+                      || identity.contains(":1065.0.2:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -744,7 +751,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(10);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(11);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -880,7 +887,17 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     }
     for (String version :
         List.of(
-            "1057", "1058", "1059", "1060", "1061", "1062", "1063", "1064", "1065", "1065.0.1")) {
+            "1057",
+            "1058",
+            "1059",
+            "1060",
+            "1061",
+            "1062",
+            "1063",
+            "1064",
+            "1065",
+            "1065.0.1",
+            "1065.0.2")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
         try (Fixture f = fixture(null)) {
@@ -909,7 +926,17 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     }
     for (String version :
         List.of(
-            "1057", "1058", "1059", "1060", "1061", "1062", "1063", "1064", "1065", "1065.0.1")) {
+            "1057",
+            "1058",
+            "1059",
+            "1060",
+            "1061",
+            "1062",
+            "1063",
+            "1064",
+            "1065",
+            "1065.0.1",
+            "1065.0.2")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
             "INSERT INTO "
@@ -930,12 +957,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
     try (Fixture f = fixture(null)) {
       var original = f.owner().capture(request());
       f.addComponent();
-      for (long invalid : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12}) {
+      for (long invalid : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13}) {
         assertThatThrownBy(() -> f.installEpoch(invalid))
             .hasMessageContaining("exact classified installed schema");
       }
       // Controlled explicit owner revision, not an exposed registry/runtime mutation API.
-      f.installEpoch(11);
+      f.installEpoch(12);
       assertThatThrownBy(() -> f.owner().capture(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
@@ -943,9 +970,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.evidence(original.request()))
           .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().capture(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(11);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(12);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count(EPOCHS)).isEqualTo(11);
+      assertThat(f.count(EPOCHS)).isEqualTo(12);
     }
   }
 
@@ -982,9 +1009,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       "INSERT INTO "
                           + EPOCHS
                           + "(catalog_epoch,catalog_bytes,catalog_digest)"
-                          + " SELECT 11,catalog_bytes,catalog_digest FROM "
+                          + " SELECT 12,catalog_bytes,catalog_digest FROM "
                           + EPOCHS
-                          + " WHERE catalog_epoch=10"))
+                          + " WHERE catalog_epoch=11"))
           .hasMessageContaining("exact classified installed schema");
       assertThatThrownBy(
               () ->

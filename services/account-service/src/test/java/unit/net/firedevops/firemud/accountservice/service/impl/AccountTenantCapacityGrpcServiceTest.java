@@ -67,7 +67,10 @@ class AccountTenantCapacityGrpcServiceTest {
 
       var error = ArgumentCaptor.forClass(Throwable.class);
       verify(observer).onError(error.capture());
-      assertThat(Status.fromThrowable(error.getValue())).isEqualTo(Status.INTERNAL);
+      Status status = Status.fromThrowable(error.getValue());
+      assertThat(status.getCode()).isEqualTo(Status.Code.INTERNAL);
+      assertThat(status.getDescription()).isNull();
+      assertThat(status.getCause()).isNull();
       assertThat(error.getValue().getCause()).isNull();
       verify(observer, never()).onNext(any());
       verify(observer, never()).onCompleted();

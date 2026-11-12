@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -175,17 +176,20 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
 
     @SuppressWarnings("unchecked")
     Fixture() {
-      UUID tenant = UUID.randomUUID();
+      var request = CapacityAdmissionTestFixture.playerRequest();
+      var player = (TenantCapacityAdmission.PlayerContext) request.context();
+      UUID tenant = request.identity().tenantId();
+      UUID transitionId = request.identity().admissionId();
       var binding =
           new CanonicalGameplayBindingIdentity(
-              UUID.randomUUID(),
+              player.accountId(),
               tenant,
-              UUID.randomUUID(),
-              UUID.randomUUID(),
+              player.playableStateNamespaceId(),
+              player.characterId(),
               "SHARED",
-              UUID.randomUUID(),
+              player.gameInstanceId(),
               1,
-              UUID.randomUUID().toString(),
+              player.sessionId().toString(),
               UUID.randomUUID(),
               BigInteger.ONE,
               "firemud-account-service",
@@ -193,8 +197,10 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
               BigInteger.ONE,
               BigInteger.ONE,
               BigInteger.ONE);
-      UUID transitionId = UUID.randomUUID();
+      byte[] candidateBytes = "controlled-candidate".getBytes(StandardCharsets.US_ASCII);
+      byte[] executionBytes = "controlled-execution".getBytes(StandardCharsets.US_ASCII);
       when(candidate.bindingIdentity()).thenReturn(binding);
+      when(candidate.bindingDecisionId()).thenReturn(transitionId);
       when(candidate.transition())
           .thenReturn(
               new CanonicalGameplayOriginalNewCandidate.TransitionSource(
@@ -204,8 +210,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
                   UUID.randomUUID(),
                   UUID.randomUUID(),
                   UUID.randomUUID()));
-      when(candidate.canonicalBytes())
-          .thenAnswer(ignored -> "controlled-candidate".getBytes(StandardCharsets.US_ASCII));
+      when(candidate.canonicalBytes()).thenAnswer(ignored -> candidateBytes.clone());
       when(assignment.isBindingTransition()).thenReturn(true);
       when(assignment.transitionId()).thenReturn(transitionId);
       when(assignment.tenantId()).thenReturn(tenant);
@@ -216,12 +221,13 @@ class CanonicalGameplayOriginalNewCapacityExecutionRedisCommandTest {
       when(assignment.sessionId()).thenReturn(binding.sessionId());
       when(assignment.bindingRef()).thenReturn(binding.bindingRef());
       when(assignment.tenantGameplayTag()).thenReturn("g1-0123456789abcdef0123456789abcdef");
-      TenantCapacityAdmission.Request request = mock();
-      when(request.admissionAttemptId()).thenReturn(UUID.randomUUID());
       when(execution.request()).thenReturn(request);
-      when(execution.canonicalBytes())
-          .thenAnswer(ignored -> "controlled-execution".getBytes(StandardCharsets.US_ASCII));
-      when(execution.digest()).thenReturn("sha256:" + "a".repeat(64));
+      when(execution.canonicalBytes()).thenAnswer(ignored -> executionBytes.clone());
+      when(execution.digest())
+          .thenReturn(CanonicalGameplayIssuerMemberV2Codec.sha256(executionBytes));
+      when(execution.candidateDigest())
+          .thenReturn(CanonicalGameplayIssuerMemberV2Codec.sha256(candidateBytes));
+      when(execution.transitionId()).thenReturn(transitionId);
       RedisAsyncCommands<byte[], byte[]> commands =
           mock(
               RedisAsyncCommands.class,

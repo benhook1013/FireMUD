@@ -434,6 +434,20 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
   }
 
   @Test
+  void installAndFinalRefuseMalformedClosedExecutionWithoutChangingAnyKey() throws Exception {
+    ScriptCase original = seed();
+    assertThat(eval(action(original, "CLOSE"))).isEqualTo(4L);
+    assertThat(eval(action(original, "INSTALL"))).isEqualTo(7L);
+    assertThat(eval(original)).isEqualTo(7L);
+
+    admin.hset(ascii(original.keys()[6]), ascii("unexpected"), ascii("value"));
+    Map<String, byte[]> malformed = physicalImage(original);
+    assertThat(eval(action(original, "INSTALL"))).isEqualTo(-1L);
+    assertThat(eval(original)).isEqualTo(-1L);
+    assertPhysicalImage(original, malformed, 7);
+  }
+
+  @Test
   void expiredFirstFenceRefusesBothAbsentAndAuthorizedWithoutAnyMutation() throws Exception {
     for (boolean install : new boolean[] {false, true}) {
       admin.flushdb();
