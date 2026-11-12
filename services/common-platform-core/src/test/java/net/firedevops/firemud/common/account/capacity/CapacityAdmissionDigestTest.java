@@ -275,6 +275,40 @@ class CapacityAdmissionDigestTest {
     }
   }
 
+  @Test
+  void boundReleasedAndQuarantinedResultsCannotAuthorizeOriginalExecution() {
+    Request request = CapacityAdmissionTestFixture.playerRequest();
+    for (var state :
+        List.of(
+            TenantCapacityAdmission.State.RELEASED,
+            TenantCapacityAdmission.State.QUARANTINED_REQUIRES_AUTHORITY_REMEDIATION)) {
+      var reservation =
+          new TenantCapacityAdmission.Result(
+              request.identity(),
+              request.admissionAttemptId(),
+              request.capacityRearmFence(),
+              request.mutationDigest(),
+              UUID.fromString("b1111111-1111-4111-8111-111111111111"),
+              1,
+              request.evidence().expiresAt(),
+              state,
+              request.evidence().snapshotIdentity(),
+              request.evidence().evaluationIdentity());
+      reservation.requireBinding(request);
+      assertThatThrownBy(
+              () ->
+                  new OriginalNewCapacityExecution(
+                      request,
+                      reservation,
+                      request.identity().admissionId(),
+                      "sha256:" + "a".repeat(64),
+                      "owner-1",
+                      1))
+          .as(state.name())
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
   private static Request playerMutation(Request base, Long delta, Shape requested, String digest) {
     return new Request(
         base.identity(),

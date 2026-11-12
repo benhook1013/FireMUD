@@ -32,6 +32,8 @@ The [shared capacity-admission/v1 schema](../../../services/common-platform-core
 
 The unregistered Account owner prepares exact initial reservation, replay and conflict. The recovery worker uses an exact selected-owner observation to finalize, release or rearm the original reservation. Missing and ambiguous observations retain the hold through bounded quarantine. Focused Account proof covers the ledger, fresh and historical bootstrap, exact replay, refusal and controlled recovery. The default Account runtime refuses the legacy numeric entitlement route and has no registered capacity receiver or recovery worker.
 
+The Account owner can retry a rolled-back PostgreSQL serialization failure up to three times in fresh transactions, with short randomized delays and one retry-admission deadline. The player evaluation transaction rolls back and reports source unavailability when exact retention readback fails. An exact reservation replay in RELEASED or QUARANTINED state cannot authorize original NEW execution.
+
 Game Session original-NEW execution and its authenticated recovery source, normal owner handoff, and the origin and historical FINAL receiving paths remain dependent work. Finalized usage retirement requires a genuine admitted-session teardown receipt from the selected owner and an exactly-once Account usage transition that preserves finalized replay. Bounded conservation and owner-governed evidence retention remain downstream. Preserve immutable predecessor evidence, deployed source and PKI qualification, and runtime registration and activation holds.
 
 ### Controlled player-admission transport composition
