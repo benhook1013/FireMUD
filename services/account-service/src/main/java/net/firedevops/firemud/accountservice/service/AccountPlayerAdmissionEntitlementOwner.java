@@ -635,7 +635,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
         request.requestId(),
         request.authenticatedCallerWorkload(),
-        request.connectScopeId(),
+        scope.scopeTokenHash(),
         player.snapshot(),
         binding,
         facts,
