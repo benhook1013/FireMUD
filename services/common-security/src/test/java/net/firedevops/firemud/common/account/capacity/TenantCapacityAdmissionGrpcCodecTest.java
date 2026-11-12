@@ -195,7 +195,7 @@ class TenantCapacityAdmissionGrpcCodecTest {
         request.admissionAttemptId(),
         request.capacityRearmFence(),
         request.mutationDigest(),
-        UUID.randomUUID(),
+        UUID.fromString("b2222222-2222-4222-8222-222222222222"),
         1,
         CapacityAdmissionTestFixture.NOW.plusSeconds(15),
         State.RESERVED,

@@ -242,7 +242,7 @@ class CapacityAdmissionDigestTest {
             denied.admissionAttemptId(),
             denied.capacityRearmFence(),
             denied.mutationDigest(),
-            java.util.UUID.randomUUID(),
+            java.util.UUID.fromString("b1111111-1111-4111-8111-111111111111"),
             1,
             denied.evidence().expiresAt(),
             TenantCapacityAdmission.State.RESERVED,
