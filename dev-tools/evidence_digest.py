@@ -7,12 +7,12 @@ import json
 from typing import Any
 
 
-def canonical_evidence_digest(record: dict[str, Any]) -> str:
-    """Hash a record, excluding only its top-level immutableArtifactId field.
+def canonical_json_bytes(value: Any) -> bytes:
+    """Encode the restricted RFC 8785 evidence subset as canonical UTF-8 bytes.
 
-    Nested immutableArtifactId occurrences remain part of the canonical payload.
+    Evidence records intentionally reject floating-point values and integers outside
+    the interoperable range rather than applying JavaScript number rounding.
     """
-    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
 
     def encode(value: Any) -> str:
         if value is None:
@@ -38,5 +38,15 @@ def canonical_evidence_digest(record: dict[str, Any]) -> str:
             return "[" + ",".join(encode(nested) for nested in value) + "]"
         raise TypeError(f"unsupported evidence value type: {type(value).__name__}")
 
-    encoded = encode(payload).encode("utf-8")
+    return encode(value).encode("utf-8")
+
+
+def canonical_evidence_digest(record: dict[str, Any]) -> str:
+    """Hash a record, excluding only its top-level immutableArtifactId field.
+
+    Nested immutableArtifactId occurrences remain part of the canonical payload.
+    """
+    payload = {key: value for key, value in record.items() if key != "immutableArtifactId"}
+
+    encoded = canonical_json_bytes(payload)
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"

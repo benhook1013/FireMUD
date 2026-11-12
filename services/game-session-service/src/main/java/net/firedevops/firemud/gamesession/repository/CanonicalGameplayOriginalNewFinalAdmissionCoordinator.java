@@ -183,7 +183,8 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                   source.transitionStatus()
                       == CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL;
               if (committedByThisAttempt) {
-                inventory.commitOriginalNewFinalAdmission(finalReadback);
+                inventory.commitOriginalNewFinalAdmission(
+                    finalReadback, clock, absoluteDeadlineMillis);
                 CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
                     committedSource = readSameSource(source, originalDecision, true);
                 if (committedSource.transitionStatus()
@@ -200,7 +201,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
                           .orElseThrow(
                               CanonicalGameplayOriginalNewFinalAdmissionCoordinator::unavailable);
               requireReadbackMatchesReceipt(finalReadback, finalReceipt);
-              capacityExecution.retainCommitted(finalReadback, absoluteDeadlineMillis);
+              if (!committedByThisAttempt) {
+                capacityExecution.retainCommitted(finalReadback, absoluteDeadlineMillis);
+              }
               Currentness beforeConfirmation = currentness(source, privateRegionInstallation);
               requireSameCurrentness(atDispatch, beforeConfirmation, committedByThisAttempt);
 
