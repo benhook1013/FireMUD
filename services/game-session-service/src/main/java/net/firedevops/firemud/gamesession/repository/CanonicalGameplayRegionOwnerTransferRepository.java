@@ -461,12 +461,16 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             transferId,
             round)) throw unavailable();
     requireComplete(sql(), transferId);
+    long evidenceDeadline =
+        Math.min(deadline, Math.min(before.expiresAtEpochMillis(), after.expiresAtEpochMillis()));
+    if (clock.millis() >= evidenceDeadline) throw unavailable();
     return new Completion(
         transferId,
         transfer.get("source_digest", String.class),
         after.incarnationDigest(),
         round,
-        deadline);
+        evidenceDeadline,
+        clock);
   }
 
   long verificationCursor(UUID transferId) {
@@ -567,17 +571,16 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       CanonicalGameplayRegionRuntimeStatus prior,
       String newOwner,
       long newFence,
-      String newLease,
-      Instant now) {
-    if (proof == null
-        || now.toEpochMilli() >= proof.deadline
-        || !sourceDigest(source, prior).equals(proof.sourceDigest)) throw unavailable();
+      String newLease) {
+    if (proof == null || !sourceDigest(source, prior).equals(proof.sourceDigest))
+      throw unavailable();
     Record transfer = current(tx, proof.transferId, true);
     if (!proof.incarnationDigest.equals(transfer.get("incarnation_digest", String.class))
         || !proof.round.equals(transfer.get("verification_round", UUID.class))
         || !Boolean.TRUE.equals(transfer.get("verification_complete", Boolean.class)))
       throw unavailable();
     requireComplete(tx, proof.transferId);
+    proof.requireFresh();
     if (tx.execute(
             "UPDATE "
                 + TRANSFER
@@ -1092,14 +1095,25 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     private final String incarnationDigest;
     private final UUID round;
     private final long deadline;
+    private final Clock clock;
 
     private Completion(
-        UUID transferId, String sourceDigest, String incarnationDigest, UUID round, long deadline) {
+        UUID transferId,
+        String sourceDigest,
+        String incarnationDigest,
+        UUID round,
+        long deadline,
+        Clock clock) {
       this.transferId = transferId;
       this.sourceDigest = sourceDigest;
       this.incarnationDigest = incarnationDigest;
       this.round = round;
       this.deadline = deadline;
+      this.clock = clock;
+    }
+
+    void requireFresh() {
+      if (clock.millis() >= deadline) throw unavailable();
     }
   }
 }
