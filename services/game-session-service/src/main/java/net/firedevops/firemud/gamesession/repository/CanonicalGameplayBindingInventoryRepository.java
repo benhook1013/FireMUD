@@ -1218,6 +1218,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
               expectedEvidence.transition().transitionId(),
               expectedEvidence.candidate().bindingRef().bytes(),
               null);
+          // Region authorization locks region before transition; retain runtime-before-region
+          // ordering and never hold the transition while waiting for the current region owner.
+          requireCurrentRegionOwner(transaction, ownerStatus);
           CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
               loadProvisionalCasEvidence(
                   transaction, expectedEvidence.transition().transitionId(), true);
@@ -1228,7 +1231,6 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!inputs.equals(currentInputs) || currentEvidence.expectedPrior() != null) {
             throw conflict("Region bridge source changed or is not a first-NEW transition");
           }
-          requireCurrentRegionOwner(transaction, ownerStatus);
           Record regionRow =
               transaction.fetchOne(
                   "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
@@ -1301,6 +1303,9 @@ public final class CanonicalGameplayBindingInventoryRepository {
               prepared.transitionId(),
               expectedEvidence.candidate().bindingRef().bytes(),
               null);
+          // Region authorization locks region before transition; retain runtime-before-region
+          // ordering and never hold the transition while waiting for the current region owner.
+          requireCurrentRegionOwner(transaction, ownerStatus);
           CanonicalGameplayBindingProvisionalCasEvidence currentEvidence =
               loadProvisionalCasEvidence(transaction, prepared.transitionId(), true);
           requireSameProvisionalOperation(expectedEvidence, currentEvidence);
@@ -1310,7 +1315,6 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!inputs.equals(currentInputs) || currentEvidence.expectedPrior() != null) {
             throw conflict("Region bridge sources changed before durable acknowledgement");
           }
-          requireCurrentRegionOwner(transaction, ownerStatus);
           Record regionRow =
               transaction.fetchOne(
                   "SELECT * FROM " + REGION_OBLIGATION + " WHERE transition_id = ? FOR UPDATE",
