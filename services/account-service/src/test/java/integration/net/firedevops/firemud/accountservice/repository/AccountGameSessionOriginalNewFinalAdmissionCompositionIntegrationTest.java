@@ -474,12 +474,9 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                       System.currentTimeMillis() + 10_000L,
                       session.capacityClient,
                       denied))
-          .isInstanceOf(IllegalStateException.class)
-          .hasCauseInstanceOf(CapacityRefusedException.class)
-          .satisfies(
-              failure ->
-                  assertThat(((CapacityRefusedException) failure.getCause()).code())
-                      .isEqualTo(Failure.TENANT_BILLING_BLOCKED));
+          .isInstanceOfSatisfying(
+              CapacityRefusedException.class,
+              failure -> assertThat(failure.code()).isEqualTo(Failure.TENANT_BILLING_BLOCKED));
       assertThat(session.capacityImage()).isEqualTo(beforeDenial);
       assertProvisionalUnchanged(session, candidate);
     }
@@ -913,6 +910,25 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                 endpoints, accountTls, new GrpcChannelFactory(), "test");
         finalRead.init();
         restartAccount();
+        capacityOwner = account.capacityOwner(capacityClock);
+        capacityServer =
+            new net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService(
+                    capacityOwner, "test")
+                .createUnregisteredServer(
+                    "127.0.0.1:0",
+                    pki.keyManagerFactory(pki.identity("account")),
+                    pki.trustManagerFactory());
+        capacityServer.start();
+        var capacityEndpoints = new ServiceEndpointsProperties();
+        capacityEndpoints.setAccountService("localhost:" + capacityServer.getPort());
+        capacityClient =
+            new net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient(
+                capacityEndpoints,
+                pki.clientProperties(pkiDirectory, pki.identity("gs-client")),
+                new GrpcChannelFactory(),
+                "test",
+                CLOCK);
+        capacityClient.init();
         // All containers, keys, source servers, and INITIAL setup precede the <=15-second lease.
         lease =
             client
@@ -976,25 +992,6 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                     1L,
                     null)
                 .withDigest();
-        capacityOwner = account.capacityOwner(capacityClock);
-        capacityServer =
-            new net.firedevops.firemud.accountservice.service.impl.AccountTenantCapacityGrpcService(
-                    capacityOwner, "test")
-                .createUnregisteredServer(
-                    "127.0.0.1:0",
-                    pki.keyManagerFactory(pki.identity("account")),
-                    pki.trustManagerFactory());
-        capacityServer.start();
-        var capacityEndpoints = new ServiceEndpointsProperties();
-        capacityEndpoints.setAccountService("localhost:" + capacityServer.getPort());
-        capacityClient =
-            new net.firedevops.firemud.gamesession.client.AccountTenantCapacityClient(
-                capacityEndpoints,
-                pki.clientProperties(pkiDirectory, pki.identity("gs-client")),
-                new GrpcChannelFactory(),
-                "test",
-                CLOCK);
-        capacityClient.init();
         capacityRead =
             new net.firedevops.firemud.accountservice.client
                 .AccountOriginalNewCapacityExecutionReadClient(

@@ -45,12 +45,15 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 /** Real loopback mTLS with a controlled Account result; not Account sources or final admission. */
 @Timeout(90)
 class AccountTenantCapacityClientMtlsTest {
+  private static final String TLS_RELOAD_PROPERTY = "firemud.grpc.tls-reload.enabled";
   @TempDir static Path directory;
   private static LoopbackMtlsTestPki.Pki pki;
 
@@ -214,38 +217,52 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
+  @ResourceLock(Resources.SYSTEM_PROPERTIES)
   void commitReachesItsTransportDeadlineWhileTlsReloadIsBlocked() throws Exception {
-    var calls = new AtomicInteger();
-    var respond = new AtomicBoolean(true);
-    var tls = pki.clientProperties(directory, pki.identity("client"));
-    var factory = new BlockingReloadChannelFactory();
-    var server = server("account", calls, false, new AtomicLong(), respond);
-    try (var client = client(server, tls, factory);
-        var executor = Executors.newSingleThreadExecutor()) {
-      client.init();
-      var request = CapacityAdmissionTestFixture.playerRequest();
-      client.commit(request, deadline());
-      respond.set(false);
-      try {
-        Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
-        assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
-        long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L;
-        var timedOut =
-            executor.submit(
-                () ->
-                    assertThatThrownBy(() -> client.commit(request, explicitDeadline))
-                        .isInstanceOfSatisfying(
-                            StatusRuntimeException.class,
-                            failure ->
-                                assertThat(failure.getStatus().getCode())
-                                    .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
-        timedOut.get(3, TimeUnit.SECONDS);
-        assertThat(calls).hasValue(2);
-      } finally {
-        factory.releaseReload.countDown();
+    String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
+    System.setProperty(TLS_RELOAD_PROPERTY, "true");
+    Server server = null;
+    try {
+      var calls = new AtomicInteger();
+      var respond = new AtomicBoolean(true);
+      var tls = pki.clientProperties(directory, pki.identity("client"));
+      var factory = new BlockingReloadChannelFactory();
+      server = server("account", calls, false, new AtomicLong(), respond);
+      try (var client = client(server, tls, factory);
+          var executor = Executors.newSingleThreadExecutor()) {
+        client.init();
+        var request = CapacityAdmissionTestFixture.playerRequest();
+        client.commit(request, deadline());
+        respond.set(false);
+        try {
+          Files.writeString(Path.of(tls.getCertChain()), "\n", StandardOpenOption.APPEND);
+          assertThat(factory.reloadStarted.await(5, TimeUnit.SECONDS)).isTrue();
+          long explicitDeadline = CapacityAdmissionTestFixture.NOW.toEpochMilli() + 1_000L;
+          var timedOut =
+              executor.submit(
+                  () ->
+                      assertThatThrownBy(() -> client.commit(request, explicitDeadline))
+                          .isInstanceOfSatisfying(
+                              StatusRuntimeException.class,
+                              failure ->
+                                  assertThat(failure.getStatus().getCode())
+                                      .isEqualTo(Status.Code.DEADLINE_EXCEEDED)));
+          timedOut.get(3, TimeUnit.SECONDS);
+          assertThat(calls).hasValue(2);
+        } finally {
+          factory.releaseReload.countDown();
+        }
       }
     } finally {
-      stop(server);
+      try {
+        if (server != null) stop(server);
+      } finally {
+        if (previousReloadPolicy == null) {
+          System.clearProperty(TLS_RELOAD_PROPERTY);
+        } else {
+          System.setProperty(TLS_RELOAD_PROPERTY, previousReloadPolicy);
+        }
+      }
     }
   }
 
