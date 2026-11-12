@@ -7,11 +7,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -96,6 +98,23 @@ class AccountTenantCapacityOwnerTest {
     var result = f.owner.commit(f.request, f.request.evidence().callerWorkload());
     assertThat(result.reservationId()).isEqualTo(f.reservation);
     assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload())).isEqualTo(result);
+    verifyNoInteractions(f.memberships, f.issuances, f.scopes);
+    verify(f.dsl, never()).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void serializationFailureRetriesOnceAndReplaysInAFreshTransaction() throws Exception {
+    var f = new Fixture(true);
+    var aborted =
+        new org.jooq.exception.DataAccessException(
+            "concurrent reservation", new SQLException("serialization failure", "40001"));
+    when(f.accounts.findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT))
+        .thenThrow(aborted)
+        .thenReturn(Optional.of(new Account()));
+
+    assertThat(f.owner.commit(f.request, f.request.evidence().callerWorkload()).reservationId())
+        .isEqualTo(f.reservation);
+    verify(f.accounts, times(2)).findByAccountUuidForUpdate(CapacityAdmissionTestFixture.ACCOUNT);
     verifyNoInteractions(f.memberships, f.issuances, f.scopes);
     verify(f.dsl, never()).execute(anyString(), any(Object[].class));
   }
