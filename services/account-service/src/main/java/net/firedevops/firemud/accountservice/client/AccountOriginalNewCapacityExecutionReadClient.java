@@ -75,15 +75,20 @@ public final class AccountOriginalNewCapacityExecutionReadClient
     long millis = Math.min(MAX_READ_MILLIS, Duration.between(clock.instant(), deadline).toMillis());
     if (millis <= 0) throw unavailable();
     Deadline rpcDeadline = maximum.offset(millis - MAX_READ_MILLIS, TimeUnit.MILLISECONDS);
-    var stub = requirePublishedInitializedStub("Capacity execution read unavailable");
     var selector = new OriginalNewCapacityExecutionReadGrpcCodec.Selector(request, reservation);
     var wire = OriginalNewCapacityExecutionReadGrpcCodec.toRequest(selector);
-    if (rpcDeadline.isExpired()) throw unavailable();
     var response =
-        stub.withDeadline(rpcDeadline)
-            .withMaxOutboundMessageSize(OriginalNewCapacityExecutionReadGrpcCodec.MAX_REQUEST_BYTES)
-            .withMaxInboundMessageSize(OriginalNewCapacityExecutionReadGrpcCodec.MAX_RESPONSE_BYTES)
-            .readOriginalNewCapacityExecution(wire);
+        withPublishedInitializedStub(
+            "Capacity execution read unavailable",
+            stub -> {
+              if (rpcDeadline.isExpired()) throw unavailable();
+              return stub.withDeadline(rpcDeadline)
+                  .withMaxOutboundMessageSize(
+                      OriginalNewCapacityExecutionReadGrpcCodec.MAX_REQUEST_BYTES)
+                  .withMaxInboundMessageSize(
+                      OriginalNewCapacityExecutionReadGrpcCodec.MAX_RESPONSE_BYTES)
+                  .readOriginalNewCapacityExecution(wire);
+            });
     var readback = OriginalNewCapacityExecutionReadGrpcCodec.fromResponse(selector, response);
     var disposition =
         AccountTenantCapacityRecoveryWorker.Disposition.valueOf(readback.disposition());

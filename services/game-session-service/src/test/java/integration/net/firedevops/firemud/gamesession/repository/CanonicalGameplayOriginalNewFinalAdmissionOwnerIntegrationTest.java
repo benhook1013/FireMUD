@@ -963,6 +963,24 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 successor.installForTransition(
                     null, original.transitionId, original.worldRequest, transfer, deadline()))
         .isInstanceOf(IllegalStateException.class);
+    String beforeWorldTimeout = sqlImage();
+    Map<String, String> beforeWorldTimeoutRedis = physicalImage();
+    sources.withholdWorldRead =
+        CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead
+            .PLACEMENT;
+    long started = System.nanoTime();
+    assertThatThrownBy(() -> successor.resumeCompletedTransfer(failure, CLOCK.millis() + 1500))
+        .isInstanceOfSatisfying(
+            io.grpc.StatusRuntimeException.class,
+            timeout ->
+                assertThat(timeout.getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.DEADLINE_EXCEEDED));
+    assertThat(sources.withheldReadEntered.getCount()).isZero();
+    assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
+        .isLessThan(3500);
+    assertThat(sqlImage()).isEqualTo(beforeWorldTimeout);
+    assertThat(physicalImage()).isEqualTo(beforeWorldTimeoutRedis);
+    sources.withholdWorldRead = null;
     var recovered = successor.resumeCompletedTransfer(failure, deadline());
     assertThat(recovered.status).isEqualTo(durable);
     assertThat(recovered.grant.tokenCorrelation()).isEqualTo(durable.leaseTokenCorrelation());
@@ -1081,6 +1099,25 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         .isInstanceOf(IllegalStateException.class);
     assertThat(sqlImage()).isEqualTo(frozenSql);
     assertThat(physicalImage()).isEqualTo(frozenPhysical);
+
+    sources.withholdWorldRead =
+        CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead
+            .LIFECYCLE;
+    long started = System.nanoTime();
+    assertThatThrownBy(() -> successor.resumeFrozenTransfer(frozenFailure, CLOCK.millis() + 1500))
+        .isInstanceOf(CanonicalGameplayRegionLeaseOwner.FrozenTransferUnconfirmed.class)
+        .rootCause()
+        .isInstanceOfSatisfying(
+            io.grpc.StatusRuntimeException.class,
+            timeout ->
+                assertThat(timeout.getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.DEADLINE_EXCEEDED));
+    assertThat(sources.withheldReadEntered.getCount()).isZero();
+    assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
+        .isLessThan(3500);
+    assertThat(sqlImage()).isEqualTo(frozenSql);
+    assertThat(physicalImage()).isEqualTo(frozenPhysical);
+    sources.withholdWorldRead = null;
 
     var installFailure =
         org.junit.jupiter.api.Assertions.assertThrows(
@@ -1722,6 +1759,55 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
                 .get(0, Long.class))
         .isEqualTo(sequence + 1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead.class)
+  void stalledWorldReadCannotOutliveHandoffDeadline(
+      CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead
+          stalledRead)
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var transferRepository =
+        new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(transferRepository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, transferRepository, capacityOwner(), receiver);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    String beforeSql = sqlImage();
+    Map<String, String> beforeRedis = physicalImage();
+    sources.withholdWorldRead = stalledRead;
+    long started = System.nanoTime();
+    long handoffDeadline = CLOCK.millis() + 1500;
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                    fixture.dsl(),
+                    ownerClient,
+                    catalog,
+                    original,
+                    sources.resolver,
+                    transfer,
+                    handoffDeadline))
+        .isInstanceOfSatisfying(
+            io.grpc.StatusRuntimeException.class,
+            failure ->
+                assertThat(failure.getStatus().getCode())
+                    .isEqualTo(io.grpc.Status.Code.DEADLINE_EXCEEDED));
+    assertThat(sources.withheldReadEntered.getCount()).isZero();
+    assertThat(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started))
+        .isLessThan(3500);
+    assertThat(sqlImage()).isEqualTo(beforeSql);
+    assertThat(physicalImage()).isEqualTo(beforeRedis);
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isZero();
   }
 
   @org.junit.jupiter.params.ParameterizedTest
