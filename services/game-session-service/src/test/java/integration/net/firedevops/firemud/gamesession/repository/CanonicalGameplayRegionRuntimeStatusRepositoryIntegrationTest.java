@@ -27,6 +27,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
@@ -783,7 +784,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var observationLatency = Duration.ofMillis(5);
       var attestor =
           new CanonicalGameplayControlledRegionTransferObservationFixture(
-              proof.clock, observationLatency);
+              proof.clock, Duration.ofSeconds(30), observationLatency);
       var transfer =
           new CanonicalGameplayRegionOwnerTransferCoordinator(
               proof.sql,
@@ -937,7 +938,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       var observationLatency = Duration.ofMillis(5);
       var regionAttestor =
           new CanonicalGameplayControlledRegionTransferObservationFixture(
-              proof.clock, observationLatency);
+              proof.clock, Duration.ofSeconds(30), observationLatency);
       var originAttestor =
           new CanonicalGameplayControlledOriginTransferObservationFixture(
               proof.clock, observationLatency);
@@ -1114,6 +1115,59 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         assertThat(proof.transferImage(id)).isEqualTo(completion);
         assertThat(proof.originalImage()).isEqualTo(retained);
       }
+    }
+  }
+
+  @Test
+  void installationRefusesSignedEvidenceThatExpiresWhileAcquiringTheRegionLock() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.newControlledExecution());
+      var wall = new AtomicLong(proof.clock.millis());
+      Clock clock = org.mockito.Mockito.mock(Clock.class);
+      org.mockito.Mockito.when(clock.millis()).thenAnswer(ignored -> wall.get());
+      org.mockito.Mockito.when(clock.instant())
+          .thenAnswer(ignored -> Instant.ofEpochMilli(wall.get()));
+      var expireAfterLock = new AtomicBoolean();
+      var listener =
+          new DefaultExecuteListener() {
+            @Override
+            public void executeEnd(ExecuteContext context) {
+              if (context.sql() != null
+                  && context.sql().contains("pg_advisory_xact_lock")
+                  && expireAfterLock.compareAndSet(true, false)) wall.addAndGet(1_100);
+            }
+          };
+      DSLContext installingSql = DSL.using(proof.sql.configuration().deriveAppending(listener));
+      var transfers =
+          new CanonicalGameplayRegionOwnerTransferRepository(installingSql, clock, proof.tags);
+      var observations =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(
+                  clock, Duration.ofSeconds(1))
+              .receiver(transfers, proof.tags);
+      var coordinator =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              installingSql, clock, transfers, proof.capacity(installingSql), observations);
+      UUID id = coordinator.advance(proof.scope, proof.prior, wall.get() + 5_000);
+      assertThat(id).isNotNull();
+      String retained = proof.itemImage(id);
+      expireAfterLock.set(true);
+      long deadline = wall.get() + 5_000;
+      assertThatThrownBy(
+              () ->
+                  coordinator.install(
+                      id,
+                      proof.scope,
+                      proof.prior,
+                      "e".repeat(64),
+                      "game-session-service",
+                      "sql-proof-successor",
+                      deadline))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(expireAfterLock).isFalse();
+      assertThat(wall.get()).isLessThan(deadline);
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      assertThat(proof.transfers.readCurrent(id, 0).controlState()).isEqualTo("FROZEN");
+      assertThat(proof.itemImage(id)).isEqualTo(retained);
     }
   }
 

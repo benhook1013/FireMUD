@@ -376,6 +376,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             })
         .when(provider)
         .release(connection);
+    DSLContext dsl = source(provider);
     try {
       assertThatThrownBy(
               () ->
@@ -383,7 +384,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       CLOCK,
                       CLOCK.millis() + 200,
                       budget -> {
-                        execute(budget.sql(source(provider)));
+                        execute(budget.sql(dsl));
                         awaitUninterruptibly(finish);
                         return true;
                       },
@@ -611,6 +612,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
               awaitUninterruptibly(finish);
               return true;
             });
+    DSLContext dsl = source(provider);
     try {
       assertThatThrownBy(
               () ->
@@ -619,7 +621,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       CLOCK.millis() + 200,
                       budget -> {
                         captured.set(budget);
-                        return execute(budget.sql(source(provider)));
+                        return execute(budget.sql(dsl));
                       },
                       ignored -> {
                         throw new java.util.concurrent.RejectedExecutionException(
@@ -693,7 +695,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
             budget -> {
               assertThat(budget.absoluteDeadlineMillis()).isEqualTo(originalDeadline);
               execute(budget.sql(dsl));
-              assertThat(budget.remainingMillis()).isBetween(1L, 4000L);
+              assertThat(budget.remainingMillis()).isBetween(1L, 3000L);
               return budget.absoluteDeadlineMillis();
             });
 

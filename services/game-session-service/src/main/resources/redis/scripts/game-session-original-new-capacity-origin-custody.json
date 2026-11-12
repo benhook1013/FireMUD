@@ -1,7 +1,7 @@
 {
-  "scriptId": "game-session.original-new-capacity-origin-custody.v1",
+  "scriptId": "game-session.original-new-capacity-origin-custody.v2",
   "resourcePath": "redis/lua/game-session-original-new-capacity-origin-custody.lua",
-  "sha256": "4a0606e797c9c459da9873c24b40a232c4e7248b71a4bfa9890893200424ae3e",
+  "sha256": "78675508d9848e303d023850bbe08973d7c4173c87de1982bee22ff14e8d1b6a",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -63,11 +63,11 @@
   ],
   "resetSensitivity": "CLUSTER",
   "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
-  "tailLossBehavior": "Missing capacity execution remains historically indeterminate and cannot be reinstalled as AUTHORIZED by retry. Under separately qualified current-incarnation normal owner handoff only, FENCE creates or retains an exact persistent FENCED_INDETERMINATE deny, excluding delayed INSTALL/FINAL without claiming no earlier execution, permitting reset adoption, or authorizing Account release/rearm. FENCE preserves exact COMMITTED and CLOSED outcomes; first mutation must meet the frozen Redis TIME deadline and completed exact replay is read-only. CLOSED is irreversible and fences every delayed same-attempt FINAL. Account alone consumes exact terminal evidence to mutate capacity. A missing or changed candidate, tenant index, OPEN barrier, or Redis state fails closed for admission. Exact final retry is read-only and preserves the first Redis TIME values; the script never repairs indexes, recreates barriers, transfers a controller, or claims that the supplied OPEN sources establish the complete admission flow. The owner returns evidence only after independent exact physical readback. Reset-sensitive state requires its owning recovery before the final consumer can proceed.",
+  "tailLossBehavior": "This key records exact pre-Account origin custody. Only the caller that observed its origin INSERT succeed may send the first INIT, which establishes OPEN under the original owner fence. An existing OPEN retry reads the exact persistent marker and never recreates missing or expired custody. During an authenticated normal handoff, TRANSFER may advance only an existing exact marker under the reserved successor fence; a missing or ambiguous marker refuses installation, including when initial submission has yet to arrive. DISPATCH, CLOSE_CUSTODY and DENY also require an existing exact persistent marker and advance only the original custody state. First mutations use the absolute Redis TIME deadline and exact completed replays are read-only. Missing custody after installation requires the owning loss/reset recovery and cannot establish prior non-execution, a reservation outcome, or permission to admit, release, or rearm. Current receiving remains unregistered pending qualification of the missing-key distinction.",
   "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
   "supportedCoexistence": [
     {
-      "callerVersion": "v1",
+      "callerVersion": "v2",
       "payloadVersion": "none"
     }
   ],

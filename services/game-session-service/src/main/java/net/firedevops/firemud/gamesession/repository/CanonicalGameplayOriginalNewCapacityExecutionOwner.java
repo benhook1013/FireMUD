@@ -21,7 +21,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
+import java.util.function.Function;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request;
@@ -105,23 +106,59 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             selected.instanceId(),
             selected.fence());
     var repository = new CanonicalGameplayCapacityOriginRepository(sql());
-    var retained = repository.prepare(origin);
-    if (retained.state() != CanonicalGameplayCapacityOrigin.State.OPEN) throw unavailable();
-    originRedis()
-        .apply(
-            origin,
-            CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
-            selected.instanceId(),
-            selected.fence(),
-            selected.instanceId(),
-            selected.fence(),
-            retained.state(),
-            deadline);
+    var preparation = repository.prepare(origin);
+    var retained = preparation.retained();
+    if (!retained.ownerId().equals(selected.instanceId())
+        || retained.ownerFence() != selected.fence()) throw unavailable();
+    if (retained.state() == CanonicalGameplayCapacityOrigin.State.OPEN) {
+      if (preparation.insertedByThisCall()) {
+        originRedis()
+            .apply(
+                origin,
+                CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
+                selected.instanceId(),
+                selected.fence(),
+                selected.instanceId(),
+                selected.fence(),
+                retained.state(),
+                deadline);
+      } else {
+        originRedis()
+            .readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
+      }
+    } else if (retained.state() == CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED) {
+      requireCommittedOriginReplay(source, origin, retained);
+    } else {
+      throw unavailable();
+    }
     var after = repository.read(origin);
     if (!after.ownerId().equals(selected.instanceId())
         || after.ownerFence() != selected.fence()
-        || after.state() != CanonicalGameplayCapacityOrigin.State.OPEN) throw unavailable();
+        || after.state() != retained.state()) throw unavailable();
     return origin;
+  }
+
+  private void requireCommittedOriginReplay(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayCapacityOrigin origin,
+      CanonicalGameplayCapacityOriginRepository.Retained retained) {
+    var execution =
+        CanonicalGameplayRegionOwnerTransferRepository.decode(retained.accountResolution());
+    CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.requireExecutionBinding(source, execution);
+    if (!Arrays.equals(
+            CapacityAdmissionDigest.preimage(origin.request()),
+            CapacityAdmissionDigest.preimage(execution.request()))
+        || !origin.selectedOwnerId().equals(execution.selectedOwnerId())
+        || origin.selectedOwnerFence() != execution.selectedOwnerFence()) throw unavailable();
+    Record row = find(sql(), execution);
+    if (row == null) throw unavailable();
+    exact(row, execution);
+    String status = row.get("status", String.class);
+    if (!"AUTHORIZED".equals(status) && !"COMMITTED".equals(status)) throw unavailable();
+    originRedis().readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
+    // Existing authorization is insufficient: an exact replay must observe the prior FINAL.
+    exactPhysicalBinding(
+        readExecution(execution, origin.tenantGameplayTag()), execution, "COMMITTED");
   }
 
   /**
@@ -284,6 +321,15 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(deadline, owner -> owner.readOriginTransferCustody(item, deadline));
     budget.check();
+    if (transferReadConnection != null) {
+      return originRedis()
+          .readExact(
+              transferReadConnection.async(),
+              item.origin(),
+              item.newOwner(),
+              item.newFence(),
+              item.state());
+    }
     return originRedis().readExact(item.origin(), item.newOwner(), item.newFence(), item.state());
   }
 
@@ -299,7 +345,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   private CanonicalGameplayCapacityOriginRedisOwner originRedis() {
-    var descriptor = scripts.require("game-session.original-new-capacity-origin-custody.v1");
+    var descriptor = scripts.require("game-session.original-new-capacity-origin-custody.v2");
     var expectedArguments =
         java.util.List.of(
                 "action",
@@ -315,7 +361,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.ArgumentSpec
                     ::new)
             .toList();
-    if (!"game-session.original-new-capacity-origin-custody.v1".equals(descriptor.scriptId())
+    if (!"game-session.original-new-capacity-origin-custody.v2".equals(descriptor.scriptId())
         || !"redis/lua/game-session-original-new-capacity-origin-custody.lua"
             .equals(descriptor.resourcePath())
         || !"game-session-service".equals(descriptor.owner())
@@ -938,14 +984,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   /** Keeps one authenticated non-reconnecting connection for the current transfer readback. */
-  void withTransferReadback(Consumer<CanonicalGameplayOriginalNewCapacityExecutionOwner> read) {
+  <T> T withTransferReadback(Function<CanonicalGameplayOriginalNewCapacityExecutionOwner, T> read) {
     noSql();
     if (budget == null || transferReadConnection != null) throw unavailable();
     budget.check();
     var connection = connectForRead();
     try {
       principal(connection.async());
-      read.accept(
+      return read.apply(
           new CanonicalGameplayOriginalNewCapacityExecutionOwner(
               dsl, redis, scripts, clock, tags, budget, connection));
     } finally {

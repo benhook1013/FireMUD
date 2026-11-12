@@ -26,6 +26,7 @@ final class CanonicalGameplayControlledRegionTransferObservationFixture {
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private final KeyPair keys;
   private final Clock clock;
+  private final Duration observationTtl;
   private final Duration observationLatency;
   private final AtomicInteger observationCount = new AtomicInteger();
 
@@ -34,12 +35,18 @@ final class CanonicalGameplayControlledRegionTransferObservationFixture {
   }
 
   CanonicalGameplayControlledRegionTransferObservationFixture(Clock clock) throws Exception {
-    this(clock, Duration.ZERO);
+    this(clock, Duration.ofSeconds(30));
   }
 
   CanonicalGameplayControlledRegionTransferObservationFixture(
-      Clock clock, Duration observationLatency) throws Exception {
+      Clock clock, Duration observationTtl) throws Exception {
+    this(clock, observationTtl, Duration.ZERO);
+  }
+
+  CanonicalGameplayControlledRegionTransferObservationFixture(
+      Clock clock, Duration observationTtl, Duration observationLatency) throws Exception {
     this.clock = Objects.requireNonNull(clock, "clock");
+    this.observationTtl = Objects.requireNonNull(observationTtl, "observationTtl");
     this.observationLatency = Objects.requireNonNull(observationLatency, "observationLatency");
     if (observationLatency.isNegative()) throw new IllegalArgumentException();
     KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
@@ -84,7 +91,7 @@ final class CanonicalGameplayControlledRegionTransferObservationFixture {
             "sha256:" + "c".repeat(64),
             16 * 1024,
             1,
-            Duration.ofSeconds(30));
+            observationTtl);
     return CanonicalGameplayProtectedIncarnationReceiver.forRegionOwnerTransfer(
         source, tags, this::observe, trust, clock);
   }

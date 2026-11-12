@@ -74,6 +74,22 @@ class TenantCapacityAdmissionGrpcCodecTest {
                   .setRefusal(0, response.getRefusal(0).toBuilder().setCapacityRearmFence(0, 2))
                   .build(),
               response.toBuilder()
+                  .setRefusal(
+                      0,
+                      response.getRefusal(0).toBuilder()
+                          .setTenantId(0, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+                  .build(),
+              response.toBuilder()
+                  .setRefusal(
+                      0,
+                      response.getRefusal(0).toBuilder()
+                          .setAdmissionAttemptId(0, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
+                  .build(),
+              response.toBuilder()
+                  .setRefusal(
+                      0, response.getRefusal(0).toBuilder().setMutationDigest(0, "b".repeat(64)))
+                  .build(),
+              response.toBuilder()
                   .setRefusal(0, response.getRefusal(0).toBuilder().setCodeValue(0, 999))
                   .build())) {
         assertThatThrownBy(() -> TenantCapacityAdmissionGrpcCodec.readRefusal(request, malformed))

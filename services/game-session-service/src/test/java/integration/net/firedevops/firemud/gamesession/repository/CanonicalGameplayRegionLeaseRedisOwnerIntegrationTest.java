@@ -13,6 +13,7 @@ import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.protocol.CommandKeyword;
 import io.lettuce.core.protocol.CommandType;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
@@ -92,6 +93,36 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
           owner.acquire(firstSource, 7L, Duration.ofSeconds(10), identity("instance-b"));
       assertThat(redis.admin().get(firstKey)).isNotEqualTo(firstValue);
       owner.requireCurrent(successor);
+    }
+  }
+
+  @Test
+  void handoffDeadlineFencesLateAcquireAndRenewOnRedisTime() {
+    try (RedisFixture redis = RedisFixture.open()) {
+      var owner = new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+      var source = source(GAME_INSTANCE_ID_A);
+      seedMeta(redis.admin(), source);
+      byte[] leaseKey =
+          ascii(
+              CanonicalGameplayRegionRedisKeys.lease(
+                  TENANT_ID, GAME_INSTANCE_ID_A, OPERATIONAL_REGION_ID));
+      Clock behindRedis = Clock.offset(Clock.systemUTC(), Duration.ofSeconds(-30));
+      var late = owner.forHandoffDeadline(behindRedis, behindRedis.millis() + 4_000);
+      assertThatThrownBy(() -> late.acquire(source, 7L, Duration.ofSeconds(30), identity("late")))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(redis.admin().get(leaseKey)).isNull();
+
+      Clock current = Clock.systemUTC();
+      var timely = owner.forHandoffDeadline(current, current.millis() + 4_000);
+      var grant = timely.acquire(source, 7L, Duration.ofSeconds(30), identity("timely"));
+      timely.requireCurrent(grant);
+      timely.renew(grant, Duration.ofSeconds(30));
+      byte[] token = redis.admin().get(leaseKey);
+      long ttl = redis.admin().pttl(leaseKey);
+      assertThatThrownBy(() -> late.renew(grant, Duration.ofMinutes(2)))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(redis.admin().get(leaseKey)).containsExactly(token);
+      assertThat(redis.admin().pttl(leaseKey)).isPositive().isLessThanOrEqualTo(ttl);
     }
   }
 
@@ -283,6 +314,7 @@ class CanonicalGameplayRegionLeaseRedisOwnerIntegrationTest {
               .addCommand(CommandType.PTTL)
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)
+              .addCommand(CommandType.TIME)
               .addCommand(CommandType.PEXPIRE));
       RedisClient ownerClient = createClient(PRINCIPAL, PASSWORD);
       RedisScriptCatalog catalog =
