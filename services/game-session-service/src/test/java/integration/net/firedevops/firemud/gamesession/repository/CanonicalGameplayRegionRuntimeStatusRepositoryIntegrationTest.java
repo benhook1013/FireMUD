@@ -516,11 +516,13 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         ExecutorService executor = Executors.newFixedThreadPool(2)) {
       proof.seedUndeliveredDispatch(proof.execution);
       UUID id = proof.begin();
+      var captured =
+          proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
+      assertThat(captured).hasSize(1);
       var original =
-          proof
-              .transfers
-              .within(transferDeadline(), ignored -> proof.transfers.capture(id))
-              .getFirst();
+          proof.transfers.within(
+              transferDeadline(),
+              ignored -> proof.transfers.frozenOriginal(proof.execution.transitionId()));
       String before = proof.transferImage(id);
       gate.arm();
       Future<?> replay = executor.submit(proof::replayBridge);
@@ -720,6 +722,107 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       assertThat(proof.begin()).isEqualTo(id);
       assertThat(proof.captureAndFence(id)).isEmpty();
       assertThat(proof.physicalExecutionExists(last.execution())).isFalse();
+    }
+  }
+
+  @Test
+  void terminalOnlyTransferRecoversExactCompletedSuccessorAfterOriginalFinalReceipt()
+      throws Exception {
+    try (var proof = new TransferSqlProof();
+        var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                proof.admission.candidate(), proof.clock);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(proof.execution)) {
+      var account = proof.controlledAccountOpen();
+      var issuer = proof.issuerOpen();
+      proof
+          .capacity(proof.sql)
+          .authorize(
+              proof.admission, template, account, issuer, proof.execution, transferDeadline());
+      try (var readback =
+          new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
+                  proof.redis, proof.scripts, proof.clock, proof.tags)
+              .finalizeOriginalNewOnce(
+                  proof.admission,
+                  template,
+                  account,
+                  issuer,
+                  proof.execution,
+                  transferDeadline())) {
+        UUID id = proof.begin();
+        assertThatThrownBy(
+                () ->
+                    proof.coordinator.recoverCompleted(
+                        id, "sql-proof-successor", "e".repeat(64), transferDeadline()))
+            .isInstanceOf(IllegalStateException.class);
+
+        new CanonicalGameplayBindingInventoryRepository(proof.sql)
+            .commitOriginalNewFinalAdmission(readback);
+        assertThat(proof.captureAndFence(id)).isEmpty();
+        proof.verifyPage(id);
+        boolean verified =
+            proof.transfers.within(
+                transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+        assertThat(verified).isTrue();
+        var installed = proof.install(id);
+        String completion = proof.transferImage(id);
+        String retained = proof.originalImage();
+        assertThat(proof.executionState(proof.execution)).isEqualTo("COMMITTED");
+        assertThat(
+                proof.coordinator.recoverCompleted(
+                    id,
+                    installed.ownerInstanceId(),
+                    installed.leaseTokenCorrelation(),
+                    transferDeadline()))
+            .isEqualTo(installed);
+        assertThatThrownBy(
+                () ->
+                    proof.coordinator.recoverCompleted(
+                        id, installed.ownerInstanceId(), "f".repeat(64), transferDeadline()))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(proof.currentOwner()).isEqualTo(installed);
+        assertThat(proof.transferImage(id)).isEqualTo(completion);
+        assertThat(proof.originalImage()).isEqualTo(retained);
+      }
+    }
+  }
+
+  @Test
+  void standaloneTransferObservationCancelsBlockedSqlAtItsExplicitDeadline() throws Exception {
+    try (var proof = new TransferSqlProof();
+        var lock =
+            java.sql.DriverManager.getConnection(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var captured =
+          proof.transfers.within(transferDeadline(), ignored -> proof.transfers.capture(id));
+      assertThat(captured).hasSize(1);
+      lock.setSchema(proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class));
+      lock.setAutoCommit(false);
+      try (var statement = lock.createStatement()) {
+        statement.execute("LOCK TABLE game_session_region_owner_transfer IN ACCESS EXCLUSIVE MODE");
+      }
+      try {
+        long start = System.nanoTime();
+        assertThatThrownBy(
+                () ->
+                    proof.receiver.observeForRegionOwnerTransfer(
+                        id, captured.getFirst().ordinal(), proof.clock.millis() + 500L))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(3));
+      } finally {
+        lock.rollback();
+      }
+      assertThat(
+              proof
+                  .receiver
+                  .observeForRegionOwnerTransfer(
+                      id, captured.getFirst().ordinal(), transferDeadline())
+                  .regionOwnerTransferContext()
+                  .transferId())
+          .isEqualTo(id);
     }
   }
 
