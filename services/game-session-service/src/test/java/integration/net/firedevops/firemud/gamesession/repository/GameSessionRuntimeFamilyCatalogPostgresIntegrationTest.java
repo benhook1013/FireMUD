@@ -88,7 +88,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(12);
+      assertThat(catalog.catalogEpoch()).isEqualTo(13);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -153,7 +153,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "game_session_canonical_binding_transition.admission_request_id",
               "game_session_canonical_realm_catalog.private_preparation_request_id",
               "game_session_private_catalog_revision_history",
-              "game_session_current_private_catalog_revisions")) {
+              "game_session_current_private_catalog_revisions",
+              "game_session_original_new_admitted_logout_intent")) {
         assertThat(catalog.families()).anyMatch(family -> family.familyId().equals(name));
       }
       assertPrivateRevisionClassifications(catalog);
@@ -202,7 +203,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065",
               "catalog-installation:1065.0.1",
               "catalog-installation:1065.0.2",
-              "catalog-installation:1065.0.3")
+              "catalog-installation:1065.0.3",
+              "catalog-installation:1066")
           .noneMatch(
               identity ->
                   identity.contains(":1057:")
@@ -216,7 +218,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1065:")
                       || identity.contains(":1065.0.1:")
                       || identity.contains(":1065.0.2:")
-                      || identity.contains(":1065.0.3:"));
+                      || identity.contains(":1065.0.3:")
+                      || identity.contains(":1066:"));
       assertThat(
               f.dsl
                   .fetchSingle(
@@ -759,7 +762,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(12);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(13);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->

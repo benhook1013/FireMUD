@@ -2121,6 +2121,69 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void admittedLogoutIntentRequiresActualFinalAndReplaysAfterServingStateDisappears()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var provisional = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var intents = new CanonicalGameplayOriginalNewAdmittedLogoutIntentRepository(fixture.dsl());
+    var logout = UUID.randomUUID();
+    assertThatThrownBy(
+            () -> intents.prepare(logout, provisional, controlledCapacity, new byte[] {1}))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                provisional.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    provisional,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      inventory.commitOriginalNewFinalAdmission(actual);
+    }
+    var admitted = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var sessionKey =
+        CanonicalGameplaySessionRedisKeys.session(
+            assignment, admitted.candidate().bindingIdentity().bindingRef());
+    var execution = controlledCapacity;
+    var physical = physicalImage();
+    byte[] observed = admin.get(ascii(sessionKey));
+    var retained = intents.prepare(logout, admitted, execution, observed);
+    assertThat(retained.originalFinalSessionSha256())
+        .isEqualTo(admitted.finalReceipt().orElseThrow().finalSessionSha256());
+    assertThat(intents.prepare(logout, admitted, execution, observed)).isEqualTo(retained);
+    assertThatThrownBy(() -> intents.prepare(UUID.randomUUID(), admitted, execution, observed))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(() -> intents.prepare(logout, admitted, execution, new byte[] {1}))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(physicalImage()).isEqualTo(physical);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "DELETE FROM game_session_original_new_admitted_logout_intent WHERE logout_id = ?",
+                        logout))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    controlledRemoveServingKeys(admitted, assignment);
+    assertThat(
+            new CanonicalGameplayOriginalNewAdmittedLogoutIntentRepository(fixture.dsl())
+                .readExact(execution.digest(), logout))
+        .isEqualTo(retained);
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .disposition())
+        .isEqualTo("COMMITTED");
+  }
+
+  @Test
   void recreatedCapacityOwnerRetainsCommittedSqlBeforeServingCleanup() throws Exception {
     repairAccountMember();
     bridge();
