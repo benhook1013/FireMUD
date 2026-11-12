@@ -52,6 +52,8 @@ class AbstractReloadingBlockingGrpcClientTest {
     assertThatThrownBy(client::requireExplicitStub)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test client is not initialized and available");
+    assertThatThrownBy(client::requirePublishedExplicitStub)
+        .isInstanceOf(IllegalStateException.class);
 
     client.initExplicit();
     GameDesignServiceGrpc.GameDesignServiceBlockingStub initializedStub =
@@ -60,12 +62,15 @@ class AbstractReloadingBlockingGrpcClientTest {
 
     assertThat(factory.buildAttempts.get()).isEqualTo(1);
     assertThat(client.requireExplicitStub()).isSameAs(initializedStub);
+    assertThat(client.requirePublishedExplicitStub()).isSameAs(initializedStub);
 
     client.close();
 
     assertThatThrownBy(client::requireExplicitStub)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test client is not initialized and available");
+    assertThatThrownBy(client::requirePublishedExplicitStub)
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(client::initExplicit)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("test client is closed");
@@ -244,6 +249,10 @@ class AbstractReloadingBlockingGrpcClientTest {
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub requireExplicitStub() {
       return requireInitializedStub("test client is not initialized and available");
+    }
+
+    private GameDesignServiceGrpc.GameDesignServiceBlockingStub requirePublishedExplicitStub() {
+      return requirePublishedInitializedStub("test client is not initialized and available");
     }
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub() {

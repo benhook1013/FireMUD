@@ -1,8 +1,10 @@
 package net.firedevops.firemud.accountservice.client;
 
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -27,6 +29,7 @@ public final class AccountOriginalNewCapacityExecutionReadClient
         OriginalNewCapacityExecutionReadServiceGrpc
             .OriginalNewCapacityExecutionReadServiceBlockingStub>
     implements AccountTenantCapacityRecoveryWorker.ExecutionReadClient {
+  private static final long MAX_READ_MILLIS = 5000;
   private final String namespace;
   private final String peer;
   private final Clock clock;
@@ -61,6 +64,7 @@ public final class AccountOriginalNewCapacityExecutionReadClient
       TenantCapacityAdmission.Request request,
       TenantCapacityAdmission.Result reservation,
       Instant deadline) {
+    Deadline maximum = Deadline.after(MAX_READ_MILLIS, TimeUnit.MILLISECONDS);
     requireNoAmbientSql("Capacity execution read requires no Account transaction");
     if (!namespace.equals(request.targetNamespace())
         || request.context().owner() != TenantCapacityAdmission.Owner.GAME_SESSION
@@ -68,18 +72,19 @@ public final class AccountOriginalNewCapacityExecutionReadClient
         || SessionContext.isInternalService()
         || SessionContext.getServiceName() != null
         || SessionContext.getServiceInstanceId() != null) throw unavailable();
-    long millis = Math.min(5000, java.time.Duration.between(clock.instant(), deadline).toMillis());
+    long millis = Math.min(MAX_READ_MILLIS, Duration.between(clock.instant(), deadline).toMillis());
     if (millis <= 0) throw unavailable();
+    Deadline rpcDeadline = maximum.offset(millis - MAX_READ_MILLIS, TimeUnit.MILLISECONDS);
+    var stub = requirePublishedInitializedStub("Capacity execution read unavailable");
     var selector = new OriginalNewCapacityExecutionReadGrpcCodec.Selector(request, reservation);
+    var wire = OriginalNewCapacityExecutionReadGrpcCodec.toRequest(selector);
+    if (rpcDeadline.isExpired()) throw unavailable();
     var response =
-        requireInitializedStub("Capacity execution read unavailable")
-            .withDeadlineAfter(millis, TimeUnit.MILLISECONDS)
+        stub.withDeadline(rpcDeadline)
             .withMaxOutboundMessageSize(OriginalNewCapacityExecutionReadGrpcCodec.MAX_REQUEST_BYTES)
             .withMaxInboundMessageSize(OriginalNewCapacityExecutionReadGrpcCodec.MAX_RESPONSE_BYTES)
-            .readOriginalNewCapacityExecution(
-                OriginalNewCapacityExecutionReadGrpcCodec.toRequest(selector));
+            .readOriginalNewCapacityExecution(wire);
     var readback = OriginalNewCapacityExecutionReadGrpcCodec.fromResponse(selector, response);
-    if (!clock.instant().isBefore(deadline)) throw unavailable();
     var disposition =
         AccountTenantCapacityRecoveryWorker.Disposition.valueOf(readback.disposition());
     // The complete terminal bytes are generated from actual owner evidence, not a boolean.
@@ -94,15 +99,18 @@ public final class AccountOriginalNewCapacityExecutionReadClient
       observed.writeBytes(value);
     }
     byte[] canonical = observed.toByteArray();
-    return new AccountTenantCapacityRecoveryWorker.Observation(
-        peer,
-        reservation,
-        CapacityAdmissionDigest.preimage(request),
-        disposition,
-        UUID.nameUUIDFromBytes(canonical),
-        readback.currentOwnerFence(),
-        readback.physicalDigest(),
-        canonical);
+    var observation =
+        new AccountTenantCapacityRecoveryWorker.Observation(
+            peer,
+            reservation,
+            CapacityAdmissionDigest.preimage(request),
+            disposition,
+            UUID.nameUUIDFromBytes(canonical),
+            readback.currentOwnerFence(),
+            readback.physicalDigest(),
+            canonical);
+    if (rpcDeadline.isExpired() || !clock.instant().isBefore(deadline)) throw unavailable();
+    return observation;
   }
 
   @Override
