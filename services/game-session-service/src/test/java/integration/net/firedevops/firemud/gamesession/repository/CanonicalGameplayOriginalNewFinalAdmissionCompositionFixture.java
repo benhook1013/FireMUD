@@ -81,7 +81,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   private CanonicalGameplayAdmissionAbortCompositionFixture binding;
   private CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources sources;
   private CanonicalGameplayTenantGameplayTagRepository tags;
-  private RedisScriptCatalog scripts;
+  private volatile RedisScriptCatalog scripts;
   private CanonicalGameplayControlledInitialObservationFixture attestor;
   private CanonicalGameplayAccountInitialBarrierInitializerRepository initialRepository;
   private CanonicalGameplayRegionBindingBridgeOwner region;
@@ -90,7 +90,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   private CanonicalGameplayAdmissionDecision decision;
   private String initialBarrierKey;
   private Server server;
-  private boolean originReceivingEnabled;
+  private volatile boolean originReceivingEnabled;
 
   public static CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture open(
       DriverManagerDataSource accountDataSource,
@@ -667,7 +667,6 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
 
   /** Compose the origin recovery scripts for the controlled receiver. */
   public void enableOriginReceiving() {
-    originReceivingEnabled = true;
     scripts =
         RedisScriptCatalog.fromContributions(
             List.of(
@@ -682,6 +681,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                     .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution()));
+    originReceivingEnabled = true;
   }
 
   public void prepareReceivingOrigin(
