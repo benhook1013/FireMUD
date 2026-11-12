@@ -9,7 +9,7 @@ CREATE TABLE game_session_original_new_capacity_origin (
     transition_id UUID NOT NULL,
     game_instance_id UUID NOT NULL,
     region_id UUID NOT NULL,
-    mutation_digest TEXT NOT NULL CHECK (mutation_digest ~ '^sha256:[0-9a-f]{64}$'),
+    mutation_digest TEXT NOT NULL CHECK (mutation_digest ~ '^[0-9a-f]{64}$'),
     canonical_request BYTEA NOT NULL,
     canonical_candidate BYTEA NOT NULL,
     canonical_origin BYTEA NOT NULL,
