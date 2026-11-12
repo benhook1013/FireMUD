@@ -295,7 +295,7 @@ public final class TenantCapacityAdmission {
     /** Strong guard for rearm and selected-owner execution; content alone grants no authority. */
     public void requireCommittable() {
       requireStructurallyValid();
-      if (operation == Operation.CAPACITY_CREATING && !evidence.permitsCreation()) throw invalid();
+      if (!evidence.permitsCreation()) throw invalid();
     }
 
     /** Account resolves exact replay/conflict and current policy after this content check. */

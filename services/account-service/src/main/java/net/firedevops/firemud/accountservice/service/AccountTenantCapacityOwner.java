@@ -94,12 +94,14 @@ public final class AccountTenantCapacityOwner {
   public Result commit(Request request, String authenticatedCaller) {
     requireCaller(request, authenticatedCaller);
     request.requireStructurallyValid();
+    if (!(request.context() instanceof PlayerContext)) throw unavailable();
     return commitWithFreshSnapshot(
         () -> {
-          lockPlayerAccount(request);
-          Record existing = capacity.find(request.identity());
-          // Replay/conflict is resolved before current-source reads and any usage write.
+          // Exact replay/conflict can linearize at the snapshot read without taking a mutation
+          // lock.
+          Record existing = capacity.findForReplay(request.identity());
           if (existing != null) return capacity.exact(request, existing);
+          lockPlayerAccount(request);
           if (request.capacityRearmFence() != 1) throw conflict();
           current(request);
           requireSupportedShape(request);

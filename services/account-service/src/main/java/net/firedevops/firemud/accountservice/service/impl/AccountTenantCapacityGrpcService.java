@@ -77,12 +77,15 @@ public final class AccountTenantCapacityGrpcService
       observer.onError(Failure.PERMISSION_DENIED.toStatusException());
       return;
     }
-    final CommitTenantCapacityAdmissionResponse result;
+    CommitTenantCapacityAdmissionResponse result;
     try {
       result = TenantCapacityAdmissionGrpcCodec.toResponse(request, owner.commit(request, peer));
     } catch (CapacityException denied) {
-      observer.onError(denied.code().toStatusException());
-      return;
+      if (!denied.code().isDomainRefusal()) {
+        observer.onError(denied.code().toStatusException());
+        return;
+      }
+      result = TenantCapacityAdmissionGrpcCodec.toRefusal(request, denied.code());
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException
         | org.springframework.transaction.TransactionException unavailable) {
