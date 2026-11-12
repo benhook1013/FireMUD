@@ -11,6 +11,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigInteger;
@@ -57,6 +58,28 @@ class AccountControlUiSigningAndActorTest {
   private static final Instant NOW = Instant.parse("2026-10-08T11:00:00Z");
   private static KeyPair key;
   @TempDir Path temporary;
+
+  @Test
+  void unavailableProtectedSignerSourceHasItsOwnFailureType() {
+    var repository =
+        mock(
+            net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository
+                .class);
+    var source =
+        new net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding(
+            true, temporary.resolve("missing-binding").toString());
+    var owner =
+        new AccountControlUiSignerOwner(
+            repository,
+            source,
+            new net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding(),
+            temporary,
+            temporary);
+
+    assertThatThrownBy(() -> owner.requireOriginal(new byte[] {1}))
+        .isInstanceOf(AccountControlUiSignerOwner.SignerSourceUnavailableException.class);
+    verifyNoInteractions(repository);
+  }
 
   @BeforeAll
   static void key() throws Exception {

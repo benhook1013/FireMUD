@@ -136,6 +136,8 @@ public final class AccountHostingFirstInvoiceController {
   @ExceptionHandler({
     net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReader
         .RegistryUnavailableException.class,
+    net.firedevops.firemud.accountservice.service.session.AccountControlUiSignerOwner
+        .SignerSourceUnavailableException.class,
     net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceUnavailableException.class,
     net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier
         .VerificationUnavailableException.class,

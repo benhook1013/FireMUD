@@ -1,5 +1,6 @@
 import {
   AccountControlUiApiError,
+  accountControlUiLoginTimeoutMs,
   maxControlUiSessionLifetimeMs,
   type AccountControlUiApi,
   type AccountControlUiLoginRequest,
@@ -115,27 +116,31 @@ async function readBoundedBytes(
 ): Promise<Uint8Array> {
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
+  const discard = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener('abort', discard, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     for (;;) {
       if (signal.aborted) throw new ControlUiSessionError('REQUEST_CANCELLED');
       const { done, value } = await reader.read();
+      if (signal.aborted) throw new ControlUiSessionError('REQUEST_CANCELLED');
       if (done) break;
       size += value.byteLength;
       if (size > maxOwnerResponseBytes) {
-        await reader.cancel();
+        discard();
         throw new ControlUiSessionError('REQUEST_FAILED');
       }
       chunks.push(value);
     }
   } catch {
-    try {
-      await reader.cancel();
-    } catch {
-      // The response body is private Account data and is never surfaced here.
-    }
+    discard();
     throw new ControlUiSessionError('REQUEST_FAILED');
+  } finally {
+    signal.removeEventListener('abort', discard);
+    reader.releaseLock();
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -144,6 +149,10 @@ async function readBoundedBytes(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+function discardResponse(response: Response): void {
+  void response.body?.cancel().catch(() => {});
 }
 
 function validateOwnerRequest(
@@ -300,6 +309,7 @@ export class ControlUiSessionStore {
 
     const controller = new AbortController();
     const externalSignal = init.signal;
+    let deadlineExpired = false;
     const cancelFromCaller = () => controller.abort();
     if (externalSignal?.aborted) controller.abort();
     else
@@ -326,67 +336,102 @@ export class ControlUiSessionStore {
       if (!isCurrent()) throw new ControlUiSessionError('SESSION_REPLACED');
     };
 
+    const deadline = performance.now() + accountControlUiLoginTimeoutMs;
+    const deadlineTimer = setTimeout(() => {
+      deadlineExpired = true;
+      controller.abort();
+    }, accountControlUiLoginTimeoutMs);
+    const assertWithinDeadline = () => {
+      if (performance.now() >= deadline) {
+        deadlineExpired = true;
+        controller.abort();
+      }
+      if (controller.signal.aborted) {
+        assertCurrent();
+        throw new ControlUiSessionError(
+          deadlineExpired ? 'REQUEST_FAILED' : 'REQUEST_CANCELLED'
+        );
+      }
+    };
     try {
       assertCurrent();
+      assertWithinDeadline();
+
+      const interrupted = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => {
+            try {
+              assertWithinDeadline();
+            } catch (error) {
+              reject(error);
+            }
+          },
+          { once: true }
+        );
+      });
 
       const headers = new Headers(init.headers);
       headers.set('Authorization', `Bearer ${bearer}`);
-      let response: Response;
-      try {
-        response = await this.fetchImpl(target, {
-          method,
-          headers,
-          ...(init.body !== undefined ? { body: init.body } : {}),
-          cache: 'no-store',
-          credentials: 'omit',
-          redirect: 'error',
-          referrerPolicy: 'no-referrer',
-          mode: 'same-origin',
-          signal: controller.signal,
-        });
-      } catch {
+      const receive = async (): Promise<Response> => {
+        let response: Response;
+        try {
+          response = await this.fetchImpl(target, {
+            method,
+            headers,
+            ...(init.body !== undefined ? { body: init.body } : {}),
+            cache: 'no-store',
+            credentials: 'omit',
+            redirect: 'error',
+            referrerPolicy: 'no-referrer',
+            mode: 'same-origin',
+            signal: controller.signal,
+          });
+        } catch {
+          assertCurrent();
+          assertWithinDeadline();
+          throw new ControlUiSessionError('REQUEST_FAILED');
+        }
+
+        try {
+          assertCurrent();
+          assertWithinDeadline();
+        } catch (error) {
+          discardResponse(response);
+          throw error;
+        }
+        if (response.status === 401 || response.status === 403) {
+          discardResponse(response);
+          this.requests.delete(controller);
+          this.clearIfCurrent(session.identity, revision);
+          throw new ControlUiSessionError('AUTH_REJECTED');
+        }
+        if (!response.ok) {
+          discardResponse(response);
+          return new Response(null, {
+            status: response.status,
+            headers: { 'Cache-Control': 'no-store' },
+          });
+        }
+        if (response.status !== 200) {
+          discardResponse(response);
+          throw new ControlUiSessionError('REQUEST_FAILED');
+        }
+
+        const bytes = await readBoundedBytes(response, controller.signal);
         assertCurrent();
-        throw new ControlUiSessionError(
-          controller.signal.aborted ? 'REQUEST_CANCELLED' : 'REQUEST_FAILED'
+        assertWithinDeadline();
+        return guardedJsonResponse(
+          response.status,
+          bytes,
+          assertCurrent,
+          response.headers.get('content-type') ?? 'application/json'
         );
-      }
+      };
 
-      assertCurrent();
-      if (response.status === 401 || response.status === 403) {
-        this.clearIfCurrent(session.identity, revision);
-        throw new ControlUiSessionError('AUTH_REJECTED');
-      }
-      if (!response.ok) {
-        try {
-          await response.body?.cancel();
-        } catch {
-          // Error bodies may contain sensitive provider or Account details.
-        }
-        assertCurrent();
-        return new Response(null, {
-          status: response.status,
-          headers: { 'Cache-Control': 'no-store' },
-        });
-      }
-      if (response.status !== 200) {
-        try {
-          await response.body?.cancel();
-        } catch {
-          // A success response outside the owner contract is discarded.
-        }
-        assertCurrent();
-        throw new ControlUiSessionError('REQUEST_FAILED');
-      }
-
-      const bytes = await readBoundedBytes(response, controller.signal);
-      assertCurrent();
-      return guardedJsonResponse(
-        response.status,
-        bytes,
-        assertCurrent,
-        response.headers.get('content-type') ?? 'application/json'
-      );
+      return await Promise.race([interrupted, receive()]);
     } finally {
+      clearTimeout(deadlineTimer);
       externalSignal?.removeEventListener('abort', cancelFromCaller);
       this.requests.delete(controller);
     }

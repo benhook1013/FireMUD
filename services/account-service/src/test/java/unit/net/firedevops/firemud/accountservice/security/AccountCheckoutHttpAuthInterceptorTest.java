@@ -69,8 +69,9 @@ class AccountCheckoutHttpAuthInterceptorTest {
     verifyNoInteractions(actors);
     request.setSecure(true);
     doThrow(new IllegalStateException("denied")).when(actors).authenticateAccount("rejected");
-    assertThat(interceptor.preHandle(request, response, handler)).isFalse();
-    assertThat(response.getStatus()).isEqualTo(401);
+    var secureResponse = new MockHttpServletResponse();
+    assertThat(interceptor.preHandle(request, secureResponse, handler)).isFalse();
+    assertThat(secureResponse.getStatus()).isEqualTo(401);
   }
 
   @ParameterizedTest
@@ -108,6 +109,8 @@ class AccountCheckoutHttpAuthInterceptorTest {
     return Stream.of(
         registryFailure(() -> null),
         registryFailure(() -> mock(io.lettuce.core.api.StatefulRedisConnection.class)),
+        new net.firedevops.firemud.accountservice.service.session.AccountControlUiSignerOwner
+            .SignerSourceUnavailableException(),
         new net.firedevops.firemud.common.security.AccountPublicJwksCache
             .SourceUnavailableException(),
         new org.springframework.transaction.CannotCreateTransactionException(

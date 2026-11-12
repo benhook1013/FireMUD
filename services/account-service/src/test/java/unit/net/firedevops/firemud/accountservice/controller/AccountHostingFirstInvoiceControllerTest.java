@@ -129,6 +129,11 @@ class AccountHostingFirstInvoiceControllerTest {
   static Stream<Arguments> ownerFailures() {
     return Stream.of(
         Arguments.of(
+            new net.firedevops.firemud.accountservice.service.session.AccountControlUiSignerOwner
+                .SignerSourceUnavailableException(),
+            503,
+            "AUTH_UNAVAILABLE"),
+        Arguments.of(
             new org.springframework.transaction.CannotCreateTransactionException(
                 "private database connection detail"),
             503,

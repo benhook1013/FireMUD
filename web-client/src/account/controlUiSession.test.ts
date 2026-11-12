@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AccountControlUiApiError,
+  accountControlUiLoginTimeoutMs,
   type AccountControlUiApi,
   type AccountControlUiLoginRequest,
 } from '../api/accountControlUi';
@@ -262,6 +263,124 @@ describe('memory-only control-ui session owner', () => {
       code: 'AUTH_REJECTED',
     });
     expect(store.getSession()).toBeNull();
+  });
+
+  it('times out a stalled owner fetch and ignores its late auth rejection', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Response>();
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ state: 'AWAITING_PAYMENT' }), {
+          status: 200,
+        })
+      );
+    const store = makeStore({ fetchImpl });
+    const session = await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+    const request = store.authenticatedRequest(url, init);
+    const failure = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+    });
+
+    await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+    await failure;
+    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(store.getSession()).toEqual(session);
+
+    const lateUnauthorized = new Response('private auth details', {
+      status: 401,
+    });
+    const cancelLateBody = vi.spyOn(lateUnauthorized.body!, 'cancel');
+    pending.resolve(lateUnauthorized);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cancelLateBody).toHaveBeenCalledOnce();
+
+    const recovered = await store.authenticatedRequest(url, init);
+    expect(await recovered.json()).toEqual({ state: 'AWAITING_PAYMENT' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(store.getSession()).toEqual(session);
+  });
+
+  it('times out a stalled owner response body and cancels its reader', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"state":'));
+        },
+        cancel,
+      }),
+      { status: 200 }
+    );
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response);
+    const store = makeStore({ fetchImpl });
+    const session = await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+    const request = store.authenticatedRequest(url, init);
+    const failure = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(response.body?.locked).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+    await failure;
+    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(store.getSession()).toEqual(session);
+  });
+
+  it('does not retry a timed-out payment write or deliver its late success', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Response>();
+    const fetchImpl = vi.fn<typeof fetch>().mockReturnValue(pending.promise);
+    const store = makeStore({ fetchImpl });
+    const session = await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const url = new URL(
+      `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice/confirm`,
+      origin
+    );
+    const request = store.authenticatedRequest(url, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ acceptCharge: true }),
+    });
+    const failure = expect(request).rejects.toMatchObject({
+      code: 'REQUEST_FAILED',
+    });
+
+    await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+    await failure;
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    expect(store.getSession()).toEqual(session);
+
+    const lateSuccess = new Response(JSON.stringify({ status: 'succeeded' }), {
+      status: 200,
+    });
+    const cancelLateBody = vi.spyOn(lateSuccess.body!, 'cancel');
+    pending.resolve(lateSuccess);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cancelLateBody).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(store.getSession()).toEqual(session);
   });
 
   it('denies a stale owner response after sign-out even if fetch ignores abort', async () => {

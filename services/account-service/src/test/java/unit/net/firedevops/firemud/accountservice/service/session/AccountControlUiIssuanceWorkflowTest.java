@@ -160,8 +160,13 @@ class AccountControlUiIssuanceWorkflowTest {
   void replayCredentialMismatchCommitsFailureBeforeReportingConflictWithoutPrimaryAuthentication() {
     Fixture fixture = new Fixture(NOW.plusSeconds(30));
     var original = fixture.existing();
+    AtomicReference<byte[]> replayMacInput = new AtomicReference<>();
     when(fixture.cryptography.requestDigest(anyString(), any(byte[].class)))
-        .thenReturn("changed-request-digest");
+        .thenAnswer(
+            call -> {
+              replayMacInput.set(call.getArgument(1, byte[].class).clone());
+              return "changed-request-digest";
+            });
 
     try (var ignored = fixture.withPeer(ISSUER)) {
       assertThatThrownBy(
@@ -174,6 +179,8 @@ class AccountControlUiIssuanceWorkflowTest {
           .isInstanceOf(AccountControlUiIssuanceService.IdempotencyConflictException.class);
     }
 
+    assertThat(AccountControlUiIssuanceRepository.object(replayMacInput.get()))
+        .containsEntry("secret", "wrong-secret");
     var order = inOrder(fixture.operations, fixture.cryptography, fixture.transactions);
     order.verify(fixture.operations).lockReplayRequest(original.requestId);
     order.verify(fixture.operations).countReplayFailures(original);

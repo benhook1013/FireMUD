@@ -72,6 +72,8 @@ public final class AccountCheckoutHttpAuthInterceptor extends HttpJwtAuthInterce
             | io.lettuce.core.RedisException
             | net.firedevops.firemud.accountservice.service.session.AccountControlUiRegistryReader
                 .RegistryUnavailableException
+            | net.firedevops.firemud.accountservice.service.session.AccountControlUiSignerOwner
+                .SignerSourceUnavailableException
             | net.firedevops.firemud.common.security.AccountPublicJwksCache
                 .SourceUnavailableException
             | net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier

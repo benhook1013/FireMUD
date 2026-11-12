@@ -43,7 +43,22 @@ class AccountCheckoutReceivingConfigurationTest {
   }
 
   @Test
-  void productionProfilesNeverRegisterTheIsolatedAuthenticationReceiver() {
+  void productionProfilesNeverRegisterTheIsolatedAuthenticationReceiver() throws Exception {
+    var config = new AccountCheckoutReceivingConfiguration();
+    var environment =
+        new MockEnvironment()
+            .withProperty("firemud.grpc.workload-namespace", "test")
+            .withProperty(
+                "firemud.account.checkout-receiving.private-signer-root",
+                Files.createDirectory(keys.resolve("profile-private")).toString())
+            .withProperty(
+                "firemud.account.checkout-receiving.public-signer-root",
+                Files.createDirectory(keys.resolve("profile-public")).toString())
+            .withProperty(
+                "firemud.account.checkout-receiving.control-ui-keyring-root",
+                Files.createDirectory(keys.resolve("profile-custody")).toString());
+    environment.setActiveProfiles("isolated-checkout-receiving");
+    assertThat(config.accountCheckoutReceivingProperties(environment)).isNotNull();
     for (String profile : java.util.List.of("prod", "production")) {
       context
           .withPropertyValues(
@@ -54,11 +69,10 @@ class AccountCheckoutReceivingConfigurationTest {
                 assertThat(ctx).hasNotFailed();
                 assertThat(ctx).doesNotHaveBean(AccountControlUiAuthenticationGrpcService.class);
               });
-      context
-          .withPropertyValues(
-              "spring.profiles.active=" + profile + ",isolated-checkout-receiving",
-              "firemud.account.checkout-receiving.enabled=true")
-          .run(ctx -> assertThat(ctx).hasFailed());
+      environment.setActiveProfiles(profile, "isolated-checkout-receiving");
+      assertThatThrownBy(() -> config.accountCheckoutReceivingProperties(environment))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Checkout receiving is restricted to isolated inputs");
     }
   }
 
