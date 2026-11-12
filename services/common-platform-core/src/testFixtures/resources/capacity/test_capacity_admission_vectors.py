@@ -4,11 +4,16 @@ import copy
 import hashlib
 import json
 import re
+import sys
 import unicodedata
 import unittest
 from pathlib import Path
 
 MAX = 9223372036854775807
+REPOSITORY = Path(__file__).resolve().parents[6]
+sys.path.insert(0, str(REPOSITORY / "dev-tools"))
+
+from evidence_digest import canonical_json_bytes
 
 
 def decimal(value):
@@ -72,7 +77,10 @@ def evidence(encoded, variant="TENANT_OPERATION"):
         raise ValueError("evidence bound")
     parsed = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=reject_duplicates,
                         parse_constant=reject_nonfinite)
-    canonical = json.dumps(parsed, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    try:
+        canonical = canonical_json_bytes(parsed)
+    except TypeError as error:
+        raise ValueError("canonical evidence values required") from error
     if raw != canonical or parsed["schema"] != "account-auth-evidence-bundle/v1" or parsed["variant"] != variant:
         raise ValueError("exact canonical variant required")
     tenant = parsed["tenantId"]
@@ -122,6 +130,30 @@ def preimage(request, candidate):
 
 
 class CapacityAdmissionVectors(unittest.TestCase):
+    def test_evidence_uses_restricted_jcs_bytes(self):
+        # UTF-16 ordering places the supplementary key before U+E000, unlike code-point sorting.
+        value = {"\ue000": "bmp", "\U00010000": "supplementary"}
+        self.assertEqual(canonical_json_bytes(value),
+                         '{"\U00010000":"supplementary","\ue000":"bmp"}'.encode("utf-8"))
+
+        corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
+        parsed = json.loads(base64.b64decode(corpus["request"]["canonicalAccountEvidenceBase64"]))
+        parsed["fractional"] = 1.0
+        noncanonical_numeric = json.dumps(parsed, sort_keys=True, ensure_ascii=False,
+                                          separators=(",", ":")).encode("utf-8")
+        encoded = base64.b64encode(noncanonical_numeric).decode("ascii")
+        with self.assertRaisesRegex(ValueError, "canonical evidence values"):
+            evidence(encoded)
+
+        parsed.pop("fractional")
+        parsed["\ue000"] = "bmp"
+        parsed["\U00010000"] = "supplementary"
+        codepoint_ordered = json.dumps(parsed, sort_keys=True, ensure_ascii=False,
+                                       separators=(",", ":")).encode("utf-8")
+        encoded = base64.b64encode(codepoint_ordered).decode("ascii")
+        with self.assertRaisesRegex(ValueError, "exact canonical variant"):
+            evidence(encoded)
+
     def test_shared_golden_preimages_and_digests(self):
         corpus = json.loads(Path(__file__).with_name("capacity-admission-v1-vectors.json").read_text())
         digests = []

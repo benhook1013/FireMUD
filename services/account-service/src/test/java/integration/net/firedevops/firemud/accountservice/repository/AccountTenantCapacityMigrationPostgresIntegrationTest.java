@@ -2,10 +2,22 @@ package integration.net.firedevops.firemud.accountservice.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapDigest;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.Completion;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository.StoredOperation;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
 import org.jooq.SQLDialect;
@@ -34,7 +46,7 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
   }
 
   @Test
-  void existingTenantStaysUninitializedAndAPlainNewImportCannotInitializeCapacity() {
+  void historicalBootstrapCompletionAndPlainNewImportCannotInitializeCapacity() {
     String schema = "capacity_migration_" + UUID.randomUUID().toString().replace("-", "");
     new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
     var data = POSTGRES.dataSource(schema);
@@ -51,8 +63,17 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
       var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
       var transaction = new TransactionTemplate(new DataSourceTransactionManager(data));
       var repository = new FreshTenantIdentityAssociationRepository(dsl, "prod");
+      var operations = new AccountTenantCreationBootstrapOperationRepository(dsl);
       var existing = source();
-      transaction.executeWithoutResult(status -> repository.importVerified(existing));
+      var historical =
+          Objects.requireNonNull(
+              transaction.execute(
+                  status -> {
+                    repository.importVerified(existing);
+                    return claimBootstrap(
+                        operations, new AccountRepository(dsl).save(creator()), existing);
+                  }));
+      assertThat(historical.status()).isEqualTo("IN_PROGRESS");
       Flyway.configure()
           .dataSource(data)
           .schemas(schema)
@@ -70,6 +91,19 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
                           existing.canonicalTenantId()))
                   .get("capacity_birth_transaction"))
           .isNull();
+      var completed =
+          Objects.requireNonNull(
+              transaction.execute(
+                  status -> {
+                    var operation = operations.findForUpdate(historical.requestId()).orElseThrow();
+                    assertThat(operation.status()).isEqualTo("IN_PROGRESS");
+                    assertThat(operation.creationOperationId()).isEqualTo(existing.operationId());
+                    assertThat(operation.requestPayload()).isEqualTo(historical.requestPayload());
+                    return operations.complete(operation.requestId(), completion(operation));
+                  }));
+      assertThat(completed.status()).isEqualTo("COMMITTED");
+      assertThat(completed.tenantUuid()).isEqualTo(existing.canonicalTenantId());
+      assertThat(dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
       var later = source();
       transaction.executeWithoutResult(status -> repository.importVerified(later));
       assertThat(
@@ -85,6 +119,84 @@ class AccountTenantCapacityMigrationPostgresIntegrationTest {
     } finally {
       new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
     }
+  }
+
+  private static Account creator() {
+    String suffix = UUID.randomUUID().toString().replace("-", "");
+    var account = new Account();
+    account.setUsername("capacity-" + suffix);
+    account.setEmail(suffix + "@example.test");
+    account.setPasswordHash("test-only-password-hash");
+    account.setRole("player");
+    return account;
+  }
+
+  private static StoredOperation claimBootstrap(
+      AccountTenantCreationBootstrapOperationRepository operations,
+      Account creator,
+      FreshTenantCreationEvidence creation) {
+    UUID accountId = creator.getAccountUuid();
+    UUID authorizationId = UUID.randomUUID();
+    String authorizationDigest =
+        AccountTenantCreationBootstrapDigest.sha256(
+            "fixture authorization".getBytes(StandardCharsets.UTF_8));
+    var evidence =
+        new FreshTenantCreatorEvidence(
+            1,
+            creation,
+            accountId,
+            authorizationId,
+            authorizationDigest,
+            FreshTenantCreatorDigest.evidenceDigest(
+                1, creation, accountId, authorizationId, authorizationDigest));
+    byte[] creatorPayload = AccountTenantCreationBootstrapDigest.creatorEvidencePayload(evidence);
+    byte[] sourcePayload = "fixture source snapshot".getBytes(StandardCharsets.UTF_8);
+    byte[] requestPayload =
+        AccountTenantCreationBootstrapDigest.requestPayload(creatorPayload, sourcePayload);
+    var claim =
+        operations.claim(
+            evidence,
+            creatorPayload,
+            sourcePayload,
+            AccountTenantCreationBootstrapDigest.sha256(sourcePayload),
+            requestPayload,
+            AccountTenantCreationBootstrapDigest.sha256(requestPayload),
+            1,
+            1);
+    assertThat(claim.claimed()).isTrue();
+    return claim.operation();
+  }
+
+  private static Completion completion(StoredOperation operation) {
+    // Controlled completion receipts exercise the real storage owner's guarded transition.
+    byte[] event = "fixture membership event".getBytes(StandardCharsets.UTF_8);
+    byte[] audit = "fixture bootstrap audit".getBytes(StandardCharsets.UTF_8);
+    byte[] result = "fixture bootstrap result".getBytes(StandardCharsets.UTF_8);
+    return new Completion(
+        1,
+        operation.baselineMembershipVersion() + 1,
+        operation.baselineMembershipAuthorityGeneration(),
+        "ACTIVE",
+        false,
+        "[\"tenantAdmin\"]".getBytes(StandardCharsets.UTF_8),
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+            + "membership/"
+            + operation.initiatingAccountUuid()
+            + "/"
+            + operation.tenantUuid(),
+        operation.requestId().toString(),
+        1,
+        "fixture-membership-event",
+        AccountTenantCreationBootstrapDigest.sha256(event),
+        false,
+        event,
+        UUID.randomUUID(),
+        "ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED",
+        Instant.now().truncatedTo(ChronoUnit.MICROS),
+        AccountTenantCreationBootstrapDigest.sha256(audit),
+        audit,
+        result,
+        AccountTenantCreationBootstrapDigest.sha256(result));
   }
 
   private static FreshTenantCreationEvidence source() {
