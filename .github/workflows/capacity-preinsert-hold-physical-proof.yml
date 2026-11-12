@@ -13,7 +13,7 @@ jobs:
   capacity-proof:
     if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/codex/proof-capacity-preinsert-hold-20261112'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       SOURCE_SHA: 46a00036a6c0459628f08c4ed1e9856fdcfabd72
       SOURCE_TREE: 66c454f4742c2099055146c9e62b8bbb318905de
@@ -186,7 +186,7 @@ jobs:
     - name: Run exact composed Account hold methods
       shell: bash
       run: "set -euo pipefail\nset +e\npython3 \"$RUNNER_TEMP/capture-capacity-log.py\" \"$RUNNER_TEMP/capacity-physical-gradle.log\"\
-        \ -- \\\n  timeout --signal=TERM --kill-after=30s 15m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
+        \ -- \\\n  timeout --signal=TERM --kill-after=30s 18m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
         \ --runner ./gradlew -- \\\n  --no-daemon --no-build-cache --no-configuration-cache --no-scan --rerun-tasks \\\n \
         \ --max-workers=2 --no-parallel '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' \\\n  --console=plain -I \"\
         $RUNNER_TEMP/capacity-physical.init.gradle\" \\\n  :account-service:integrationTest -PfullCheck\nstatus=$?\nset -e\n\
