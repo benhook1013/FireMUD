@@ -92,12 +92,28 @@ public final class AccountTenantCapacityClient
       throw TenantCapacityAdmissionGrpcCodec.validateFailure(failure);
     }
     try {
+      var refusal = TenantCapacityAdmissionGrpcCodec.readRefusal(request, response);
+      if (refusal.isPresent()) throw new CapacityRefusedException(refusal.orElseThrow());
       // Exact retry may replay an expired/terminal reservation. The final owner still checks it.
       return TenantCapacityAdmissionGrpcCodec.requireResponse(request, response);
     } catch (IllegalArgumentException inexactResponse) {
       throw Status.UNKNOWN
           .withDescription("Account capacity commitment response was inexact")
           .asRuntimeException();
+    }
+  }
+
+  /** Exact Account domain refusal without a capacity commitment. */
+  public static final class CapacityRefusedException extends IllegalStateException {
+    private final TenantCapacityAdmissionGrpcCodec.Failure code;
+
+    private CapacityRefusedException(TenantCapacityAdmissionGrpcCodec.Failure code) {
+      super(code.name());
+      this.code = code;
+    }
+
+    public TenantCapacityAdmissionGrpcCodec.Failure code() {
+      return code;
     }
   }
 

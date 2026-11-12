@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.google.protobuf.Any;
 import io.grpc.Context;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
@@ -14,7 +13,6 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
-import io.grpc.protobuf.StatusProto;
 import io.grpc.stub.StreamObserver;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
@@ -42,7 +40,6 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -96,20 +93,28 @@ class AccountTenantCapacityClientMtlsTest {
       client.init();
       var request = CapacityAdmissionTestFixture.playerRequest(false);
       assertThatThrownBy(() -> client.commit(request, deadline()))
-          .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(
-              failure -> {
-                assertThat(Status.fromThrowable(failure).getCode())
-                    .isEqualTo(Status.Code.RESOURCE_EXHAUSTED);
-                var status = Objects.requireNonNull(StatusProto.fromThrowable(failure));
-                assertThat(status.getDetailsList())
-                    .containsExactly(
-                        Any.pack(
-                            ErrorDetail.newBuilder()
-                                .setCode("TENANT_BILLING_BLOCKED")
-                                .setMessage("Tenant capacity commitment did not complete")
-                                .build()));
-              });
+          .isInstanceOfSatisfying(
+              AccountTenantCapacityClient.CapacityRefusedException.class,
+              refusal ->
+                  assertThat(refusal.code())
+                      .isEqualTo(TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED));
+      assertThat(calls).hasValue(1);
+    } finally {
+      stop(server);
+    }
+  }
+
+  @Test
+  void mismatchedTypedRefusalDoesNotBecomeAnAccountDecision() throws Exception {
+    AtomicInteger calls = new AtomicInteger();
+    Server server = server("account", calls, true);
+    try (var client = client(server)) {
+      client.init();
+      var request = CapacityAdmissionTestFixture.playerRequest(false);
+      assertThatThrownBy(() -> client.commit(request, deadline()))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure -> assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNKNOWN));
       assertThat(calls).hasValue(1);
     } finally {
       stop(server);
@@ -345,19 +350,17 @@ class AccountTenantCapacityClientMtlsTest {
             var request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
             if (!request.evidence().permitsCreation()) {
               assertThat(request).isEqualTo(CapacityAdmissionTestFixture.playerRequest(false));
-              // Controlled transport response only; the real Account owner proves policy authority.
-              observer.onError(
-                  StatusProto.toStatusRuntimeException(
-                      com.google.rpc.Status.newBuilder()
-                          .setCode(Status.Code.RESOURCE_EXHAUSTED.value())
-                          .setMessage("Tenant capacity commitment did not complete")
-                          .addDetails(
-                              Any.pack(
-                                  ErrorDetail.newBuilder()
-                                      .setCode("TENANT_BILLING_BLOCKED")
-                                      .setMessage("Tenant capacity commitment did not complete")
-                                      .build()))
-                          .build()));
+              var response =
+                  TenantCapacityAdmissionGrpcCodec.toRefusal(
+                      request, TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED);
+              if (wrongFence)
+                response =
+                    response.toBuilder()
+                        .setRefusal(
+                            0, response.getRefusal(0).toBuilder().setCapacityRearmFence(0, 2))
+                        .build();
+              observer.onNext(response);
+              observer.onCompleted();
               return;
             }
             var result =

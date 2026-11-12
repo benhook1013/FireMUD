@@ -9,11 +9,13 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.StatusProto;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionResponse;
 import net.firedevops.firemud.account.v1.TenantCapacityAdmissionAttempt;
 import net.firedevops.firemud.account.v1.TenantCapacityAdmissionCommitment;
+import net.firedevops.firemud.account.v1.TenantCapacityAdmissionRefusal;
 import net.firedevops.firemud.account.v1.TenantCapacityPlayerContext;
 import net.firedevops.firemud.account.v1.TenantCapacityShape;
 import net.firedevops.firemud.account.v1.TenantCapacityWorldContext;
@@ -55,6 +57,10 @@ public final class TenantCapacityAdmissionGrpcCodec {
       this.code = code;
     }
 
+    public boolean isDomainRefusal() {
+      return this == TENANT_BILLING_BLOCKED || this == CAPACITY_QUOTA_EXCEEDED;
+    }
+
     public StatusRuntimeException toStatusException() {
       return toStatusException(code);
     }
@@ -74,8 +80,9 @@ public final class TenantCapacityAdmissionGrpcCodec {
     }
 
     private boolean matches(Status.Code status) {
-      return status == code
-          || (this == ENTITLEMENT_UNAVAILABLE && status == Status.Code.FAILED_PRECONDITION);
+      return !isDomainRefusal()
+          && (status == code
+              || (this == ENTITLEMENT_UNAVAILABLE && status == Status.Code.FAILED_PRECONDITION));
     }
   }
 
@@ -180,6 +187,7 @@ public final class TenantCapacityAdmissionGrpcCodec {
   public static Result requireResponse(
       Request request, CommitTenantCapacityAdmissionResponse wire) {
     clean(wire, MAX_RESPONSE_WIRE_BYTES);
+    if (wire.getRefusalCount() != 0) throw invalid();
     var result = one(wire.getCommitmentList());
     clean(result, MAX_RESPONSE_WIRE_BYTES);
     String expires = one(result.getExpiresAtList());
@@ -207,6 +215,58 @@ public final class TenantCapacityAdmissionGrpcCodec {
             one(result.getEvaluationIdentityList()));
     parsed.requireBinding(request);
     return parsed;
+  }
+
+  public static CommitTenantCapacityAdmissionResponse toRefusal(Request request, Failure failure) {
+    request.requireStructurallyValid();
+    if (failure == null || !failure.isDomainRefusal()) throw invalid();
+    var wire =
+        CommitTenantCapacityAdmissionResponse.newBuilder()
+            .addRefusal(
+                TenantCapacityAdmissionRefusal.newBuilder()
+                    .addTenantId(request.identity().tenantId().toString())
+                    .addRequestId(request.identity().requestId().toString())
+                    .addAdmissionId(request.identity().admissionId().toString())
+                    .addAdmissionAttemptId(request.admissionAttemptId().toString())
+                    .addCapacityRearmFence(request.capacityRearmFence())
+                    .addMutationDigest(request.mutationDigest())
+                    .addSnapshotIdentity(request.evidence().snapshotIdentity())
+                    .addEvaluationIdentity(request.evidence().evaluationIdentity())
+                    .addCode(TenantCapacityAdmissionRefusal.Code.valueOf(failure.name())))
+            .build();
+    clean(wire, MAX_RESPONSE_WIRE_BYTES);
+    return wire;
+  }
+
+  /** Returns empty for the commitment envelope, which callers then verify with requireResponse. */
+  public static Optional<Failure> readRefusal(
+      Request request, CommitTenantCapacityAdmissionResponse wire) {
+    clean(wire, MAX_RESPONSE_WIRE_BYTES);
+    if (wire.getRefusalCount() == 0) {
+      clean(one(wire.getCommitmentList()), MAX_RESPONSE_WIRE_BYTES);
+      return Optional.empty();
+    }
+    if (wire.getCommitmentCount() != 0) throw invalid();
+    var refusal = one(wire.getRefusalList());
+    clean(refusal, MAX_RESPONSE_WIRE_BYTES);
+    request.requireStructurallyValid();
+    if (!request.identity().tenantId().toString().equals(one(refusal.getTenantIdList()))
+        || !request.identity().requestId().toString().equals(one(refusal.getRequestIdList()))
+        || !request.identity().admissionId().toString().equals(one(refusal.getAdmissionIdList()))
+        || !request.admissionAttemptId().toString().equals(one(refusal.getAdmissionAttemptIdList()))
+        || request.capacityRearmFence() != one(refusal.getCapacityRearmFenceList())
+        || !request.mutationDigest().equals(one(refusal.getMutationDigestList()))
+        || !request.evidence().snapshotIdentity().equals(one(refusal.getSnapshotIdentityList()))
+        || !request
+            .evidence()
+            .evaluationIdentity()
+            .equals(one(refusal.getEvaluationIdentityList()))) throw invalid();
+    return Optional.of(
+        switch (one(refusal.getCodeList())) {
+          case TENANT_BILLING_BLOCKED -> Failure.TENANT_BILLING_BLOCKED;
+          case CAPACITY_QUOTA_EXCEEDED -> Failure.CAPACITY_QUOTA_EXCEEDED;
+          default -> throw invalid();
+        });
   }
 
   private static TenantCapacityShape shape(Shape value) {
