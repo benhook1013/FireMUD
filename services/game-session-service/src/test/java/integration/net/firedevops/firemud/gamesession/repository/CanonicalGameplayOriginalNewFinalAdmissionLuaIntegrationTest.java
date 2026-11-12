@@ -346,7 +346,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionLuaIntegrationTest {
     Map<String, byte[]> before = physicalImage(original);
 
     // No credential, template, OPEN barrier, candidate or index is needed to deny future execution.
-    byte[][] arguments = original.arguments().clone();
+    byte[][] arguments = action(original, "FENCE").arguments();
     arguments[8] = ascii("unavailable-candidate");
     arguments[10] = ascii("unavailable-template");
     arguments[12] = ascii("unavailable-account");
