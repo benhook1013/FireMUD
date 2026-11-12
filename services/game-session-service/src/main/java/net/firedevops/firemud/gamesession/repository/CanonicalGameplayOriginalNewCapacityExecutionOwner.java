@@ -635,6 +635,56 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return within(
           deadline, owner -> owner.retainCommittedBeforeCleanup(request, reservation, deadline));
     budget.check();
+    var execution = retainedExecution(request, reservation);
+    Record transition = transition(execution);
+    if ("PROVISIONAL".equals(transition.get("status", String.class))) {
+      // Redis may already contain the irreversible positive effect even when its SQL receipt
+      // was not reached. Recover that exact result without the original LOGIN or private grant.
+      try (var actual = readProvisionalFinal(execution, transition)) {
+        new CanonicalGameplayBindingInventoryRepository(sql())
+            .commitOriginalNewFinalAdmission(actual);
+      }
+    }
+    Snapshot snapshot = readExact(request, reservation, true);
+    if (!"COMMITTED".equals(snapshot.disposition())) throw unavailable();
+    retainTerminal(execution, "COMMITTED", snapshot.canonicalReadback());
+    return readExact(request, reservation, false);
+  }
+
+  /** The fence owner can observe a physical FINAL before opening its SQL intent transaction. */
+  HistoricalFinalReadback readFinalBeforeAccountIntent(
+      Request request, Result reservation, long deadline) {
+    noSql();
+    if (budget == null)
+      return within(
+          deadline, owner -> owner.readFinalBeforeAccountIntent(request, reservation, deadline));
+    budget.check();
+    var execution = retainedExecution(request, reservation);
+    Record transition = transition(execution);
+    if (!"PROVISIONAL".equals(transition.get("status", String.class))) throw unavailable();
+    try (var actual = readProvisionalFinal(execution, transition)) {
+      var binding = actual.source().candidate().bindingIdentity();
+      return new HistoricalFinalReadback(
+          binding.accountId(),
+          binding.tenantId(),
+          binding.playableStateNamespaceId(),
+          execution,
+          actual.finalSessionSha256(),
+          actual.admissionAtMillis(),
+          actual.continuityExpiresAtMillis());
+    }
+  }
+
+  record HistoricalFinalReadback(
+      UUID accountId,
+      UUID tenantId,
+      UUID playableStateNamespaceId,
+      OriginalNewCapacityExecution execution,
+      String finalSessionSha256,
+      long admissionAtMillis,
+      long continuityExpiresAtMillis) {}
+
+  private OriginalNewCapacityExecution retainedExecution(Request request, Result reservation) {
     Record row =
         sql()
             .fetchOne(
@@ -655,25 +705,19 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             row.get("selected_owner_id", String.class),
             row.get("selected_owner_fence", Long.class));
     exact(row, execution);
-    Record transition = transition(execution);
-    if ("PROVISIONAL".equals(transition.get("status", String.class))) {
-      // Redis may already contain the irreversible positive effect even when its SQL receipt
-      // was not reached. Recover that exact result without the original LOGIN or private grant.
-      var candidate =
-          CanonicalGameplayOriginalNewCandidate.parseCanonical(
-              transition.get("original_new_candidate_bytes", byte[].class));
-      var inventory = new CanonicalGameplayBindingInventoryRepository(sql());
-      var decision =
-          inventory.readAdmissionDecision(execution.transitionId(), candidate.leaseEvidence());
-      var source = inventory.readOriginalNewFinalAdmissionSource(decision);
-      try (var actual = scopedFinalOwner().readCommittedForRetention(source, execution)) {
-        inventory.commitOriginalNewFinalAdmission(actual);
-      }
-    }
-    Snapshot snapshot = readExact(request, reservation, true);
-    if (!"COMMITTED".equals(snapshot.disposition())) throw unavailable();
-    retainTerminal(execution, "COMMITTED", snapshot.canonicalReadback());
-    return readExact(request, reservation, false);
+    return execution;
+  }
+
+  private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback readProvisionalFinal(
+      OriginalNewCapacityExecution execution, Record transition) {
+    var candidate =
+        CanonicalGameplayOriginalNewCandidate.parseCanonical(
+            transition.get("original_new_candidate_bytes", byte[].class));
+    var inventory = new CanonicalGameplayBindingInventoryRepository(sql());
+    var decision =
+        inventory.readAdmissionDecision(execution.transitionId(), candidate.leaseEvidence());
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    return scopedFinalOwner().readCommittedForRetention(source, execution);
   }
 
   void retainCommitted(CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual) {

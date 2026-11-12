@@ -28,6 +28,8 @@ V1065 retains the transfer control and per-original receipt families, their immu
 
 V1065.1 retains exact pre-Account origin custody and its bounded observation budget as a separate owner record. The owner records the origin before attempting Account commitment. Only the exact retained Account decision and independent physical custody can advance the original recovery operation. Transfer retains original origin bytes, physical fencing evidence, and the actual successor in the same installation transaction. Owner movement preserves the original budget and cannot turn missing evidence into a terminal result. The origin and transfer-item relations are retained control state in the next runtime-family catalog epoch. The receiving composition remains unregistered.
 
+V1065.2 allows the account fence owner to observe the exact physical FINAL before acquiring its SQL fence intent. The owner records an immutable historical receipt only when the same acquisition revalidates the prior no-active fence, inventory revision, and exact original attempt, candidate and frozen cohort. The sequence of the owner's operations establishes ordering without comparing Redis and SQL clocks. Missing, expired or displaced evidence leaves ordering indeterminate and the protective fence can still be established. The receipt neither promotes frozen inventory nor authorizes admission, release, rearm or successor installation.
+
 ## Runtime Model
 
 Game Session coordinates with Redis to store volatile session state and command queues and with PostgreSQL to persist durable game-instance control-plane metadata. It provides a single point of truth for current tick and world time while exposing gameplay-session state to the protocol front door.

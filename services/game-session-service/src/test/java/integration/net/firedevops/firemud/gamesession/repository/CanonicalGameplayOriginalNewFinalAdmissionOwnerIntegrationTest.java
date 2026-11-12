@@ -1889,10 +1889,17 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template()) {
       var barrier = new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl());
+      UUID fenceRequest = UUID.randomUUID();
       var intent =
-          barrier.beginFenceIntent(
-              source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
+          barrier.beginFenceIntentWithFinalObservation(
+              source.candidate().bindingIdentity().accountId(),
+              fenceRequest,
+              capacityOwner(),
+              controlledCapacity.request(),
+              controlledCapacity.reservation(),
+              deadline());
       assertThat(intent.state().name()).isEqualTo("ACQUISITION_INTENT");
+      assertThat(barrier.readFinalObservation(intent.operationId())).isEmpty();
       assertThat(intent.cohortRows())
           .filteredOn(
               row ->
@@ -1934,7 +1941,91 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         assertThat(sqlImage()).isEqualTo(frozenSql);
         assertThat(admin.get(ascii(installation.sessionKey())))
             .containsExactly(actual.exactCanonicalBytes());
+        assertThat(
+                barrier
+                    .beginFenceIntentWithFinalObservation(
+                        intent.accountId(),
+                        fenceRequest,
+                        capacityOwner(),
+                        controlledCapacity.request(),
+                        controlledCapacity.reservation(),
+                        deadline())
+                    .operationId())
+            .isEqualTo(intent.operationId());
+        assertThat(barrier.readFinalObservation(intent.operationId())).isEmpty();
       }
+    }
+  }
+
+  @Test
+  void fenceOwnerRetainsObservedFinalWithoutPromotingFrozenInventory() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      var accountId = source.candidate().bindingIdentity().accountId();
+      UUID fenceRequest = UUID.randomUUID();
+      var physical = physicalImage();
+      var revision =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT inventory_revision FROM game_session_canonical_binding_inventory_clock WHERE singleton_id=1")
+              .get(0, java.math.BigDecimal.class)
+              .toBigIntegerExact();
+      var barrier = new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl());
+      var intent =
+          barrier.beginFenceIntentWithFinalObservation(
+              accountId,
+              fenceRequest,
+              capacityOwner(),
+              controlledCapacity.request(),
+              controlledCapacity.reservation(),
+              deadline());
+      var recreated = new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl());
+      var receipt = recreated.readFinalObservation(intent.operationId()).orElseThrow();
+      assertThat(receipt.transitionId()).isEqualTo(fixture.transitionId());
+      assertThat(receipt.admissionAttemptId())
+          .isEqualTo(controlledCapacity.request().admissionAttemptId());
+      assertThat(receipt.executionDigest()).isEqualTo(controlledCapacity.digest());
+      assertThat(receipt.candidateDigest()).isEqualTo(source.candidateDigest());
+      assertThat(receipt.finalSessionSha256()).isEqualTo(actual.finalSessionSha256());
+      assertThat(receipt.admissionAtMillis()).isEqualTo(actual.admissionAtMillis());
+      assertThat(receipt.continuityExpiresAtMillis()).isEqualTo(actual.continuityExpiresAtMillis());
+      assertThat(receipt.inventorySnapshotRevision()).isEqualTo(revision);
+      assertThat(receipt.cohortDigest()).isEqualTo(intent.cohortDigest());
+      assertThat(receipt.barrierTargetDigest()).isEqualTo(intent.barrierTargetDigest());
+      var transition =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT status, original_new_final_session_sha256 FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                  fixture.transitionId());
+      assertThat(transition.get("status", String.class)).isEqualTo("PROVISIONAL");
+      assertThat(transition.get("original_new_final_session_sha256", String.class)).isNull();
+      var frozenSql = sqlImage();
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .retainCommittedBeforeCleanup(
+                          controlledCapacity.request(), controlledCapacity.reservation()))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+      assertThat(recreated.beginFenceIntent(accountId, fenceRequest).cohortDigest())
+          .isEqualTo(intent.cohortDigest());
+      assertThat(recreated.readFinalObservation(intent.operationId())).contains(receipt);
+      assertThat(sqlImage()).isEqualTo(frozenSql);
+      assertThat(physicalImage()).isEqualTo(physical);
     }
   }
 
@@ -1988,6 +2079,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
           barrier.beginFenceIntent(
               source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
       assertThat(intent.state().name()).isEqualTo("ACQUISITION_INTENT");
+      assertThat(barrier.readFinalObservation(intent.operationId())).isEmpty();
       assertThat(intent.cohortRows())
           .filteredOn(
               row ->
