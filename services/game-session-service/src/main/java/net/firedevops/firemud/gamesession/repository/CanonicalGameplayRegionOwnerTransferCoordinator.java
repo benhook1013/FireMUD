@@ -162,8 +162,7 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
           if (!"game-session-service".equals(ownerService)) throw held();
           var owner = capacity.forTransferBudget(budget);
           UUID originRound = null;
-          List<CanonicalGameplayCapacityOriginTransferRepository.Item> firstOrigins =
-              List.of();
+          List<CanonicalGameplayCapacityOriginTransferRepository.Item> firstOrigins = List.of();
           if (hasOriginItems) {
             // The physical origin custody CAS names this reserved successor.
             repository.prepareSuccessor(transferId, ownerInstanceId, leaseCorrelation);
