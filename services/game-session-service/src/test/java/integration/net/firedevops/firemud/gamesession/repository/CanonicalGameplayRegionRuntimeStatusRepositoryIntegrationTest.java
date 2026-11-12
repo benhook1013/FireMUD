@@ -883,8 +883,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
   }
 
-  @Test
-  void transfersTwoIndependentlyPreparedOriginsForDistinctCandidatesInOneRegionWithinFiveSeconds()
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void transfersTwoIndependentOriginsWithOptionalCapturedExecution(boolean captureExecution)
       throws Exception {
     try (var proof = new TransferSqlProof(true)) {
       var otherDecision = proof.otherDecision;
@@ -932,6 +933,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                   .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_origin")
                   .get(0, Long.class))
           .isEqualTo(2L);
+      if (captureExecution) proof.freezeWithCommittedOriginExecution(firstOrigin);
       var observationLatency = Duration.ofMillis(5);
       var regionAttestor =
           new CanonicalGameplayControlledRegionTransferObservationFixture(
@@ -967,12 +969,17 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
       int observationCount = regionAttestor.observationCount() + originAttestor.observationCount();
       int signedOriginObservationCount = originAttestor.observationCount();
-      assertThat(observationCount).isPositive();
+      if (captureExecution) {
+        assertThat(regionAttestor.observationCount()).isPositive();
+      } else {
+        assertThat(regionAttestor.observationCount()).isZero();
+      }
       assertThat(signedOriginObservationCount).isPositive();
       assertThat(elapsed).isGreaterThanOrEqualTo(observationLatency.multipliedBy(observationCount));
       assertThat(elapsed).isLessThan(Duration.ofSeconds(5));
       LOGGER.info(
-          "Two-origin transfer completed in {} ms with {} signed origin observations and {} total signed observations",
+          "Two-origin transfer (captured execution={}) completed in {} ms with {} signed origin observations and {} total signed observations",
+          captureExecution,
           elapsed.toMillis(),
           signedOriginObservationCount,
           observationCount);
@@ -998,7 +1005,8 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
       assertThat(transferRows).hasSize(2);
       assertThat(transferRows.getValues("origin_digest", String.class))
           .containsExactlyInAnyOrder(firstOrigin.digest(), secondOrigin.digest());
-      assertThat(transferRows.getValues("captured_state", String.class)).containsOnly("OPEN");
+      assertThat(transferRows.getValues("captured_state", String.class))
+          .containsExactlyInAnyOrder(captureExecution ? "DISPATCH_CLAIMED" : "OPEN", "OPEN");
       assertThat(transferRows.getValues("fence_readback", byte[].class))
           .allSatisfy(value -> assertThat(value).isNotNull().isNotEmpty());
       assertThat(transferRows.getValues("incarnation_digest", String.class))
@@ -1016,6 +1024,11 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
           .containsOnly(installed.status.executorFence().longValueExact());
       assertThat(retainedOrigins.getValues("custody_transfer_id", UUID.class))
           .containsOnly(transferId);
+      if (captureExecution) {
+        assertThat(proof.transfers.readCurrent(transferId, 0).controlState())
+            .isEqualTo("COMPLETED");
+        assertThat(proof.physicalExecutionState(proof.execution)).isEqualTo("COMMITTED");
+      }
       try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
         for (var row : retainedOrigins) {
           var origin = CanonicalGameplayCapacityOriginTransferRepository.decodeOrigin(row);
@@ -1034,7 +1047,7 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                       "origin", origin.digest(),
                       "owner", installed.status.ownerInstanceId(),
                       "fence", installed.status.executorFence().toString(),
-                      "state", "OPEN"));
+                      "state", row.get("state", String.class)));
           assertThat(connection.sync().pttl(ascii(origin.redisKey()))).isEqualTo(-1L);
         }
       }
@@ -1711,7 +1724,9 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                   new net.firedevops.firemud.gamesession.service
                       .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution(),
                   new net.firedevops.firemud.gamesession.service
-                      .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution()));
+                      .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution()));
       var decision = fixture.originalPreparedDecisionWithControlledAccountLease(withOtherCandidate);
       var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
       CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(redis, scripts, inventory, tags)
@@ -1769,6 +1784,37 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private void replayBridge() {
       var replayed = region.owner().bridge(region.installation());
       assertThat(replayed.obligation()).isEqualTo(region.acknowledgement().obligation());
+    }
+
+    private void freezeWithCommittedOriginExecution(CanonicalGameplayCapacityOrigin origin)
+        throws Exception {
+      try (var credential =
+              new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                  admission.candidate(), clock);
+          var raw = credential.template();
+          var template = raw.bindCapacityExecution(execution)) {
+        var account = controlledAccountOpen();
+        var issuer = issuerOpen();
+        capacity(sql)
+            .authorizeWithOrigin(
+                admission, template, account, issuer, execution, transferDeadline(), origin);
+        var custody = new CanonicalGameplayCapacityOriginRepository(sql).read(origin);
+        var finalOwner =
+            new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(redis, scripts, clock, tags)
+                .forOrigin(origin, custody);
+        try (var finalReadback =
+            finalOwner.finalizeOriginalNewOnce(
+                admission, template, account, issuer, execution, transferDeadline())) {
+          UUID id = begin();
+          var captured = transfers.within(transferDeadline(), ignored -> transfers.capture(id));
+          assertThat(captured)
+              .extracting(item -> item.execution().digest())
+              .containsExactly(execution.digest());
+          new CanonicalGameplayBindingInventoryRepository(sql)
+              .commitOriginalNewFinalAdmission(finalReadback);
+        }
+        assertThat(executionState(execution)).isEqualTo("COMMITTED");
+      }
     }
 
     private OriginalNewCapacityExecution newControlledExecution() {
