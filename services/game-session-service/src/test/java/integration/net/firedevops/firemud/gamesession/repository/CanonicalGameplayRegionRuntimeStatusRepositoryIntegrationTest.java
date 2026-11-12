@@ -944,7 +944,27 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
               BigInteger.ONE,
               BigInteger.valueOf(64));
       fixture = new CanonicalGameplayAdmissionAbortCompositionFixture(dataSource, candidate, redis);
-      sql = fixture.dsl();
+      sql =
+          DSL.using(
+              fixture
+                  .dsl()
+                  .configuration()
+                  .deriveAppending(
+                      new DefaultExecuteListener() {
+                        @Override
+                        public void resultEnd(ExecuteContext context) {
+                          String query = context.sql();
+                          var result = context.result();
+                          if (query != null
+                              && query.contains("JOIN game_session_region_runtime_status r")
+                              && result != null) {
+                            assertThat(result.fields())
+                                .extracting(org.jooq.Field::getName)
+                                .as("current transfer observation has unambiguous field names")
+                                .doesNotHaveDuplicates();
+                          }
+                        }
+                      }));
       tags = new CanonicalGameplayTenantGameplayTagRepository(sql, "test", 1);
       scripts =
           RedisScriptCatalog.fromContributions(
