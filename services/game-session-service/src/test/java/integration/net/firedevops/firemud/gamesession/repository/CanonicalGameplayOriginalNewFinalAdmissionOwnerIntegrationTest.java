@@ -84,6 +84,272 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   private CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding regionBinding;
 
   @Test
+  void committedCapacityWithoutExecutionCustodyRemainsIndeterminate() throws Exception {
+    repairAccountMember();
+    bridge(false);
+    var before = physicalImage();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(
+                    org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
+        .isZero();
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .closeOriginalAttempt(
+                        controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(
+                    org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
+        .isZero();
+    assertThat(physicalImage()).isEqualTo(before);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,false",
+    "false,true",
+    "true,false",
+    "true,true"
+  })
+  void exactAbortedOriginalCompletesSameTransferBeforeAndAfterCapture(
+      boolean abortAfterCapture, boolean originalReservationExpired) throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    Clock transferClock =
+        originalReservationExpired ? Clock.offset(CLOCK, Duration.ofHours(1)) : CLOCK;
+    if (originalReservationExpired)
+      assertThat(controlledCapacity.reservation().expiresAt()).isBefore(transferClock.instant());
+    var repository =
+        new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), transferClock, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture(transferClock)
+            .receiver(repository, tags);
+    var capacity =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            fixture.dsl(), ownerClient, catalog, transferClock, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), transferClock, repository, capacity, receiver);
+    UUID transferId = null;
+    if (abortAfterCapture) {
+      transferId =
+          repository.within(
+              transferClock.millis() + 5000L,
+              ignored -> repository.begin(original.source, original.status));
+      UUID capturedId = transferId;
+      var captured =
+          repository.within(
+              transferClock.millis() + 5000L, ignored -> repository.capture(capturedId));
+      assertThat(captured).hasSize(1);
+    }
+    assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+    byte[] candidate = admin.get(ascii(installation.sessionKey()));
+    UUID resumed =
+        transfer.advance(original.source, original.status, transferClock.millis() + 5000L);
+    if (transferId != null) assertThat(resumed).isEqualTo(transferId);
+    String intent =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT intent_digest FROM game_session_region_owner_transfer WHERE transfer_id=?",
+                resumed)
+            .get(0, String.class);
+    // Real expiry of the incumbent Redis lease, followed by actual grant acquisition and protected
+    // installation.
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var installed = installAbortedTransferSuccessor(transfer, original, resumed, transferClock);
+    assertThat(installed.ownerInstanceId()).isEqualTo("aborted-original-successor");
+    assertThat(installed.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(installed);
+    var completed =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT transfer_id,intent_digest,state FROM game_session_region_owner_transfer");
+    assertThat(completed.get("transfer_id", UUID.class)).isEqualTo(resumed);
+    assertThat(completed.get("intent_digest", String.class)).isEqualTo(intent);
+    assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
+    assertThat(
+            receiver
+                .observeForRegionOwnerTransfer(resumed, 0, transferClock.millis() + 5000L)
+                .regionOwnerTransferContext()
+                .controlState())
+        .isEqualTo("COMPLETED");
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(candidate);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                    fixture.transitionId())
+                .get(0, String.class))
+        .isEqualTo("ABORTED");
+    assertThatThrownBy(() -> tags.assignmentForTransition(fixture.transitionId()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(
+            () ->
+                capacity.readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+        .isInstanceOf(IllegalStateException.class);
+    String terminalRows = sqlImage();
+    assertThatThrownBy(
+            () ->
+                transfer.advance(original.source, original.status, transferClock.millis() + 5000L))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(terminalRows);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"missing", "binding", "ttl"})
+  void abortedTransferCannotInstallWithMissingOrChangedRetainedFence(String fault)
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+    UUID id = transfer.advance(original.source, original.status, deadline());
+    byte[] key = ascii(capacityKey(assignment));
+    if (fault.equals("missing")) admin.del(key);
+    else if (fault.equals("binding")) admin.hset(key, ascii("binding"), ascii("changed"));
+    else admin.pexpire(key, 60_000L);
+    byte[] altered =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
+    String retained = sqlImage();
+    admin.pexpire(ascii(original.grant.key()), 0);
+    assertThatThrownBy(() -> installAbortedTransferSuccessor(transfer, original, id, CLOCK))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(original.status);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT state FROM game_session_region_owner_transfer")
+                .get(0, String.class))
+        .isEqualTo("FROZEN");
+    assertThat(sqlImage()).isEqualTo(retained);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .containsExactly(altered);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void abortedCapturedOriginalRetainsPhysicalClosureBeforeSuccessorInstallation(
+      boolean closeBeforeAbort) throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+    UUID id =
+        repository.within(
+            deadline(), ignored -> repository.begin(original.source, original.status));
+    var captured = repository.within(deadline(), ignored -> repository.capture(id));
+    assertThat(captured).hasSize(1);
+    if (closeBeforeAbort)
+      capacityOwner()
+          .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(fixture.recordOriginalAccountAbort().isAccountAborted()).isTrue();
+    if (!closeBeforeAbort)
+      capacityOwner()
+          .closeOriginalAttempt(controlledCapacity.request(), controlledCapacity.reservation());
+    var proof =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(proof.disposition()).isEqualTo("NOT_EXECUTED_AFTER_AUTHORIZATION");
+    byte[] tombstone =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+            admin,
+            ascii(
+                capacityKey(tags.assignmentForRetainedCapacityExecution(fixture.transitionId()))));
+    assertThat(transfer.advance(original.source, original.status, deadline())).isEqualTo(id);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var installed = installAbortedTransferSuccessor(transfer, original, id, CLOCK);
+    assertThat(installed.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(
+            receiver
+                .observeForRegionOwnerTransfer(id, 0, deadline())
+                .regionOwnerTransferContext()
+                .controlState())
+        .isEqualTo("COMPLETED");
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(proof.canonicalReadback());
+    assertThat(
+            CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(
+                admin,
+                ascii(
+                    capacityKey(
+                        tags.assignmentForRetainedCapacityExecution(fixture.transitionId())))))
+        .containsExactly(tombstone);
+  }
+
+  private net.firedevops.firemud.gamesession.entity.CanonicalGameplayRegionRuntimeStatus
+      installAbortedTransferSuccessor(
+          CanonicalGameplayRegionOwnerTransferCoordinator transfer,
+          CanonicalGameplayRegionLeaseOwner.Installation original,
+          UUID transferId,
+          Clock transferClock) {
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "aborted-original-successor",
+            "localhost",
+            transferClock.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    var leases = new CanonicalGameplayRegionLeaseRedisOwner(ownerClient, catalog);
+    var grant =
+        leases.acquire(
+            original.source, original.status.regionEpoch(), Duration.ofSeconds(30), identity);
+    leases.requireGrantScope(grant, original.source, original.status.regionEpoch(), identity);
+    var preparation =
+        new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
+            .findTimelinePreparation(original.source)
+            .orElseThrow();
+    leases.verifyInitializedTimeline(grant, preparation);
+    leases.requireCurrent(grant);
+    var installed =
+        transfer.install(
+            transferId,
+            original.source,
+            original.status,
+            grant.tokenCorrelation(),
+            identity.service(),
+            identity.serviceInstanceId(),
+            transferClock.millis() + 5000L);
+    leases.requireCurrent(grant);
+    return installed;
+  }
+
+  @Test
   void physicalImageRetainsAbsoluteExpiryRatherThanOnlyItsPresence() {
     byte[] key = "physical-image-expiry".getBytes(StandardCharsets.US_ASCII);
     admin.set(key, "unchanged".getBytes(StandardCharsets.US_ASCII));

@@ -64,6 +64,38 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
         });
   }
 
+  /** Retained topology for capacity handoff; never grants provisional admission authority. */
+  Assignment assignmentForRetainedCapacityExecution(UUID transitionId) {
+    requireNonNil(transitionId, "transitionId");
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
+          Record transition =
+              transaction.fetchOne(
+                  "SELECT status FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                  transitionId);
+          boolean aborted =
+              transition != null && "ABORTED".equals(transition.get("status", String.class));
+          if (aborted) {
+            var retained =
+                CanonicalGameplayBindingInventoryRepository
+                    .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
+                        transaction, transitionId, false);
+            if (!retained.isAccountAborted())
+              throw conflict("Exact retained Account abort required");
+          }
+          BindingTarget source = loadBindingTarget(transaction, transitionId, null, aborted);
+          requireTenantClaim(transaction, source.tenantId());
+          // A retained execution cannot allocate replacement topology after loss of its mapping.
+          if (transaction.fetchOne(
+                  "SELECT 1 FROM " + MAPPING + " WHERE tenant_id=?", source.tenantId())
+              == null) throw conflict("Retained capacity execution mapping is unavailable");
+          return resolveMapping(
+              transaction, source, allocationVersion, tagFor(source.tenantId(), allocationVersion));
+        });
+  }
+
   /** Topology-only retained lookup for one irreversibly selected original negative continuation. */
   Assignment assignmentForOriginalNewAbandonment(UUID transitionId, UUID abandonmentId) {
     requireNonNil(transitionId, "transitionId");
@@ -264,6 +296,11 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
 
   private BindingTarget loadBindingTarget(
       DSLContext transaction, UUID transitionId, UUID abandonmentId) {
+    return loadBindingTarget(transaction, transitionId, abandonmentId, false);
+  }
+
+  private BindingTarget loadBindingTarget(
+      DSLContext transaction, UUID transitionId, UUID abandonmentId, boolean retainedAbort) {
     boolean negative = abandonmentId != null;
     String negativeSelector =
         negative
@@ -323,10 +360,15 @@ public final class CanonicalGameplayTenantGameplayTagRepository {
             .equals(requiredUuid(row, "account_index_fence"))
         || !requiredUuid(row, "transition_reservation_id")
             .equals(requiredUuid(row, "inventory_reservation_id"))
-        || !(negative ? Set.of("PREPARED", "ABORTED") : TRANSITION_STATES).contains(transitionState)
-        || !(negative
-                ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
-                : INVENTORY_STATES)
+        || !(retainedAbort
+                ? Set.of("ABORTED")
+                : negative ? Set.of("PREPARED", "ABORTED") : TRANSITION_STATES)
+            .contains(transitionState)
+        || !(retainedAbort
+                ? Set.of("TERMINAL_UNRESOLVED", "TERMINAL")
+                : negative
+                    ? Set.of("CANDIDATE_PREPARED", "TERMINAL_UNRESOLVED", "TERMINAL")
+                    : INVENTORY_STATES)
             .contains(inventoryState)
         || !transitionRefMatches(
             transitionRefBytes, inventoryRefBytes, tenantId, gameInstanceId, sessionId)

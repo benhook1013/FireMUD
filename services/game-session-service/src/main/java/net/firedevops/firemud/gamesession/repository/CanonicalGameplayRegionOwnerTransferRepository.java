@@ -575,7 +575,9 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       UUID transitionId, CanonicalGameplayTenantGameplayTagRepository sourceTags) {
     if (admitted.get() == null)
       return within(Long.MAX_VALUE, ignored -> readAssignment(transitionId, sourceTags));
-    return sourceTags.withCapacityExecutionDsl(sql()).assignmentForTransition(transitionId);
+    return sourceTags
+        .withCapacityExecutionDsl(sql())
+        .assignmentForRetainedCapacityExecution(transitionId);
   }
 
   private static Record observationCurrent(DSLContext tx, UUID id) {
@@ -632,7 +634,8 @@ final class CanonicalGameplayRegionOwnerTransferRepository
             .admissionAttemptId()
             .equals(row.get("admission_attempt_id", UUID.class))) throw unavailable();
     var assignment =
-        tags.withCapacityExecutionDsl(sql()).assignmentForTransition(execution.transitionId());
+        tags.withCapacityExecutionDsl(sql())
+            .assignmentForRetainedCapacityExecution(execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
     var binding = candidate.bindingIdentity();

@@ -294,12 +294,21 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       // Successful positive reconciliation never authorizes the requested negative closure.
       throw unavailable();
     }
-    if (!"PROVISIONAL".equals(transition.get("status", String.class))
-        || transition.get("original_new_final_session_sha256") != null) throw unavailable();
+    requireClosedTransition(transition);
+    if ("ABORTED".equals(transition.get("status", String.class))) {
+      var abort =
+          CanonicalGameplayBindingInventoryRepository
+              .readRetainedDefinitiveFirstNewAccountAbortSourceInTransaction(
+                  sql(), execution.transitionId(), false);
+      if (!abort.isAccountAborted()) throw unavailable();
+    }
     var candidate =
         CanonicalGameplayOriginalNewCandidate.parseCanonical(
             transition.get("original_new_candidate_bytes", byte[].class));
-    var assignment = scopedTags().assignmentForTransition(execution.transitionId());
+    var assignment =
+        "ABORTED".equals(transition.get("status", String.class))
+            ? scopedTags().assignmentForRetainedCapacityExecution(execution.transitionId())
+            : scopedTags().assignmentForTransition(execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
     long result =
@@ -622,7 +631,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       // Merely seeing a COMMITTED hash must not release old-generation custody.
       retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
     } else if (result == 4) {
-      closeOriginalAttempt(execution.request(), execution.reservation());
+      if ("CLOSED".equals(row.get("status", String.class))) {
+        readExact(execution.request(), execution.reservation(), false);
+      } else {
+        closeOriginalAttempt(execution.request(), execution.reservation());
+      }
     } else if (result != 5) throw unavailable();
     return readTransferFence(item, deadline);
   }
@@ -730,7 +743,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       CanonicalGameplayOriginalNewCandidate candidate,
       String expectedFinalDigest,
       OriginalNewCapacityExecution execution) {
-    var assignment = scopedTags().assignmentForTransition(execution.transitionId());
+    var assignment =
+        "ABORTED".equals(transition(execution).get("status", String.class))
+            ? scopedTags().assignmentForRetainedCapacityExecution(execution.transitionId())
+            : scopedTags().assignmentForTransition(execution.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class)))
       throw unavailable();
     var binding = candidate.bindingIdentity();
