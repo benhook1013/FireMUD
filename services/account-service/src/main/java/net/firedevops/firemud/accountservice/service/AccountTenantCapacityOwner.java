@@ -8,6 +8,7 @@ import static net.firedevops.firemud.accountservice.repository.AccountTenantCapa
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
+import io.grpc.Deadline;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Clock;
@@ -15,6 +16,8 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.AccountCapacityOriginDecisionRepository;
@@ -53,6 +56,10 @@ import org.springframework.transaction.support.TransactionTemplate;
     value = "EI_EXPOSE_REP2",
     justification = "Private Account owner collaborators.")
 public final class AccountTenantCapacityOwner {
+  private static final int TRANSACTION_TIMEOUT_SECONDS = 5;
+  private static final int MAX_SERIALIZATION_ATTEMPTS = 4;
+  private static final long INITIAL_RETRY_DELAY_MILLIS = 5;
+
   private final DSLContext dsl;
   private final AccountRepository accounts;
   private final AccountCanonicalRuntimeMembershipSnapshotRepository memberships;
@@ -87,7 +94,7 @@ public final class AccountTenantCapacityOwner {
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_SERIALIZABLE);
-    transaction.setTimeout(5);
+    transaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
   }
 
   public Result commit(Request request, String authenticatedCaller) {
@@ -327,14 +334,41 @@ public final class AccountTenantCapacityOwner {
   }
 
   private Result commitWithFreshSnapshot(Supplier<Result> action) {
-    try {
-      return inTransaction(action);
-    } catch (RuntimeException failure) {
-      // PostgreSQL has rolled back this serialization failure. The whole next transaction needs
-      // a new snapshot so a concurrent first attempt can become exact replay or conflict.
-      if (!serializationFailure(failure) || Context.current().isCancelled()) throw failure;
-      return inTransaction(action);
+    Context caller = Context.current();
+    Deadline localDeadline = Deadline.after(TRANSACTION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    Deadline incoming = caller.getDeadline();
+    Deadline retryDeadline = incoming == null ? localDeadline : localDeadline.minimum(incoming);
+    if (caller.isCancelled() || retryDeadline.isExpired()) throw unavailable();
+    for (int attempt = 1; ; attempt++) {
+      try {
+        return inTransaction(
+            () -> {
+              if (caller.isCancelled() || retryDeadline.isExpired()) throw unavailable();
+              return action.get();
+            });
+      } catch (RuntimeException failure) {
+        // A PostgreSQL serialization failure rolls back the whole transaction. Retry outside
+        // that transaction so a concurrent original can become exact replay or conflict.
+        if (attempt >= MAX_SERIALIZATION_ATTEMPTS
+            || !serializationFailure(failure)
+            || !waitForFreshSnapshot(caller, retryDeadline, attempt)) throw failure;
+      }
     }
+  }
+
+  private static boolean waitForFreshSnapshot(Context caller, Deadline deadline, int attempt) {
+    long minimumDelay = INITIAL_RETRY_DELAY_MILLIS << (attempt - 1);
+    long delay = ThreadLocalRandom.current().nextLong(minimumDelay, 2 * minimumDelay);
+    if (caller.isCancelled() || deadline.timeRemaining(TimeUnit.MILLISECONDS) <= delay) {
+      return false;
+    }
+    try {
+      TimeUnit.MILLISECONDS.sleep(delay);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
+    return !caller.isCancelled() && !deadline.isExpired();
   }
 
   private static boolean serializationFailure(RuntimeException failure) {
