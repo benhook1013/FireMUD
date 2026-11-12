@@ -15,11 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      SOURCE_SHA: 2942ea82eaf7d56a0d745a53e062e8f33d5a9ff8
-      SOURCE_TREE: 8c005460e003b96518d42eec7e6644050e5d3b9c
-      SOURCE_FILES: '[{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java","preimage_blob":"626c0e833fb0c2339f1ef38a3e7f5d76aec468b1","postimage_blob":"1fdb1c87032a772ab6f5a7fdc64c03f8c5e76bd2","postimage_sha256":"abb2cf788c4e336d18b686fc20c10a661a3905be76dc93322a021610e2e72869"}]'
+      SOURCE_SHA: 60f5e125667ad9b2146a45c033617966266098b2
+      SOURCE_TREE: 76c6aa559f6978924c0edb27d83a7a50ba6b1ddd
+      SOURCE_FILES: '[{"path":"design/architecture/microservices/game-session-service/runtime-and-data.md","postimage_blob":"80376efbe9c23e5eb86bc3c27f6f6ee3f6d38d0f","postimage_sha256":"b05c580399cfb62fbdf4267c57aade3ffc9ce9cc6341ba1174133397911cacc8"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayAccountAdmissionBarrierRepository.java","postimage_blob":"39977d3bb7a86785f0132862fe5af707170d9e01","postimage_sha256":"5efafa99f30c64988b57dad11f4e13e695bed2a07fe94113f4a9bc1e26f4930e"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewCapacityExecutionOwner.java","postimage_blob":"80cf66fb24804202af18621ad9ec8c940cb9872e","postimage_sha256":"44b29e03098a795cef53a67a523d984d166d0f25d4e9a4af12cae451cce1fb14"},{"path":"services/game-session-service/src/main/resources/db/migration/V1065.2__account_fence_historical_final_observation.sql","postimage_blob":"8c2f9c7ed6b7e08e5b3eba19578a26f67fc62982","postimage_sha256":"20f3b17949944029bec9634a63996b0d70c274bccb9e999a3113288138a8170c"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java","postimage_blob":"5a3a7d6ac6d12ed15ff3551b08e5629bd2dcd5f4","postimage_sha256":"c706da17004501073250beef7c46d34ff326efdd17da34726062d42359d8a17d"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionRuntimeFamilyCatalogPostgresIntegrationTest.java","postimage_blob":"069a07b1e633573d53ffbe80b83513c65e826109","postimage_sha256":"93751e30a86f049c407d484021cb3fcba86377b13ca2e0efe0dd4fa1600d2a11"}]'
       TESTCONTAINERS_CHECKS_DISABLE: 'false'
-      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"accountSqlFenceBeforeDelayedFinalCannotEstablishPreIntentCommitOrdering","count":1}]'
+      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"accountSqlFenceBeforeDelayedFinalCannotEstablishPreIntentCommitOrdering","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"fenceOwnerRetainsObservedFinalWithoutPromotingFrozenInventory","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"actualFinalBeforeAccountFenceRetainsPhysicalPositiveButRecoveryRemainsIndeterminate","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.GameSessionRuntimeFamilyCatalogPostgresIntegrationTest","method":"currentCombinedChainSealsEveryEmptyTableActualRenamesComponentsAndExplicitBlockingGaps","count":1}]'
     steps:
     - name: Set isolated proof directory
       shell: bash
@@ -184,7 +184,7 @@ jobs:
         \ indent=2) + '\\n')\n    return status\n\nif __name__ == '__main__':\n    if len(sys.argv) < 4 or sys.argv[2] !=\
         \ '--':\n        raise SystemExit('Usage: capture_log.py LOG -- COMMAND [ARG ...]')\n    raise SystemExit(capture(sys.argv[1],\
         \ sys.argv[3:]))\nCAPTURE\n"
-    - name: Run one historical FINAL physical witness
+    - name: Run exact historical FINAL receipt and migration proof
       shell: bash
       run: "set -euo pipefail\nset +e\npython3 \"$RUNNER_TEMP/capture-capacity-log.py\" \"$RUNNER_TEMP/capacity-physical-gradle.log\"\
         \ -- \\\n  timeout --signal=TERM --kill-after=30s 18m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
