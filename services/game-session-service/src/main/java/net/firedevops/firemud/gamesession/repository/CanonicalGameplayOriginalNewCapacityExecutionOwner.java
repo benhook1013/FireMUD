@@ -116,20 +116,26 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
             selected.instanceId(),
             selected.fence());
     var repository = new CanonicalGameplayCapacityOriginRepository(sql());
-    var retained = repository.prepare(origin);
+    var preparation = repository.prepare(origin);
+    var retained = preparation.retained();
     if (!retained.ownerId().equals(selected.instanceId())
         || retained.ownerFence() != selected.fence()) throw unavailable();
     if (retained.state() == CanonicalGameplayCapacityOrigin.State.OPEN) {
-      originRedis()
-          .apply(
-              origin,
-              CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
-              selected.instanceId(),
-              selected.fence(),
-              selected.instanceId(),
-              selected.fence(),
-              retained.state(),
-              deadline);
+      if (preparation.insertedByThisCall()) {
+        originRedis()
+            .apply(
+                origin,
+                CanonicalGameplayCapacityOriginRedisOwner.Action.INIT,
+                selected.instanceId(),
+                selected.fence(),
+                selected.instanceId(),
+                selected.fence(),
+                retained.state(),
+                deadline);
+      } else {
+        originRedis()
+            .readExact(origin, retained.ownerId(), retained.ownerFence(), retained.state());
+      }
     } else if (retained.state() == CanonicalGameplayCapacityOrigin.State.DISPATCH_CLAIMED) {
       requireCommittedOriginReplay(source, origin, retained);
     } else {
@@ -349,7 +355,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   private CanonicalGameplayCapacityOriginRedisOwner originRedis() {
-    var descriptor = scripts.require("game-session.original-new-capacity-origin-custody.v1");
+    var descriptor = scripts.require("game-session.original-new-capacity-origin-custody.v2");
     var expectedArguments =
         java.util.List.of(
                 "action",
@@ -365,7 +371,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.ArgumentSpec
                     ::new)
             .toList();
-    if (!"game-session.original-new-capacity-origin-custody.v1".equals(descriptor.scriptId())
+    if (!"game-session.original-new-capacity-origin-custody.v2".equals(descriptor.scriptId())
         || !"redis/lua/game-session-original-new-capacity-origin-custody.lua"
             .equals(descriptor.resourcePath())
         || !"game-session-service".equals(descriptor.owner())

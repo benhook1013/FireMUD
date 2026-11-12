@@ -143,6 +143,45 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   }
 
   @Test
+  void missingInstalledOriginMarkerRefusesRetryAndTransferWithoutRecreation() throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var reservation = session.capacityOwner.commit(session.capacityRequest, GS);
+      assertThat(reservation.state()).isEqualTo(TenantCapacityAdmission.State.RESERVED);
+
+      String originSql = session.gs.originSqlImage();
+      String accountCapacity = session.capacityImage();
+      byte[] candidate = session.gs.physicalSession();
+      assertThat(session.gs.originPhysicalImage())
+          .containsEntry("state", "OPEN")
+          .containsEntry("pttl", "-1");
+      session.gs.removeOriginMarkerForFault();
+      assertThat(session.gs.originPhysicalImage())
+          .containsOnlyKeys("pttl")
+          .containsEntry("pttl", "-2");
+
+      assertThatThrownBy(() -> session.gs.prepareReceivingOrigin(session.capacityRequest))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(session.gs.originPhysicalImage())
+          .containsOnlyKeys("pttl")
+          .containsEntry("pttl", "-2");
+      assertThat(session.gs.originSqlImage()).isEqualTo(originSql);
+      assertThat(session.capacityImage()).isEqualTo(accountCapacity);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+
+      assertThatThrownBy(() -> session.gs.handoffReceivingOrigin())
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(session.gs.originPhysicalImage())
+          .containsOnlyKeys("pttl")
+          .containsEntry("pttl", "-2");
+      assertThat(session.gs.originSqlImage()).isEqualTo(originSql);
+      assertThat(session.capacityImage()).isEqualTo(accountCapacity);
+      assertThat(session.gs.physicalSession()).containsExactly(candidate);
+    }
+  }
+
+  @Test
   void actualOriginCallbackRacesOwnerMovementWithoutLosingDenialOrReplenishingBudget()
       throws Exception {
     try (Session session = session()) {
@@ -380,6 +419,24 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   .fetchCount(
                       org.jooq.impl.DSL.table("game_session_original_new_capacity_execution")))
           .isZero();
+    }
+  }
+
+  @Test
+  void completedOriginHandoffRecoversAfterTheSuccessorClaimsAnOpenOrigin() throws Exception {
+    try (Session session = session()) {
+      session.enableOriginReceiving();
+      session.gs.prepareReceivingOrigin(session.capacityRequest);
+      var denied = session.capacityOwner.resolveOrigin(session.capacityRequest, GS, true);
+      session.gs.handoffReceivingOriginAfterLostConfirmation(
+          () -> {
+            var permit = session.beginOriginObservation(CLOCK);
+            session.deliverOriginResolution(denied, permit, CLOCK);
+            assertThat(session.gs.originPhysicalImage()).containsEntry("state", "DENIED");
+            return null;
+          });
+      assertThat(session.gs.originBudgetImage()).containsEntry("state", "DENIED");
+      assertThat(session.gs.originPhysicalImage()).containsEntry("state", "DENIED");
     }
   }
 

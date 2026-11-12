@@ -162,16 +162,30 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
 
   private Item load(Record transfer, Record row) {
     var origin = decodeOrigin(row);
+    boolean completed = "COMPLETED".equals(transfer.get("state", String.class));
+    var capturedState =
+        CanonicalGameplayCapacityOrigin.State.valueOf(row.get("captured_state", String.class));
+    var currentState =
+        CanonicalGameplayCapacityOrigin.State.valueOf(row.get("state", String.class));
+    byte[] capturedResolution = row.get("captured_resolution", byte[].class);
+    byte[] currentResolution = row.get("account_resolution_bytes", byte[].class);
+    boolean unchangedClaim =
+        capturedState == currentState
+            && Arrays.equals(currentResolution, capturedResolution)
+            && Objects.equals(
+                row.get("account_resolution_digest", String.class),
+                row.get("captured_resolution_digest", String.class));
+    boolean successorClaim =
+        completed
+            && capturedState == CanonicalGameplayCapacityOrigin.State.OPEN
+            && capturedResolution == null
+            && row.get("captured_resolution_digest", String.class) == null
+            && currentResolution != null
+            && (currentState == CanonicalGameplayCapacityOrigin.State.CLOSURE_CLAIMED
+                || currentState == CanonicalGameplayCapacityOrigin.State.DENIED);
     if (!Arrays.equals(origin.canonicalBytes(), row.get("captured_origin", byte[].class))
-        || !Arrays.equals(
-            row.get("account_resolution_bytes", byte[].class),
-            row.get("captured_resolution", byte[].class))
-        || !Objects.equals(
-            row.get("account_resolution_digest", String.class),
-            row.get("captured_resolution_digest", String.class))
         || !origin.tenantGameplayTag().equals(row.get("captured_tag", String.class))
-        || !row.get("captured_state", String.class).equals(row.get("state", String.class)))
-      throw held();
+        || (!unchangedClaim && !successorClaim)) throw held();
     var assignment = transfers.assignmentForOrigin(transfers.sql(), origin.transitionId());
     if (!assignment.tenantGameplayTag().equals(row.get("tenant_gameplay_tag", String.class))
         || !assignment.workloadNamespace().equals(row.get("workload_namespace", String.class))
@@ -195,7 +209,11 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
             ? row.get("old_owner_fence", Long.class)
             : newFence;
     if (!expectedOwner.equals(row.get("custody_owner_id", String.class))
-        || expectedFence != row.get("custody_owner_fence", Long.class)) throw held();
+        || expectedFence != row.get("custody_owner_fence", Long.class)
+        || (completed
+            && !transfer
+                .get("transfer_id", UUID.class)
+                .equals(row.get("custody_transfer_id", UUID.class)))) throw held();
     return new Item(
         transfer.get("transfer_id", UUID.class),
         row.get("target_ordinal", Long.class),
@@ -204,7 +222,7 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
         row.get("old_owner_fence", Long.class),
         newOwner,
         newFence,
-        CanonicalGameplayCapacityOrigin.State.valueOf(row.get("captured_state", String.class)));
+        currentState);
   }
 
   Context readCurrent(UUID transferId, long targetOrdinal, long deadline) {
@@ -385,21 +403,34 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
       Item item,
       CanonicalGameplayCapacityOriginRedisOwner.Readback actual,
       String incarnationDigest) {
-    if (!exists(
-        transfers.sql(),
-        "SELECT 1 FROM "
-            + ITEM
-            + " i JOIN "
-            + TRANSFER
-            + " t ON t.transfer_id=i.transfer_id WHERE i.transfer_id=? AND i.target_ordinal=?"
-            + " AND i.origin_digest=? AND i.fence_readback=? AND i.incarnation_digest=?"
-            + " AND t.state='COMPLETED' AND t.incarnation_digest=i.incarnation_digest"
-            + " AND i.verified_round=t.origin_verification_round",
-        item.transferId(),
-        item.ordinal(),
-        item.origin().digest(),
-        exactReadback(item, actual),
-        incarnationDigest)) throw held();
+    requireExactMarker(item, actual);
+    Record retained =
+        transfers
+            .sql()
+            .fetchOne(
+                "SELECT i.captured_state,i.fence_readback FROM "
+                    + ITEM
+                    + " i JOIN "
+                    + TRANSFER
+                    + " t ON t.transfer_id=i.transfer_id JOIN "
+                    + ORIGIN
+                    + " o ON o.origin_digest=i.origin_digest"
+                    + " WHERE i.transfer_id=? AND i.target_ordinal=? AND i.origin_digest=?"
+                    + " AND i.incarnation_digest=? AND t.state='COMPLETED'"
+                    + " AND t.incarnation_digest=i.incarnation_digest"
+                    + " AND i.verified_round=t.origin_verification_round"
+                    + " AND o.canonical_origin=i.canonical_origin AND o.custody_transfer_id=t.transfer_id"
+                    + " AND o.custody_owner_id=t.successor_owner_id"
+                    + " AND o.custody_owner_fence=t.successor_owner_fence AND o.state=?",
+                item.transferId(),
+                item.ordinal(),
+                item.origin().digest(),
+                incarnationDigest,
+                item.state().name());
+    if (retained == null
+        || !Arrays.equals(
+            retained.get("fence_readback", byte[].class),
+            encodeReadback(item, retained.get("captured_state", String.class)))) throw held();
   }
 
   static void requireComplete(DSLContext tx, UUID transferId) {
@@ -487,19 +518,28 @@ final class CanonicalGameplayCapacityOriginTransferRepository {
   /** No absence, TTL or partial marker can be serialized as a retained fence. */
   static byte[] exactReadback(
       Item item, CanonicalGameplayCapacityOriginRedisOwner.Readback actual) {
+    requireExactMarker(item, actual);
+    return encodeReadback(item, actual.state().name());
+  }
+
+  private static void requireExactMarker(
+      Item item, CanonicalGameplayCapacityOriginRedisOwner.Readback actual) {
     if (actual == null
         || !item.origin().digest().equals(actual.originDigest())
         || !item.newOwner().equals(actual.owner())
         || item.newFence() != actual.fence()
         || item.state() != actual.state()) throw held();
+  }
+
+  private static byte[] encodeReadback(Item item, String state) {
     var output = new java.io.ByteArrayOutputStream();
     for (String value :
         List.of(
             "capacity-origin-transfer-readback/v1",
-            actual.originDigest(),
-            actual.owner(),
-            Long.toString(actual.fence()),
-            actual.state().name())) {
+            item.origin().digest(),
+            item.newOwner(),
+            Long.toString(item.newFence()),
+            state)) {
       byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
       output.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
       output.write(':');
