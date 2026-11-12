@@ -136,6 +136,9 @@ final class CanonicalGameplayOriginalNewFinalAdmissionCoordinator {
       requireOriginalSource(source, originalDecision);
       var selectedOwner =
           capacityExecution.requireRequestBinding(source, capacityRequest, absoluteDeadlineMillis);
+      if (!originReceiving) {
+        capacityExecution.requireOrdinaryAdmission(capacityRequest, absoluteDeadlineMillis);
+      }
       Currentness beforeEffects = currentness(source, privateRegionInstallation);
       CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource currentSource =
           readSameSource(source, originalDecision, false);
