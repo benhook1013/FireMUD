@@ -60,13 +60,18 @@ def reject_duplicates(pairs):
     return result
 
 
+def reject_nonfinite(token):
+    raise ValueError("non-finite JSON constant")
+
+
 def evidence(encoded, variant="TENANT_OPERATION"):
     raw = base64.b64decode(encoded, validate=True)
     if base64.b64encode(raw).decode("ascii") != encoded:
         raise ValueError("canonical padded base64 required")
     if not 0 < len(raw) <= 262144:
         raise ValueError("evidence bound")
-    parsed = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=reject_duplicates)
+    parsed = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=reject_duplicates,
+                        parse_constant=reject_nonfinite)
     canonical = json.dumps(parsed, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if raw != canonical or parsed["schema"] != "account-auth-evidence-bundle/v1" or parsed["variant"] != variant:
         raise ValueError("exact canonical variant required")
@@ -177,6 +182,14 @@ class CapacityAdmissionVectors(unittest.TestCase):
         for candidate in corpus["rejectedEvidence"]:
             with self.subTest(candidate["name"]), self.assertRaises(ValueError):
                 evidence(candidate["canonicalAccountEvidenceBase64"])
+        parsed = json.loads(base64.b64decode(corpus["request"]["canonicalAccountEvidenceBase64"]))
+        for token, constant in (("NaN", float("nan")), ("Infinity", float("inf")),
+                                ("-Infinity", float("-inf"))):
+            with self.subTest(token), self.assertRaisesRegex(ValueError, "non-finite JSON constant"):
+                parsed["nonFinite"] = constant
+                raw = json.dumps(parsed, sort_keys=True, ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8")
+                evidence(base64.b64encode(raw).decode("ascii"))
         # Shape/absence and usage expectations are separate from this encoding corpus:
         # CapacityAdmissionDigestTest and AccountTenantCapacityOwnerTest invoke their real owners.
 

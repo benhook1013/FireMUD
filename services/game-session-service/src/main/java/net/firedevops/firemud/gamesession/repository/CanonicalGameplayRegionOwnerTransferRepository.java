@@ -327,6 +327,32 @@ final class CanonicalGameplayRegionOwnerTransferRepository
 
   List<Item> page(UUID transferId, long afterOrdinal) {
     current(sql(), transferId, false);
+    return readPage(transferId, afterOrdinal);
+  }
+
+  List<Item> completedPage(UUID transferId, long afterOrdinal) {
+    requireCompleted(transferId);
+    return readPage(transferId, afterOrdinal);
+  }
+
+  CompletedTransfer completedSuccessor(UUID transferId, String ownerInstance, String correlation) {
+    Record completed = requireCompleted(transferId);
+    var status = CanonicalGameplayRegionRuntimeStatusRepository.toStatus(completed);
+    if (status.paused()
+        || !ownerInstance.equals(status.ownerInstanceId())
+        || !correlation.equals(status.leaseTokenCorrelation())) throw unavailable();
+    return new CompletedTransfer(status, completed.get("incarnation_digest", String.class));
+  }
+
+  private Record requireCompleted(UUID transferId) {
+    Record completed = observationCurrent(sql(), transferId);
+    if (!"COMPLETED".equals(completed.get("state", String.class))) throw unavailable();
+    return completed;
+  }
+
+  record CompletedTransfer(CanonicalGameplayRegionRuntimeStatus status, String incarnationDigest) {}
+
+  private List<Item> readPage(UUID transferId, long afterOrdinal) {
     List<Item> result = new ArrayList<>();
     for (Record row :
         sql()

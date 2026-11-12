@@ -781,6 +781,102 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void completedTransferResumesOnlyWithTheSameLivePrivateGrant() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var failAfterCommit = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var observationSource =
+        new CanonicalGameplayRegionOwnerTransferObservationSource() {
+          @Override
+          public Context readCurrent(UUID transferId, long targetOrdinal) {
+            var context = repository.readCurrent(transferId, targetOrdinal);
+            if ("COMPLETED".equals(context.controlState()) && failAfterCommit.getAndSet(false)) {
+              throw new IllegalStateException("Controlled completed observation failure");
+            }
+            return context;
+          }
+
+          @Override
+          public CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
+              UUID transitionId, CanonicalGameplayTenantGameplayTagRepository sourceTags) {
+            return repository.readAssignment(transitionId, sourceTags);
+          }
+        };
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(observationSource, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "final-owner-handoff",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    CanonicalGameplayRegionIncarnationSource incarnation =
+        scope -> {
+          assertThat(scope).isEqualTo(original.incarnation.scope());
+          return original.incarnation;
+        };
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            catalog,
+            incarnation,
+            sources.resolver,
+            identity,
+            java.time.Duration.ofSeconds(30),
+            CLOCK);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var failure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
+            () ->
+                successor.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()));
+    assertThat(failAfterCommit).isFalse();
+    var durable =
+        new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl())
+            .find(original.source)
+            .orElseThrow();
+    assertThat(durable.executorFence()).isGreaterThan(original.status.executorFence());
+    var completed =
+        fixture
+            .dsl()
+            .fetchSingle("SELECT state, transfer_id FROM game_session_region_owner_transfer");
+    assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
+    assertThatThrownBy(
+            () ->
+                successor.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    var recovered = successor.resumeCompletedTransfer(failure, deadline());
+    assertThat(recovered.status).isEqualTo(durable);
+    assertThat(recovered.grant.tokenCorrelation()).isEqualTo(durable.leaseTokenCorrelation());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT state, transfer_id FROM game_session_region_owner_transfer"))
+        .isEqualTo(completed);
+    var completedSql = sqlImage();
+    assertThat(successor.resumeCompletedTransfer(failure, deadline()).status).isEqualTo(durable);
+    assertThat(sqlImage()).isEqualTo(completedSql);
+    admin.pexpire(ascii(recovered.grant.key()), 0);
+    assertThatThrownBy(() -> successor.resumeCompletedTransfer(failure, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(durable);
+  }
+
+  @Test
   void retainedTransferFenceLossCannotBeReinstalledOrQualifyHandoff() throws Exception {
     repairAccountMember();
     bridge();
