@@ -113,6 +113,17 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     return new ExistingBinding(owner, installation, acknowledgement);
   }
 
+  /** Installs another retained candidate through the exact existing region grant and owner. */
+  static ExistingBinding installAdditionalOriginalCandidate(
+      ExistingBinding existing,
+      UUID transitionId,
+      CanonicalInitialPlayerLocationRequest worldRequest) {
+    var installation =
+        existing.owner().installForTransition(existing.installation(), transitionId, worldRequest);
+    var acknowledgement = existing.owner().bridge(installation);
+    return new ExistingBinding(existing.owner(), installation, acknowledgement);
+  }
+
   record ExistingBinding(
       CanonicalGameplayRegionBindingBridgeOwner owner,
       CanonicalGameplayRegionLeaseOwner.Installation installation,

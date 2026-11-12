@@ -884,6 +884,164 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void transfersTwoIndependentlyPreparedOriginsForDistinctCandidatesInOneRegionWithinFiveSeconds()
+      throws Exception {
+    try (var proof = new TransferSqlProof(true)) {
+      var otherDecision = proof.otherDecision;
+      assertThat(otherDecision.bindingDecisionId()).isNotEqualTo(proof.execution.transitionId());
+      assertThat(otherDecision.candidate().characterId())
+          .isNotEqualTo(proof.admission.candidate().bindingIdentity().characterId());
+      assertThat(otherDecision.candidate().sessionId())
+          .isNotEqualTo(proof.admission.candidate().bindingIdentity().sessionId());
+      var otherRegion = proof.otherRegion;
+      assertThat(
+              CanonicalGameplayRegionRuntimeStatusRepository.sameRegionSource(
+                  otherRegion.installation().source, proof.scope))
+          .isTrue();
+      assertThat(otherRegion.installation().source.lifecycleRequest().readRequestId())
+          .isNotEqualTo(proof.scope.lifecycleRequest().readRequestId());
+      assertThat(otherRegion.installation().grant.tokenCorrelation())
+          .isEqualTo(proof.region.installation().grant.tokenCorrelation());
+      assertThat(otherRegion.installation().status.executorFence())
+          .isEqualTo(proof.prior.executorFence());
+
+      var otherAdmission = proof.otherAdmission;
+      var otherCapacity =
+          CanonicalGameplayOriginalNewFinalAdmissionTestFixture.controlledCapacity(
+              otherAdmission, proof.clock);
+      var firstOrigin =
+          proof
+              .capacity(proof.sql)
+              .prepareOrigin(proof.admission, proof.execution.request(), transferDeadline());
+      var secondOrigin =
+          proof
+              .capacity(proof.sql)
+              .prepareOrigin(otherAdmission, otherCapacity.request(), transferDeadline());
+      assertThat(firstOrigin.transitionId()).isNotEqualTo(secondOrigin.transitionId());
+      assertThat(firstOrigin.digest()).isNotEqualTo(secondOrigin.digest());
+      assertThat(firstOrigin.candidateDigest()).isNotEqualTo(secondOrigin.candidateDigest());
+      assertThat(firstOrigin.candidate().bindingIdentity().tenantId())
+          .isEqualTo(secondOrigin.candidate().bindingIdentity().tenantId());
+      assertThat(firstOrigin.candidate().bindingIdentity().gameInstanceId())
+          .isEqualTo(secondOrigin.candidate().bindingIdentity().gameInstanceId());
+      assertThat(firstOrigin.candidate().bindingIdentity().regionId())
+          .isEqualTo(secondOrigin.candidate().bindingIdentity().regionId());
+      assertThat(
+              proof
+                  .sql
+                  .fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_origin")
+                  .get(0, Long.class))
+          .isEqualTo(2L);
+      var observationLatency = Duration.ofMillis(5);
+      var regionAttestor =
+          new CanonicalGameplayControlledRegionTransferObservationFixture(
+              proof.clock, observationLatency);
+      var originAttestor =
+          new CanonicalGameplayControlledOriginTransferObservationFixture(
+              proof.clock, observationLatency);
+      var originTransfers = new CanonicalGameplayCapacityOriginTransferRepository(proof.transfers);
+      var transfer =
+          new CanonicalGameplayRegionOwnerTransferCoordinator(
+              proof.sql,
+              proof.clock,
+              proof.transfers,
+              proof.capacity(proof.sql),
+              regionAttestor.receiver(proof.transfers, proof.tags),
+              originAttestor.receiver(originTransfers, proof.tags));
+
+      try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+        assertThat(connection.sync().pexpire(ascii(proof.region.installation().grant.key()), 0L))
+            .isTrue();
+      }
+      long deadline = transferDeadline();
+      long start = System.nanoTime();
+      var installed =
+          CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+              proof.sql,
+              proof.redis,
+              proof.scripts,
+              proof.region.installation(),
+              proof.upstream.resolver,
+              transfer,
+              deadline);
+      Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+      int observationCount = regionAttestor.observationCount() + originAttestor.observationCount();
+      int signedOriginObservationCount = originAttestor.observationCount();
+      assertThat(observationCount).isPositive();
+      assertThat(signedOriginObservationCount).isPositive();
+      assertThat(elapsed).isGreaterThanOrEqualTo(observationLatency.multipliedBy(observationCount));
+      assertThat(elapsed).isLessThan(Duration.ofSeconds(5));
+      LOGGER.info(
+          "Two-origin transfer completed in {} ms with {} signed origin observations and {} total signed observations",
+          elapsed.toMillis(),
+          signedOriginObservationCount,
+          observationCount);
+      assertThat(proof.clock.millis()).isLessThan(deadline);
+      assertThat(installed.status.executorFence()).isGreaterThan(proof.prior.executorFence());
+      assertThat(proof.currentOwner()).isEqualTo(installed.status);
+
+      UUID transferId =
+          proof
+              .sql
+              .fetchSingle(
+                  "SELECT transfer_id FROM game_session_region_owner_transfer"
+                      + " WHERE tenant_id=? AND game_instance_id=? AND region_id=? AND state='COMPLETED'",
+                  proof.scope.tenantId(),
+                  proof.scope.gameInstanceId(),
+                  proof.scope.regionId())
+              .get(0, UUID.class);
+      var transferRows =
+          proof.sql.fetch(
+              "SELECT origin_digest,captured_state,fence_readback,incarnation_digest,verified_round"
+                  + " FROM game_session_capacity_origin_transfer_item WHERE transfer_id=?",
+              transferId);
+      assertThat(transferRows).hasSize(2);
+      assertThat(transferRows.getValues("origin_digest", String.class))
+          .containsExactlyInAnyOrder(firstOrigin.digest(), secondOrigin.digest());
+      assertThat(transferRows.getValues("captured_state", String.class)).containsOnly("OPEN");
+      assertThat(transferRows.getValues("fence_readback", byte[].class))
+          .allSatisfy(value -> assertThat(value).isNotNull().isNotEmpty());
+      assertThat(transferRows.getValues("incarnation_digest", String.class))
+          .allSatisfy(value -> assertThat(value).isNotNull());
+      assertThat(transferRows.getValues("verified_round", UUID.class))
+          .allSatisfy(value -> assertThat(value).isNotNull());
+
+      var retainedOrigins =
+          proof.sql.fetch(
+              "SELECT * FROM game_session_original_new_capacity_origin ORDER BY origin_digest");
+      assertThat(retainedOrigins).hasSize(2);
+      assertThat(retainedOrigins.getValues("custody_owner_id", String.class))
+          .containsOnly(installed.status.ownerInstanceId());
+      assertThat(retainedOrigins.getValues("custody_owner_fence", Long.class))
+          .containsOnly(installed.status.executorFence().longValueExact());
+      assertThat(retainedOrigins.getValues("custody_transfer_id", UUID.class))
+          .containsOnly(transferId);
+      try (var connection = proof.redis.connect(ByteArrayCodec.INSTANCE)) {
+        for (var row : retainedOrigins) {
+          var origin = CanonicalGameplayCapacityOriginTransferRepository.decodeOrigin(row);
+          Map<String, String> fields = new java.util.HashMap<>();
+          connection
+              .sync()
+              .hgetall(ascii(origin.redisKey()))
+              .forEach(
+                  (key, value) ->
+                      fields.put(
+                          new String(key, StandardCharsets.US_ASCII),
+                          new String(value, StandardCharsets.US_ASCII)));
+          assertThat(fields)
+              .containsExactlyInAnyOrderEntriesOf(
+                  Map.of(
+                      "origin", origin.digest(),
+                      "owner", installed.status.ownerInstanceId(),
+                      "fence", installed.status.executorFence().toString(),
+                      "state", "OPEN"));
+          assertThat(connection.sync().pttl(ascii(origin.redisKey()))).isEqualTo(-1L);
+        }
+      }
+    }
+  }
+
+  @Test
   void terminalOnlyTransferRecoversExactCompletedSuccessorAfterOriginalFinalReceipt()
       throws Exception {
     try (var proof = new TransferSqlProof();
@@ -1424,15 +1582,29 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     private final CanonicalGameplayRegionRuntimeStatus prior;
     private final OriginalNewCapacityExecution execution;
     private final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding region;
+    private final net.firedevops.firemud.gamesession.binding.CanonicalGameplayAdmissionDecision
+        otherDecision;
+    private final CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding otherRegion;
+    private final CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource
+        otherAdmission;
     private CanonicalGameplayRegionOwnerTransferRepository transfers;
     private CanonicalGameplayProtectedIncarnationReceiver receiver;
     private CanonicalGameplayRegionOwnerTransferCoordinator coordinator;
 
     private TransferSqlProof() throws Exception {
-      this(new DefaultExecuteListener());
+      this(new DefaultExecuteListener(), false);
+    }
+
+    private TransferSqlProof(boolean withOtherCandidate) throws Exception {
+      this(new DefaultExecuteListener(), withOtherCandidate);
     }
 
     private TransferSqlProof(DefaultExecuteListener listener) throws Exception {
+      this(listener, false);
+    }
+
+    private TransferSqlProof(DefaultExecuteListener listener, boolean withOtherCandidate)
+        throws Exception {
       String password = UUID.randomUUID().toString();
       try (var administrator =
               RedisClient.create(RedisURI.create(REDIS.getHost(), REDIS.getMappedPort(6379)));
@@ -1537,17 +1709,30 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
                   new net.firedevops.firemud.gamesession.service
                       .CanonicalGameplayRegionLeaseRedisScriptContribution(),
                   new net.firedevops.firemud.gamesession.service
-                      .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution()));
-      upstream =
-          new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
-              sql, fixture.originalPreparedDecisionWithControlledAccountLease(), directory);
-      var decision = fixture.originalPreparedDecisionWithControlledAccountLease();
+                      .CanonicalGameplayIssuerAdmissionBarrierRedisScriptContribution(),
+                  new net.firedevops.firemud.gamesession.service
+                      .CanonicalGameplayCapacityOriginCustodyRedisScriptContribution()));
+      var decision = fixture.originalPreparedDecisionWithControlledAccountLease(withOtherCandidate);
       var inventory = new CanonicalGameplayBindingInventoryRepository(sql);
       CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(redis, scripts, inventory, tags)
           .installOnce(decision);
       fixture.acknowledgeOriginalIssuer();
       new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
           .repair(fixture.transitionId());
+
+      String otherSeed = "two-origin-transfer";
+      if (withOtherCandidate) {
+        fixture.prepareOtherControllerNew(otherSeed);
+        otherDecision = fixture.otherControllerDecision(otherSeed, true);
+      } else {
+        otherDecision = null;
+      }
+      upstream =
+          withOtherCandidate
+              ? new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
+                  sql, decision, otherDecision, directory)
+              : new CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources(
+                  sql, decision, directory);
       region =
           CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
               sql,
@@ -1556,6 +1741,24 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
               upstream.request,
               upstream.resolver,
               upstream.entity);
+      if (withOtherCandidate) {
+        fixture.projectOtherControllerNew(otherSeed);
+        CanonicalGameplayOriginalNewCandidateRedisOwnerFactory.create(
+                redis, scripts, inventory, tags)
+            .installOnce(otherDecision);
+        fixture.acknowledgeOtherControllerNew(otherSeed);
+        new CanonicalGameplayAccountMemberRepairOwner(sql, redis, scripts)
+            .repair(otherDecision.bindingDecisionId());
+        otherRegion =
+            CanonicalGameplayRegionOwnerCompositionFixture.installAdditionalOriginalCandidate(
+                region,
+                otherDecision.bindingDecisionId(),
+                upstream.request(otherDecision.bindingDecisionId()));
+        otherAdmission = inventory.readOriginalNewFinalAdmissionSource(otherDecision);
+      } else {
+        otherRegion = null;
+        otherAdmission = null;
+      }
       admission = inventory.readOriginalNewFinalAdmissionSource(decision);
       scope = region.installation().source;
       prior = new CanonicalGameplayRegionRuntimeStatusRepository(sql).find(scope).orElseThrow();
