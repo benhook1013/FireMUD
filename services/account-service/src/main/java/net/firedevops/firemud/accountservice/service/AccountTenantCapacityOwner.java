@@ -16,12 +16,16 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountCapacityOriginDecisionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginContinuation;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution;
+import net.firedevops.firemud.common.account.capacity.AccountCapacityOriginResolution.Status;
 import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.PlayerContext;
@@ -53,6 +57,7 @@ public final class AccountTenantCapacityOwner {
   private final AccountGameplayDelegationIssuanceRepository issuances;
   private final AccountConnectScopeRepository scopes;
   private final AccountTenantCapacityRepository capacity;
+  private final AccountCapacityOriginDecisionRepository originDecisions;
   private final TransactionTemplate transaction;
   private final Clock clock;
   private final String namespace;
@@ -72,6 +77,7 @@ public final class AccountTenantCapacityOwner {
     this.issuances = Objects.requireNonNull(issuances);
     this.scopes = Objects.requireNonNull(scopes);
     this.capacity = new AccountTenantCapacityRepository(dsl);
+    this.originDecisions = new AccountCapacityOriginDecisionRepository(dsl);
     this.clock = Objects.requireNonNull(clock);
     if (!GrpcPeerIdentity.isValidNamespace(namespace))
       throw new IllegalArgumentException("Namespace required");
@@ -96,7 +102,50 @@ public final class AccountTenantCapacityOwner {
           requireSupportedShape(request);
           if (!request.evidence().permitsCreation())
             throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
+          originDecisions.accept(request);
           return capacity.create(request, request.evidence().expiresAt());
+        });
+  }
+
+  /**
+   * Bounded private recovery entrypoint, not registered as an RPC. A lookup does not mutate.
+   * Explicit retirement is a durable Account refusal, not an inference from a missing reply. The
+   * caller must independently own an OPEN Game Session origin; this result never grants dispatch
+   * permission, capacity release, rearm, or negative execution evidence.
+   */
+  public AccountCapacityOriginResolution resolveOrigin(
+      Request request, String authenticatedCaller, boolean retireIfUnaccepted) {
+    requireCaller(request, authenticatedCaller);
+    request.requireStructurallyValid();
+    requireSupportedShape(request);
+    return inTransaction(
+        () -> {
+          lockPlayerAccount(request);
+          Record reservation = capacity.find(request.identity());
+          if (reservation != null) {
+            Result exact = capacity.exact(request, reservation);
+            return new AccountCapacityOriginResolution(
+                request,
+                Status.RESERVATION_RETAINED,
+                exact,
+                null,
+                AccountCapacityOriginContinuation.retained(
+                    request,
+                    exact,
+                    AccountTenantCapacityRepository.time(reservation, "reconcile_deadline")));
+          }
+          Record decision = originDecisions.find(request);
+          if (decision != null) {
+            if (!"NO_ACCEPT".equals(decision.get("decision", String.class))) throw unavailable();
+            return new AccountCapacityOriginResolution(
+                request, Status.NO_ACCEPT_RETAINED, null, decision.get("decision_id", UUID.class));
+          }
+          if (!retireIfUnaccepted)
+            return new AccountCapacityOriginResolution(request, Status.UNKNOWN, null, null);
+          // A missing initial reservation cannot authorize a made-up later rearm attempt.
+          if (request.capacityRearmFence() != 1) throw conflict();
+          return new AccountCapacityOriginResolution(
+              request, Status.NO_ACCEPT_RETAINED, null, originDecisions.refuse(request));
         });
   }
 
@@ -132,6 +181,7 @@ public final class AccountTenantCapacityOwner {
               || row.get("owner_readback", byte[].class) == null) throw conflict();
           current(next);
           requireSupportedShape(next);
+          originDecisions.accept(next);
           int history =
               dsl.execute(
                   "INSERT INTO account_tenant_capacity_attempt_history "
@@ -156,7 +206,9 @@ public final class AccountTenantCapacityOwner {
                   CapacityAdmissionDigest.preimage(next),
                   next.evidence().evaluationIdentity(),
                   at(next.evidence().expiresAt()),
-                  at(next.evidence().expiresAt().plusSeconds(60)),
+                  at(
+                      AccountCapacityOriginContinuation.reconcileDeadline(
+                          next.evidence().expiresAt())),
                   prior.identity().tenantId(),
                   prior.identity().requestId(),
                   prior.identity().admissionId(),

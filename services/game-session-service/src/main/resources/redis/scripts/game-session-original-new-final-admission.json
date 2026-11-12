@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.original-new-final-admission.v1",
   "resourcePath": "redis/lua/game-session-original-new-final-admission.lua",
-  "sha256": "0ed090df2d591f1d9001f812ce0ffe23a9de2916c17423834f7ced02bb6fbcc9",
+  "sha256": "848aa9569db14d28f7d1f83cc591d88fe70e1115f892cb4af6e9955a24e6b603",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",

@@ -719,6 +719,8 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
       return dsl.transactionResult(
           configuration -> {
             DSLContext transaction = DSL.using(configuration);
+            if (transferProof != null)
+              CanonicalGameplayBindingInventoryRepository.lockInventoryRevision(transaction);
             lockRegionScope(transaction, expectedTag);
             Record currentRow =
                 transaction.fetchOne(
@@ -774,9 +776,15 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
               throw unavailable();
             }
 
+            // Origin physical custody must name the same successor fence committed here.
             Record fenceRow =
-                transaction.fetchOne("SELECT nextval('" + FENCE_SEQUENCE + "') AS fence");
-            Long fence = fenceRow == null ? null : fenceRow.get("fence", Long.class);
+                transferProof == null
+                    ? transaction.fetchOne("SELECT nextval('" + FENCE_SEQUENCE + "') AS fence")
+                    : null;
+            Long fence =
+                transferProof == null
+                    ? (fenceRow == null ? null : fenceRow.get("fence", Long.class))
+                    : transferProof.reservedFence();
             if (fence == null || fence <= 0L) throw unavailable();
             if (transferProof != null) {
               if (current == null) throw unavailable();

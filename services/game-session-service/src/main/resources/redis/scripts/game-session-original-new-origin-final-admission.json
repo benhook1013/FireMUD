@@ -1,0 +1,167 @@
+{
+  "scriptId": "game-session.original-new-origin-final-admission.v1",
+  "resourcePath": "redis/lua/game-session-original-new-final-admission.lua",
+  "sha256": "848aa9569db14d28f7d1f83cc591d88fe70e1115f892cb4af6e9955a24e6b603",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "session",
+      "ownedPrefix": "session:game:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "characterIndex",
+      "ownedPrefix": "session:game:index:character:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "accountTenantIndex",
+      "ownedPrefix": "session:game:index:account-tenant:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "tenantIndex",
+      "ownedPrefix": "session:game:index:tenant:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "accountAdmissionBarrier",
+      "ownedPrefix": "session:game:account-admission:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "issuerAdmissionBarrier",
+      "ownedPrefix": "session:game:issuer-admission:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "capacityExecution",
+      "ownedPrefix": "session:game:capacity-execution:",
+      "hashTagDeclaration": "REQUIRED"
+    },
+    {
+      "name": "capacityOrigin",
+      "ownedPrefix": "session:game:capacity-origin:",
+      "hashTagDeclaration": "REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "tenantId"
+    },
+    {
+      "name": "accountId"
+    },
+    {
+      "name": "playableStateNamespaceId"
+    },
+    {
+      "name": "characterId"
+    },
+    {
+      "name": "gameInstanceId"
+    },
+    {
+      "name": "sessionId"
+    },
+    {
+      "name": "bindingGeneration"
+    },
+    {
+      "name": "tenantGameplayTag"
+    },
+    {
+      "name": "candidateBytes"
+    },
+    {
+      "name": "characterProjectionBytes"
+    },
+    {
+      "name": "templateBytes"
+    },
+    {
+      "name": "canonicalSessionDurationMillis"
+    },
+    {
+      "name": "accountOpenFieldsJSON"
+    },
+    {
+      "name": "issuerOpenFieldsJSON"
+    },
+    {
+      "name": "absoluteDeadlineMillis"
+    },
+    {
+      "name": "issuerPayloadBytes"
+    },
+    {
+      "name": "capacityExecutionBytes"
+    },
+    {
+      "name": "capacityAction"
+    },
+    {
+      "name": "capacityExecutionDigest"
+    },
+    {
+      "name": "originDigest"
+    },
+    {
+      "name": "custodyOwnerId"
+    },
+    {
+      "name": "custodyOwnerFence"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "FINAL_ADMISSION_CREATED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "FINAL_ADMISSION_REPLAY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CAPACITY_EXECUTION_AUTHORIZED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "CAPACITY_EXECUTION_CLOSED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "CAPACITY_EXECUTION_FENCED_INDETERMINATE",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "CURRENT_PHYSICAL_STATE_REFUSED",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "EMPTY_REDIS_COLD_START_OR_RESET",
+  "tailLossBehavior": "Missing capacity execution remains historically indeterminate and cannot be reinstalled as AUTHORIZED by retry. Under separately qualified current-incarnation normal owner handoff only, FENCE creates or retains an exact persistent FENCED_INDETERMINATE deny, excluding delayed INSTALL/FINAL without claiming no earlier execution, permitting reset adoption, or authorizing Account release/rearm. FENCE preserves exact COMMITTED and CLOSED outcomes; first mutation must meet the frozen Redis TIME deadline and completed exact replay is read-only. CLOSED is irreversible and fences every delayed same-attempt FINAL. Account alone consumes exact terminal evidence to mutate capacity. A missing or changed candidate, tenant index, OPEN barrier, or Redis state fails closed for admission. Exact final retry is read-only and preserves the first Redis TIME values; the script never repairs indexes, recreates barriers, transfers a controller, or claims that the supplied OPEN sources establish the complete admission flow. The owner returns evidence only after independent exact physical readback. Reset-sensitive state requires its owning recovery before the final consumer can proceed.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "none"
+    }
+  ],
+  "legacyPayloadShape": null
+}
