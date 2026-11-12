@@ -1877,6 +1877,131 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void actualFinalBeforeAccountFenceRetainsPhysicalPositiveButRecoveryRemainsIndeterminate()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      // This is the real physical FINAL, not an injected SQL or Redis positive receipt.
+      byte[] finalBytes = admin.get(ascii(installation.sessionKey()));
+      assertThat(finalBytes).containsExactly(actual.exactCanonicalBytes());
+      assertThat(
+              net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
+                  finalBytes))
+          .isEqualTo(actual.finalSessionSha256());
+      var pending =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT status, original_new_final_session_sha256 FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                  fixture.transitionId());
+      assertThat(pending.get("status", String.class)).isEqualTo("PROVISIONAL");
+      assertThat(pending.get("original_new_final_session_sha256", String.class)).isNull();
+      // The crash window intentionally precedes SQL commit. Physical FINAL is positive evidence,
+      // but the Account-facing reader requires COMMITTED and must not expose it as final-readable.
+      String beforeReader = sqlImage();
+      var physicalBeforeFence = physicalImage();
+      assertThatThrownBy(
+              () -> reader().readActualOriginalFinalAdmission(credential.selector(), "test"))
+          .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+          .hasMessage("Original NEW transition is not final-readable");
+      assertThat(sqlImage()).isEqualTo(beforeReader);
+      assertThat(physicalImage()).isEqualTo(physicalBeforeFence);
+      assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).transitionStatus())
+          .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.PROVISIONAL);
+      var barrier = new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl());
+      var intent =
+          barrier.beginFenceIntent(
+              source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
+      assertThat(intent.state().name()).isEqualTo("ACQUISITION_INTENT");
+      assertThat(intent.cohortRows())
+          .filteredOn(
+              row ->
+                  row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
+                      && row.sourceKey().equals(fixture.transitionId().toString()))
+          .hasSize(1);
+      assertThat(physicalImage()).isEqualTo(physicalBeforeFence);
+      String rows = sqlImage();
+      var physical = physicalImage();
+      for (int attempt = 0; attempt < 2; attempt++) {
+        // Current authority deliberately cannot promote this historical positive through a
+        // newer frozen Account cohort. A future receipt-only recovery owner needs its own proof.
+        assertThatThrownBy(
+                () ->
+                    new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
+                        .commitOriginalNewFinalAdmission(actual))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+            .hasMessage("Account-fence acquisition intent blocks a new binding transition");
+        assertThatThrownBy(
+                () ->
+                    new CanonicalGameplayBindingInventoryRepository(fixture.dsl())
+                        .readOriginalNewFinalAdmissionSource(decision))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+            .hasMessage("Account-fence acquisition intent blocks a new binding transition");
+        assertThatThrownBy(
+                () ->
+                    capacityOwner()
+                        .retainCommittedBeforeCleanup(
+                            controlledCapacity.request(), controlledCapacity.reservation()))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+        assertThatThrownBy(
+                () ->
+                    capacityOwner()
+                        .closeOriginalAttempt(
+                            controlledCapacity.request(), controlledCapacity.reservation()))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+        assertThatThrownBy(
+                () ->
+                    capacityOwner()
+                        .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+            .isInstanceOf(IllegalStateException.class);
+        // This remains the SQL-commit guard; the source/commit assertions above independently
+        // prove that the newer Account fence prevents reconciliation of the physical positive.
+        assertThatThrownBy(
+                () -> reader().readActualOriginalFinalAdmission(credential.selector(), "test"))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+            .hasMessage("Original NEW transition is not final-readable");
+        assertThat(sqlImage()).isEqualTo(rows);
+        assertThat(physicalImage()).isEqualTo(physical);
+        assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(finalBytes);
+        var frozen = barrier.readCurrentFenceIntent(intent.operationId());
+        assertThat(frozen.state()).isEqualTo(intent.state());
+        assertThat(frozen.inventorySnapshotRevision())
+            .isEqualTo(intent.inventorySnapshotRevision());
+        assertThat(frozen.cohortDigest()).isEqualTo(intent.cohortDigest());
+        assertThat(frozen.operationFence()).isEqualTo(intent.operationFence());
+        assertThat(frozen.plannedAccountAdmissionFence())
+            .isEqualTo(intent.plannedAccountAdmissionFence());
+        assertThat(frozen.cohortRows()).usingRecursiveComparison().isEqualTo(intent.cohortRows());
+        assertThat(frozen.barrierTargetDigest()).isEqualTo(intent.barrierTargetDigest());
+        assertThat(frozen.barrierTargets())
+            .usingRecursiveComparison()
+            .isEqualTo(intent.barrierTargets());
+      }
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                      controlledCapacity.digest())
+                  .get(0, String.class))
+          .isEqualTo("AUTHORIZED");
+    }
+  }
+
+  @Test
   void recreatedCapacityOwnerRecoversCommittedRedisWithoutOriginalCredentialOrGrant()
       throws Exception {
     repairAccountMember();
