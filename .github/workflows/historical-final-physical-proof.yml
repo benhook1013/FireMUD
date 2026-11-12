@@ -1,25 +1,25 @@
-name: Temporary historical FINAL fence witness
-run-name: Historical FINAL witness ${{ github.run_id }}
+name: Temporary same-grant handoff proof
+run-name: Same-grant handoff proof ${{ github.run_id }}
 'on':
   push:
     branches:
-    - codex/proof-cli7-historical-final-20261112
+    - codex/proof-hosted9-same-grant-20261112
 permissions:
   contents: read
 concurrency:
-  group: cli7-historical-final-physical-proof
+  group: hosted9-same-grant-physical-proof
   cancel-in-progress: false
 jobs:
   capacity-proof:
-    if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/codex/proof-cli7-historical-final-20261112'
+    if: github.repository == 'benhook1013/FireMUD' && github.ref == 'refs/heads/codex/proof-hosted9-same-grant-20261112'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      SOURCE_SHA: 60f5e125667ad9b2146a45c033617966266098b2
-      SOURCE_TREE: 76c6aa559f6978924c0edb27d83a7a50ba6b1ddd
-      SOURCE_FILES: '[{"path":"design/architecture/microservices/game-session-service/runtime-and-data.md","postimage_blob":"80376efbe9c23e5eb86bc3c27f6f6ee3f6d38d0f","postimage_sha256":"b05c580399cfb62fbdf4267c57aade3ffc9ce9cc6341ba1174133397911cacc8"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayAccountAdmissionBarrierRepository.java","postimage_blob":"39977d3bb7a86785f0132862fe5af707170d9e01","postimage_sha256":"5efafa99f30c64988b57dad11f4e13e695bed2a07fe94113f4a9bc1e26f4930e"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewCapacityExecutionOwner.java","postimage_blob":"80cf66fb24804202af18621ad9ec8c940cb9872e","postimage_sha256":"44b29e03098a795cef53a67a523d984d166d0f25d4e9a4af12cae451cce1fb14"},{"path":"services/game-session-service/src/main/resources/db/migration/V1065.2__account_fence_historical_final_observation.sql","postimage_blob":"8c2f9c7ed6b7e08e5b3eba19578a26f67fc62982","postimage_sha256":"20f3b17949944029bec9634a63996b0d70c274bccb9e999a3113288138a8170c"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java","postimage_blob":"5a3a7d6ac6d12ed15ff3551b08e5629bd2dcd5f4","postimage_sha256":"c706da17004501073250beef7c46d34ff326efdd17da34726062d42359d8a17d"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionRuntimeFamilyCatalogPostgresIntegrationTest.java","postimage_blob":"069a07b1e633573d53ffbe80b83513c65e826109","postimage_sha256":"93751e30a86f049c407d484021cb3fcba86377b13ca2e0efe0dd4fa1600d2a11"}]'
+      SOURCE_SHA: f7d51937a4a81e9b235d1edb63024fb1c5a887ea
+      SOURCE_TREE: 566b7cb3bb8c516aa3debf5460b0d0929d093319
+      SOURCE_FILES: '[{"path":"design/architecture/microservices/game-session-service/runtime-and-data.md","postimage_blob":"5790324cb15d79b0086573144f812bd806632d1f","postimage_sha256":"140080a3e06642e0bfc757826befdab09b0d5a52415d4f80b76cd480fe28cbb9"},{"path":"services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/AccountTenantCapacityOwner.java","postimage_blob":"48802ed7e3ccddf9861be0a85e1c6642911ba3e6","postimage_sha256":"73e6efa711208aef3114df9f35ff22ac0f1609a99a1204edc6442e2a0c8fa90c"},{"path":"services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/AccountTenantCapacityOwnerTest.java","postimage_blob":"a2c2f405789dfdc60ed74c295e08acf45cf972d2","postimage_sha256":"500b9ea82daa460f4ff2137314d173940ad7c6875dfb97114cd442d84ab943ab"},{"path":"services/common-platform-core/src/testFixtures/resources/capacity/test_capacity_admission_vectors.py","postimage_blob":"6aa871584ff78219796aec58103f57acba2e444b","postimage_sha256":"5c1443ba19ab1cfff65e6477b9ff17aae1804e254976addb2f2465e6327ef87c"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionLeaseOwner.java","postimage_blob":"a6d9a882ae6a20ab3add7c070632ab5ad00e37b8","postimage_sha256":"f1a3c10098ac18d4e441f2707cea778d5a1d4339f66140898ba20e092941ea88"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferCoordinator.java","postimage_blob":"9970b94a02f9a7a1244d5a96b9bad4bb5f91a3af","postimage_sha256":"a2c2a03f18742e98972de497634c6c2d44690932654af157409490b79cbf5ddb"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerTransferRepository.java","postimage_blob":"5b12e8f5cc837e438458ef2048f1b250f5926408","postimage_sha256":"668194d5e0dbffcea37852e2c9f8aac4c1077cb603a76ebb24897324c8982a40"},{"path":"services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionRuntimeStatusRepository.java","postimage_blob":"a2797db79fd43d9f86b9a8202d7dc3810f46fd8e","postimage_sha256":"ee1186e908d1aa96bf64e4da2511681eaf497102f9c28c381b3829617038706d"},{"path":"services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest.java","postimage_blob":"7bef165e64c548857bddc9125a86c4f399b3037d","postimage_sha256":"31efb3d9e46a967d3756a9d97fd625de4117c93a6dba06d159ccafd49387946c"},{"path":"services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewAuthenticatedSessionTest.java","postimage_blob":"8f8df214ce23100bdd82763de5892995010421fe","postimage_sha256":"132d7d9f8dc196b4d86a151396e4bdfc1b21650f83358a9b21d3a5d5dc435a76"}]'
       TESTCONTAINERS_CHECKS_DISABLE: 'false'
-      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"accountSqlFenceBeforeDelayedFinalCannotEstablishPreIntentCommitOrdering","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"fenceOwnerRetainsObservedFinalWithoutPromotingFrozenInventory","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"actualFinalBeforeAccountFenceRetainsPhysicalPositiveButRecoveryRemainsIndeterminate","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.GameSessionRuntimeFamilyCatalogPostgresIntegrationTest","method":"currentCombinedChainSealsEveryEmptyTableActualRenamesComponentsAndExplicitBlockingGaps","count":1}]'
+      EXPECTED_CASES: '[{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"completedTransferResumesOnlyWithTheSameLivePrivateGrant","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"authorizedUnknownHandoffKeepsOriginalCandidateAndRefusesCompletedMutation","count":1},{"task":"integrationTest","classname":"net.firedevops.firemud.gamesession.repository.CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest","method":"retainedTransferFenceLossCannotBeReinstalledOrQualifyHandoff","count":1}]'
     steps:
     - name: Set isolated proof directory
       shell: bash
@@ -184,7 +184,7 @@ jobs:
         \ indent=2) + '\\n')\n    return status\n\nif __name__ == '__main__':\n    if len(sys.argv) < 4 or sys.argv[2] !=\
         \ '--':\n        raise SystemExit('Usage: capture_log.py LOG -- COMMAND [ARG ...]')\n    raise SystemExit(capture(sys.argv[1],\
         \ sys.argv[3:]))\nCAPTURE\n"
-    - name: Run exact historical FINAL receipt and migration proof
+    - name: Run exact same-grant handoff and guard regressions
       shell: bash
       run: "set -euo pipefail\nset +e\npython3 \"$RUNNER_TEMP/capture-capacity-log.py\" \"$RUNNER_TEMP/capacity-physical-gradle.log\"\
         \ -- \\\n  timeout --signal=TERM --kill-after=30s 18m \\\n  bash dev-tools/validation/run-gradle-with-dependency-recovery.sh\
@@ -223,7 +223,7 @@ jobs:
       if: ${{ always() && steps.bound.outputs.ok == 'true' }}
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
-        name: cli7-historical-final-physical-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        name: hosted9-same-grant-physical-${{ github.run_id }}-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/capacity-physical-proof/
         if-no-files-found: error
         retention-days: 7
