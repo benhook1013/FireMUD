@@ -748,6 +748,19 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   @Test
   void rawOwnerReplacementCannotSkipFrozenIncompleteOrChangedExactTransfer() throws Exception {
     try (var proof = new TransferSqlProof()) {
+      assertThatThrownBy(
+              () ->
+                  proof.sql.transaction(
+                      configuration ->
+                          CanonicalGameplayRegionOwnerTransferRepository.completeTerminalOnly(
+                              DSL.using(configuration),
+                              proof.prior,
+                              "unretained-terminal-successor",
+                              proof.prior.executorFence().longValueExact() + 1,
+                              "e".repeat(64))))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Normal region owner transfer is held");
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
       proof.seedUndeliveredDispatch(proof.execution);
       String original = proof.originalImage();
       assertSqlGuard(() -> proof.rawReplaceOwner("unretained-successor", "e".repeat(64)));
