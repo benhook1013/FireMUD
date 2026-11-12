@@ -762,22 +762,32 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   private void handoffReceivingOrigin(boolean loseConfirmation) throws Exception {
     var fail = new java.util.concurrent.atomic.AtomicBoolean(loseConfirmation);
     var sql = binding.dsl();
-    var transferSql = loseConfirmation
-        ? org.jooq.impl.DSL.using(sql.configuration().deriveAppending(
-            new org.jooq.impl.DefaultExecuteListener() {
-              @Override
-              public void executeStart(org.jooq.ExecuteContext context) {
-                var query = context.sql();
-                if (fail.get() && query != null
-                    && query.contains("JOIN game_session_region_runtime_status r")
-                    && sql.fetchExists(org.jooq.impl.DSL.selectOne()
-                        .from("game_session_region_owner_transfer").where("state='COMPLETED'"))
-                    && fail.compareAndSet(true, false)) {
-                  throw new IllegalStateException("Controlled loss of completed origin observation");
-                }
-              }
-            }))
-        : sql;
+    var transferSql =
+        loseConfirmation
+            ? org.jooq.impl.DSL.using(
+                sql.configuration()
+                    .deriveAppending(
+                        new org.jooq.impl.DefaultExecuteListener() {
+                          @Override
+                          public void executeStart(org.jooq.ExecuteContext context) {
+                            var query = context.sql();
+                            if (fail.get()
+                                && query != null
+                                && query.contains("JOIN game_session_region_runtime_status r")
+                                && sql.fetchExists(
+                                    org.jooq
+                                        .impl
+                                        .DSL
+                                        .selectOne()
+                                        .from("game_session_region_owner_transfer")
+                                        .where("state='COMPLETED'"))
+                                && fail.compareAndSet(true, false)) {
+                              throw new IllegalStateException(
+                                  "Controlled loss of completed origin observation");
+                            }
+                          }
+                        }))
+            : sql;
     var repository = new CanonicalGameplayRegionOwnerTransferRepository(transferSql, CLOCK, tags);
     var receiver =
         new CanonicalGameplayControlledRegionTransferObservationFixture()
@@ -787,31 +797,44 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         new CanonicalGameplayControlledOriginTransferObservationFixture().receiver(origins, tags);
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
-            transferSql,
-            CLOCK,
-            repository,
-            originExecutionOwner(CLOCK),
-            receiver,
-            originReceiver);
+            transferSql, CLOCK, repository, originExecutionOwner(CLOCK), receiver, originReceiver);
     administration.sync().pexpire(ascii(regionInstallation.grant.key()), 0);
     if (loseConfirmation) {
-      var successor = CanonicalGameplayRegionLeaseOwnerFactory.compose(
-          sql, coordination, scripts,
-          CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture::controlledRegionIncarnation,
-          sources.resolver,
-          new RuntimeIdentity("game-session-service", "final-owner-handoff", "localhost",
-              CLOCK.instant(), "test", "test", "controlled-test-image"),
-          Duration.ofSeconds(30), CLOCK);
-      var unconfirmed = org.junit.jupiter.api.Assertions.assertThrows(
-          CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
-          () -> successor.installForTransition(
-              null, regionInstallation.transitionId, regionInstallation.worldRequest, transfer,
-              CLOCK.millis() + 5000));
+      var successor =
+          CanonicalGameplayRegionLeaseOwnerFactory.compose(
+              sql,
+              coordination,
+              scripts,
+              CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
+                  ::controlledRegionIncarnation,
+              sources.resolver,
+              new RuntimeIdentity(
+                  "game-session-service",
+                  "final-owner-handoff",
+                  "localhost",
+                  CLOCK.instant(),
+                  "test",
+                  "test",
+                  "controlled-test-image"),
+              Duration.ofSeconds(30),
+              CLOCK);
+      var unconfirmed =
+          org.junit.jupiter.api.Assertions.assertThrows(
+              CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
+              () ->
+                  successor.installForTransition(
+                      null,
+                      regionInstallation.transitionId,
+                      regionInstallation.worldRequest,
+                      transfer,
+                      CLOCK.millis() + 5000));
       org.assertj.core.api.Assertions.assertThat(fail).isFalse();
       var before = sql.fetchSingle("SELECT * FROM game_session_region_owner_transfer");
-      org.assertj.core.api.Assertions.assertThat(before.get("state", String.class)).isEqualTo("COMPLETED");
+      org.assertj.core.api.Assertions.assertThat(before.get("state", String.class))
+          .isEqualTo("COMPLETED");
       regionInstallation = successor.resumeCompletedTransfer(unconfirmed, CLOCK.millis() + 5000);
-      org.assertj.core.api.Assertions.assertThat(sql.fetchSingle("SELECT * FROM game_session_region_owner_transfer"))
+      org.assertj.core.api.Assertions.assertThat(
+              sql.fetchSingle("SELECT * FROM game_session_region_owner_transfer"))
           .isEqualTo(before);
       return;
     }
