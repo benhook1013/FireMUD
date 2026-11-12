@@ -218,6 +218,37 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
         });
   }
 
+  /** Rechecks the exact completed successor. This path cannot enroll, fence or install. */
+  CanonicalGameplayRegionRuntimeStatus recoverCompleted(
+      UUID transferId, String ownerInstance, String correlation, long deadline) {
+    return repository.within(
+        deadline,
+        budget -> {
+          var completed = repository.completedSuccessor(transferId, ownerInstance, correlation);
+          var page = repository.completedPage(transferId, -1);
+          if (page.isEmpty()) throw held();
+          var first = page.getFirst();
+          var before = observe(first, budget.absoluteDeadlineMillis());
+          if (!before.incarnationDigest().equals(completed.incarnationDigest())) throw held();
+          var owner = capacity.forTransferBudget(budget);
+          while (!page.isEmpty()) {
+            for (var item : page) {
+              budget.check();
+              repository.requireRetainedPhysical(
+                  item, owner.readTransferFence(item, budget.absoluteDeadlineMillis()));
+            }
+            page = repository.completedPage(transferId, page.getLast().ordinal());
+          }
+          var after = observe(first, budget.absoluteDeadlineMillis());
+          if (!after.incarnationDigest().equals(completed.incarnationDigest())
+              || !completed.equals(
+                  repository.completedSuccessor(transferId, ownerInstance, correlation))) {
+            throw held();
+          }
+          return completed.status();
+        });
+  }
+
   private CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation observe(
       CanonicalGameplayRegionOwnerTransferRepository.Item item, long deadline) {
     var value =

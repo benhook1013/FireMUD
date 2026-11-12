@@ -416,6 +416,12 @@ final class CanonicalGameplayRegionRuntimeStatusRepository {
                   || !status.leaseTokenCorrelation().equals(leaseTokenCorrelation)) {
                 throw unavailable();
               }
+              if (current.phase == TimelinePreparationPhase.INSTALLED
+                  && status.executorFence().equals(current.executorFence)
+                  && leaseTokenCorrelation.equals(current.leaseTokenCorrelation)
+                  && redisMetaDigest.equals(current.redisMetaDigest)) {
+                return current;
+              }
               nextPhase = "INSTALLED";
             }
             int updated =
