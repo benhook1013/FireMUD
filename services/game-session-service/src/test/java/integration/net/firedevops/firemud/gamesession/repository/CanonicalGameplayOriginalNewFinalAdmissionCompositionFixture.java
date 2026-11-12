@@ -828,9 +828,22 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
       result.put(
           "redis:" + new String(key, StandardCharsets.UTF_8),
           net.firedevops.firemud.common.account.capacity.OriginalNewCapacityExecution.sha256(
-              commands.dump(key)));
+              CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(commands, key)));
     }
     return java.util.Map.copyOf(result);
+  }
+
+  /** Controlled TTL-only fault used to prove the composition image observes absolute expiry. */
+  public String setPhysicalSessionExpiryForFault() {
+    var commands = administration.sync();
+    byte[] key = ascii(candidateInstallation.sessionKey());
+    long expiresAt = Math.addExact(CLOCK.millis(), 60_000L);
+    if (commands.pexpiretime(key) != -1L
+        || !commands.pexpireat(key, expiresAt)
+        || commands.pexpiretime(key) != expiresAt)
+      throw new IllegalStateException(
+          "Expected a persistent candidate with only its expiry changed");
+    return "redis:" + candidateInstallation.sessionKey();
   }
 
   /** Controlled post-retention serving loss only, not proof of actual runtime teardown ordering. */

@@ -187,6 +187,7 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayAdmissionAbortCompositionFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayRegionOwnerCompositionFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture*.class")
+        include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalPublishedAdmissionActualOwnerCompositionFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayControlledInitialObservationFixture*.class")
         include("net/firedevops/firemud/gamesession/repository/CanonicalGameplayControlledRegionTransferObservationFixture*.class")
