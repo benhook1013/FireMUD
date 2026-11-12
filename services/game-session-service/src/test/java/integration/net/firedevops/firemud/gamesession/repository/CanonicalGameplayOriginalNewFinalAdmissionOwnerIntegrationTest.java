@@ -1219,7 +1219,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var originalPhysical = physicalImage();
     byte[] sessionKey = ascii(installation.sessionKey());
     byte[] originalSession = admin.get(sessionKey);
-    admin.del(new byte[][] {sessionKey});
+    assertThat(admin.pexpire(sessionKey, 0)).isTrue();
     assertThatThrownBy(() -> owner.retainCommittedBeforeCleanup(request, reservation, deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> owner.readExact(request, reservation))
