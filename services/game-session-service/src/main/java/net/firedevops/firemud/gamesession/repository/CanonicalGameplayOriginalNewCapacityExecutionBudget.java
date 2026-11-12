@@ -53,7 +53,6 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   private final AtomicInteger outstandingConnections = new AtomicInteger();
   private final Context caller;
   private final Clock clock;
-  private final long explicitDeadline;
   private final Deadline deadline;
   private final long absoluteDeadlineMillis;
   private final AtomicBoolean cancelled = new AtomicBoolean();
@@ -73,7 +72,6 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
       Clock clock, long explicitDeadline, ThreadFactory cancellationThreads, boolean background) {
     this.background = background;
     this.clock = clock;
-    this.explicitDeadline = explicitDeadline;
     this.cancellationThreads = Objects.requireNonNull(cancellationThreads);
     caller = Context.current();
     long startedMillis = clock.millis();
@@ -214,12 +212,18 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
   }
 
   long remainingNanos() {
-    long nanos = deadline.timeRemaining(TimeUnit.NANOSECONDS);
-    if (nanos <= 0
-        || cancelled.get()
-        || caller.isCancelled()
-        || (explicitDeadline != Long.MAX_VALUE && clock.millis() >= explicitDeadline))
+    if (cancelled.get() || caller.isCancelled()) throw unavailable();
+    long remainingMillis;
+    try {
+      remainingMillis = Math.subtractExact(absoluteDeadlineMillis, clock.millis());
+    } catch (ArithmeticException invalid) {
       throw unavailable();
+    }
+    long nanos =
+        Math.min(
+            deadline.timeRemaining(TimeUnit.NANOSECONDS),
+            TimeUnit.MILLISECONDS.toNanos(remainingMillis));
+    if (nanos <= 0) throw unavailable();
     return nanos;
   }
 
