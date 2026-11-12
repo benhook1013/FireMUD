@@ -19,18 +19,20 @@ local function decode(bytes)
   return value
 end
 
-if #KEYS ~= 5 or #ARGV ~= 13 then return -2 end
+if #KEYS ~= 5 or #ARGV ~= 14 then return -2 end
 local tenantId, accountId, namespaceId, characterId = ARGV[1], ARGV[2], ARGV[3], ARGV[4]
 local gameInstanceId, sessionId, generation, tag = ARGV[5], ARGV[6], ARGV[7], ARGV[8]
 local executionDigest, logoutId, deadlineText = ARGV[9], ARGV[10], ARGV[11]
 local executionBytes, sessionSha1 = ARGV[12], ARGV[13]
+local action = ARGV[14]
 if not uuid(tenantId) or not uuid(accountId) or not uuid(namespaceId) or not uuid(characterId)
     or not uuid(gameInstanceId) or not uuid(sessionId) or not uuid(logoutId)
     or not positive(generation, 256) or #tag > 44
     or not string.match(tag, '^g[1-9][0-9]*%-[0-9a-f]+$')
     or #executionDigest ~= 71 or not string.match(executionDigest, '^sha256:[0-9a-f]+$')
     or #sessionSha1 ~= 40 or not string.match(sessionSha1, '^[0-9a-f]+$')
-    or not positive(deadlineText, 16) then return -2 end
+    or not positive(deadlineText, 16)
+    or (action ~= 'DISPATCH' and action ~= 'OBSERVE') then return -2 end
 local deadline = tonumber(deadlineText)
 if not deadline or deadline > 9007199254740991
     or string.format('%.0f', deadline) ~= deadlineText then return -2 end
@@ -81,10 +83,23 @@ local tombstone = '{"purpose":"original-new-admitted-logout/v1","bindingGenerati
   .. '","originalSessionSha1":"' .. sessionSha1 .. '"}'
 
 if session == tombstone then
-  -- A later generation may own the character pointer. Exact retry only observes it.
-  if character == characterExpected or accountMember ~= 0 or tenantMember ~= 0 then return -1 end
+  if accountMember ~= 0 or tenantMember ~= 0 then return -1 end
+  if character then
+    -- An exact readback may coexist with a successor, whose pointer must remain intact.
+    local next = decode(character)
+    if not next or not uuid(next.sessionId) or next.sessionId == sessionId
+        or not uuid(next.gameInstanceId) or not positive(next.bindingGeneration, 256)
+        or #next.bindingGeneration < #generation
+        or (#next.bindingGeneration == #generation and next.bindingGeneration <= generation)
+        or character ~= '{"sessionId":"' .. next.sessionId .. '","gameInstanceId":"'
+            .. next.gameInstanceId .. '","bindingGeneration":"' .. next.bindingGeneration .. '"}' then
+      return -1
+    end
+  end
   return 2
 end
+-- Recovery uses EVALSHA_RO. A live value or absent marker cannot prove a completed fence.
+if action == 'OBSERVE' then return -1 end
 if redis.sha1hex(session) ~= sessionSha1 or character ~= characterExpected
     or accountMember ~= 1 or tenantMember ~= 1 then return -1 end
 local admitted = decode(session)
