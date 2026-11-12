@@ -74,6 +74,40 @@ class GatewayRateLimiterConfigTest {
   }
 
   @Test
+  void rejectsRequestedTokensAboveBurstAndAllowsEqualityAtSupportedBounds() {
+    GatewayProperties oversizedRequest = new GatewayProperties();
+    FilterDefinition oversizedLimiter = limiter("20", "40");
+    oversizedLimiter.getArgs().put("redis-rate-limiter.requestedTokens", "41");
+    oversizedRequest.setDefaultFilters(List.of(oversizedLimiter));
+
+    GatewayProperties equalityAtMaximumBounds = new GatewayProperties();
+    FilterDefinition maximumLimiter =
+        limiter(Integer.toString(Integer.MAX_VALUE), Long.toString(Long.MAX_VALUE));
+    maximumLimiter
+        .getArgs()
+        .put("redis-rate-limiter.requestedTokens", Integer.toString(Integer.MAX_VALUE));
+    equalityAtMaximumBounds.setDefaultFilters(List.of(maximumLimiter));
+
+    GatewayProperties equality = new GatewayProperties();
+    FilterDefinition equalityLimiter = limiter("20", "40");
+    equalityLimiter.getArgs().put("redis-rate-limiter.requestedTokens", "40");
+    equality.setDefaultFilters(List.of(equalityLimiter));
+
+    assertThatThrownBy(
+            () -> GatewayRateLimiterConfig.defaultRequestRateLimiterArguments(oversizedRequest))
+        .isInstanceOf(IllegalStateException.class);
+    var arguments =
+        GatewayRateLimiterConfig.defaultRequestRateLimiterArguments(equalityAtMaximumBounds);
+    assertThat(arguments.replenishRate()).isEqualTo(Integer.MAX_VALUE);
+    assertThat(arguments.burstCapacity()).isEqualTo(Long.MAX_VALUE);
+    assertThat(arguments.requestedTokens()).isEqualTo(Integer.MAX_VALUE);
+    assertThat(
+            GatewayRateLimiterConfig.defaultRequestRateLimiterArguments(equality)
+                .requestedTokens())
+        .isEqualTo(40);
+  }
+
+  @Test
   void rejectsMissingDuplicateOrNonpositiveDefaultRateLimiterConfiguration() {
     GatewayProperties missing = new GatewayProperties();
     missing.setDefaultFilters(List.of());

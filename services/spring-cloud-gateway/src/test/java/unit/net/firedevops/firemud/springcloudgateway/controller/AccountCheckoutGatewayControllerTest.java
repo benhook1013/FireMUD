@@ -279,7 +279,8 @@ class AccountCheckoutGatewayControllerTest {
     var authClient = mock(AccountControlUiAuthenticationClient.class);
     var checkoutClient = mock(AccountCheckoutHttpClient.class);
     var controller = new AccountCheckoutGatewayController(authClient, checkoutClient, properties());
-    byte[] payload = "{\n\"id\":\"evt_raw\"\n}".getBytes(StandardCharsets.UTF_8);
+    byte[] payload =
+        "  { \n  \"id\" : \"evt_raw\" \t\n}  \n".getBytes(StandardCharsets.UTF_8);
     when(checkoutClient.forward(eq(HttpMethod.POST), eq("/billing/hosting/webhook"), any(), any()))
         .thenReturn(
             Mono.just(
@@ -299,8 +300,17 @@ class AccountCheckoutGatewayControllerTest {
     assertThat(response).isNotNull();
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
     assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+    var forwardedHeaders = org.mockito.ArgumentCaptor.forClass(HttpHeaders.class);
+    var forwardedBody = org.mockito.ArgumentCaptor.forClass(byte[].class);
     verify(checkoutClient)
-        .forward(eq(HttpMethod.POST), eq("/billing/hosting/webhook"), any(), any());
+        .forward(
+            eq(HttpMethod.POST),
+            eq("/billing/hosting/webhook"),
+            forwardedHeaders.capture(),
+            forwardedBody.capture());
+    assertThat(forwardedBody.getValue()).containsExactly(payload);
+    assertThat(forwardedHeaders.getValue().get("Stripe-Signature"))
+        .containsExactly("t=123,v1=signature");
     verify(authClient, never()).login(any());
   }
 

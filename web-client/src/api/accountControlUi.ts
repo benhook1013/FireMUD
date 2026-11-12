@@ -20,11 +20,16 @@ export interface AccountControlUiApi {
 
 export class AccountControlUiApiError extends Error {
   readonly status: number;
+  readonly uncertain: boolean;
 
-  constructor(status: number) {
+  constructor(
+    status: number,
+    uncertain = status < 400 || status === 408 || status >= 500
+  ) {
     super('Account sign-in could not be completed.');
     this.name = 'AccountControlUiApiError';
     this.status = status;
+    this.uncertain = uncertain;
   }
 }
 
@@ -33,6 +38,7 @@ const jwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const timestamp =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const maxLoginResponseBytes = 32 * 1024;
+export const accountControlUiLoginTimeoutMs = 10_000;
 export const maxControlUiSessionLifetimeMs = 24 * 60 * 60 * 1000;
 
 function requireSecureOrigin(value: string): URL {
@@ -70,31 +76,30 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
 
 async function readBoundedJson(
   response: Response,
-  signal?: AbortSignal
+  signal: AbortSignal
 ): Promise<unknown> {
   if (!response.body) throw new AccountControlUiApiError(0);
   const reader = response.body.getReader();
+  const discard = () => void reader.cancel().catch(() => {});
+  signal.addEventListener('abort', discard, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
     for (;;) {
-      if (signal?.aborted) throw new AccountControlUiApiError(0);
+      if (signal.aborted) throw new AccountControlUiApiError(0);
       const { done, value } = await reader.read();
+      if (signal.aborted) throw new AccountControlUiApiError(0);
       if (done) break;
       size += value.byteLength;
-      if (size > maxLoginResponseBytes) {
-        await reader.cancel();
-        throw new AccountControlUiApiError(0);
-      }
+      if (size > maxLoginResponseBytes) throw new AccountControlUiApiError(0);
       chunks.push(value);
     }
   } catch {
-    try {
-      await reader.cancel();
-    } catch {
-      // Do not expose a stream or transport error that could contain response data.
-    }
+    discard();
     throw new AccountControlUiApiError(0);
+  } finally {
+    signal.removeEventListener('abort', discard);
+    reader.releaseLock();
   }
 
   const bytes = new Uint8Array(size);
@@ -170,7 +175,12 @@ export function createAccountControlUiApi(
 
   return {
     async login(request, signal) {
-      const url = new URL('/api/account/auth/login', currentOrigin());
+      let url: URL;
+      try {
+        url = new URL('/api/account/auth/login', currentOrigin());
+      } catch {
+        throw new AccountControlUiApiError(0, false);
+      }
       if (
         !uuid.test(request.requestId) ||
         !uuid.test(request.callerContextId) ||
@@ -182,12 +192,29 @@ export function createAccountControlUiApi(
         request.secret.length < 1 ||
         request.secret.length > 1024
       ) {
-        throw new AccountControlUiApiError(0);
+        throw new AccountControlUiApiError(0, false);
       }
+      if (signal?.aborted) throw new AccountControlUiApiError(0, false);
 
-      let response: Response;
-      try {
-        response = await fetchImpl(url, {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      const deadline = performance.now() + accountControlUiLoginTimeoutMs;
+      const timer = setTimeout(abort, accountControlUiLoginTimeoutMs);
+      signal?.addEventListener('abort', abort, { once: true });
+      const interrupted = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => reject(new AccountControlUiApiError(0)),
+          { once: true }
+        );
+      });
+      const assertWithinDeadline = () => {
+        if (performance.now() >= deadline) abort();
+        if (controller.signal.aborted) throw new AccountControlUiApiError(0);
+      };
+
+      async function receive(): Promise<AccountControlUiLoginResult> {
+        const response = await fetchImpl(url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -199,22 +226,32 @@ export function createAccountControlUiApi(
           redirect: 'error',
           referrerPolicy: 'no-referrer',
           mode: 'same-origin',
-          signal,
+          signal: controller.signal,
         });
-      } catch {
-        throw new AccountControlUiApiError(0);
-      }
-
-      if (response.status !== 200) {
         try {
-          await response.body?.cancel();
-        } catch {
-          // The body is deliberately discarded; server text is never surfaced.
+          assertWithinDeadline();
+          if (response.status !== 200) {
+            throw new AccountControlUiApiError(response.status);
+          }
+        } catch (error) {
+          // Discard rejected and late responses without waiting for stream cancellation.
+          void response.body?.cancel().catch(() => {});
+          throw error;
         }
-        throw new AccountControlUiApiError(response.status);
+        const body = await readBoundedJson(response, controller.signal);
+        assertWithinDeadline();
+        return parseLoginResult(body, now());
       }
 
-      return parseLoginResult(await readBoundedJson(response, signal), now());
+      try {
+        return await Promise.race([interrupted, receive()]);
+      } catch (error) {
+        if (error instanceof AccountControlUiApiError) throw error;
+        throw new AccountControlUiApiError(0);
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+      }
     },
   };
 }

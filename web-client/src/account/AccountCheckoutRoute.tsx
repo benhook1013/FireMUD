@@ -330,17 +330,21 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
       await sessionStore.signIn(api, credentials);
     } catch (error) {
       if (
-        error instanceof AccountControlUiApiError &&
-        [0, 429, 502, 503].includes(error.status)
-      ) {
-        setMessage(
-          'Account sign-in is temporarily unavailable. Try again later.'
-        );
-      } else if (
         error instanceof ControlUiSessionError &&
         error.code === 'SESSION_REPLACED'
       ) {
         setMessage('This sign-in attempt was replaced. Sign in again.');
+      } else if (sessionStore.canRetrySignIn(credentials.email)) {
+        setMessage(
+          'Account sign-in could not be confirmed. To retry now, re-enter the same secret and select Sign in.'
+        );
+      } else if (
+        error instanceof AccountControlUiApiError &&
+        (error.uncertain || error.status === 429)
+      ) {
+        setMessage(
+          'Account sign-in is temporarily unavailable. Try again later.'
+        );
       } else {
         setMessage(
           'Sign-in could not be completed. Check your email and primary authentication secret.'
@@ -374,7 +378,17 @@ function AccountLoginForm({ api, sessionStore, notice }: LoginFormProps) {
           autoComplete="username"
           value={email}
           disabled={busy}
-          onChange={(event) => setEmail(event.target.value)}
+          onChange={(event) => {
+            const nextEmail = event.target.value;
+            if (
+              nextEmail.trim() !== email.trim() &&
+              sessionStore.canRetrySignIn(email.trim())
+            ) {
+              setMessage('');
+            }
+            sessionStore.discardLoginRecoveryIfEmailChanged(nextEmail.trim());
+            setEmail(nextEmail);
+          }}
           slotProps={{ htmlInput: { maxLength: 254 } }}
         />
         <TextField

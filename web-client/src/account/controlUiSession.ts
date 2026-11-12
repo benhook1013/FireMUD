@@ -1,4 +1,5 @@
 import {
+  AccountControlUiApiError,
   maxControlUiSessionLifetimeMs,
   type AccountControlUiApi,
   type AccountControlUiLoginRequest,
@@ -49,6 +50,12 @@ const ownerPath =
   /^\/api\/account\/billing\/hosting\/subscriptions\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/first-invoice(?:\/(reauthenticate|confirm|renew))?$/i;
 const maxOwnerRequestBytes = 16 * 1024;
 const maxOwnerResponseBytes = 64 * 1024;
+const loginRecoveryWindowMs = 60_000;
+
+type LoginRecovery = Pick<
+  AccountControlUiLoginRequest,
+  'requestId' | 'callerContextId' | 'email'
+> & { expiresAt: number };
 
 function secureOrigin(value: string): URL {
   let parsed: URL;
@@ -244,6 +251,8 @@ export class ControlUiSessionStore {
   private bearer: string | null = null;
   private revision = 0;
   private loginController: AbortController | null = null;
+  private loginRecovery: LoginRecovery | null = null;
+  private loginRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: ControlUiSessionOptions) {
@@ -387,14 +396,19 @@ export class ControlUiSessionStore {
     api: AccountControlUiApi,
     credentials: ControlUiCredentials
   ): Promise<ControlUiSessionView> {
+    const retry = this.canRetrySignIn(credentials.email)
+      ? this.loginRecovery
+      : null;
+    // Account starts its recovery window at issuance, which follows the initial submission.
+    const expiresAt = retry?.expiresAt ?? this.now() + loginRecoveryWindowMs;
     const hadSession = this.snapshot !== null || this.bearer !== null;
     const revision = this.beginReplacement();
     if (hadSession) this.emitSessionChange();
     const controller = new AbortController();
     this.loginController = controller;
     const request: AccountControlUiLoginRequest = {
-      requestId: this.idFactory(),
-      callerContextId: this.idFactory(),
+      requestId: retry?.requestId ?? this.idFactory(),
+      callerContextId: retry?.callerContextId ?? this.idFactory(),
       email: credentials.email,
       secret: credentials.secret,
     };
@@ -433,9 +447,40 @@ export class ControlUiSessionStore {
         throw new ControlUiSessionError('SESSION_REPLACED');
       }
       this.loginController = null;
+      if (
+        this.now() < expiresAt &&
+        (!(error instanceof AccountControlUiApiError) ||
+          error.uncertain ||
+          (error.status === 429 && retry !== null))
+      ) {
+        this.loginRecovery = {
+          requestId: request.requestId,
+          callerContextId: request.callerContextId,
+          email: request.email,
+          expiresAt,
+        };
+        this.loginRecoveryTimer = setTimeout(
+          () => this.clearLoginRecovery(),
+          Math.max(0, expiresAt - this.now())
+        );
+      }
       throw error;
     } finally {
       request.secret = '';
+    }
+  }
+
+  canRetrySignIn(email: string): boolean {
+    return (
+      this.loginRecovery !== null &&
+      this.loginRecovery.email === email &&
+      this.now() < this.loginRecovery.expiresAt
+    );
+  }
+
+  discardLoginRecoveryIfEmailChanged(email: string): void {
+    if (this.loginRecovery && this.loginRecovery.email !== email) {
+      this.clearLoginRecovery();
     }
   }
 
@@ -462,11 +507,18 @@ export class ControlUiSessionStore {
     this.revision += 1;
     this.loginController?.abort();
     this.loginController = null;
+    this.clearLoginRecovery();
     this.abortRequests();
     this.clearExpiryTimer();
     this.snapshot = null;
     this.bearer = null;
     return this.revision;
+  }
+
+  private clearLoginRecovery(): void {
+    if (this.loginRecoveryTimer !== null) clearTimeout(this.loginRecoveryTimer);
+    this.loginRecoveryTimer = null;
+    this.loginRecovery = null;
   }
 
   private expireIfCurrent(identity: string, revision: number): void {

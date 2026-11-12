@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type {
-  AccountControlUiApi,
-  AccountControlUiLoginRequest,
+import {
+  AccountControlUiApiError,
+  type AccountControlUiApi,
+  type AccountControlUiLoginRequest,
 } from '../api/accountControlUi';
 import {
   ControlUiSessionError,
@@ -341,6 +342,66 @@ describe('memory-only control-ui session owner', () => {
       login.mock.calls[1][0].requestId
     );
   });
+
+  it('expires uncertain IDs at the original submission bound despite a second lost reply', async () => {
+    vi.useFakeTimers();
+    const store = makeStore();
+    const login = vi
+      .fn<AccountControlUiApi['login']>()
+      .mockRejectedValue(new AccountControlUiApiError(0));
+    const api = { login };
+    const email = 'owner@example.com';
+    const submit = () => store.signIn(api, { email, secret: '012345' });
+
+    await expect(submit()).rejects.toMatchObject({ status: 0 });
+    vi.advanceTimersByTime(59_999);
+    await expect(submit()).rejects.toMatchObject({ status: 0 });
+    expect(login.mock.calls[1][0]).toEqual(login.mock.calls[0][0]);
+
+    vi.advanceTimersByTime(1);
+    expect(store.canRetrySignIn(email)).toBe(false);
+    await expect(submit()).rejects.toMatchObject({ status: 0 });
+    expect(login.mock.calls[2][0].requestId).not.toBe(
+      login.mock.calls[0][0].requestId
+    );
+    expect(login.mock.calls[2][0].callerContextId).not.toBe(
+      login.mock.calls[0][0].callerContextId
+    );
+  });
+
+  it.each(['email edit', 'sign-out', 'definitive rejection'])(
+    'drops the uncertain original after %s',
+    async (invalidation) => {
+      const store = makeStore();
+      const login = vi
+        .fn<AccountControlUiApi['login']>()
+        .mockRejectedValueOnce(new AccountControlUiApiError(0))
+        .mockResolvedValue(successfulLogin());
+      const api = { login };
+      const email = 'owner@example.com';
+      const submit = () => store.signIn(api, { email, secret: '012345' });
+
+      await expect(submit()).rejects.toMatchObject({ status: 0 });
+      expect(store.canRetrySignIn(email)).toBe(true);
+      if (invalidation === 'email edit') {
+        store.discardLoginRecoveryIfEmailChanged('other@example.com');
+      } else if (invalidation === 'sign-out') {
+        store.signOut();
+      } else {
+        login.mockRejectedValueOnce(new AccountControlUiApiError(409));
+        await expect(submit()).rejects.toMatchObject({ status: 409 });
+        expect(login.mock.calls[1][0]).toEqual(login.mock.calls[0][0]);
+      }
+
+      expect(store.canRetrySignIn(email)).toBe(false);
+      await submit();
+      const fresh = login.mock.lastCall![0];
+      expect(fresh.requestId).not.toBe(login.mock.calls[0][0].requestId);
+      expect(fresh.callerContextId).not.toBe(
+        login.mock.calls[0][0].callerContextId
+      );
+    }
+  );
 
   it('rejects a buffered success body if the session changes before JSON is consumed', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(

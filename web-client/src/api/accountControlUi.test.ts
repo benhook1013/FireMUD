@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AccountControlUiApiError,
+  accountControlUiLoginTimeoutMs,
   createAccountControlUiApi,
   maxControlUiSessionLifetimeMs,
   type AccountControlUiLoginRequest,
@@ -12,6 +13,10 @@ const requestId = '22222222-2222-4222-8222-222222222222';
 const callerContextId = '33333333-3333-4333-8333-333333333333';
 const now = Date.parse('2026-11-07T12:00:00.000Z');
 const authToken = 'header.payload.signature';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function successfulLogin(expiresAt = new Date(now + 60_000).toISOString()) {
   return new Response(
@@ -139,6 +144,67 @@ describe('account control-ui login transport', () => {
     expect(error).toMatchObject({ status: 0 });
     expect((error as Error).message).not.toContain('primary-secret');
   });
+
+  it('times out stalled fetch and discards a late successful response', async () => {
+    vi.useFakeTimers();
+    let resolveFetch!: (response: Response) => void;
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    const api = createAccountControlUiApi(origin, fetchImpl, () => now);
+    const failure = expect(api.login(loginRequest)).rejects.toMatchObject({
+      status: 0,
+      uncertain: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+    await failure;
+    expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+    const late = successfulLogin();
+    const cancel = vi.spyOn(late.body!, 'cancel');
+    resolveFetch(late);
+    await Promise.resolve();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it.each(['deadline', 'caller abort'])(
+    'abandons a stalled response body on %s even if cancellation stalls',
+    async (interruption) => {
+      vi.useFakeTimers();
+      const stalled = new Promise<void>(() => {});
+      const cancel = vi.fn(() => stalled);
+      const response = new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"status":"SUCCESS"'));
+          },
+          cancel,
+        }),
+        { status: 200 }
+      );
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response);
+      const api = createAccountControlUiApi(origin, fetchImpl, () => now);
+      const caller = new AbortController();
+      const failure = expect(
+        api.login(loginRequest, caller.signal)
+      ).rejects.toMatchObject({ status: 0, uncertain: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(response.body?.locked).toBe(true);
+
+      if (interruption === 'deadline') {
+        await vi.advanceTimersByTimeAsync(accountControlUiLoginTimeoutMs);
+      } else {
+        caller.abort();
+      }
+      await failure;
+      expect(fetchImpl.mock.calls[0][1]?.signal?.aborted).toBe(true);
+      expect(cancel).toHaveBeenCalledOnce();
+    }
+  );
 
   it('discards non-success response bodies and preserves only the status', async () => {
     const fetchImpl = vi

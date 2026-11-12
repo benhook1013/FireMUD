@@ -399,7 +399,9 @@ describe('App-owned first-invoice route', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
       await screen.findByText(
-        'Account sign-in is temporarily unavailable. Try again later.'
+        status === 429
+          ? 'Account sign-in is temporarily unavailable. Try again later.'
+          : /Account sign-in could not be confirmed/
       );
       expect(api.login).toHaveBeenCalledOnce();
       expect(vi.mocked(api.login).mock.calls[0][0].secret).toBe('');
@@ -412,6 +414,60 @@ describe('App-owned first-invoice route', () => {
       ).toBe('');
     }
   );
+
+  it('re-enters a consumed one-time code and explicitly recovers the original sign-in', async () => {
+    const { api } = setupApp();
+    const login = vi.mocked(api.login);
+    let original: { requestId: string; callerContextId: string } | undefined;
+    login
+      .mockImplementationOnce(
+        async ({ requestId, callerContextId, secret }) => {
+          expect(secret).toBe('012345');
+          original = { requestId, callerContextId };
+          throw new AccountControlUiApiError(0);
+        }
+      )
+      .mockImplementationOnce(
+        async ({ requestId, callerContextId, secret }) => {
+          if (
+            !original ||
+            requestId !== original.requestId ||
+            callerContextId !== original.callerContextId ||
+            secret !== '012345'
+          ) {
+            throw new AccountControlUiApiError(401);
+          }
+          return {
+            accountId,
+            authToken: 'header.payload.signature',
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          };
+        }
+      );
+    fireEvent.change(screen.getByLabelText('Account email'), {
+      target: { value: 'owner@example.com' },
+    });
+    const secret = screen.getByLabelText(
+      'Primary authentication secret'
+    ) as HTMLInputElement;
+    fireEvent.change(secret, { target: { value: '012345' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await screen.findByText(/re-enter the same secret and select Sign in/);
+    expect(secret.value).toBe('');
+    expect(login).toHaveBeenCalledOnce();
+    expect(login.mock.calls[0][0].secret).toBe('');
+    expect(
+      (screen.getByRole('button', { name: 'Sign in' }) as HTMLButtonElement)
+        .disabled
+    ).toBe(true);
+
+    fireEvent.change(secret, { target: { value: '012345' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByText('in_existing');
+    expect(login).toHaveBeenCalledTimes(2);
+    expect(login.mock.calls[1][0].secret).toBe('');
+  });
 
   it.each(['navigation', 'replacement login'])(
     'restores only the server original operation after %s before a confirmation row exists',

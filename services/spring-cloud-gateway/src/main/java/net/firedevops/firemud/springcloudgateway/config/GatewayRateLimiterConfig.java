@@ -43,10 +43,11 @@ public class GatewayRateLimiterConfig {
         || !Set.of(REPLENISH_RATE, BURST_CAPACITY, REQUESTED_TOKENS).containsAll(args.keySet())) {
       throw invalidRateLimiterConfiguration();
     }
-    return new DefaultRequestRateLimiterArguments(
-        parsePositiveInt(args.get(REPLENISH_RATE)),
-        parsePositiveLong(args.get(BURST_CAPACITY)),
-        parsePositiveInt(args.getOrDefault(REQUESTED_TOKENS, "1")));
+    int replenishRate = parsePositiveInt(args.get(REPLENISH_RATE));
+    long burstCapacity = parsePositiveLong(args.get(BURST_CAPACITY));
+    int requestedTokens = parsePositiveInt(args.getOrDefault(REQUESTED_TOKENS, "1"));
+    if (requestedTokens > burstCapacity) throw invalidRateLimiterConfiguration();
+    return new DefaultRequestRateLimiterArguments(replenishRate, burstCapacity, requestedTokens);
   }
 
   private static int parsePositiveInt(String value) {
