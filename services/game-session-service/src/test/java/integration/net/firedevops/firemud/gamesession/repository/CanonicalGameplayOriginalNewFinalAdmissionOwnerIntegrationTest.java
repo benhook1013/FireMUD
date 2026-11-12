@@ -664,6 +664,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             "sha256:" + "0".repeat(64),
             controlledCapacity.selectedOwnerId(),
             controlledCapacity.selectedOwnerFence());
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
     var sqlBefore = sqlImage();
     var physicalBefore = physicalImage();
     try (var credential =
@@ -672,13 +674,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       assertThatThrownBy(
               () ->
                   capacityOwner()
-                      .authorize(
-                          source,
-                          template,
-                          controlledAccountOpen(),
-                          issuerOpen(),
-                          changed,
-                          deadline()))
+                      .authorize(source, template, accountOpen, issuerOpen, changed, deadline()))
           .isInstanceOf(IllegalStateException.class);
     }
     assertThat(sqlImage()).isEqualTo(sqlBefore);
@@ -1104,6 +1100,141 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 .fetchSingle("SELECT count(*) FROM game_session_region_owner_transfer")
                 .get(0, Long.class))
         .isZero();
+  }
+
+  @Test
+  void failedPositiveRetentionRollsBackFinalReceiptAndExactRecoveryCommitsBoth() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    String before = sqlImage();
+    var retentionAttempted = new java.util.concurrent.atomic.AtomicBoolean();
+    var observer =
+        new org.jooq.impl.DefaultExecuteListener() {
+          @Override
+          public void executeStart(org.jooq.ExecuteContext context) {
+            String query = context.sql();
+            if (query == null
+                || !query.startsWith("UPDATE game_session_original_new_capacity_execution")
+                || !query.contains("terminal_readback")) return;
+            retentionAttempted.set(true);
+            assertThat(sqlImage()).isEqualTo(before);
+            throw new IllegalStateException("Controlled positive execution retention failure");
+          }
+        };
+    var observedSql =
+        org.jooq.impl.DSL.using(fixture.dsl().configuration().deriveAppending(observer));
+    var observedInventory = new CanonicalGameplayBindingInventoryRepository(observedSql);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
+      var committedRedis = physicalImage();
+      assertThatThrownBy(
+              () -> observedInventory.commitOriginalNewFinalAdmission(readback, CLOCK, deadline()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Controlled positive execution retention failure");
+      assertThat(retentionAttempted).isTrue();
+      assertThat(sqlImage()).isEqualTo(before);
+      assertThatThrownBy(
+              () ->
+                  capacityOwner()
+                      .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
+          .isInstanceOf(IllegalStateException.class);
+      var recovered =
+          capacityOwner()
+              .retainCommittedBeforeCleanup(
+                  controlledCapacity.request(), controlledCapacity.reservation(), deadline());
+      assertThat(recovered.disposition()).isEqualTo("COMMITTED");
+      assertThat(recovered.physicalDigest()).isEqualTo("sha256:" + readback.finalSessionSha256());
+      assertThat(
+              inventory
+                  .readOriginalNewFinalAdmissionSource(decision)
+                  .finalReceipt()
+                  .orElseThrow()
+                  .finalSessionSha256())
+          .isEqualTo(readback.finalSessionSha256());
+      assertThat(
+              capacityOwner()
+                  .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                  .canonicalReadback())
+          .containsExactly(recovered.canonicalReadback());
+      assertThat(physicalImage()).isEqualTo(committedRedis);
+    }
+  }
+
+  @Test
+  void previouslySplitReceiptRequiresExactPhysicalProofAndRetainsIdempotently() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    var sql = fixture.dsl();
+    // Model an old receipt-only writer while preserving the actual guarded receipt transaction.
+    sql.execute(
+        """
+        CREATE FUNCTION fixture_preserve_authorized_execution() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RETURN OLD;
+        END;
+        $$
+        """);
+    sql.execute(
+        """
+        CREATE TRIGGER aaa_fixture_preserve_authorized_execution
+        BEFORE UPDATE ON game_session_original_new_capacity_execution
+        FOR EACH ROW EXECUTE FUNCTION fixture_preserve_authorized_execution()
+        """);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
+      inventory.commitOriginalNewFinalAdmission(readback);
+    } finally {
+      sql.execute(
+          "DROP TRIGGER aaa_fixture_preserve_authorized_execution ON game_session_original_new_capacity_execution");
+      sql.execute("DROP FUNCTION fixture_preserve_authorized_execution()");
+    }
+    var request = controlledCapacity.request();
+    var reservation = controlledCapacity.reservation();
+    var owner = capacityOwner();
+    assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).finalReceipt()).isPresent();
+    assertThat(
+            sql.fetchSingle(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+                    controlledCapacity.digest())
+                .get(0, String.class))
+        .isEqualTo("AUTHORIZED");
+    assertThatThrownBy(() -> owner.readExact(request, reservation))
+        .isInstanceOf(IllegalStateException.class);
+    var originalPhysical = physicalImage();
+    byte[] sessionKey = ascii(installation.sessionKey());
+    byte[] originalSession = admin.get(sessionKey);
+    admin.del(new byte[][] {sessionKey});
+    assertThatThrownBy(() -> owner.retainCommittedBeforeCleanup(request, reservation, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> owner.readExact(request, reservation))
+        .isInstanceOf(IllegalStateException.class);
+    admin.set(sessionKey, originalSession);
+    var retained = owner.retainCommittedBeforeCleanup(request, reservation, deadline());
+    assertThat(retained.disposition()).isEqualTo("COMMITTED");
+    assertThat(
+            owner
+                .retainCommittedBeforeCleanup(request, reservation, deadline())
+                .canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
+    assertThat(owner.readExact(request, reservation).canonicalReadback())
+        .containsExactly(retained.canonicalReadback());
+    assertThat(physicalImage()).isEqualTo(originalPhysical);
   }
 
   @Test

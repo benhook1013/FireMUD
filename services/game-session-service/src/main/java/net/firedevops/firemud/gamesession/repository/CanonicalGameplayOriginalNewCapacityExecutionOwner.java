@@ -735,8 +735,21 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     return scopedFinalOwner().readCommittedForRetention(source, execution);
   }
 
-  void retainCommitted(CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback actual) {
-    retainCommitted(actual, Long.MAX_VALUE);
+  static void retainCommittedInTransaction(
+      DSLContext transaction,
+      OriginalNewCapacityExecution execution,
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionReceipt finalReceipt) {
+    String receipt =
+        receiptDigest(
+            execution,
+            finalReceipt.finalSessionSha256(),
+            finalReceipt.admissionAtMillis(),
+            finalReceipt.continuityExpiresAtMillis(),
+            finalReceipt.sessionDurationMillis());
+    byte[] proof =
+        execution.terminalEvidence(
+            "COMMITTED", "sha256:" + finalReceipt.finalSessionSha256(), receipt);
+    retainTerminal(transaction, execution, "COMMITTED", proof);
   }
 
   void retainCommitted(
@@ -756,8 +769,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     Record row = find(sql(), execution);
     if (row == null) throw unavailable();
     exact(row, execution);
-    // The final receipt must already be committed. This read also independently checks indexes
-    // and the script's atomic terminal record, not the return value of EVAL.
+    // A pre-existing receipt may predate atomic retention. Qualify that historical gap through
+    // the exact physical indexes and atomic terminal record before retaining its outcome.
     Snapshot snapshot = readExact(execution.request(), execution.reservation(), true);
     if (!"COMMITTED".equals(snapshot.disposition())) throw unavailable();
     retainTerminal(execution, "COMMITTED", snapshot.canonicalReadback());
@@ -766,31 +779,32 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   private void retainTerminal(OriginalNewCapacityExecution execution, String status, byte[] proof) {
     sql()
         .transaction(
-            configuration -> {
-              var tx = DSL.using(configuration);
-              Record row = find(tx, execution);
-              if (row == null) throw unavailable();
-              exact(row, execution);
-              String current = row.get("status", String.class);
-              if (current.equals(status)) {
-                if (!Arrays.equals(proof, row.get("terminal_readback", byte[].class)))
-                  throw unavailable();
-                return;
-              }
-              if (!("AUTHORIZED".equals(current)
-                  || ("CLOSED".equals(status)
-                      && ("INSTALL_DISPATCHED".equals(current)
-                          || "CLOSURE_CLAIMED".equals(current))))) throw unavailable();
-              if (tx.execute(
-                      "UPDATE "
-                          + TABLE
-                          + " SET status = ?, terminal_readback = ? WHERE execution_digest = ? AND status = ?",
-                      status,
-                      proof,
-                      execution.digest(),
-                      current)
-                  != 1) throw unavailable();
-            });
+            configuration -> retainTerminal(DSL.using(configuration), execution, status, proof));
+  }
+
+  private static void retainTerminal(
+      DSLContext tx, OriginalNewCapacityExecution execution, String status, byte[] proof) {
+    Record row = find(tx, execution);
+    if (row == null) throw unavailable();
+    exact(row, execution);
+    String current = row.get("status", String.class);
+    if (current.equals(status)) {
+      if (!Arrays.equals(proof, row.get("terminal_readback", byte[].class))) throw unavailable();
+      return;
+    }
+    if (!("AUTHORIZED".equals(current)
+        || ("CLOSED".equals(status)
+            && ("INSTALL_DISPATCHED".equals(current) || "CLOSURE_CLAIMED".equals(current)))))
+      throw unavailable();
+    if (tx.execute(
+            "UPDATE "
+                + TABLE
+                + " SET status = ?, terminal_readback = ? WHERE execution_digest = ? AND status = ?",
+            status,
+            proof,
+            execution.digest(),
+            current)
+        != 1) throw unavailable();
   }
 
   /** Authenticated transport calls this read-only method. Absence and contradictions throw. */
@@ -1308,16 +1322,30 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
   }
 
   private static String receiptDigest(Record row, OriginalNewCapacityExecution execution) {
+    return receiptDigest(
+        execution,
+        row.get("original_new_final_session_sha256", String.class),
+        row.get("original_new_admission_at_ms", Long.class),
+        row.get("original_new_continuity_expires_at_ms", Long.class),
+        row.get("original_new_session_duration_ms", Long.class));
+  }
+
+  private static String receiptDigest(
+      OriginalNewCapacityExecution execution,
+      String finalSessionSha256,
+      long admissionAtMillis,
+      long continuityExpiresAtMillis,
+      long durationMillis) {
     String receipt =
         execution.digest()
             + "/"
-            + row.get("original_new_final_session_sha256", String.class)
+            + finalSessionSha256
             + "/"
-            + row.get("original_new_admission_at_ms", Long.class)
+            + admissionAtMillis
             + "/"
-            + row.get("original_new_continuity_expires_at_ms", Long.class)
+            + continuityExpiresAtMillis
             + "/"
-            + row.get("original_new_session_duration_ms", Long.class);
+            + durationMillis;
     return "sha256:" + OriginalNewCapacityExecution.sha256(bytes(receipt));
   }
 
