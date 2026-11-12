@@ -229,7 +229,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
     UUID id = transfer.advance(original.source, original.status, deadline());
     byte[] key = ascii(capacityKey(assignment));
-    if (fault.equals("missing")) admin.del(key);
+    if (fault.equals("missing")) admin.del(java.util.List.of(key).toArray(byte[][]::new));
     else if (fault.equals("binding")) admin.hset(key, ascii("binding"), ascii("changed"));
     else admin.pexpire(key, 60_000L);
     byte[] altered =
@@ -368,7 +368,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     admin.persist(key);
     assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
         .isEqualTo(persistent);
-    admin.del(key);
+    admin.del(java.util.List.of(key).toArray(byte[][]::new));
     assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
         .isNotEqualTo(persistent);
   }
