@@ -83,6 +83,30 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       controlledCapacity;
   private CanonicalGameplayRegionOwnerCompositionFixture.ExistingBinding regionBinding;
 
+  @Test
+  void physicalImageRetainsAbsoluteExpiryRatherThanOnlyItsPresence() {
+    byte[] key = "physical-image-expiry".getBytes(StandardCharsets.US_ASCII);
+    admin.set(key, "unchanged".getBytes(StandardCharsets.US_ASCII));
+    byte[] persistent =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
+    long expiresAt = System.currentTimeMillis() + 60_000L;
+    admin.pexpireat(key, expiresAt);
+    byte[] expiring =
+        CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key);
+    assertThat(expiring).isNotEqualTo(persistent);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isEqualTo(expiring);
+    admin.pexpireat(key, expiresAt + 600_000L);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isNotEqualTo(expiring);
+    admin.persist(key);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isEqualTo(persistent);
+    admin.del(key);
+    assertThat(CanonicalGameplayOriginalNewFinalAdmissionPhysicalImageFixture.image(admin, key))
+        .isNotEqualTo(persistent);
+  }
+
   @BeforeEach
   void setUp() throws Exception {
     administrator = client(null, null);
@@ -753,6 +777,158 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             () -> inventory.readRegionTransferOriginalSource(UUID.randomUUID(), retained))
         .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessage("Region transfer changed its original transition");
+  }
+
+  @Test
+  void frozenTransferResumesSameCommittedOriginalAfterFenceRetentionFailure() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    byte[] committed;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var ignored =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      committed = admin.get(ascii(installation.sessionKey()));
+    }
+    var original = regionBinding.installation();
+    var failRetention = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var failed = new java.util.concurrent.atomic.AtomicBoolean();
+    var observer =
+        new org.jooq.impl.DefaultExecuteListener() {
+          @Override
+          public void executeStart(org.jooq.ExecuteContext context) {
+            String query = context.sql();
+            if (query == null || !query.contains(" SET fence_readback=")) return;
+            if (!failRetention.get()) return;
+            assertThat(
+                    fixture
+                        .dsl()
+                        .fetchSingle(
+                            "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest=?",
+                            controlledCapacity.digest())
+                        .get(0, String.class))
+                .isEqualTo("COMMITTED");
+            assertThat(
+                    fixture
+                        .dsl()
+                        .fetchSingle(
+                            "SELECT original_new_final_session_sha256 FROM game_session_canonical_binding_transition WHERE transition_id=?",
+                            fixture.transitionId())
+                        .get(0, String.class))
+                .isNotBlank();
+            failed.set(true);
+            throw new IllegalStateException("Controlled failure after positive SQL retention");
+          }
+        };
+    var observedSql =
+        org.jooq.impl.DSL.using(fixture.dsl().configuration().deriveAppending(observer));
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(observedSql, CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            observedSql, CLOCK, repository, capacityOwner(), receiver);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                    fixture.dsl(),
+                    ownerClient,
+                    catalog,
+                    original,
+                    sources.resolver,
+                    transfer,
+                    deadline()))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(failed).isTrue();
+    var frozen = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
+    UUID transferId = frozen.get("transfer_id", UUID.class);
+    String intent = frozen.get("intent_digest", String.class);
+    assertThat(frozen.get("state", String.class)).isEqualTo("FROZEN");
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(original.status);
+    var retained = inventory.readRegionTransferOriginalSource(fixture.transitionId(), source);
+    assertThat(retained.transitionStatus())
+        .isEqualTo(CanonicalGameplayBindingTransitionSnapshot.Status.COMMITTED);
+    assertThat(retained.finalReceipt()).isPresent();
+    String executionImage =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT to_jsonb(e)::text FROM game_session_original_new_capacity_execution e WHERE execution_digest=?",
+                controlledCapacity.digest())
+            .get(0, String.class);
+    long sequence =
+        fixture
+            .dsl()
+            .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
+            .get(0, Long.class);
+    failRetention.set(false);
+    // Controlled expiry of the failed contender's grant, not a bypass of a live incumbent.
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var successor =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            fixture.dsl(), ownerClient, catalog, original, sources.resolver, transfer, deadline());
+    assertThat(successor.status.ownerInstanceId()).isEqualTo("final-owner-handoff");
+    var completed = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
+    assertThat(completed.get("transfer_id", UUID.class)).isEqualTo(transferId);
+    assertThat(completed.get("intent_digest", String.class)).isEqualTo(intent);
+    assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
+                .get(0, Long.class))
+        .isEqualTo(sequence + 1);
+    assertThat(
+            inventory
+                .readRegionTransferOriginalSource(fixture.transitionId(), retained)
+                .finalReceipt())
+        .isEqualTo(retained.finalReceipt());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_jsonb(e)::text FROM game_session_original_new_capacity_execution e WHERE execution_digest=?",
+                    controlledCapacity.digest())
+                .get(0, String.class))
+        .isEqualTo(executionImage);
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
+    assertThat(successor.evidence)
+        .as("committed continuation grants no provisional bridge authority")
+        .isNull();
+    assertThatThrownBy(
+            () ->
+                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+                    fixture.dsl(),
+                    ownerClient,
+                    catalog,
+                    original,
+                    sources.resolver,
+                    transfer,
+                    deadline()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+        .hasMessage("A first binding cannot proceed while an active controller exists");
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(successor.status);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
+                .get(0, Long.class))
+        .isEqualTo(sequence + 1);
   }
 
   @org.junit.jupiter.params.ParameterizedTest

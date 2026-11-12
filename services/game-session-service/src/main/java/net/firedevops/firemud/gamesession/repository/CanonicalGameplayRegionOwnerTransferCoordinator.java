@@ -36,15 +36,51 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     return repository.completedForCurrent(prior, requestingOwner, deadline);
   }
 
+  CanonicalGameplayRegionOwnerTransferRepository.Item frozenOriginal(
+      UUID transitionId, long deadline) {
+    return repository.within(deadline, ignored -> repository.frozenOriginal(transitionId));
+  }
+
+  void requireFrozenOriginal(
+      CanonicalGameplayRegionOwnerTransferRepository.Item original,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      long deadline) {
+    repository.within(
+        deadline,
+        ignored -> {
+          repository.requireFrozenOriginal(original, source, prior);
+          return null;
+        });
+  }
+
+  UUID resume(
+      CanonicalGameplayRegionOwnerTransferRepository.Item original,
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      long deadline) {
+    return advance(source, prior, deadline, original);
+  }
+
   /** A bounded step; incomplete progress remains durable and the caller must resume this intent. */
   UUID advance(
       CanonicalGameplayRegionRuntimeStatusRepository.Source source,
       CanonicalGameplayRegionRuntimeStatus prior,
       long deadline) {
+    return advance(source, prior, deadline, null);
+  }
+
+  private UUID advance(
+      CanonicalGameplayRegionRuntimeStatusRepository.Source source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      long deadline,
+      CanonicalGameplayRegionOwnerTransferRepository.Item original) {
     return repository.within(
         deadline,
         budget -> {
-          UUID transfer = repository.begin(source, prior);
+          if (original != null) repository.requireFrozenOriginal(original, source, prior);
+          UUID transfer =
+              original == null ? repository.begin(source, prior) : original.transferId();
           if (transfer == null) return null;
           var owner = capacity.forTransferBudget(budget);
           for (var item : repository.capture(transfer)) {

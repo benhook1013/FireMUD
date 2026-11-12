@@ -66,17 +66,31 @@ class CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuardTest {
     assertDenied(invoke(method, peer(NAMESPACE, "account-service")), Status.Code.PERMISSION_DENIED);
   }
 
+  @Test
+  void refusesForwardedAuthorizationMetadataFromAnOtherwiseValidAccountPeer() {
+    var method =
+        OriginalNewCapacityExecutionReadServiceGrpc.getReadOriginalNewCapacityExecutionMethod();
+    for (String authorization : List.of("Bearer player-token", "")) {
+      Metadata headers = new Metadata();
+      headers.put(
+          Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER), authorization);
+      assertDenied(
+          invokeTyped(method, peer(NAMESPACE, "account-service"), headers),
+          Status.Code.PERMISSION_DENIED);
+    }
+  }
+
   private static void assertDenied(Invocation invocation, Status.Code code) {
     assertThat(invocation.nextStarts()).isZero();
     assertThat(invocation.status().getCode()).isEqualTo(code);
   }
 
   private Invocation invoke(MethodDescriptor<?, ?> method, GrpcPeerIdentity peer) {
-    return invokeTyped(method, peer);
+    return invokeTyped(method, peer, new Metadata());
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  private Invocation invokeTyped(MethodDescriptor method, GrpcPeerIdentity peer) {
+  private Invocation invokeTyped(MethodDescriptor method, GrpcPeerIdentity peer, Metadata headers) {
     ServerCall call = mock(ServerCall.class);
     org.mockito.Mockito.when(call.getMethodDescriptor()).thenReturn(method);
     AtomicInteger starts = new AtomicInteger();
@@ -87,7 +101,7 @@ class CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuardTest {
         };
     Context.current()
         .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
-        .run(() -> guard.interceptCall(call, new Metadata(), next));
+        .run(() -> guard.interceptCall(call, headers, next));
     ArgumentCaptor<Status> status = ArgumentCaptor.forClass(Status.class);
     org.mockito.Mockito.verify(call, org.mockito.Mockito.atMostOnce())
         .close(status.capture(), any(Metadata.class));
