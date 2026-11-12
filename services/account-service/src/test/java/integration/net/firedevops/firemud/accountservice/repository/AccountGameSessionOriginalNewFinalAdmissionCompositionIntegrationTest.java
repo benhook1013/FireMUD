@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -226,10 +228,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       var budget = session.gs.originBudgetImage();
       assertThat(budget.get("recovery_observations")).isEqualTo(1);
       assertThat(budget.get("reservation_policy_applied")).isEqualTo(true);
-      assertThat(budget.get("recovery_deadline"))
-          .isEqualTo(
-              java.time.OffsetDateTime.ofInstant(
-                  resolution.continuationPolicy().deadline(), java.time.ZoneOffset.UTC));
+      assertThat(((java.time.OffsetDateTime) budget.get("recovery_deadline")).toInstant())
+          .isEqualTo(resolution.continuationPolicy().deadline());
       assertThat(
               session
                   .gs
@@ -950,17 +950,25 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
       assertCapacityRefusalWithoutMutation(
           session, wrongScope, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       var player = (TenantCapacityAdmission.PlayerContext) session.capacityRequest.context();
-      session.serializable.executeWithoutResult(
-          status -> {
-            assertThat(
-                    session.dsl.fetchOne(
-                        "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
-                        player.accountId()))
-                .isNotNull();
-            assertThat(
-                    session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L))
-                .isEqualTo(first);
-          });
+      try (var replayCaller = Executors.newVirtualThreadPerTaskExecutor()) {
+        session.serializable.executeWithoutResult(
+            status -> {
+              assertThat(
+                      session.dsl.fetchOne(
+                          "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+                          player.accountId()))
+                  .isNotNull();
+              assertThat(
+                      CompletableFuture.supplyAsync(
+                              () ->
+                                  session.capacityClient.commit(
+                                      session.capacityRequest, CLOCK.millis() + 5_000L),
+                              replayCaller)
+                          .orTimeout(6L, TimeUnit.SECONDS)
+                          .join())
+                  .isEqualTo(first);
+            });
+      }
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
       assertProvisionalUnchanged(session, candidate);
     }
