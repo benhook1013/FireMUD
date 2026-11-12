@@ -679,6 +679,30 @@ require_equal(
     "ci workflow",
 )
 
+spotbugs_reports_step = find_step(
+    module_ci, "build-and-test", "Upload SpotBugs Reports if Failed", "ci workflow"
+)
+require_equal(
+    spotbugs_reports_step, ("if",), "${{ failure() || cancelled() }}", "ci workflow"
+)
+require_equal(
+    spotbugs_reports_step,
+    ("uses",),
+    "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    "ci workflow",
+)
+require_equal(
+    spotbugs_reports_step,
+    ("with",),
+    {
+        "name": "spotbugs-${{ matrix.module }}-${{ matrix.partition }}-reports-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+        "path": "${{ matrix.module == 'load-testing' && 'dev-tools/load-testing/build/reports/spotbugs/' || format('services/{0}/build/reports/spotbugs/', matrix.module) }}",
+        "if-no-files-found": "warn",
+        "retention-days": "14",
+    },
+    "ci workflow",
+)
+
 junit_results_step = find_step(
     module_ci, "build-and-test", "Upload JUnit Test Results", "ci workflow"
 )
@@ -1306,6 +1330,14 @@ require_equal(
 
 gradle_build = Path(sys.argv[6]).read_text(encoding="utf-8")
 root_configuration, subproject_configuration = gradle_build.split("subprojects {", 1)
+spotbugs_xml_report = re.search(
+    r'tasks\.withType<SpotBugsTask>\(\)\.configureEach\s*\{\s*'
+    r'enabled = fullCheck\s*reports\.create\("xml"\)\s*\{\s*'
+    r'required\.set\(true\)\s*\}',
+    re.sub(r"//[^\n]*", "", subproject_configuration),
+)
+if spotbugs_xml_report is None:
+    raise SystemExit("Module SpotBugs tasks must emit XML reports for failed CI diagnostics")
 game_session_build = (
     Path(sys.argv[6]).resolve().parent / "services/game-session-service/build.gradle.kts"
 )

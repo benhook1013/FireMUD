@@ -23,8 +23,8 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   private ManagedChannel channel;
   private volatile TStub stub;
   private TlsCertificateWatcher watcher;
-  private boolean closed;
-  private boolean explicitlyInitialized;
+  private volatile boolean closed;
+  private volatile boolean explicitlyInitialized;
 
   protected AbstractReloadingBlockingGrpcClient(
       ServiceEndpointsProperties endpoints,
@@ -132,10 +132,16 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   }
 
   protected final synchronized TStub requireInitializedStub(String unavailableMessage) {
-    if (closed || !explicitlyInitialized || stub == null) {
+    return requirePublishedInitializedStub(unavailableMessage);
+  }
+
+  /** Takes the last published stub without waiting for a TLS reload. */
+  protected final TStub requirePublishedInitializedStub(String unavailableMessage) {
+    TStub current = stub;
+    if (closed || !explicitlyInitialized || current == null) {
       throw new IllegalStateException(unavailableMessage);
     }
-    return stub;
+    return current;
   }
 
   protected final synchronized void reloadChannel() throws SSLException {
@@ -155,11 +161,12 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       newChannel.shutdown();
       throw e;
     }
-    if (channel != null) {
-      channel.shutdown();
-    }
+    ManagedChannel previous = channel;
     channel = newChannel;
     stub = newStub;
+    if (previous != null) {
+      previous.shutdown();
+    }
   }
 
   protected final TStub stub() {
