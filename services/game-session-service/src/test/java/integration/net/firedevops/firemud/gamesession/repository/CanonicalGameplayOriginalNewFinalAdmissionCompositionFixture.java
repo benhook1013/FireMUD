@@ -737,6 +737,32 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     return result;
   }
 
+  public String originSqlImage() {
+    return binding
+        .dsl()
+        .fetchSingle(
+            "SELECT (to_jsonb(t) || jsonb_build_object('_original_xmin', t.xmin::text))::text "
+                + "AS image FROM game_session_original_new_capacity_origin t")
+        .get("image", String.class);
+  }
+
+  public void removeOriginMarkerForFault() {
+    var row =
+        binding
+            .dsl()
+            .fetchSingle(
+                "SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
+    String key =
+        "session:game:capacity-origin:{"
+            + row.get("tenant_gameplay_tag", String.class)
+            + "}:"
+            + row.get("admission_attempt_id", java.util.UUID.class);
+    if (administration.sync().pttl(ascii(key)) != -1L
+        || administration.sync().del(ascii(key)) != 1L) {
+      throw new IllegalStateException("Expected one installed persistent origin marker");
+    }
+  }
+
   public void corruptOriginDigestForFault() {
     var row =
         binding
@@ -752,14 +778,21 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   }
 
   public void handoffReceivingOrigin() throws Exception {
-    handoffReceivingOrigin(false);
+    handoffReceivingOrigin(false, null);
   }
 
   public void handoffReceivingOriginAfterLostConfirmation() throws Exception {
-    handoffReceivingOrigin(true);
+    handoffReceivingOrigin(true, null);
   }
 
-  private void handoffReceivingOrigin(boolean loseConfirmation) throws Exception {
+  public void handoffReceivingOriginAfterLostConfirmation(
+      java.util.concurrent.Callable<Void> beforeRecovery) throws Exception {
+    handoffReceivingOrigin(true, beforeRecovery);
+  }
+
+  private void handoffReceivingOrigin(
+      boolean loseConfirmation, java.util.concurrent.Callable<Void> beforeRecovery)
+      throws Exception {
     var fail = new java.util.concurrent.atomic.AtomicBoolean(loseConfirmation);
     var sql = binding.dsl();
     var transferSql =
@@ -830,12 +863,17 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
                       CLOCK.millis() + 5000));
       org.assertj.core.api.Assertions.assertThat(fail).isFalse();
       var before = sql.fetchSingle("SELECT * FROM game_session_region_owner_transfer");
+      var retainedItems = sql.fetch("SELECT * FROM game_session_capacity_origin_transfer_item");
       org.assertj.core.api.Assertions.assertThat(before.get("state", String.class))
           .isEqualTo("COMPLETED");
+      if (beforeRecovery != null) beforeRecovery.call();
       regionInstallation = successor.resumeCompletedTransfer(unconfirmed, CLOCK.millis() + 5000);
       org.assertj.core.api.Assertions.assertThat(
               sql.fetchSingle("SELECT * FROM game_session_region_owner_transfer"))
           .isEqualTo(before);
+      org.assertj.core.api.Assertions.assertThat(
+              sql.fetch("SELECT * FROM game_session_capacity_origin_transfer_item"))
+          .isEqualTo(retainedItems);
       return;
     }
     regionInstallation =

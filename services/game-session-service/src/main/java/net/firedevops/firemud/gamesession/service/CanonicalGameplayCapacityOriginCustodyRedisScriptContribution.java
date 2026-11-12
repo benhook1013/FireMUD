@@ -10,10 +10,10 @@ import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Passive descriptor contribution for the manual original-NEW final session CAS. */
+/** Passive descriptor contribution for manual original-NEW capacity-origin custody. */
 public final class CanonicalGameplayCapacityOriginCustodyRedisScriptContribution
     implements RedisScriptContribution {
-  public static final String SCRIPT_ID = "game-session.original-new-capacity-origin-custody.v1";
+  public static final String SCRIPT_ID = "game-session.original-new-capacity-origin-custody.v2";
   public static final String RESOURCE_PATH =
       "redis/lua/game-session-original-new-capacity-origin-custody.lua";
   private static final String DESCRIPTOR_PATH =
@@ -48,6 +48,6 @@ public final class CanonicalGameplayCapacityOriginCustodyRedisScriptContribution
 
   private static IllegalStateException unavailable() {
     return new IllegalStateException(
-        "Original NEW final admission Redis descriptor is unavailable");
+        "Original NEW capacity-origin custody Redis descriptor is unavailable");
   }
 }

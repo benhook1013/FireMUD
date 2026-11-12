@@ -979,6 +979,144 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void frozenTransferResumesAfterAdvanceAndInstallFailuresWithTheSameLiveGrant() throws Exception {
+    repairAccountMember();
+    bridge();
+    var original = regionBinding.installation();
+    var failFenceReceipt = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var failInstallCompletion = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var observer =
+        new org.jooq.impl.DefaultExecuteListener() {
+          @Override
+          public void executeStart(org.jooq.ExecuteContext context) {
+            String statement = context.sql();
+            if (statement == null) return;
+            if (statement.contains("UPDATE game_session_region_owner_transfer_item")
+                && statement.contains("SET fence_readback=?")
+                && failFenceReceipt.compareAndSet(true, false)) {
+              throw new IllegalStateException("Controlled failure after successor fence CAS");
+            }
+            if (statement.contains("UPDATE game_session_region_owner_transfer")
+                && statement.contains("SET state='COMPLETED'")
+                && failInstallCompletion.compareAndSet(true, false)) {
+              throw new IllegalStateException(
+                  "Controlled failure before transfer completion commit");
+            }
+          }
+        };
+    var observedSql =
+        org.jooq.impl.DSL.using(fixture.dsl().configuration().deriveAppending(observer));
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(observedSql, CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            observedSql, CLOCK, repository, capacityOwner(), receiver);
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "final-owner-handoff",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    CanonicalGameplayRegionIncarnationSource incarnation =
+        scope -> {
+          assertThat(scope).isEqualTo(original.incarnation.scope());
+          return original.incarnation;
+        };
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            catalog,
+            incarnation,
+            sources.resolver,
+            identity,
+            java.time.Duration.ofSeconds(30),
+            CLOCK);
+    admin.pexpire(ascii(original.grant.key()), 0);
+
+    var frozenFailure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CanonicalGameplayRegionLeaseOwner.FrozenTransferUnconfirmed.class,
+            () ->
+                successor.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()));
+    assertThat(failFenceReceipt).isFalse();
+    var frozen = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
+    UUID transferId = frozen.get("transfer_id", UUID.class);
+    assertThat(frozen.get("state", String.class)).isEqualTo("FROZEN");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT fence_readback FROM game_session_region_owner_transfer_item WHERE transfer_id=? ORDER BY target_ordinal LIMIT 1",
+                    transferId)
+                .get(0, byte[].class))
+        .isNull();
+    String fencedKey = capacityKey(tags.assignmentForTransition(fixture.transitionId()));
+    assertThat(admin.hget(ascii(fencedKey), ascii("state")))
+        .containsExactly(ascii("FENCED_INDETERMINATE"));
+    String frozenSql = sqlImage();
+    Map<String, String> frozenPhysical = physicalImage();
+
+    var differentOwner =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            catalog,
+            incarnation,
+            sources.resolver,
+            identity,
+            java.time.Duration.ofSeconds(30),
+            CLOCK);
+    assertThatThrownBy(() -> differentOwner.resumeFrozenTransfer(frozenFailure, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(frozenSql);
+    assertThat(physicalImage()).isEqualTo(frozenPhysical);
+
+    var installFailure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CanonicalGameplayRegionLeaseOwner.TransferCompletionUnconfirmed.class,
+            () -> successor.resumeFrozenTransfer(frozenFailure, deadline()));
+    assertThat(failInstallCompletion).isFalse();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT state,transfer_id FROM game_session_region_owner_transfer"))
+        .satisfies(
+            row -> {
+              assertThat(row.get("state", String.class)).isEqualTo("FROZEN");
+              assertThat(row.get("transfer_id", UUID.class)).isEqualTo(transferId);
+            });
+    long reservedFence =
+        fixture
+            .dsl()
+            .fetchSingle("SELECT successor_owner_fence FROM game_session_region_owner_transfer")
+            .get(0, Long.class);
+    var recovered = successor.resumeFrozenTransfer(installFailure, deadline());
+    assertThat(recovered.status.executorFence()).isEqualTo(reservedFence);
+    assertThat(recovered.grant.tokenCorrelation())
+        .isEqualTo(recovered.status.leaseTokenCorrelation());
+    var completed =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT state,transfer_id,successor_owner_fence FROM game_session_region_owner_transfer");
+    assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
+    assertThat(completed.get("transfer_id", UUID.class)).isEqualTo(transferId);
+    assertThat(completed.get("successor_owner_fence", Long.class)).isEqualTo(reservedFence);
+    String completedSql = sqlImage();
+    admin.pexpire(ascii(recovered.grant.key()), 0);
+    assertThatThrownBy(() -> successor.resumeFrozenTransfer(installFailure, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(sqlImage()).isEqualTo(completedSql);
+  }
+
+  @Test
   void retainedTransferFenceLossCannotBeReinstalledOrQualifyHandoff() throws Exception {
     repairAccountMember();
     bridge();
@@ -1474,18 +1612,37 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var transfer =
         new CanonicalGameplayRegionOwnerTransferCoordinator(
             observedSql, CLOCK, repository, capacityOwner(), receiver);
+    var identity =
+        new net.firedevops.firemud.common.runtime.RuntimeIdentity(
+            "game-session-service",
+            "final-owner-handoff",
+            "localhost",
+            CLOCK.instant(),
+            "test",
+            "test",
+            "controlled-test-image");
+    CanonicalGameplayRegionIncarnationSource incarnation =
+        scope -> {
+          assertThat(scope).isEqualTo(original.incarnation.scope());
+          return original.incarnation;
+        };
+    var successor =
+        CanonicalGameplayRegionLeaseOwnerFactory.compose(
+            fixture.dsl(),
+            ownerClient,
+            catalog,
+            incarnation,
+            sources.resolver,
+            identity,
+            Duration.ofSeconds(30),
+            CLOCK);
     admin.pexpire(ascii(original.grant.key()), 0);
-    assertThatThrownBy(
+    var frozenFailure =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CanonicalGameplayRegionLeaseOwner.FrozenTransferUnconfirmed.class,
             () ->
-                CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-                    fixture.dsl(),
-                    ownerClient,
-                    catalog,
-                    original,
-                    sources.resolver,
-                    transfer,
-                    deadline()))
-        .isInstanceOf(RuntimeException.class);
+                successor.installForTransition(
+                    null, original.transitionId, original.worldRequest, transfer, deadline()));
     assertThat(failed).isTrue();
     var frozen = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
     UUID transferId = frozen.get("transfer_id", UUID.class);
@@ -1511,12 +1668,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             .fetchSingle("SELECT last_value FROM game_session_region_executor_fence_seq")
             .get(0, Long.class);
     failRetention.set(false);
-    // Controlled expiry of the failed contender's grant, not a bypass of a live incumbent.
-    admin.pexpire(ascii(original.grant.key()), 0);
-    var successor =
-        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-            fixture.dsl(), ownerClient, catalog, original, sources.resolver, transfer, deadline());
-    assertThat(successor.status.ownerInstanceId()).isEqualTo("final-owner-handoff");
+    var recovered = successor.resumeFrozenTransfer(frozenFailure, deadline());
+    assertThat(recovered.status.ownerInstanceId()).isEqualTo("final-owner-handoff");
     var completed = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
     assertThat(completed.get("transfer_id", UUID.class)).isEqualTo(transferId);
     assertThat(completed.get("intent_digest", String.class)).isEqualTo(intent);
@@ -1541,7 +1694,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 .get(0, String.class))
         .isEqualTo(executionImage);
     assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
-    assertThat(successor.evidence)
+    assertThat(recovered.evidence)
         .as("committed continuation grants no provisional bridge authority")
         .isNull();
     assertThatThrownBy(
@@ -1558,7 +1711,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         .hasMessage("A first binding cannot proceed while an active controller exists");
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
-        .contains(successor.status);
+        .contains(recovered.status);
     assertThat(
             fixture
                 .dsl()

@@ -37,9 +37,9 @@ local function timely()
 end
 local kind = redis.call('TYPE', KEYS[1]).ok
 if kind == 'none' then
-  -- A captured transfer can install the successor fence before a delayed initial
-  -- submission arrives. This creates custody only; it never fabricates a reservation.
-  if action ~= 'INIT' and action ~= 'TRANSFER' then return -1 end
+  -- Only the successful SQL origin inserter may make the first physical INIT write.
+  -- Transfer and every replay require the already-installed persistent marker.
+  if action ~= 'INIT' then return -1 end
   if action == 'INIT' and expectedState ~= 'OPEN' then return -2 end
   if not timely() then return -1 end
   redis.call('HSET', KEYS[1], 'origin', digest, 'owner', newOwner, 'fence', newFence, 'state', expectedState)
