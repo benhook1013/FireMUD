@@ -69,6 +69,8 @@ dependencies {
     testFixturesImplementation(project(":common-security"))
     testFixturesImplementation(project(":common-data-runtime"))
     testFixturesApi(testFixtures(project(":common-test-support")))
+    // Public credential-abuse fixture signatures expose Testcontainers container types.
+    testFixturesApi(libs.testcontainers)
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesImplementation(libs.spring.boot.starter.jdbc)
     testFixturesImplementation(libs.spring.boot.starter.data.redis)

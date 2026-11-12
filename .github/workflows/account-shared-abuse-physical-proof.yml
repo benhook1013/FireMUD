@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      SOURCE_SHA: 2d587ac1571d82d36c5035a95f23f0a89ed4e4be
+      SOURCE_SHA: 61eea5c1beea8b238bd846a2d3ab1a0edd621d27
       SOURCE_DIRECTORY: ${{ github.workspace }}/source
       TESTCONTAINERS_CHECKS_DISABLE: 'false'
       TESTCONTAINERS_REUSE_ENABLE: 'false'
@@ -33,7 +33,7 @@ jobs:
       - name: Check out exact isolated source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 2d587ac1571d82d36c5035a95f23f0a89ed4e4be
+          ref: 61eea5c1beea8b238bd846a2d3ab1a0edd621d27
           path: source
           fetch-depth: 2
           persist-credentials: false

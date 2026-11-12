@@ -1,296 +1,303 @@
 {
-  "base_head": "b68e274959b2de70445afe000aae1e0bb670ad3b",
+  "base_head": "2d587ac1571d82d36c5035a95f23f0a89ed4e4be",
   "files": [
     {
       "path": "design/architecture/microservices/account-service/README.md",
-      "before_blob": "d6765b92f378d325ecd8370813e1eb0651f9791f",
+      "before_blob": "8c9fc396fc99de1306a3fa83c796c60d7589d881",
       "after_blob": "8c9fc396fc99de1306a3fa83c796c60d7589d881",
       "sha256": "efe42be53b7fe87b665438604c7c329596a13ee8c93dc4f9f5c4cd4d5f7fcb41",
       "bytes": 9942
     },
     {
       "path": "design/architecture/microservices/account-service/api-contracts.md",
-      "before_blob": "ac62b203e2fc1dc2d1477c6636b685957152baf2",
+      "before_blob": "5b59b18546d9394f17d1f7a1a4eb3694aadddbed",
       "after_blob": "5b59b18546d9394f17d1f7a1a4eb3694aadddbed",
       "sha256": "c47949cae0dc78ff7cf73f0d6d496b677607ba7939f01fe83533ecf56c75f951",
       "bytes": 217073
     },
     {
       "path": "design/architecture/microservices/account-service/configuration.md",
-      "before_blob": "6c8cd2e48e721a4cd51a2929b848441e01a9e70b",
+      "before_blob": "351a30e35902d41fb40083ed9a212736b248a4a3",
       "after_blob": "351a30e35902d41fb40083ed9a212736b248a4a3",
       "sha256": "f03c22f4ffc5043400101c7a0b3c6806c25b3ddee4641a19d3a849560c192a4d",
       "bytes": 22604
     },
     {
       "path": "design/architecture/microservices/account-service/runtime-and-data.md",
-      "before_blob": "57679bfbce33920c123fde9ecb6bcf11f58b42b2",
+      "before_blob": "8448edd847a836d80017409b37b6af83bc7a1261",
       "after_blob": "8448edd847a836d80017409b37b6af83bc7a1261",
       "sha256": "da85ac463a21ecb11cc3a5052439464be68c879f853e2c5e9ee4aa2d8a32515b",
       "bytes": 164959
     },
     {
       "path": "design/architecture/microservices/spring-cloud-gateway/client-behavior.md",
-      "before_blob": "ffc3e1c96dfb9f457864c4ef5b0e7f84a1d3d8a3",
+      "before_blob": "688a91bdd4f59a35830ea67a76294a239d6b601f",
       "after_blob": "688a91bdd4f59a35830ea67a76294a239d6b601f",
       "sha256": "62fc09af05f6a66fbe665f6fea453690b0e584bb390bd70a11e0f1ccbb3a7a9f",
       "bytes": 14113
     },
     {
       "path": "design/architecture/system-architecture-redis-cache-reference.md",
-      "before_blob": "6200a42e335324343f492cb2776f29be674ff520",
+      "before_blob": "08f543a6de1f218862b754e35fae1054383c88b5",
       "after_blob": "08f543a6de1f218862b754e35fae1054383c88b5",
       "sha256": "573ed66f3505673d63070d93d9943804150bb7a089f2292c00d6298abffd3f87",
       "bytes": 31850
     },
     {
       "path": "design/architecture/system-architecture-redis-cache.md",
-      "before_blob": "6eae23eb365cf1ef770cfc410393454833f68c4b",
+      "before_blob": "d48f0ac97a990393df916c2dc3a7ade65e156899",
       "after_blob": "d48f0ac97a990393df916c2dc3a7ade65e156899",
       "sha256": "a192d73749605d4d73aaf42c71b3fc9eb4df5ecee9e041dfb41cee04d93afde7",
       "bytes": 48564
     },
     {
       "path": "design/architecture/system-architecture-redis-cheatsheet.md",
-      "before_blob": "bf890b4617cbede372a945bd03c0627836a596d5",
+      "before_blob": "7d9c0f06e4982aed72c6b6580f942c0a26d2a08f",
       "after_blob": "7d9c0f06e4982aed72c6b6580f942c0a26d2a08f",
       "sha256": "52608980036c7bafb59471ffe87896089dfdfe240753a51b69b080d2cbc00380",
       "bytes": 30166
     },
     {
       "path": "design/architecture/system-architecture-redis-reset-and-recovery.md",
-      "before_blob": "62a277a98c62024098bb5d624b664b0f88bc62d5",
+      "before_blob": "eaa8eedcf5f4e5e4d6c7c587d30c274097923f20",
       "after_blob": "eaa8eedcf5f4e5e4d6c7c587d30c274097923f20",
       "sha256": "886226b0e772c8917d698e259c873fe5a4060d1e64e563175b18c9a0b0a501cd",
       "bytes": 118799
     },
     {
       "path": "design/architecture/system-architecture-redis-usage-and-profiles.md",
-      "before_blob": "d3b8c47ecc4a900084b8813e77339238e2a12917",
+      "before_blob": "38d754dde99489827d1ae95b9e824c26d7e05899",
       "after_blob": "38d754dde99489827d1ae95b9e824c26d7e05899",
       "sha256": "883e509a325300823042f25b781deca2f92c5cbaf33613fd9a4bbfaf69945a6d",
       "bytes": 63639
     },
     {
       "path": "design/project-management/implementation-tracking/player-access-and-session.md",
-      "before_blob": "dd0c10780e0b74499df3e5912bcb593d9f034b13",
+      "before_blob": "61095dc84122aaa3ea03e2d1eac2ba29281a500c",
       "after_blob": "61095dc84122aaa3ea03e2d1eac2ba29281a500c",
       "sha256": "2ed2b5f99e53c46fd9eb042a760561d2b6cacc478e2b361b1d30009beaf0e5a3",
       "bytes": 585316
     },
     {
       "path": "protos/account/v1/control_ui_authentication.proto",
-      "before_blob": "10757a24975473a2e8ceff02634368192cc6c51d",
+      "before_blob": "b8f01949a371cc3f08cff041f2416bc42c86c2b9",
       "after_blob": "b8f01949a371cc3f08cff041f2416bc42c86c2b9",
       "sha256": "a746d1a6cb169c3e28f767e94642e7432c58b52d877b53195f5b87b6d81fe489",
       "bytes": 2194
     },
     {
+      "path": "services/account-service/build.gradle.kts",
+      "before_blob": "5bf904c02e063be70ebbc398f04396ca70aae8b3",
+      "after_blob": "64b793a3854de1d8753e241864b5137c2cf3356f",
+      "sha256": "3f5188f56164affa0dbaaa2619574172613c92332af1137bfd7fd38a2e3ede55",
+      "bytes": 12274
+    },
+    {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/config/AccountCheckoutReceivingConfiguration.java",
-      "before_blob": "719511bcbf8396ab07a32e4ac931d3537180c264",
+      "before_blob": "e1faf6ebe0e922824a92be0c2ea12848e581cf46",
       "after_blob": "e1faf6ebe0e922824a92be0c2ea12848e581cf46",
       "sha256": "48141970bba9cf40739c47dda8e8b0a6e66bab5f946e954fd1387560081280ea",
       "bytes": 14919
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/config/AccountCredentialAbuseConfiguration.java",
-      "before_blob": null,
+      "before_blob": "a4c96266e5ae8e495d884ca84e57b493632182d6",
       "after_blob": "a4c96266e5ae8e495d884ca84e57b493632182d6",
       "sha256": "7991992b60f38c0d0d6f298c3ac8a45a3a18c4c61ea4db5293d993584b39027a",
       "bytes": 1244
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbusePolicy.java",
-      "before_blob": null,
+      "before_blob": "5d9801586e23e5a06bda8f933c4159df77dc115e",
       "after_blob": "5d9801586e23e5a06bda8f933c4159df77dc115e",
       "sha256": "699cfeaf3dd36047fd871e5b7ad0edafde1e35354f92698ee821d1bca4f75e89",
       "bytes": 7648
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbusePolicySource.java",
-      "before_blob": null,
+      "before_blob": "59ced2b70ae2efebb1a45dd7042d5af7f1f233ef",
       "after_blob": "59ced2b70ae2efebb1a45dd7042d5af7f1f233ef",
       "sha256": "6f43c0484a27b946d81814e75c57d90099c1fe548b45a82516e6bca11463b767",
       "bytes": 1340
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseRedisScriptContribution.java",
-      "before_blob": null,
+      "before_blob": "63b4fa37d6f5b4b8d8ad60ae65555478142441b0",
       "after_blob": "63b4fa37d6f5b4b8d8ad60ae65555478142441b0",
       "sha256": "71b6eff222feb698a9312710db5e982958e095bdfcf7029c72523ada135e5c7f",
       "bytes": 4396
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseRedisStore.java",
-      "before_blob": null,
+      "before_blob": "5eaed39ec6490514742e349b4edda230b249405c",
       "after_blob": "5eaed39ec6490514742e349b4edda230b249405c",
       "sha256": "c4c3a851f2d683a551371f8d844706c3bcb706ba0651a01e45161f2bfc0972e2",
       "bytes": 12073
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseRefusal.java",
-      "before_blob": null,
+      "before_blob": "923cc5716e39e374d414dcc3af8def17c8d4faf4",
       "after_blob": "923cc5716e39e374d414dcc3af8def17c8d4faf4",
       "sha256": "b615aef4c70a8e71e2ae92527028db14194e8f4d7597a037d5979a901d9a5723",
       "bytes": 1763
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseService.java",
-      "before_blob": null,
+      "before_blob": "fb59e76c5ac53d8f83ce09d06e9518827a4de334",
       "after_blob": "fb59e76c5ac53d8f83ce09d06e9518827a4de334",
       "sha256": "65a21cbb3a2ae65d2162fda5d6e1a0493a184850ef73bc1568b5106054e119b0",
       "bytes": 7233
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseSubjectKeys.java",
-      "before_blob": null,
+      "before_blob": "1da6945881e0c77ad8eea598df221aaf675038a1",
       "after_blob": "1da6945881e0c77ad8eea598df221aaf675038a1",
       "sha256": "43999dd75dea410ff31d15aeedf37d18b4c476ee6d6aa2e36fc43c26aa7592f4",
       "bytes": 7973
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountControlUiAuthenticationGrpcService.java",
-      "before_blob": "1bab9ab103a59804519b9978c3eb5f67501b8adf",
+      "before_blob": "d47709bd28d72d121e32668b294d9eaee11c87c1",
       "after_blob": "d47709bd28d72d121e32668b294d9eaee11c87c1",
       "sha256": "fcc868b9b240cde08ca0a33ff81ded29f902dfac2bfe287730539f55a646bd19",
       "bytes": 4801
     },
     {
       "path": "services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/session/AccountControlUiIssuanceService.java",
-      "before_blob": "adb7b3145c2df8473712f079ea3a6f2c917dcc4c",
+      "before_blob": "2d67e2b301e7f5aa74ee99be66d5a4c8792c7a65",
       "after_blob": "2d67e2b301e7f5aa74ee99be66d5a4c8792c7a65",
       "sha256": "7879bdffc0a215440eb59d7d9472d35e0822b9ac906eafdb341417f6c1877ea4",
       "bytes": 27876
     },
     {
       "path": "services/account-service/src/main/resources/redis/account_credential_abuse_admission_v1.lua",
-      "before_blob": null,
+      "before_blob": "92b980b99bcf8ebcb32b673257f4d26a718d8a64",
       "after_blob": "92b980b99bcf8ebcb32b673257f4d26a718d8a64",
       "sha256": "172e789c1bba04cba4b1ec3322420a4f4441a2a7377ef7a112dc1ddb1ebb3e73",
       "bytes": 5492
     },
     {
       "path": "services/account-service/src/main/resources/redis/account_credential_abuse_bucket_v1.lua",
-      "before_blob": null,
+      "before_blob": "979d806fef580f93b42f988c62f5fcc29a97bd23",
       "after_blob": "979d806fef580f93b42f988c62f5fcc29a97bd23",
       "sha256": "85af5355059b2d6953af964e2bc1fd8aaaaab1d9b8aa67d9bb5cd5d854ea4d3d",
       "bytes": 5588
     },
     {
       "path": "services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseRedisIntegrationTest.java",
-      "before_blob": null,
+      "before_blob": "a2499ed1dd86a34b3feca29e87c271328493216f",
       "after_blob": "a2499ed1dd86a34b3feca29e87c271328493216f",
       "sha256": "119fbd8ab385431ead331ef33758321be227bb5fb5d86c882c6a12229acb8f79",
       "bytes": 20803
     },
     {
       "path": "services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/service/session/AccountControlUiIssuancePostgresIntegrationTest.java",
-      "before_blob": "8e0f570f12a109ddc43cbbf683397b652e54da43",
+      "before_blob": "3ee44a5c2c8b36ca994d4138690c988c6a680f56",
       "after_blob": "3ee44a5c2c8b36ca994d4138690c988c6a680f56",
       "sha256": "439c964a3f201e45a88b92d30abc35d856ec7cd1f79b319497f12d2be9a072dc",
       "bytes": 36444
     },
     {
       "path": "services/account-service/src/test/java/integration/net/firedevops/firemud/accountservice/service/session/AccountControlUiPositiveOwnerPostgresIntegrationTest.java",
-      "before_blob": "c2f094c037c4d3a47160ffa420227e47c6a273ff",
+      "before_blob": "9cc6a18811b9a3f976bfdf9a1b0716d6010ac77b",
       "after_blob": "9cc6a18811b9a3f976bfdf9a1b0716d6010ac77b",
       "sha256": "0a48bac721920759b3ab0be0f3358acc1ad9e79f1bb30e43325da90e753b3ba6",
       "bytes": 81949
     },
     {
       "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/config/AccountCredentialAbuseConfigurationTest.java",
-      "before_blob": null,
+      "before_blob": "d52b776ce4e14d6a387c265538c9081481bc864c",
       "after_blob": "d52b776ce4e14d6a387c265538c9081481bc864c",
       "sha256": "f3028e0813400a0d31550eba4bc3a84076cfc2a11b17cd90d4ef6536aea18ce2",
       "bytes": 2394
     },
     {
       "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbusePolicyTest.java",
-      "before_blob": null,
+      "before_blob": "af68027423e7dfebf52fece72ca8ca7c109e54ed",
       "after_blob": "af68027423e7dfebf52fece72ca8ca7c109e54ed",
       "sha256": "9b88be5749ce584ff5497b14732bf216e4610d97e4a81add0b5e64f5dcec4bff",
       "bytes": 13284
     },
     {
       "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseRedisStoreTest.java",
-      "before_blob": null,
+      "before_blob": "f5f0d2dcf4dfc264da8344c32bff45da16c8de85",
       "after_blob": "f5f0d2dcf4dfc264da8344c32bff45da16c8de85",
       "sha256": "fc8664f6df04cb42757365b179fe577df26c97b5dcd86fce7821522e04574b76",
       "bytes": 20024
     },
     {
       "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseServiceTest.java",
-      "before_blob": null,
+      "before_blob": "18bda8f8d8398456f2004d65388f2e00613edb60",
       "after_blob": "18bda8f8d8398456f2004d65388f2e00613edb60",
       "sha256": "b20198a4a36a004be4966f6feaf7fa5b00c9195c398cbbc95674f894965b762d",
       "bytes": 9244
     },
     {
       "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseSubjectKeysTest.java",
-      "before_blob": null,
+      "before_blob": "4112c3bfe3e21b2003670c27c4d60ce3eb08ca71",
       "after_blob": "4112c3bfe3e21b2003670c27c4d60ce3eb08ca71",
       "sha256": "7e37877e77556929314a84fa564b1aafd3e8f627876538e528074d512f759806",
       "bytes": 9215
     },
     {
       "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/impl/AccountControlUiAuthenticationGrpcServiceTest.java",
-      "before_blob": "0929f3d5916f948c223432efec3f4d819a4fa278",
+      "before_blob": "9c30fdf4bae81ecf0b1094532355482f54a1600b",
       "after_blob": "9c30fdf4bae81ecf0b1094532355482f54a1600b",
       "sha256": "2746e2c4d49316f46ff276b8768c701e88536be7e3eb7b68bb51b22ea2c8d081",
       "bytes": 12282
     },
     {
       "path": "services/account-service/src/test/java/unit/net/firedevops/firemud/accountservice/service/session/AccountControlUiIssuanceWorkflowTest.java",
-      "before_blob": "f640043e2c5f2874512377b00709e2f964aebe2d",
+      "before_blob": "bc175488817bde2abe0047773db0c56b5d0ca6b3",
       "after_blob": "bc175488817bde2abe0047773db0c56b5d0ca6b3",
       "sha256": "f9eaed8e75749b04b7b2ad7e20ecc5c8cc6fc3fcf99c28325c22edd087d2781f",
       "bytes": 57040
     },
     {
       "path": "services/account-service/src/testFixtures/java/net/firedevops/firemud/accountservice/service/auth/AccountCredentialAbuseCacheFixture.java",
-      "before_blob": null,
+      "before_blob": "4f47e873ddd6abfdc175bcc3213346edc6c1cc9c",
       "after_blob": "4f47e873ddd6abfdc175bcc3213346edc6c1cc9c",
       "sha256": "b90f59b0430edc05115548eee0e23a6eb822f8933b3585dbaca5da6f1ed9f303",
       "bytes": 6702
     },
     {
       "path": "services/account-service/src/testFixtures/java/net/firedevops/firemud/accountservice/service/session/AccountControlUiOriginalOrderFixture.java",
-      "before_blob": "9aad17ba59c0412e0f6b4157d7889df7f502a325",
+      "before_blob": "3e783e858c7d3d33efb5a13658fb8b805312bcb4",
       "after_blob": "3e783e858c7d3d33efb5a13658fb8b805312bcb4",
       "sha256": "58f1872590553a81c0676612b548724bfca580a43378d364a46f4f8d4dd25bbd",
       "bytes": 24598
     },
     {
       "path": "services/account-service/src/testFixtures/java/net/firedevops/firemud/accountservice/service/session/AccountControlUiOwnerSourcesFixture.java",
-      "before_blob": "f3124dfc74a7306e856f5946e8fd127dde013188",
+      "before_blob": "3662cdf596b729f05f9afe4a4612d2be16789d55",
       "after_blob": "3662cdf596b729f05f9afe4a4612d2be16789d55",
       "sha256": "15f35c887977faec53364e18a1810993cb3aae9095e3e8a1051610246a8df8a5",
       "bytes": 37225
     },
     {
       "path": "services/common-security/src/main/java/net/firedevops/firemud/common/account/auth/AccountControlUiAuthenticationGrpcCodec.java",
-      "before_blob": "8c607c8c9014611a31c316f8789df4e0970a8a68",
+      "before_blob": "2f923773010065fc7d84458e1485ed7746772849",
       "after_blob": "2f923773010065fc7d84458e1485ed7746772849",
       "sha256": "d43978f3e2147088aa8312f5de736a4e4e54dc4f8421a738a14c321444f343f0",
       "bytes": 13551
     },
     {
       "path": "services/common-security/src/test/java/unit/net/firedevops/firemud/common/account/auth/AccountControlUiAuthenticationGrpcCodecTest.java",
-      "before_blob": "0b5d5a2f13c4811f6d347ab956ecee62bc937e74",
+      "before_blob": "3d3e797b930a655f81dfc07bf17c4e2b43ad1852",
       "after_blob": "3d3e797b930a655f81dfc07bf17c4e2b43ad1852",
       "sha256": "f19d8c7b12cd6d1c101b39657a02b04ae1eeca1e6ffec97c8eaabc693bd9382b",
       "bytes": 11817
     },
     {
       "path": "services/spring-cloud-gateway/src/main/java/net/firedevops/firemud/springcloudgateway/controller/AccountCheckoutGatewayController.java",
-      "before_blob": "fbad4dd21b5f53742984c71e1e4ded88bfa784fa",
+      "before_blob": "13580051a54c480753f4dbdd7086d4c012d3ae16",
       "after_blob": "13580051a54c480753f4dbdd7086d4c012d3ae16",
       "sha256": "5c84ffd09728a19cf1d42f2e144a4a869668be26d0b364d9569bbdc5ab6d9c6e",
       "bytes": 17784
     },
     {
       "path": "services/spring-cloud-gateway/src/test/java/unit/net/firedevops/firemud/springcloudgateway/controller/AccountCheckoutGatewayControllerTest.java",
-      "before_blob": "df445988176a77b83b74803c1d0d1f93caf0226e",
+      "before_blob": "5011db1befeb35b44962adb87489cc8da6eb2a73",
       "after_blob": "5011db1befeb35b44962adb87489cc8da6eb2a73",
       "sha256": "2a21bdcd307f5b43e9dc1eeaa49d58d547fe0baab054042891f2290ce91019de",
       "bytes": 19885
@@ -311,7 +318,10 @@
       "net.firedevops.firemud.accountservice.service.session.AccountControlUiPositiveOwnerPostgresIntegrationTest.realSignerLifecycleIssuesAuthenticatesAndClaimsExactOriginalAccountOrder"
     ]
   },
-  "base_tree": "e6a67bb5e183ca54c7776c77e930a1471378aeb6",
-  "candidate_tree": "67db348b171dbd49bf83e7955b52a9aa1dd7a24d",
-  "source_commit": "2d587ac1571d82d36c5035a95f23f0a89ed4e4be"
+  "base_tree": "67db348b171dbd49bf83e7955b52a9aa1dd7a24d",
+  "candidate_tree": "5aafa309f375cf7f7682ac425ea412bb3af7976b",
+  "source_commit": "61eea5c1beea8b238bd846a2d3ab1a0edd621d27",
+  "changed_paths": [
+    "services/account-service/build.gradle.kts"
+  ]
 }

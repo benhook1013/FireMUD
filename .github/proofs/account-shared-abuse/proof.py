@@ -32,7 +32,7 @@ def source_check():
     assert git('rev-parse','HEAD^{tree}')==EXPECTED['candidate_tree']
     assert git('rev-parse',EXPECTED['base_head']+'^{tree}')==EXPECTED['base_tree']
     assert git('show','-s','--format=%P','HEAD')==EXPECTED['base_head']
-    assert git('diff-tree','--no-commit-id','--name-only','-r',EXPECTED['base_head'],'HEAD').splitlines()==sorted(r['path'] for r in EXPECTED['files'])
+    assert git('diff-tree','--no-commit-id','--name-only','-r',EXPECTED['base_head'],'HEAD').splitlines()==sorted(EXPECTED['changed_paths'])
     assert not git('status','--porcelain','--untracked-files=no')
     for row in EXPECTED['files']:
         data=(ROOT/row['path']).read_bytes();assert sha(data)==row['sha256']
