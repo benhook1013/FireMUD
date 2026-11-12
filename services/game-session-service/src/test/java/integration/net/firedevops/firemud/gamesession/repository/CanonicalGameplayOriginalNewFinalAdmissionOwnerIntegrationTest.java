@@ -428,6 +428,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewAdmittedLogoutRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayRegionLeaseRedisScriptContribution(),
@@ -2212,6 +2214,18 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var fenced = physicalImage();
     var sql = sqlImage();
     capacityOwner().requireAdmittedLogoutFence(logout, execution, deadline());
+    var ownerWithoutLogoutDescriptor =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            fixture.dsl(),
+            ownerClient,
+            RedisScriptCatalog.fromContributions(List.of()),
+            CLOCK,
+            tags);
+    assertThatThrownBy(
+            () ->
+                ownerWithoutLogoutDescriptor.requireAdmittedLogoutFence(
+                    logout, execution, deadline()))
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(
             () ->
                 capacityOwner()

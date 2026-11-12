@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -29,6 +30,13 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Re
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Result;
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.State;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.ArgumentSpec;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.KeySpec;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.MutationEffect;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.OutcomeCategory;
+import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor.OutcomeSpec;
+import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewAdmittedLogoutRedisScriptContribution;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -1292,16 +1300,90 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     budget.check();
   }
 
-  private static byte[] admittedLogoutScript() {
-    try (var input =
-        CanonicalGameplayOriginalNewCapacityExecutionOwner.class.getResourceAsStream(
-            "/redis/lua/game-session-original-new-admitted-logout.lua")) {
-      if (input == null) throw unavailable();
-      int maximumBytes = 16 * 1024;
-      byte[] script = input.readNBytes(maximumBytes + 1);
-      if (script.length == 0 || script.length > maximumBytes) throw unavailable();
-      return script;
-    } catch (IOException failure) {
+  private byte[] admittedLogoutScript() {
+    try {
+      var descriptor =
+          scripts.require(
+              CanonicalGameplayOriginalNewAdmittedLogoutRedisScriptContribution.SCRIPT_ID);
+      requireAdmittedLogoutDescriptor(descriptor);
+      try (var input = getClass().getClassLoader().getResourceAsStream(descriptor.resourcePath())) {
+        if (input == null) throw unavailable();
+        int maximumBytes = 16 * 1024;
+        byte[] script = input.readNBytes(maximumBytes + 1);
+        if (script.length == 0
+            || script.length > maximumBytes
+            || !descriptor.sha256().equals(OriginalNewCapacityExecution.sha256(script))) {
+          throw unavailable();
+        }
+        return script;
+      }
+    } catch (IOException | RuntimeException failure) {
+      throw unavailable();
+    }
+  }
+
+  private static void requireAdmittedLogoutDescriptor(RedisScriptDescriptor descriptor) {
+    var hashTag = RedisScriptDescriptor.HashTagDeclaration.REQUIRED;
+    var keys =
+        List.of(
+            new KeySpec("session", "session:game:", hashTag),
+            new KeySpec("characterIndex", "session:game:index:character:", hashTag),
+            new KeySpec("accountTenantIndex", "session:game:index:account-tenant:", hashTag),
+            new KeySpec("tenantIndex", "session:game:index:tenant:", hashTag),
+            new KeySpec("capacityExecution", "session:game:capacity-execution:", hashTag));
+    var arguments =
+        List.of(
+                "tenantId",
+                "accountId",
+                "playableStateNamespaceId",
+                "characterId",
+                "gameInstanceId",
+                "sessionId",
+                "bindingGeneration",
+                "tenantGameplayTag",
+                "capacityExecutionDigest",
+                "logoutId",
+                "absoluteDeadlineMillis",
+                "capacityExecutionBytes",
+                "originalSessionSha1",
+                "action")
+            .stream()
+            .map(ArgumentSpec::new)
+            .toList();
+    var outcomes =
+        List.of(
+            new OutcomeSpec(
+                "ADMITTED_LOGOUT_FENCE_INSTALLED",
+                OutcomeCategory.SUCCESS,
+                MutationEffect.MUTATING),
+            new OutcomeSpec(
+                "ADMITTED_LOGOUT_FENCE_OBSERVED",
+                OutcomeCategory.REPLAY,
+                MutationEffect.NON_MUTATING),
+            new OutcomeSpec(
+                "CURRENT_PHYSICAL_STATE_REFUSED",
+                OutcomeCategory.STALE,
+                MutationEffect.NON_MUTATING),
+            new OutcomeSpec(
+                "INVALID_ARGUMENTS",
+                OutcomeCategory.VALIDATION_FAILURE,
+                MutationEffect.NON_MUTATING));
+    if (!CanonicalGameplayOriginalNewAdmittedLogoutRedisScriptContribution.RESOURCE_PATH.equals(
+            descriptor.resourcePath())
+        || !"game-session-service".equals(descriptor.owner())
+        || !"gamesession_coord_app".equals(descriptor.principal())
+        || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
+        || !keys.equals(descriptor.keys())
+        || !arguments.equals(descriptor.arguments())
+        || descriptor.category() != RedisScriptDescriptor.ScriptCategory.SESSION_CAS
+        || !outcomes.equals(descriptor.outcomes())
+        || descriptor.resetSensitivity() != RedisScriptDescriptor.ResetSensitivity.CLUSTER
+        || descriptor.lossClass() != RedisScriptDescriptor.LossClass.EMPTY_REDIS_COLD_START_OR_RESET
+        || descriptor.compatibilityLevel()
+            != RedisScriptDescriptor.CompatibilityLevel.REQUIRES_CLUSTER_RESET
+        || !List.of(new RedisScriptDescriptor.SupportedCoexistence("v1", "none"))
+            .equals(descriptor.supportedCoexistence())
+        || descriptor.legacyPayloadShape() != null) {
       throw unavailable();
     }
   }
