@@ -1175,22 +1175,6 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     var source = inventory.readOriginalNewFinalAdmissionSource(decision);
     var accountOpen = controlledAccountOpen();
     var issuerOpen = issuerOpen();
-    var sql = fixture.dsl();
-    // Model an old receipt-only writer while preserving the actual guarded receipt transaction.
-    sql.execute(
-        """
-        CREATE FUNCTION fixture_preserve_authorized_execution() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN
-          RETURN OLD;
-        END;
-        $$
-        """);
-    sql.execute(
-        """
-        CREATE TRIGGER aaa_fixture_preserve_authorized_execution
-        BEFORE UPDATE ON game_session_original_new_capacity_execution
-        FOR EACH ROW EXECUTE FUNCTION fixture_preserve_authorized_execution()
-        """);
     try (var credential =
             new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
         var template = credential.template();
@@ -1198,22 +1182,11 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             finalOwner()
                 .finalizeOriginalNewOnce(
                     source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
-      inventory.commitOriginalNewFinalAdmission(readback);
-    } finally {
-      sql.execute(
-          "DROP TRIGGER aaa_fixture_preserve_authorized_execution ON game_session_original_new_capacity_execution");
-      sql.execute("DROP FUNCTION fixture_preserve_authorized_execution()");
+      commitHistoricalSplitReceipt(readback);
     }
     var request = controlledCapacity.request();
     var reservation = controlledCapacity.reservation();
     var owner = capacityOwner();
-    assertThat(inventory.readOriginalNewFinalAdmissionSource(decision).finalReceipt()).isPresent();
-    assertThat(
-            sql.fetchSingle(
-                    "SELECT status FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
-                    controlledCapacity.digest())
-                .get(0, String.class))
-        .isEqualTo("AUTHORIZED");
     assertThatThrownBy(() -> owner.readExact(request, reservation))
         .isInstanceOf(IllegalStateException.class);
     var originalPhysical = physicalImage();
@@ -2104,28 +2077,21 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       inventory.commitOriginalNewFinalAdmission(actual);
       finalDigest = actual.finalSessionSha256();
     }
-    // Stop after final SQL commit, before the original coordinator retained terminal evidence.
+    // A recreated owner can read the retained positive immediately after the receipt commits.
     String rows = sqlImage();
     var physical = physicalImage();
-    assertThatThrownBy(
-            () ->
-                capacityOwner()
-                    .readExact(controlledCapacity.request(), controlledCapacity.reservation()))
-        .isInstanceOf(IllegalStateException.class);
-    assertThat(sqlImage()).isEqualTo(rows);
-    assertThat(physicalImage()).isEqualTo(physical);
-    // The existing closure/lifecycle entry point must recover positive custody before refusing
-    // a negative outcome; no original coordinator or credential is available here.
+    var retained =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(retained.disposition()).isEqualTo("COMMITTED");
+    assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
     assertThatThrownBy(
             () ->
                 capacityOwner()
                     .closeOriginalAttempt(
                         controlledCapacity.request(), controlledCapacity.reservation()))
         .isInstanceOf(IllegalStateException.class);
-    var retained =
-        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
-    assertThat(retained.disposition()).isEqualTo("COMMITTED");
-    assertThat(retained.physicalDigest()).isEqualTo("sha256:" + finalDigest);
+    assertThat(sqlImage()).isEqualTo(rows);
+    assertThat(physicalImage()).isEqualTo(physical);
     var assignment = tags.assignmentForTransition(fixture.transitionId());
     controlledRemoveServingKeys(source, assignment);
     var replay =
@@ -2338,9 +2304,9 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     issuerOpen(),
                     controlledCapacity,
                     deadline())) {
-      inventory.commitOriginalNewFinalAdmission(actual);
+      commitHistoricalSplitReceipt(actual);
     }
-    admin.del(ascii(installation.sessionKey()));
+    assertThat(admin.del(ascii(installation.sessionKey()))).isEqualTo(1L);
     String rows = sqlImage();
     var physical = physicalImage();
     assertThatThrownBy(
@@ -3519,6 +3485,47 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         + assignment.tenantGameplayTag()
         + "}:"
         + controlledCapacity.request().admissionAttemptId();
+  }
+
+  private void commitHistoricalSplitReceipt(
+      CanonicalGameplayOriginalNewFinalAdmissionRedisOwner.Readback readback) {
+    var sql = fixture.dsl();
+    // Model the old receipt-only writer while exercising the actual guarded receipt transaction.
+    sql.execute(
+        """
+        CREATE FUNCTION fixture_preserve_authorized_execution() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RETURN OLD;
+        END;
+        $$
+        """);
+    sql.execute(
+        """
+        CREATE TRIGGER aaa_fixture_preserve_authorized_execution
+        BEFORE UPDATE ON game_session_original_new_capacity_execution
+        FOR EACH ROW WHEN (OLD.status = 'AUTHORIZED' AND NEW.status = 'COMMITTED')
+        EXECUTE FUNCTION fixture_preserve_authorized_execution()
+        """);
+    try {
+      inventory.commitOriginalNewFinalAdmission(readback);
+    } finally {
+      sql.execute(
+          "DROP TRIGGER aaa_fixture_preserve_authorized_execution ON game_session_original_new_capacity_execution");
+      sql.execute("DROP FUNCTION fixture_preserve_authorized_execution()");
+    }
+    assertThat(
+            inventory
+                .readOriginalNewFinalAdmissionSource(decision)
+                .finalReceipt()
+                .orElseThrow()
+                .finalSessionSha256())
+        .isEqualTo(readback.finalSessionSha256());
+    var execution =
+        sql.fetchSingle(
+            "SELECT status, terminal_readback FROM game_session_original_new_capacity_execution WHERE execution_digest = ?",
+            readback.execution().digest());
+    assertThat(execution.get("status", String.class)).isEqualTo("AUTHORIZED");
+    assertThat(execution.get("terminal_readback", byte[].class)).isNull();
   }
 
   private void controlledRemoveServingKeys(
