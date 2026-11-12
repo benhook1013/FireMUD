@@ -2369,6 +2369,24 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
       assertThat(receipt.inventorySnapshotRevision()).isEqualTo(revision);
       assertThat(receipt.cohortDigest()).isEqualTo(intent.cohortDigest());
       assertThat(receipt.barrierTargetDigest()).isEqualTo(intent.barrierTargetDigest());
+      for (String mutation :
+          java.util.List.of(
+              "UPDATE game_session_account_fence_final_observation"
+                  + " SET inventory_snapshot_revision = inventory_snapshot_revision + 1",
+              "DELETE FROM game_session_account_fence_final_observation",
+              "TRUNCATE game_session_account_fence_final_observation")) {
+        assertThatThrownBy(() -> fixture.dsl().execute(mutation))
+            .isInstanceOf(org.jooq.exception.DataAccessException.class)
+            .rootCause()
+            .isInstanceOfSatisfying(
+                org.postgresql.util.PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                  assertThat(failure.getMessage())
+                      .contains("Historical FINAL observation is immutable");
+                });
+        assertThat(recreated.readFinalObservation(intent.operationId())).contains(receipt);
+      }
       var transition =
           fixture
               .dsl()
