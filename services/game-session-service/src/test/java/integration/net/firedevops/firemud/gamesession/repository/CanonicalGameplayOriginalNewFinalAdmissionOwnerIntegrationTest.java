@@ -1877,6 +1877,68 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   @Test
+  void accountSqlFenceBeforeDelayedFinalCannotEstablishPreIntentCommitOrdering() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    // Capture the dispatch inputs before acquisition. This models an already-authorized delayed
+    // final call; no OPEN hash is installed or refreshed after the SQL intent commits.
+    var accountOpen = controlledAccountOpen();
+    var issuerOpen = issuerOpen();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template()) {
+      var barrier = new CanonicalGameplayAccountAdmissionBarrierRepository(fixture.dsl());
+      var intent =
+          barrier.beginFenceIntent(
+              source.candidate().bindingIdentity().accountId(), UUID.randomUUID());
+      assertThat(intent.state().name()).isEqualTo("ACQUISITION_INTENT");
+      assertThat(intent.cohortRows())
+          .filteredOn(
+              row ->
+                  row.kind() == CanonicalGameplayAccountAdmissionFenceIntent.CohortKind.TRANSITION
+                      && row.sourceKey().equals(fixture.transitionId().toString()))
+          .hasSize(1);
+      String frozenSql = sqlImage();
+      var beforeFinal = physicalImage();
+      // The SQL intent is not the Redis CLOSED linearization point. The existing script still
+      // accepts these original inputs against the unchanged exact physical OPEN barriers.
+      try (var actual =
+          finalOwner()
+              .finalizeOriginalNewOnce(
+                  source, template, accountOpen, issuerOpen, controlledCapacity, deadline())) {
+        assertThat(admin.get(ascii(installation.sessionKey())))
+            .containsExactly(actual.exactCanonicalBytes());
+        assertThat(physicalImage()).isNotEqualTo(beforeFinal);
+        assertThat(sqlImage()).isEqualTo(frozenSql);
+        var frozen = barrier.readCurrentFenceIntent(intent.operationId());
+        assertThat(frozen.inventorySnapshotRevision())
+            .isEqualTo(intent.inventorySnapshotRevision());
+        assertThat(frozen.cohortDigest()).isEqualTo(intent.cohortDigest());
+        assertThat(frozen.cohortRows()).usingRecursiveComparison().isEqualTo(intent.cohortRows());
+        // A genuine physical positive and matching preexisting frozen candidate do not prove
+        // FINAL preceded SQL acquisition. Preserve all existing admission/recovery refusals.
+        assertThatThrownBy(() -> inventory.commitOriginalNewFinalAdmission(actual))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+            .hasMessage("Account-fence acquisition intent blocks a new binding transition");
+        assertThatThrownBy(
+                () ->
+                    capacityOwner()
+                        .retainCommittedBeforeCleanup(
+                            controlledCapacity.request(), controlledCapacity.reservation()))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+        assertThatThrownBy(
+                () -> reader().readActualOriginalFinalAdmission(credential.selector(), "test"))
+            .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
+            .hasMessage("Original NEW transition is not final-readable");
+        assertThat(sqlImage()).isEqualTo(frozenSql);
+        assertThat(admin.get(ascii(installation.sessionKey())))
+            .containsExactly(actual.exactCanonicalBytes());
+      }
+    }
+  }
+
+  @Test
   void actualFinalBeforeAccountFenceRetainsPhysicalPositiveButRecoveryRemainsIndeterminate()
       throws Exception {
     repairAccountMember();
