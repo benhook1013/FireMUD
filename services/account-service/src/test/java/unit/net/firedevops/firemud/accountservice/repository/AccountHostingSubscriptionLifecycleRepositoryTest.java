@@ -51,6 +51,51 @@ class AccountHostingSubscriptionLifecycleRepositoryTest {
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"trialing", "active", "past_due", "grace"})
+  void currentPositiveWithoutSignedCompletionRefusesBeforeReceiptOrProviderWork(String status) {
+    UUID tenantId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID subscriptionId = UUID.randomUUID();
+    var controlledIntents = mock(AccountSubscriptionIntentRepository.class);
+    var controlledRepository =
+        new AccountHostingSubscriptionLifecycleRepository(
+            dsl,
+            controlledIntents,
+            Clock.systemUTC(),
+            limits(3, 2, Duration.ofSeconds(10), Duration.ofSeconds(1), Duration.ofHours(1)),
+            new AccountHostingSubscriptionLifecyclePolicy(
+                Duration.ofSeconds(15),
+                new AccountHostingSubscriptionLifecyclePolicy.RecoveryTiming(
+                    Duration.ofSeconds(60), Duration.ofSeconds(120))),
+            "prod",
+            false);
+    var current = mock(AccountSubscriptionCurrentRecord.class);
+    when(current.creationRequestId()).thenReturn(requestId);
+    when(current.subscriptionId()).thenReturn(subscriptionId);
+    when(current.rowVersion()).thenReturn(7L);
+    when(current.status()).thenReturn(status);
+    when(controlledIntents.findCurrentByTenant(tenantId)).thenReturn(Optional.of(current));
+    when(controlledIntents.lockForLifecycle(requestId, 7L)).thenReturn(current);
+    String linksSql =
+        "SELECT lifecycle_inflight_request_id, current_receipt_request_id "
+            + "FROM subscription WHERE subscription_id = ?";
+    when(dsl.fetchOne(linksSql, subscriptionId)).thenReturn(mock(Record.class));
+    String completionSql =
+        "SELECT subscription_id FROM subscription_first_invoice_completions WHERE subscription_id = ?";
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThatThrownBy(() -> controlledRepository.prepareCurrentRead(tenantId))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: signed first-invoice fulfillment is absent");
+
+    verify(controlledIntents).findCurrentByTenant(tenantId);
+    verify(controlledIntents).lockForLifecycle(requestId, 7L);
+    verify(dsl).fetchOne(linksSql, subscriptionId);
+    verify(dsl).fetchOne(completionSql, subscriptionId);
+    verifyNoMoreInteractions(controlledIntents, dsl);
+  }
+
   @Test
   void recoveryOriginIsOnlyRetainedEpisodeHistoryAndMissingHistoryStaysUnresolved() {
     assertThat(AccountHostingSubscriptionLifecycleRepository.retainedPastDueOrigin(null)).isNull();

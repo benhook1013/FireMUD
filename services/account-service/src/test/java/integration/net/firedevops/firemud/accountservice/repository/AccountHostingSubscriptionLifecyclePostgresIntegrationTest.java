@@ -55,6 +55,8 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -471,8 +473,10 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                     f.creation().owner().accountUuid()));
   }
 
-  @Test
-  void rawSqlActiveMappingWithoutGenuineClaimAndReceiptCannotBecomeAReadOrLifecycleSource() {
+  @ParameterizedTest
+  @ValueSource(strings = {"trialing", "active", "past_due", "grace"})
+  void rawSqlPositiveMappingWithoutGenuineClaimAndReceiptCannotBecomeAReadOrLifecycleSource(
+      String status) {
     Context c = context("latest");
     Fixture f = fixture(c);
     c.tx()
@@ -490,12 +494,24 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                       DIGEST);
               c.dsl()
                   .execute(
-                      "UPDATE subscription SET status = 'active', provider_subscription_id = ?, row_version = row_version + 1 WHERE subscription_id = ?",
+                      "UPDATE subscription SET status = ?, provider_subscription_id = ?, row_version = row_version + 1 WHERE subscription_id = ?",
+                      status,
                       f.providerId(),
                       f.creation().subscriptionId());
             });
     assertThat(c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().status())
-        .isEqualTo("active");
+        .isEqualTo(status);
+    // This is a schema-valid controlled row, not a genuine predecessor receipt or migration proof.
+    List<String> before = firstInvoiceImage(c);
+    var originalRow =
+        one(
+            c,
+            "SELECT to_jsonb(s)::text, xmin::text FROM subscription s WHERE subscription_id = ?",
+            f.creation().subscriptionId());
+    assertThat(retainedPositiveGapIds(c)).containsExactly(f.creation().subscriptionId());
+    assertThatThrownBy(() -> in(c, () -> f.owner().prepareCurrentRead(f.creation().tenantId())))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class)
+        .hasMessage("ENTITLEMENT_UNAVAILABLE: signed first-invoice fulfillment is absent");
     assertThatThrownBy(() -> f.service().readCurrent(f.creation().tenantId()))
         .hasMessageContaining("ENTITLEMENT_UNAVAILABLE");
     assertThatThrownBy(
@@ -507,6 +523,48 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
     assertThat(f.transport().reads).isZero();
     assertThat(count(c, "subscription_lifecycle_receipts")).isZero();
     assertThat(count(c, "account_tenant_authority_source_records")).isZero();
+    assertThat(firstInvoiceImage(c)).isEqualTo(before);
+    assertThat(
+            one(
+                c,
+                "SELECT to_jsonb(s)::text, xmin::text FROM subscription s WHERE subscription_id = ?",
+                f.creation().subscriptionId()))
+        .isEqualTo(originalRow);
+  }
+
+  @Test
+  void readOnlyRetainedPositiveInventoryExcludesCompletedAndNegativeCurrentSubscriptions() {
+    for (String status : List.of("active", "canceled")) {
+      Context c = context("latest");
+      Fixture f = fixture(c);
+      f.transport().json = response(f, status);
+      activate(f);
+      assertThat(c.intents().findCurrentByTenant(f.creation().tenantId()).orElseThrow().status())
+          .isEqualTo(status);
+      assertThat(count(c, "subscription_first_invoice_completions"))
+          .isEqualTo(status.equals("active") ? 1 : 0);
+      List<String> before = firstInvoiceImage(c);
+      assertThat(retainedPositiveGapIds(c)).isEmpty();
+      assertThat(firstInvoiceImage(c)).isEqualTo(before);
+    }
+  }
+
+  private static List<UUID> retainedPositiveGapIds(Context c) {
+    var readOnly = new TransactionTemplate(Objects.requireNonNull(c.tx().getTransactionManager()));
+    readOnly.setReadOnly(true);
+    return Objects.requireNonNull(
+        readOnly.execute(
+            ignored -> {
+              assertThat(c.dsl().fetchSingle("SHOW transaction_read_only").get(0, String.class))
+                  .isEqualTo("on");
+              return c.dsl()
+                  .fetch(
+                      "SELECT s.subscription_id FROM subscription s WHERE s.superseded_at IS NULL "
+                          + "AND s.status IN ('trialing', 'active', 'past_due', 'grace') "
+                          + "AND NOT EXISTS (SELECT 1 FROM subscription_first_invoice_completions completion "
+                          + "WHERE completion.subscription_id = s.subscription_id) ORDER BY s.subscription_id")
+                  .getValues("subscription_id", UUID.class);
+            }));
   }
 
   @Test
@@ -1545,6 +1603,8 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
                             new AccountSubscriptionCreateRequest.ReplacementFence(
                                 f.request.subscriptionId(), predecessor.rowVersion()))));
     List<String> retained = resolutionImage(c);
+    assertThat(retainedPositiveGapIds(c)).isEmpty();
+    assertThat(resolutionImage(c)).isEqualTo(retained);
     var replay = in(c, () -> owner.prepareTerminalResolution(f.request));
     assertThat(replay.replayResult()).isEqualTo(committed);
     assertThat(
