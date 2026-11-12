@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Deadline;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -29,16 +30,26 @@ public final class CanonicalInitialPlayerLocationRegionResolver {
    * Reads the exact current initial-room consequence, then revalidates it through World lifecycle.
    */
   public ResolvedRegion resolve(CanonicalInitialPlayerLocationRequest request) {
+    return resolve(request, null);
+  }
+
+  /** Shares the receiving operation's deadline across placement and lifecycle reads. */
+  public ResolvedRegion resolve(
+      CanonicalInitialPlayerLocationRequest request, Deadline operationDeadline) {
     Objects.requireNonNull(request, "request");
     CanonicalInitialPlayerLocationRegionResponse observed =
-        initialLocationClient.readInitialPlayerLocationRegion(request);
+        operationDeadline == null
+            ? initialLocationClient.readInitialPlayerLocationRegion(request)
+            : initialLocationClient.readInitialPlayerLocationRegion(request, operationDeadline);
     var lifecycle = observed.getLifecycle();
     WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest =
         WorldCanonicalInstanceLifecycleEvidence.Request.fromStored(
             lifecycle.getCanonicalRequestBytes().toByteArray());
     UUID canonicalRegionId = UUID.fromString(observed.getCanonicalRegionInstanceUuid());
     CanonicalRegionBootstrapAssignmentResolver.Assignment current =
-        lifecycleResolver.resolve(lifecycleRequest, canonicalRegionId);
+        operationDeadline == null
+            ? lifecycleResolver.resolve(lifecycleRequest, canonicalRegionId)
+            : lifecycleResolver.resolve(lifecycleRequest, canonicalRegionId, operationDeadline);
     if (!request.getExpectedTarget().equals(observed.getExpectedTarget())
         || !lifecycleRequest.equals(current.request())
         || !lifecycle.getLifecycleStatus().equals(current.lifecycleStatus())

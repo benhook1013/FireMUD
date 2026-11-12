@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.client;
 
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.util.Objects;
@@ -102,15 +103,23 @@ public final class CanonicalInitialPlayerLocationClient
   /** Reads the fresh current-room region consequence for an exact retained APPLIED placement. */
   public CanonicalInitialPlayerLocationRegionResponse readInitialPlayerLocationRegion(
       CanonicalInitialPlayerLocationRequest request) {
+    return readInitialPlayerLocationRegion(request, null);
+  }
+
+  /** Reads region evidence within the remaining deadline of the receiving operation. */
+  public CanonicalInitialPlayerLocationRegionResponse readInitialPlayerLocationRegion(
+      CanonicalInitialPlayerLocationRequest request, Deadline operationDeadline) {
     requireNoAmbientSql("Initial player location region RPC requires no ambient SQL");
     requireRequest(request);
     if (request.getSerializedSize() > MAX_REGION_REQUEST_BYTES) {
       throw new IllegalArgumentException(
           "Initial player location region request exceeds its bound");
     }
+    Deadline callDeadline = Deadline.after(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+    if (operationDeadline != null) callDeadline = callDeadline.minimum(operationDeadline);
     var stub =
         requireInitializedStub("World initial player location client is unavailable")
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withDeadline(callDeadline)
             .withMaxInboundMessageSize(MAX_REGION_RESPONSE_BYTES)
             .withMaxOutboundMessageSize(MAX_REGION_REQUEST_BYTES);
     CanonicalInitialPlayerLocationRegionResponse response =
