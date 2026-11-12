@@ -116,7 +116,12 @@ class AccountTenantOperationEntitlementOwnerPostgresIntegrationTest {
     assertThat(java.time.Instant.parse((String) second.fields().get("evaluatedAt")))
         .isAfter(java.time.Instant.parse((String) first.fields().get("evaluatedAt")));
     assertThat(first.fields())
-        .doesNotContainKeys("callerAccountId", "issuer", "accountId", "verifiedConnectScopeId");
+        .doesNotContainKeys(
+            "callerAccountId",
+            "issuer",
+            "accountId",
+            "verifiedConnectScopeId",
+            "verifiedConnectScopeTokenHash");
     assertThat(first.fields().get("quotas"))
         .isEqualTo(
             Map.of(

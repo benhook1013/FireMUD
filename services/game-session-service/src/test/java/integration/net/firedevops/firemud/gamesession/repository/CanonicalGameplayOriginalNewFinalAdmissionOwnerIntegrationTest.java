@@ -690,6 +690,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     java.nio.file.Files.write(executionFile, controlledCapacity.canonicalBytes());
     String jdbcUrl = POSTGRES.getJdbcUrl();
     String schema = fixture.dsl().fetchSingle("SELECT current_schema()").get(0, String.class);
+    var childOutput = directory.resolve("stop-after-authorization.log");
     var process =
         new ProcessBuilder(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
@@ -701,10 +702,11 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 POSTGRES.getPassword(),
                 executionFile.toString())
             .redirectErrorStream(true)
+            .redirectOutput(childOutput.toFile())
             .start();
     try {
       assertThat(process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      String output = java.nio.file.Files.readString(childOutput, StandardCharsets.UTF_8);
       assertThat(process.exitValue()).as("Child output: %s", output).isEqualTo(72);
       assertThat(output).contains("INDEPENDENT_INSTALL_DISPATCHED_COMMIT");
     } finally {
@@ -1279,6 +1281,68 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             () -> inventory.readRegionTransferOriginalSource(UUID.randomUUID(), retained))
         .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessage("Region transfer changed its original transition");
+  }
+
+  @Test
+  void frozenTransferResumesExactTerminalOriginalThatCommittedBeforeCapture() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var original = regionBinding.installation();
+    var repository = new CanonicalGameplayRegionOwnerTransferRepository(fixture.dsl(), CLOCK, tags);
+    var receiver =
+        new CanonicalGameplayControlledRegionTransferObservationFixture()
+            .receiver(repository, tags);
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            fixture.dsl(), CLOCK, repository, capacityOwner(), receiver);
+    UUID transferId;
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      transferId =
+          repository.within(
+              deadline(), ignored -> repository.begin(original.source, original.status));
+      assertThat(transferId).isNotNull();
+      inventory.commitOriginalNewFinalAdmission(readback);
+    }
+    var captured = repository.within(deadline(), ignored -> repository.capture(transferId));
+    assertThat(captured).isEmpty();
+    var retained = inventory.readRegionTransferOriginalSource(fixture.transitionId(), source);
+    byte[] committed = admin.get(ascii(installation.sessionKey()));
+    assertThat(retained.finalReceipt()).isPresent();
+    assertThat(
+            new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
+        .contains(original.status);
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var successor =
+        CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
+            fixture.dsl(), ownerClient, catalog, original, sources.resolver, transfer, deadline());
+    assertThat(successor.evidence).isNull();
+    assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
+    var completed = fixture.dsl().fetchSingle("SELECT * FROM game_session_region_owner_transfer");
+    assertThat(completed.get("transfer_id", UUID.class)).isEqualTo(transferId);
+    assertThat(completed.get("state", String.class)).isEqualTo("COMPLETED");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer_item")))
+        .isZero();
+    assertThat(
+            inventory
+                .readRegionTransferOriginalSource(fixture.transitionId(), retained)
+                .finalReceipt())
+        .isEqualTo(retained.finalReceipt());
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(committed);
   }
 
   @Test

@@ -136,6 +136,10 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.fields().get("callerWorkload")).isEqualTo(PEER);
     assertThat(f.retainedCapacity).hasSize(1);
     assertThat(
+            new String(value.canonicalBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                .contains(f.scope.connectScopeId()))
+        .isFalse();
+    assertThat(
             f.retainedCapacity
                 .get(value.fields().get("evaluationIdentity"))
                 .get("canonical_evidence", byte[].class))
@@ -151,7 +155,9 @@ class AccountPlayerAdmissionEntitlementOwnerTest {
     assertThat(value.membershipSource().authorityTuple().membershipAuthorityGeneration())
         .containsExactlyEntriesOf(Map.of(TENANT.toString(), "1"));
     assertThat(value.fields())
-        .containsEntry("verifiedConnectScopeId", f.scope.connectScopeId())
+        .containsEntry(
+            "verifiedConnectScopeTokenHash", AccountJoinDigest.tokenHash(f.scope.connectScopeId()))
+        .doesNotContainKey("verifiedConnectScopeId")
         .containsEntry("sourceKind", "NON_PAID_DEMO");
     var binding = (Map<?, ?>) value.fields().get("target");
     assertThat(binding.get("realmId")).isEqualTo(f.scope.realmId().toString());

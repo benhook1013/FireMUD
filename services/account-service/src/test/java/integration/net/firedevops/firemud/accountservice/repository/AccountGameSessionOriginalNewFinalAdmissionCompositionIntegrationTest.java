@@ -703,6 +703,11 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
   @Test
   void retainedOriginalReplaysBeforeChangedNonCreatingEvidenceCanBecomeADenial() throws Exception {
     try (Session session = session()) {
+      String unretainedScopeHash =
+          RuntimePlayerAdmissionEntitlementEvidence.connectScopeTokenHash("unretained-test-scope");
+      var wrongScope = session.retainControlledEvaluation(true, null, null, unretainedScopeHash);
+      assertCapacityRefusalWithoutMutation(
+          session, wrongScope, Status.Code.UNAVAILABLE, "ENTITLEMENT_UNAVAILABLE");
       var first = session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L);
       var changed = session.retainControlledEvaluation(false, null);
       byte[] candidate = session.gs.physicalSession();
@@ -713,6 +718,8 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
               StatusRuntimeException.class,
               () -> session.capacityClient.commit(changed, CLOCK.millis() + 5_000L));
       assertCapacityFailure(failure, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
+      assertCapacityRefusalWithoutMutation(
+          session, wrongScope, Status.Code.ALREADY_EXISTS, "IDEMPOTENCY_CONFLICT");
       assertThat(session.capacityClient.commit(session.capacityRequest, CLOCK.millis() + 5_000L))
           .isEqualTo(first);
       assertThat(session.capacityImage() + session.durableImage()).isEqualTo(before);
@@ -1044,17 +1051,25 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
                   .readByLease(UUID.fromString((String) lease.carrier().get("leaseId"))));
     }
 
-    /** Controlled entitlement facts, real current caller/scope and actual immutable retention. */
+    /** Controlled evaluation inputs with actual immutable retention. */
     private TenantCapacityAdmission.Request retainControlledEvaluation(
         boolean creationAllowed, @org.jspecify.annotations.Nullable String quota) {
       return retainControlledEvaluation(creationAllowed, quota, null);
+    }
+
+    private TenantCapacityAdmission.Request retainControlledEvaluation(
+        boolean creationAllowed,
+        @org.jspecify.annotations.Nullable String quota,
+        @org.jspecify.annotations.Nullable Long catalogRevision) {
+      return retainControlledEvaluation(creationAllowed, quota, catalogRevision, null);
     }
 
     @SuppressWarnings("unchecked")
     private TenantCapacityAdmission.Request retainControlledEvaluation(
         boolean creationAllowed,
         @org.jspecify.annotations.Nullable String quota,
-        @org.jspecify.annotations.Nullable Long catalogRevision) {
+        @org.jspecify.annotations.Nullable Long catalogRevision,
+        @org.jspecify.annotations.Nullable String scopeTokenHash) {
       var original = capacityRequest;
       var parsed =
           RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
@@ -1088,7 +1103,7 @@ class AccountGameSessionOriginalNewFinalAdmissionCompositionIntegrationTest {
           RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
               original.identity().requestId(),
               original.evidence().callerWorkload(),
-              (String) fields.get("verifiedConnectScopeId"),
+              scopeTokenHash == null ? parsed.verifiedConnectScopeTokenHash() : scopeTokenHash,
               parsed.membershipSource(),
               target,
               facts,

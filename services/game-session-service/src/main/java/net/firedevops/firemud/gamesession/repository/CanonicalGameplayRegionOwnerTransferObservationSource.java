@@ -9,10 +9,19 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 interface CanonicalGameplayRegionOwnerTransferObservationSource {
   Context readCurrent(UUID transferId, long targetOrdinal);
 
+  default Context readCurrent(UUID transferId, long targetOrdinal, long deadline) {
+    return readCurrent(transferId, targetOrdinal);
+  }
+
   /** Independent topology read; SQL implementations retain their operation's admitted budget. */
   default CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
       UUID transitionId, CanonicalGameplayTenantGameplayTagRepository tags) {
     return tags.assignmentForTransition(transitionId);
+  }
+
+  default CanonicalGameplayTenantGameplayTagRepository.Assignment readAssignment(
+      UUID transitionId, CanonicalGameplayTenantGameplayTagRepository tags, long deadline) {
+    return readAssignment(transitionId, tags);
   }
 
   /**

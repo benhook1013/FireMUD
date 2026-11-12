@@ -86,6 +86,21 @@ class CanonicalGameplayOriginalNewAuthenticatedSessionTest {
   void buildsNonPersistableTemplateAndAcceptsExactFinalCasReadback() throws Exception {
     try (Fixture fixture = fixture(claims -> {});
         var template = template(fixture)) {
+      var entitlement = fixture.capacityRequest.evidence().fields();
+      assertThat(entitlement)
+          .containsEntry("membershipExists", true)
+          .containsEntry("membershipLifecycleState", "ACTIVE")
+          .containsEntry("gameplayAdmissionAllowed", true);
+      assertThat((List<?>) entitlement.get("authoritySourceEvidence"))
+          .anySatisfy(
+              source -> {
+                assertThat(source).isInstanceOf(Map.class);
+                String eventJson = (String) ((Map<?, ?>) source).get("canonicalEventJson");
+                assertThat(eventJson)
+                    .contains("\"eventType\":\"MEMBERSHIP_CHANGED\"")
+                    .contains("\"membershipLifecycleState\":\"ACTIVE\"")
+                    .contains("\"gameplayAdmissionAllowed\":true");
+              });
       byte[] templateBytes = template.finalCasTemplateBytes();
       String templateJson = new String(templateBytes, StandardCharsets.UTF_8);
       assertThat(templateJson)

@@ -132,14 +132,19 @@ class AccountTenantCapacityClientMtlsTest {
   }
 
   @Test
-  void changedResponseFenceCannotSubstituteForOriginalCommitment() throws Exception {
+  void changedResponseFenceLeavesTheOriginalCommitmentIndeterminate() throws Exception {
     AtomicInteger calls = new AtomicInteger();
     Server server = server("account", calls, true);
     try (var client = client(server)) {
       client.init();
       assertThatThrownBy(
               () -> client.commit(CapacityAdmissionTestFixture.playerRequest(), deadline()))
-          .isInstanceOf(IllegalArgumentException.class);
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.UNKNOWN));
+      assertThat(calls).hasValue(1);
     } finally {
       stop(server);
     }
