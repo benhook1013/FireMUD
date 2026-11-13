@@ -225,23 +225,38 @@ public final class AccountHostingFirstInvoicePaymentService {
             });
     outsideSql();
     try {
-      return provider.confirm(
-          dispatch,
-          () ->
-              actors.withCurrentAccount(
-                  bearer,
-                  actor -> {
-                    var evidence =
-                        reauthentication.requireCurrentBillingEvidenceLocked(
-                            dispatch.reauthenticationEvidenceId(),
-                            actor.accountId(),
-                            dispatch.authorizationRequestId());
-                    if (evidence.billingContext() == null) {
-                      throw new IllegalStateException(
-                          "Exact first-invoice billing binding required");
-                    }
-                    return payments.claimCommand(dispatch, actor.accountId());
-                  }));
+      Handoff handoff =
+          provider.confirm(
+              dispatch,
+              () ->
+                  actors.withCurrentAccount(
+                      bearer,
+                      actor -> {
+                        var evidence =
+                            reauthentication.requireCurrentBillingEvidenceLocked(
+                                dispatch.reauthenticationEvidenceId(),
+                                actor.accountId(),
+                                dispatch.authorizationRequestId());
+                        if (evidence.billingContext() == null) {
+                          throw new IllegalStateException(
+                              "Exact first-invoice billing binding required");
+                        }
+                        return payments.claimCommand(dispatch, actor.accountId());
+                      }));
+      if (handoff.clientSecret() != null) {
+        actors.withCurrentAccount(
+            bearer,
+            actor -> {
+              var evidence =
+                  reauthentication.requireCurrentBillingEvidenceLocked(
+                      dispatch.reauthenticationEvidenceId(),
+                      actor.accountId(),
+                      dispatch.authorizationRequestId());
+              payments.validateHandoffAuthorization(dispatch, actor.accountId(), evidence);
+              return null;
+            });
+      }
+      return handoff;
     } catch (ExpiredBeforePost observation) {
       transaction.executeWithoutResult(status -> payments.retainExpiredBeforePost(observation));
       throw observation;
