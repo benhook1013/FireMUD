@@ -2583,8 +2583,14 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         int maximumRetainedRecords,
         boolean withOtherCandidate)
         throws Exception {
-      this(listener, maximumRecords, maximumBindingBytes, maximumRetainedRecords,
-          256, 1024, withOtherCandidate);
+      this(
+          listener,
+          maximumRecords,
+          maximumBindingBytes,
+          maximumRetainedRecords,
+          256,
+          1024,
+          withOtherCandidate);
     }
 
     private TransferSqlProof(
@@ -2595,8 +2601,14 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
         int maximumTransfers,
         int maximumItems)
         throws Exception {
-      this(listener, maximumRecords, maximumBindingBytes, maximumRetainedRecords,
-          maximumTransfers, maximumItems, false);
+      this(
+          listener,
+          maximumRecords,
+          maximumBindingBytes,
+          maximumRetainedRecords,
+          maximumTransfers,
+          maximumItems,
+          false);
     }
 
     private TransferSqlProof(
