@@ -1,9 +1,10 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.Observation;
@@ -12,10 +13,20 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoi
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Account-owned immutable record of a verified payment succeeding after retained cancellation. */
 final class AccountHostingFirstInvoicePaymentConflictRepository {
   private static final String TABLE = "subscription_first_invoice_late_paid_conflicts";
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
 
   private final DSLContext dsl;
 
@@ -82,8 +93,8 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
     // here as well keeps this owner safe when called directly, while an altered duplicate payload
     // cannot be rebound to the first immutable inbox receipt.
     StripeEventInboxRecord intake = new StripeEventInboxRepository(dsl).retainOrReplay(verified);
-    if (!intake.payloadSha256().equals(verified.payloadSha256())
-        || !intake.rawPayload().equals(verified.rawPayload())) throw refused();
+    if (!intake.payloadSha256().equals(StripeEventInboxRecord.sha256(intake.rawPayload()))
+        || !sameSignedSuccessTuple(intake.rawPayload(), verified.rawPayload())) throw refused();
 
     int inserted =
         dsl.execute(
@@ -117,7 +128,7 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
             observed.status(),
             utcMicros(observed.readStartedAt()),
             utcMicros(observed.observedAt()),
-            utcMicros(observed.expiresAt()),
+            utcMicros(observed.readStartedAt().plusSeconds(20)),
             cancellation.get("cancellation_request_id", UUID.class),
             cancellation.get("cancellation_receipt_digest", String.class),
             cancellation.get("cancellation_row_version", Long.class),
@@ -155,18 +166,118 @@ final class AccountHostingFirstInvoicePaymentConflictRepository {
 
   private static void requireExactEvent(VerifiedEvent verified, Record row) {
     byte[] retainedPayload = row.get("raw_payload", byte[].class);
-    byte[] incomingPayload = verified.rawPayload().getBytes(StandardCharsets.UTF_8);
     if (!"payment_intent.succeeded".equals(verified.eventType())
-        || !verified.payloadSha256().equals(row.get("event_payload_digest", String.class))
-        || !verified.payloadSha256().equals(row.get("payload_sha256", String.class))
-        || !Arrays.equals(retainedPayload, incomingPayload)
+        || !row.get("payload_sha256", String.class)
+            .equals(row.get("event_payload_digest", String.class))
+        || !sha256(retainedPayload).equals(row.get("payload_sha256", String.class))
         || !verified.eventType().equals(row.get("event_type", String.class))
         || verified.eventCreatedAtEpochSeconds()
             != row.get("provider_created_at_epoch_seconds", Long.class)
         || !Objects.equals(
             verified.providerApiVersion(), row.get("provider_api_version", String.class))
-        || verified.livemode() != row.get("livemode", Boolean.class)) throw refused();
+        || verified.livemode() != row.get("livemode", Boolean.class)
+        || !sameSignedSuccessTuple(decodeUtf8(retainedPayload), verified.rawPayload()))
+      throw refused();
   }
+
+  private static boolean sameSignedSuccessTuple(String retainedPayload, String incomingPayload) {
+    return signedSuccessTuple(retainedPayload).equals(signedSuccessTuple(incomingPayload));
+  }
+
+  private static SignedSuccessTuple signedSuccessTuple(String payload) {
+    try {
+      JsonNode event = JSON.readTree(payload);
+      if (event == null || !event.isObject() || !event.path("data").isObject()) throw refused();
+      JsonNode object = event.path("data").path("object");
+      if (!object.isObject()) throw refused();
+      JsonNode eventId = event.path("id");
+      JsonNode eventType = event.path("type");
+      JsonNode created = event.path("created");
+      JsonNode apiVersion = event.path("api_version");
+      JsonNode eventLivemode = event.path("livemode");
+      JsonNode objectType = object.path("object");
+      JsonNode status = object.path("status");
+      JsonNode id = object.path("id");
+      JsonNode customer = object.path("customer");
+      JsonNode paymentMethod = object.path("payment_method");
+      JsonNode amount = object.path("amount");
+      JsonNode amountReceived = object.path("amount_received");
+      JsonNode currency = object.path("currency");
+      JsonNode livemode = object.path("livemode");
+      if (!text(eventId)
+          || !"payment_intent.succeeded".equals(eventType.asText())
+          || !created.isIntegralNumber()
+          || !created.canConvertToLong()
+          || !(apiVersion.isMissingNode() || apiVersion.isNull() || apiVersion.isTextual())
+          || !eventLivemode.isBoolean()
+          || !"payment_intent".equals(objectType.asText())
+          || !"succeeded".equals(status.asText())
+          || !text(id)
+          || !text(customer)
+          || !text(paymentMethod)
+          || !amount.isIntegralNumber()
+          || !amount.canConvertToLong()
+          || !amountReceived.isIntegralNumber()
+          || !amountReceived.canConvertToLong()
+          || !currency.isTextual()
+          || currency.asText().isBlank()
+          || !livemode.isBoolean()) throw refused();
+      return new SignedSuccessTuple(
+          eventId.asText(),
+          created.asLong(),
+          apiVersion.isTextual() ? apiVersion.asText() : null,
+          eventLivemode.asBoolean(),
+          id.asText(),
+          customer.asText(),
+          paymentMethod.asText(),
+          amount.asLong(),
+          amountReceived.asLong(),
+          currency.asText(),
+          livemode.asBoolean());
+    } catch (JacksonException malformed) {
+      throw refused();
+    }
+  }
+
+  private static boolean text(JsonNode value) {
+    return value.isTextual() && !value.asText().isBlank();
+  }
+
+  private static String decodeUtf8(byte[] payload) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+          .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+          .decode(java.nio.ByteBuffer.wrap(payload))
+          .toString();
+    } catch (java.nio.charset.CharacterCodingException malformed) {
+      throw refused();
+    }
+  }
+
+  private static String sha256(byte[] payload) {
+    try {
+      return "sha256:"
+          + java.util.HexFormat.of()
+              .formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
+    } catch (NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 is unavailable", impossible);
+    }
+  }
+
+  private record SignedSuccessTuple(
+      String eventId,
+      long eventCreatedAtEpochSeconds,
+      String providerApiVersion,
+      boolean eventLivemode,
+      String paymentIntentId,
+      String customerId,
+      String paymentMethodId,
+      long amount,
+      long amountReceived,
+      String currency,
+      boolean livemode) {}
 
   private static OffsetDateTime utcMicros(java.time.Instant instant) {
     return OffsetDateTime.ofInstant(

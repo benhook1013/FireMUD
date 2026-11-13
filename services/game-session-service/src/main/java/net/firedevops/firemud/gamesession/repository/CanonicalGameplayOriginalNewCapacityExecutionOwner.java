@@ -115,7 +115,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       return within(
           deadline, owner -> owner.bind(source, request, result, deadline, expectedOwner));
     budget.check();
-    request.requireCommittable();
+    OriginalNewCapacityExecution.requireOriginalNewRequest(request);
     result.requireBinding(request);
     CurrentOwner selected = requireRequestBinding(source, request, deadline);
     if (expectedOwner != null && !expectedOwner.equals(selected)) throw unavailable();
@@ -182,7 +182,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     if (budget == null)
       return within(deadline, owner -> owner.precharge(source, request, selected, deadline));
     budget.check();
-    request.requireCommittable();
+    OriginalNewCapacityExecution.requireOriginalNewRequest(request);
     if (!source.candidate().bindingDecisionId().equals(request.identity().admissionId())
         || !source.candidate().bindingIdentity().tenantId().equals(request.identity().tenantId())
         || selected.fence() != source.regionAcknowledgement().executorFence().longValueExact()) {
@@ -785,9 +785,14 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   /** Fences future work without resolving the retained original or its Account capacity hold. */
   TransferFence fenceForTransfer(
-      CanonicalGameplayRegionOwnerTransferRepository.Item item, long deadline) {
-    if (budget == null) return within(deadline, owner -> owner.fenceForTransfer(item, deadline));
+      CanonicalGameplayRegionOwnerTransferRepository.Item item,
+      CanonicalGameplayRegionOwnerTransferRepository.FenceDispatch dispatch,
+      long deadline) {
+    if (budget == null)
+      return within(deadline, owner -> owner.fenceForTransfer(item, dispatch, deadline));
     budget.check();
+    UUID dispatchId = dispatch.takeSubmission(item);
+    if (dispatchId == null) return readTransferFence(item, deadline);
     var execution = item.execution();
     Record row = find(sql(), execution);
     if (row == null) throw unavailable();
@@ -797,7 +802,11 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     long result =
         scopedFinalOwner()
             .fenceCapacityExecutionOnce(
-                execution, item.candidate(), item.assignment(), budget.absoluteDeadlineMillis());
+                execution,
+                item.candidate(),
+                item.assignment(),
+                dispatchId,
+                budget.absoluteDeadlineMillis());
     if (result == CAPACITY_EXECUTION_COMMITTED_OBSERVED) {
       // Merely seeing a COMMITTED hash must not release old-generation custody.
       retainCommittedBeforeCleanup(execution.request(), execution.reservation(), deadline);
@@ -820,8 +829,20 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
     var execution = item.execution();
     Map<String, byte[]> physical = readExecution(execution, item.assignment().tenantGameplayTag());
     String state = text(physical.get("state"));
-    if ("FENCED_INDETERMINATE".equals(state)) {
-      if (physical.size() != 3
+    UUID dispatchId = null;
+    boolean terminal = !"FENCED_INDETERMINATE".equals(state);
+    if (!terminal) {
+      if (physical.containsKey("fenceDispatchId")) {
+        String encoded = text(physical.get("fenceDispatchId"));
+        try {
+          dispatchId = UUID.fromString(encoded);
+        } catch (IllegalArgumentException invalid) {
+          throw unavailable();
+        }
+        if (dispatchId.equals(new UUID(0, 0)) || !dispatchId.toString().equals(encoded))
+          throw unavailable();
+      }
+      if (physical.size() != (dispatchId == null ? 3 : 4)
           || !Arrays.equals(execution.canonicalBytes(), physical.get("binding"))
           || !execution.digest().equals(text(physical.get("digest")))) throw unavailable();
     } else {
@@ -845,17 +866,25 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                 output.writeBytes(value);
               }
             });
-    return new TransferFence(execution.digest(), output.toByteArray());
+    return new TransferFence(execution.digest(), output.toByteArray(), dispatchId, terminal);
   }
 
   /** Only physical inspection above constructs this future-exclusion capability. */
   static final class TransferFence {
     private final String executionDigest;
     private final byte[] canonicalReadback;
+    private final UUID completedDispatchId;
+    private final boolean terminal;
 
-    private TransferFence(String executionDigest, byte[] canonicalReadback) {
+    private TransferFence(
+        String executionDigest,
+        byte[] canonicalReadback,
+        UUID completedDispatchId,
+        boolean terminal) {
       this.executionDigest = executionDigest;
       this.canonicalReadback = canonicalReadback.clone();
+      this.completedDispatchId = completedDispatchId;
+      this.terminal = terminal;
     }
 
     String executionDigest() {
@@ -864,6 +893,10 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
     byte[] canonicalReadback() {
       return canonicalReadback.clone();
+    }
+
+    boolean provesDispatchEnded(UUID expectedDispatchId) {
+      return terminal || expectedDispatchId.equals(completedDispatchId);
     }
   }
 

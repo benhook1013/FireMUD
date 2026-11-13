@@ -29,6 +29,7 @@ public final class AccountHostingSubscriptionLifecycleService {
   private final StripeHostingSubscriptionObserver observer;
   private final StripeHostingFirstInvoicePaymentClient firstInvoice;
   private final TransactionTemplate transaction;
+  private final TransactionTemplate unpaidCancellationTransaction;
 
   public AccountHostingSubscriptionLifecycleService(
       AccountHostingSubscriptionLifecycleRepository repository,
@@ -47,6 +48,10 @@ public final class AccountHostingSubscriptionLifecycleService {
     this.firstInvoice = firstInvoice;
     transaction = new TransactionTemplate(Objects.requireNonNull(transactions));
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    unpaidCancellationTransaction = new TransactionTemplate(transactions);
+    unpaidCancellationTransaction.setPropagationBehavior(
+        TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    unpaidCancellationTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
   }
 
   public ClaimResult claimProvisioning(
@@ -117,7 +122,7 @@ public final class AccountHostingSubscriptionLifecycleService {
     }
     TerminalUnpaidObservation retainedObservation = unpaid;
     return Objects.requireNonNull(
-        transaction.execute(
+        unpaidCancellationTransaction.execute(
             s ->
                 repository.applyUnpaidFirstInvoiceCancellation(
                     captured, observed, retainedObservation)));

@@ -49,7 +49,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * hosting owner composition. Its receipt is revalidated on this exact SQL connection. A missing
  * paid composition or changed selected head never falls back to DEMO.
  */
-final class AccountGameplayAdmissionCurrentSources {
+public final class AccountGameplayAdmissionCurrentSources {
   private static final String ACCOUNT_ISSUER = GameSessionAccountDelegationProfile.ISSUER;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Set<String> LEASE_SOURCE_FIELDS =
@@ -155,7 +155,7 @@ final class AccountGameplayAdmissionCurrentSources {
     AccountGameplayAdmissionPaidSource.Preparation paidPreparation = null;
     if (paidSource != null
         && paidSource.hasCurrentPaidSourceCandidate(dsl, workloadNamespace, tenantId)) {
-      lockRequiredAccountsBeforeTenantSources(tenantId, accountId);
+      lockRequiredAccountsBeforeTenantSources(dsl, tenantId, accountId);
       paidPreparation = paidSource.prepare(dsl, workloadNamespace, tenantId);
     } else {
       lockExactAccountFirst(accountId);
@@ -201,7 +201,7 @@ final class AccountGameplayAdmissionCurrentSources {
     // exact current paid source for the requested tenant.
     AccountHostingSubscriptionCurrentReceipt paidReceipt = null;
     if (observed != null && observed.paidSource != null && observed.paidObservation != null) {
-      lockRequiredAccountsBeforeTenantSources(targetTenantId, accountId);
+      lockRequiredAccountsBeforeTenantSources(dsl, targetTenantId, accountId);
       paidReceipt =
           observed.paidSource.readCurrent(dsl, workloadNamespace, observed.paidObservation);
     } else {
@@ -288,10 +288,22 @@ final class AccountGameplayAdmissionCurrentSources {
     return accountId;
   }
 
-  /** Locks both Account identities before any tenant generation or hosting-wallet lock. */
-  private void lockRequiredAccountsBeforeTenantSources(UUID tenantId, UUID callerAccountId) {
+  /**
+   * Locks the exact caller and current tenant billing-owner Account rows in deterministic order.
+   *
+   * <p>Call inside the caller's writable SERIALIZABLE transaction, before hosting-wallet or tenant
+   * source locks. This shared lock step keeps paid admission readers on the same Account-first
+   * order even when the caller is not the billing owner.
+   */
+  public static void lockRequiredAccountsBeforeTenantSources(
+      DSLContext exactDsl, UUID tenantId, UUID callerAccountId) {
+    Objects.requireNonNull(exactDsl, "The caller-enlisted DSLContext is required");
+    requireNonNilUuid(tenantId, "Canonical tenant UUID");
+    requireNonNilUuid(callerAccountId, "Verified caller Account UUID");
+    requireWritableSerializableAccountTransaction(exactDsl);
+
     Record owner =
-        dsl.fetchOne(
+        exactDsl.fetchOne(
             "SELECT owner_account_uuid FROM account_tenant_billing_owners WHERE tenant_uuid = ?",
             tenantId);
     UUID billingOwnerAccountId = owner == null ? null : owner.get("owner_account_uuid", UUID.class);
@@ -306,7 +318,7 @@ final class AccountGameplayAdmissionCurrentSources {
     }
     requiredAccounts.sort(UUID::compareTo);
     for (UUID accountId : requiredAccounts) {
-      lockExactAccountFirst(accountId);
+      lockExactAccountFirst(exactDsl, accountId);
     }
   }
 
@@ -550,6 +562,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void requireWritableSerializableAccountTransaction() {
+    requireWritableSerializableAccountTransaction(dsl);
+  }
+
+  private static void requireWritableSerializableAccountTransaction(DSLContext dsl) {
     if (!TransactionSynchronizationManager.isActualTransactionActive()
         || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
       throw unavailable();
@@ -570,6 +586,10 @@ final class AccountGameplayAdmissionCurrentSources {
   }
 
   private void lockExactAccountFirst(UUID accountId) {
+    lockExactAccountFirst(dsl, accountId);
+  }
+
+  private static void lockExactAccountFirst(DSLContext dsl, UUID accountId) {
     Record locked =
         dsl.fetchOne(
             "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", accountId);
