@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -253,6 +254,41 @@ class AccountGameplayAdmissionOriginalCommitExecutorTest {
           .hasMessageContaining("Fresh owned Account original COMMIT required");
       verify(fixture.connection, never()).commit();
       verify(fixture.connection).rollback();
+      assertThat(repositories.constructed()).hasSize(1);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"decision", "carrier", "digest"})
+  void changedFinalReadbackCannotReachPhysicalCommitOrMintAcknowledgement(String fault)
+      throws Exception {
+    var fixture = new Fixture();
+    var changed = mock(AccountGameplayAdmissionLeaseEvidence.class);
+    when(changed.canonicalJson())
+        .thenReturn(fault.equals("carrier") ? "changed-carrier" : "synthetic-unit-carrier");
+    when(changed.sha256()).thenReturn(fault.equals("digest") ? "b".repeat(64) : "a".repeat(64));
+    try (var repositories =
+        mockConstruction(
+            AccountGameplayAdmissionLeaseRepository.class,
+            (repository, context) -> {
+              when(repository.readExact(fixture.evidence))
+                  .thenReturn(
+                      Optional.of(
+                          new AccountGameplayAdmissionLeaseOperation(
+                              fixture.evidence, State.PENDING, null, null)));
+              when(repository.recordCommitted(fixture.evidence, fixture.decision))
+                  .thenReturn(
+                      new AccountGameplayAdmissionLeaseOperation(
+                          changed,
+                          State.COMMITTED,
+                          fault.equals("decision") ? UUID.randomUUID() : fixture.decision,
+                          null));
+            })) {
+      assertThatThrownBy(() -> fixture.executor.execute(fixture.evidence, fixture.decision))
+          .hasMessageContaining("Fresh owned Account original COMMIT required");
+      verify(fixture.connection, never()).commit();
+      verify(fixture.connection).rollback();
+      verify(fixture.clockStatement, never()).executeQuery(anyString());
       assertThat(repositories.constructed()).hasSize(1);
     }
   }
