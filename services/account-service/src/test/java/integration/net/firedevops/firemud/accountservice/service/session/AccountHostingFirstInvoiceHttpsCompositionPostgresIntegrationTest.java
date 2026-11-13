@@ -23,6 +23,7 @@ import javax.net.ssl.SSLContext;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceController;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.StripeEventInboxRepository;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
 import net.firedevops.firemud.test.LoopbackMtlsTestPki;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.apache.catalina.startup.Tomcat;
@@ -98,19 +99,25 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               "first-invoice-primary",
               "6379");
 
+  // Dedicated run-owned Cache/Rate-Limit instance, never the Coordination Redis endpoint.
+  @Container
+  static final GenericContainer<?> credentialCache = AccountCredentialAbuseCacheFixture.container();
+
   @TempDir Path temporary;
 
   @Test
   void actualHttpsOwnerConsentScaAndExactSignedCompletionGrantAuthorityOnlyAfterReadback()
       throws Exception {
-    try (var owners =
-        new AccountControlUiOriginalOrderFixture(
-            postgres.getJdbcUrl(),
-            postgres.getUsername(),
-            postgres.getPassword(),
-            redis.getHost(),
-            redis.getMappedPort(6379),
-            temporary)) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var owners =
+            new AccountControlUiOriginalOrderFixture(
+                postgres.getJdbcUrl(),
+                postgres.getUsername(),
+                postgres.getPassword(),
+                redis.getHost(),
+                redis.getMappedPort(6379),
+                temporary,
+                abuse.service())) {
       var issued = owners.issueCertifiedAccount(PASSWORD);
       var hosting =
           CanonicalHostingSubscriptionTestFixture.createAwaitingPayment(
@@ -522,14 +529,16 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
   @Test
   void delayedOriginalConfirmationLosesToExplicitPreRowRenewalWithoutConsumingItsProof()
       throws Exception {
-    try (var owners =
-        new AccountControlUiOriginalOrderFixture(
-            postgres.getJdbcUrl(),
-            postgres.getUsername(),
-            postgres.getPassword(),
-            redis.getHost(),
-            redis.getMappedPort(6379),
-            temporary)) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var owners =
+            new AccountControlUiOriginalOrderFixture(
+                postgres.getJdbcUrl(),
+                postgres.getUsername(),
+                postgres.getPassword(),
+                redis.getHost(),
+                redis.getMappedPort(6379),
+                temporary,
+                abuse.service())) {
       var issued = owners.issueCertifiedAccount(PASSWORD);
       var hosting =
           CanonicalHostingSubscriptionTestFixture.createAwaitingPayment(

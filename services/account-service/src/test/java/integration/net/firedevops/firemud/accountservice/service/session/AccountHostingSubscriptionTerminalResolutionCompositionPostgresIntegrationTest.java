@@ -20,6 +20,7 @@ import net.firedevops.firemud.accountservice.repository.AccountHostingSubscripti
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.Outcome;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionLifecycleRepository.TransitionResult;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseCacheFixture;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture.IssuedAccount;
 import net.firedevops.firemud.accountservice.service.session.AccountHostingSubscriptionTerminalResolutionService.Input;
@@ -89,12 +90,17 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
               "terminal-resolution-primary",
               "6379");
 
+  // Dedicated run-owned Cache/Rate-Limit instance, never the Coordination Redis endpoint.
+  @Container
+  static final GenericContainer<?> credentialCache = AccountCredentialAbuseCacheFixture.container();
+
   @TempDir Path temporary;
 
   @Test
   void actualAccountAndFreshOtpCommitOneAtomicCancellationAndAuthenticatedReplay()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners(abuse)) {
       var failed = failedHosting(accountOwners);
       var issued = failed.issued();
       var hosting = failed.hosting();
@@ -149,7 +155,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
 
   @Test
   void wrongPrimaryCredentialRetainsFinancialFenceAndUnconsumedOtp() throws Exception {
-    try (var accountOwners = accountOwners()) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners(abuse)) {
       var failed = failedHosting(accountOwners);
       var issued = failed.issued();
       var challenge = issued.sources().installGlobalOtp(issued.account(), OTP);
@@ -172,7 +179,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
 
   @Test
   void lateBillingSqlFailureRollsBackCancellationAndOtpThenSameOtpSucceeds() throws Exception {
-    try (var accountOwners = accountOwners()) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners(abuse)) {
       var failed = failedHosting(accountOwners);
       var issued = failed.issued();
       var hosting = failed.hosting();
@@ -212,7 +220,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   @Test
   void missingFailedOperationCopyRejectsBeforeCurrentCasAndRollsBackAuditJournalAndOtp()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners(abuse)) {
       var failed = failedHosting(accountOwners);
       var issued = failed.issued();
       var hosting = failed.hosting();
@@ -257,7 +266,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   @Test
   void genericAccountAuthorityAdvanceDuringSdkReadMakesSourceUnavailableAndKeepsOtp()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners(abuse)) {
       var failed = failedHosting(accountOwners);
       var issued = failed.issued();
       var hosting = failed.hosting();
@@ -308,7 +318,8 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
   @Test
   void otherCertifiedAccountsFreshOtpCannotAuthorizeBillingOwnerAndConsumptionRollsBack()
       throws Exception {
-    try (var accountOwners = accountOwners()) {
+    try (var abuse = new AccountCredentialAbuseCacheFixture(credentialCache);
+        var accountOwners = accountOwners(abuse)) {
       var failed = failedHosting(accountOwners);
       var other = accountOwners.issueCertifiedAccount("test-only-other-account-password");
       assertThat(other.actors().authenticateAccount(other.compact()).accountId())
@@ -325,14 +336,16 @@ class AccountHostingSubscriptionTerminalResolutionCompositionPostgresIntegration
     }
   }
 
-  private AccountControlUiOriginalOrderFixture accountOwners() throws Exception {
+  private AccountControlUiOriginalOrderFixture accountOwners(
+      AccountCredentialAbuseCacheFixture abuse) throws Exception {
     return new AccountControlUiOriginalOrderFixture(
         postgres.getJdbcUrl(),
         postgres.getUsername(),
         postgres.getPassword(),
         redis.getHost(),
         redis.getMappedPort(6379),
-        temporary);
+        temporary,
+        abuse.service());
   }
 
   private static FailedHosting failedHosting(AccountControlUiOriginalOrderFixture accountOwners) {
