@@ -865,10 +865,12 @@ class AccountTenantCreationCompletionPostgresIntegrationTest {
                       .at(evidence.evaluatedAt()),
                   net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository
                       .at(evidence.expiresAt()));
-              return repository.create(
-                  request,
-                  evidence.expiresAt(),
-                  Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC));
+              return repository
+                  .createIfQuotaAvailable(
+                      request,
+                      evidence.expiresAt(),
+                      Clock.fixed(evidence.evaluatedAt(), ZoneOffset.UTC))
+                  .orElseThrow();
             });
     var owner =
         new net.firedevops.firemud.accountservice.service.AccountTenantCapacityOwner(
