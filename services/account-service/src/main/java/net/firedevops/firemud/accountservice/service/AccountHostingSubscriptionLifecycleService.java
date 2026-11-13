@@ -73,6 +73,26 @@ public final class AccountHostingSubscriptionLifecycleService {
         transaction.execute(s -> repository.apply(prepared, actualSdkResult)));
   }
 
+  /** Read-only Stripe reconciliation of an externally canceled, unclaimed first invoice. */
+  public TransitionResult reconcileUnpaidFirstInvoiceCancellation(
+      UUID requestId,
+      UUID creationRequestId,
+      long expectedRowVersion,
+      String providerSubscriptionId) {
+    requireNoAmbientTransaction();
+    var captured =
+        Objects.requireNonNull(
+            transaction.execute(
+                s ->
+                    repository.captureUnpaidFirstInvoiceCancellation(
+                        requestId, creationRequestId, expectedRowVersion, providerSubscriptionId)));
+    if (captured.replayResult() != null) return captured.replayResult();
+    var observed = observer.observe(captured.binding());
+    return Objects.requireNonNull(
+        transaction.execute(
+            s -> repository.applyUnpaidFirstInvoiceCancellation(captured, observed)));
+  }
+
   /**
    * Fresh SDK facts cannot override the same locked committed receipt; discrepancies require
    * reconciliation.

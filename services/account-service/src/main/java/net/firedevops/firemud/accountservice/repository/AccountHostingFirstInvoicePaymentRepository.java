@@ -179,6 +179,16 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         .get("row_version", Long.class);
   }
 
+  public boolean hasCanceledCheckout(AccountHostingFirstInvoicePayment invoice) {
+    transaction();
+    return dsl.fetchOne(
+            "SELECT 1 FROM subscription WHERE subscription_id = ?"
+                + " AND account_uuid = ? AND status = 'canceled' AND superseded_at IS NULL",
+            invoice.subscriptionId(),
+            invoice.ownerAccountId())
+        != null;
+  }
+
   public UUID confirmationRequestId(UUID subscriptionId) {
     transaction();
     Record row =
