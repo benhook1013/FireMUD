@@ -34,6 +34,18 @@ final class CanonicalGameplayRegionOwnerTransferCoordinator {
     return repository.within(deadline, ignored -> repository.frozenOriginal(transitionId));
   }
 
+  void requireRetainedCommittedOriginal(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayRegionRuntimeStatus prior,
+      long deadline) {
+    repository.within(
+        deadline,
+        budget -> {
+          capacity.forTransferBudget(budget).requireRetainedCommittedOriginal(source, prior);
+          return null;
+        });
+  }
+
   /** Runs one lease-owner status operation through the same frozen handoff deadline. */
   <T> T withStatusRepository(
       long deadline, Function<CanonicalGameplayRegionRuntimeStatusRepository, T> operation) {

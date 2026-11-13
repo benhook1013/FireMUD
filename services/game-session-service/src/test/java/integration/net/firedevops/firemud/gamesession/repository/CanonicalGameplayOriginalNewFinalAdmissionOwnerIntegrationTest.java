@@ -57,6 +57,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   private static final Clock CLOCK = Clock.systemUTC();
   private static final String PRINCIPAL = "gamesession_coord_app";
+  private static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
+  private static final long TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES = 128L * 1_048_576L;
 
   @Container
   private static final PostgreSQLContainer<?> POSTGRES =
@@ -505,6 +507,80 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     }
     assertThat(sqlImage()).isEqualTo(rows);
     assertThat(physicalImage()).isEqualTo(physical);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({"1,134217728", "128,1048576"})
+  void lastPrechargedCapacityEvidenceSlotSurvivesFullBudgetAndSameAttemptReplay(
+      int maximumRecords, long maximumBindingBytes) throws Exception {
+    repairAccountMember();
+    bridge(false, maximumRecords, maximumBindingBytes);
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var owner = capacityOwner();
+    var selected =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+            controlledCapacity.selectedOwnerId(), controlledCapacity.selectedOwnerFence());
+
+    // The initial charge happened in bridge(); the exact replay is idempotent even at capacity.
+    owner.precharge(source, controlledCapacity.request(), selected, deadline());
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id = ?",
+                    controlledCapacity.request().identity().tenantId())
+                .get(0, Long.class))
+        .isEqualTo(1L);
+
+    var refusedRequest = anotherAttempt(controlledCapacity.request());
+    assertThatThrownBy(() -> owner.precharge(source, refusedRequest, selected, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id = ?",
+                    refusedRequest.admissionAttemptId()))
+        .isNull();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT 1 FROM game_session_original_new_capacity_execution WHERE admission_attempt_id = ?",
+                    refusedRequest.admissionAttemptId()))
+        .isNull();
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    String refusedKey =
+        "session:game:capacity-execution:{"
+            + assignment.tenantGameplayTag()
+            + "}:"
+            + refusedRequest.admissionAttemptId();
+    assertThat(admin.type(ascii(refusedKey))).isEqualTo("none");
+
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var raw = credential.template();
+        var template = raw.bindCapacityExecution(controlledCapacity)) {
+      owner.authorize(
+          source, template, controlledAccountOpen(), issuerOpen(), controlledCapacity, deadline());
+    }
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT status FROM game_session_original_new_capacity_execution WHERE admission_attempt_id = ?",
+                    controlledCapacity.request().admissionAttemptId())
+                .get(0, String.class))
+        .isEqualTo("AUTHORIZED");
+    assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("hash");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_session_capacity_evidence_charge WHERE tenant_id = ?",
+                    controlledCapacity.request().identity().tenantId())
+                .get(0, Long.class))
+        .isEqualTo(1L);
   }
 
   @Test
@@ -1797,6 +1873,50 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             () -> inventory.readRegionTransferOriginalSource(UUID.randomUUID(), retained))
         .isExactlyInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
         .hasMessage("Region transfer changed its original transition");
+  }
+
+  @Test
+  void committedOriginalStartsHandoffWithoutAnExistingTransfer() throws Exception {
+    repairAccountMember();
+    bridge();
+    var source = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var original = regionBinding.installation();
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
+        var template = credential.template();
+        var readback =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    source,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      inventory.commitOriginalNewFinalAdmission(readback);
+    }
+    var retained = inventory.readRegionTransferOriginalSource(fixture.transitionId(), source);
+    var terminal =
+        capacityOwner().readExact(controlledCapacity.request(), controlledCapacity.reservation());
+    assertThat(terminal.disposition()).isEqualTo("COMMITTED");
+    assertThat(
+            fixture.dsl().fetchCount(org.jooq.impl.DSL.table("game_session_region_owner_transfer")))
+        .isZero();
+    byte[] session = admin.get(ascii(installation.sessionKey()));
+
+    admin.pexpire(ascii(original.grant.key()), 0);
+    var successor = actualTransferHandoff();
+
+    assertThat(successor.evidence).isNull();
+    assertThat(successor.status.executorFence()).isGreaterThan(original.status.executorFence());
+    assertThat(admin.get(ascii(installation.sessionKey()))).containsExactly(session);
+    var current = inventory.readRegionTransferOriginalSource(fixture.transitionId(), retained);
+    assertThat(current.finalReceipt()).isEqualTo(retained.finalReceipt());
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .canonicalReadback())
+        .containsExactly(terminal.canonicalReadback());
   }
 
   @Test
@@ -3928,6 +4048,13 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
   }
 
   private void bridge(boolean authorizeCapacity) {
+    bridge(
+        authorizeCapacity,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
+  }
+
+  private void bridge(boolean authorizeCapacity, int maximumRecords, long maximumBindingBytes) {
     regionBinding =
         CanonicalGameplayRegionOwnerCompositionFixture.installExistingOriginalCandidate(
             fixture.dsl(),
@@ -3939,6 +4066,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             sources.entity);
     assertThat(regionBinding.owner().bridge(regionBinding.installation()).obligation())
         .isEqualTo(regionBinding.acknowledgement().obligation());
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    initializeCapacityEvidenceBudget(assignment.tenantId(), maximumRecords, maximumBindingBytes);
     // Explicit controlled Account content for this native owner component proof. The separate
     // Account composition traverses actual evaluation/commit and is the complete capacity path.
     if (controlledCapacity == null) {
@@ -3963,6 +4092,13 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
               controlled.candidateDigest(),
               selectedOwner,
               controlled.selectedOwnerFence());
+      capacityOwner()
+          .precharge(
+              source,
+              controlledCapacity.request(),
+              new CanonicalGameplayOriginalNewCapacityExecutionOwner.CurrentOwner(
+                  controlledCapacity.selectedOwnerId(), controlledCapacity.selectedOwnerFence()),
+              deadline());
       if (!authorizeCapacity) return;
       try (var credential =
               new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(source.candidate(), CLOCK);
@@ -3980,6 +4116,37 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
         throw new IllegalStateException(failure);
       }
     }
+  }
+
+  private void initializeCapacityEvidenceBudget(
+      UUID tenantId, int maximumRecords, long maximumBindingBytes) {
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO game_session_capacity_evidence_budget"
+                + " (tenant_id,maximum_records,maximum_binding_bytes) VALUES (?,?,?)"
+                + " ON CONFLICT DO NOTHING",
+            tenantId,
+            maximumRecords,
+            maximumBindingBytes);
+  }
+
+  private net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request
+      anotherAttempt(
+          net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request request) {
+    return new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+            request.identity(),
+            UUID.randomUUID(),
+            request.capacityRearmFence(),
+            request.targetNamespace(),
+            request.context(),
+            request.operation(),
+            request.priorShape(),
+            request.requestedShape(),
+            request.evidence(),
+            request.capacityDelta(),
+            null)
+        .withDigest();
   }
 
   private CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen() {
