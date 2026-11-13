@@ -489,8 +489,7 @@ class CanonicalGameplayRegionTransferSerializationIntegrationTest
               org.postgresql.util.PSQLException.class,
               failure -> {
                 assertThat(failure.getSQLState()).isEqualTo("23514");
-                assertThat(failure.getMessage())
-                    .contains("requires READ COMMITTED");
+                assertThat(failure.getMessage()).contains("requires READ COMMITTED");
               });
       assertThat(proof.executionState(proof.execution)).isNull();
       assertThat(

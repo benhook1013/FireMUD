@@ -485,7 +485,10 @@ class CanonicalGameplayOriginalNewRegionHandoffLeaseDeadlineIntegrationTest
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
-      CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead.class)
+      value =
+          CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead
+              .class,
+      names = {"PLACEMENT", "LIFECYCLE"})
   void stalledWorldReadCannotOutliveHandoffDeadline(
       CanonicalGameplayOriginalNewFinalAdmissionTestFixture.ControlledRegionSources.WorldRead
           stalledRead)
