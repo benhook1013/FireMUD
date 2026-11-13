@@ -130,6 +130,33 @@ class SocialInternalGrpcClientAuthTest {
   }
 
   @Test
+  void moderationPolicyClientRejectsNoncanonicalAccountsBeforeChannelAccess() {
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    ModerationPolicyClient client =
+        new ModerationPolicyClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            channelFactory,
+            jwtUtil,
+            runtimeIdentityProvider());
+
+    for (String invalid :
+        java.util.Arrays.asList(
+            null,
+            "",
+            "42",
+            "invalid",
+            "00000000-0000-0000-0000-000000000000",
+            "A0000000-0000-0000-0000-000000000042",
+            " " + accountUuid(42L),
+            accountUuid(42L) + " ")) {
+      assertThatThrownBy(() -> client.evaluateChatSend(7L, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    verifyNoInteractions(channelFactory);
+  }
+
+  @Test
   void loggingAdminClientPropagatesApplicationErrors() throws Exception {
     CapturingChannel channel =
         new CapturingChannel(

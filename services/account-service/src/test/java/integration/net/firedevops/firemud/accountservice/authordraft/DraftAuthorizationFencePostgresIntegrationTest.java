@@ -25,6 +25,8 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Ordering;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.SourceChange;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
@@ -70,7 +72,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void twoOwnerConsumerPersistsWorldOnceAndRecoversMissingGameDesignOnRetry() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     tx(context, () -> context.repository().claimCommitOrder(binding));
     SourceChange change = change(binding);
@@ -143,7 +145,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void mixedCommitOrderPreservesOriginalWorldCommitAndHoldsSourceFence() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     tx(context, () -> context.repository().claimCommitOrder(binding));
     SourceChange change = change(binding);
@@ -313,7 +315,10 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     assertThat(rejected).hasSize(1);
     assertThat(rejected.getFirst().failure())
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessage("Concurrent owner recovery changed immutable evidence");
+        // Depending on interleaving, the service snapshot or locked repository read detects
+        // the same immutable terminal-byte conflict. Both must reject without replacement.
+        .hasMessageMatching(
+            "Concurrent owner recovery changed immutable evidence|Changed owner terminal evidence");
     byte[] storedWorldReadback =
         tx(context, () -> context.repository().readOwnerResult(binding, Owner.WORLD))
             .orElseThrow()
@@ -331,7 +336,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void revokeBeforeCommitDeniesDelayedRequestsUntilBothDefinitiveAborts() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     SourceChange change = change(binding);
     tx(context, () -> context.repository().reserve(binding));
     assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
@@ -356,7 +361,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void worldCommittedAndGameDesignUnknownSurviveRestartAndBlockSourceUntilExactBothReadbacks() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
     SourceChange change = change(binding);
@@ -402,7 +407,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void commitOrderWithBothDefinitiveAbortsReleasesOriginalWaitingIntentWithoutReopening() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     tx(context, () -> context.repository().reserve(binding));
     var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
     SourceChange change = change(binding);
@@ -449,7 +454,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         List.of(SourceKind.ACCOUNT, SourceKind.ISSUER, SourceKind.TENANT, SourceKind.MEMBERSHIP)) {
       for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
         Context context = context();
-        DraftAuthorizationFenceBinding binding = binding(sourceKind);
+        DraftAuthorizationFenceBinding binding = binding(context, sourceKind);
         tx(context, () -> context.repository().reserve(binding));
         var ordered = tx(context, () -> context.repository().claimCommitOrder(binding));
         SourceChange change = change(binding);
@@ -502,7 +507,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void revokeOrderWithEitherMixedDirectionCannotAuthorizeSourceMutation() {
     for (Outcome worldOutcome : List.of(Outcome.COMMITTED, Outcome.DEFINITIVELY_ABORTED)) {
       Context context = context();
-      DraftAuthorizationFenceBinding binding = binding();
+      DraftAuthorizationFenceBinding binding = binding(context);
       tx(context, () -> context.repository().reserve(binding));
       SourceChange change = change(binding);
       assertThat(tx(context, () -> context.repository().requestSourceChange(change))).isFalse();
@@ -604,7 +609,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void rollbackPreservesReservationAndIntentTogetherAndDisjointSourcesDoNotConflict() {
     Context context = context();
-    DraftAuthorizationFenceBinding original = binding();
+    DraftAuthorizationFenceBinding original = binding(context);
     assertThatThrownBy(
             () ->
                 tx(
@@ -619,7 +624,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
         .isInstanceOf(IllegalArgumentException.class);
     tx(context, () -> context.repository().reserve(original));
     tx(context, () -> context.repository().requestSourceChange(change(original)));
-    DraftAuthorizationFenceBinding independent = binding();
+    DraftAuthorizationFenceBinding independent = binding(context);
     tx(context, () -> context.repository().reserve(independent));
     assertThat(tx(context, () -> context.repository().claimCommitOrder(independent)).ordering())
         .isEqualTo(Ordering.COMMIT_ORDER);
@@ -628,7 +633,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void distinctPendingChangesCannotRetainTwoOldCapturesForTheSameSource() {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     SourceChange first = change(binding);
     SourceChange second = change(binding);
     tx(context, () -> context.repository().reserve(binding));
@@ -664,7 +669,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void concurrentDistinctSourceClaimsAdmitOnlyOnePendingCaptureWithoutBlockingDisjointSources()
       throws Exception {
     Context context = context();
-    DraftAuthorizationFenceBinding binding = binding();
+    DraftAuthorizationFenceBinding binding = binding(context);
     SourceChange first = change(binding);
     SourceChange second = change(binding);
     tx(context, () -> context.repository().reserve(binding));
@@ -699,7 +704,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
     assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
         .isEqualTo(1);
     assertThat(tx(context, () -> context.repository().requestSourceChange(first))).isFalse();
-    SourceChange disjoint = change(binding());
+    SourceChange disjoint = change(binding(context));
     assertThat(tx(context, () -> context.repository().requestSourceChange(disjoint))).isTrue();
     assertThat(context.dsl().fetchCount(DSL.table("account_draft_authorization_source_changes")))
         .isEqualTo(2);
@@ -709,7 +714,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void concurrentCommitOrderAndRevocationChooseExactlyOneDurableOrdering() throws Exception {
     for (boolean commitWins : List.of(true, false)) {
       Context context = context();
-      DraftAuthorizationFenceBinding binding = binding();
+      DraftAuthorizationFenceBinding binding = binding(context);
       SourceChange change = change(binding);
       tx(context, () -> context.repository().reserve(binding));
       CountDownLatch firstOrdered = new CountDownLatch(1);
@@ -791,14 +796,14 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void discoveryPagesOriginalPendingOperationsAndExcludesEverySettledVector() {
     Context context = context();
-    var reserved = binding();
-    var committedUnknown = binding();
-    var revokedUnknown = binding();
-    var revokedContradiction = binding();
-    var committed = binding();
-    var mixed = binding();
-    var aborted = binding();
-    var revokedAborted = binding();
+    var reserved = binding(context);
+    var committedUnknown = binding(context);
+    var revokedUnknown = binding(context);
+    var revokedContradiction = binding(context);
+    var committed = binding(context);
+    var mixed = binding(context);
+    var aborted = binding(context);
+    var revokedAborted = binding(context);
     List<DraftAuthorizationFenceBinding> all =
         List.of(
             reserved,
@@ -943,7 +948,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void v2WorldEntityAndCoordinatorRequireAllThreeExactOriginalResults() {
     Context context = context();
-    var b = multiOwnerBinding();
+    var b = multiOwnerBinding(context);
     tx(context, () -> context.repository().reserve(b));
     tx(context, () -> context.repository().claimCommitOrder(b));
     var change = change(b);
@@ -964,7 +969,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
             java.util.Arrays.copyOf(entity.canonicalBytes(), entity.canonicalBytes().length - 1),
             java.util.Arrays.copyOf(entity.canonicalBytes(), entity.canonicalBytes().length + 1),
             ownerReadback(b, Owner.WORLD, Outcome.COMMITTED, new byte[] {3}).canonicalBytes(),
-            ownerReadback(binding(), Owner.WORLD, Outcome.COMMITTED, new byte[] {3})
+            ownerReadback(binding(context), Owner.WORLD, Outcome.COMMITTED, new byte[] {3})
                 .canonicalBytes())) {
       assertThatThrownBy(() -> insertOwner(context, b, "ENTITY", "COMMITTED", invalid))
           .isInstanceOf(DataAccessException.class);
@@ -1119,7 +1124,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   void v2AllRequiredAbortsSettleBothCommitAndRevokeOrdering() {
     for (boolean commitOrder : List.of(true, false)) {
       Context context = context();
-      var b = multiOwnerBinding();
+      var b = multiOwnerBinding(context);
       tx(context, () -> context.repository().reserve(b));
       if (commitOrder) tx(context, () -> context.repository().claimCommitOrder(b));
       var change = change(b);
@@ -1144,7 +1149,7 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   @Test
   void v2MixedResultsHoldBothSourceTransitionsAndPreserveAppliedBytes() {
     Context context = context();
-    var b = multiOwnerBinding();
+    var b = multiOwnerBinding(context);
     tx(context, () -> context.repository().reserve(b));
     tx(context, () -> context.repository().claimCommitOrder(b));
     var change = change(b);
@@ -1289,7 +1294,29 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   private DraftAuthorizationFenceBinding binding(SourceKind sourceKind) {
-    UUID account = UUID.randomUUID();
+    return binding(UUID.randomUUID(), sourceKind);
+  }
+
+  private DraftAuthorizationFenceBinding binding(Context context) {
+    return binding(context, SourceKind.ACCOUNT);
+  }
+
+  private DraftAuthorizationFenceBinding binding(Context context, SourceKind sourceKind) {
+    UUID account =
+        tx(
+            context,
+            () -> {
+              Account fresh = new Account();
+              String unique = UUID.randomUUID().toString();
+              fresh.setUsername("draft-fence-" + unique);
+              fresh.setEmail("draft-fence-" + unique + "@example.test");
+              fresh.setPasswordHash("isolated-draft-source-verifier");
+              return new AccountRepository(context.dsl()).save(fresh).getAccountUuid();
+            });
+    return binding(account, sourceKind);
+  }
+
+  private DraftAuthorizationFenceBinding binding(UUID account, SourceKind sourceKind) {
     SourceEvidence source =
         new SourceEvidence(
             sourceKind, account.toString(), "3", "5", "stream/" + account, "2", new byte[] {7});
@@ -1319,7 +1346,14 @@ class DraftAuthorizationFencePostgresIntegrationTest {
   }
 
   private DraftAuthorizationFenceBinding multiOwnerBinding() {
-    var prior = binding();
+    return multiOwnerBinding(binding());
+  }
+
+  private DraftAuthorizationFenceBinding multiOwnerBinding(Context context) {
+    return multiOwnerBinding(binding(context));
+  }
+
+  private DraftAuthorizationFenceBinding multiOwnerBinding(DraftAuthorizationFenceBinding prior) {
     var complete =
         DraftCommitBinding.fromStored(
             new String(prior.gameDesignBinding(), StandardCharsets.UTF_8), prior.inputDigest());
