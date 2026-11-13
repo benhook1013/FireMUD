@@ -469,7 +469,13 @@ final class CanonicalGameplayOriginalNewCapacityExecutionBudget {
     }
   }
 
-  private static IllegalStateException unavailable() {
-    return new IllegalStateException("Original NEW capacity execution budget is unavailable");
+  static final class BudgetUnavailable extends IllegalStateException {
+    private BudgetUnavailable() {
+      super("Original NEW capacity execution budget is unavailable");
+    }
+  }
+
+  private static BudgetUnavailable unavailable() {
+    return new BudgetUnavailable();
   }
 }
