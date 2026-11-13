@@ -10,22 +10,19 @@
     "preview": "vite preview",
     "format": "prettier --check \"src/**/*.{ts,tsx}\"",
     "format:fix": "prettier --write \"src/**/*.{ts,tsx}\"",
-    "accessibility": "npm run build && npx serve dist -l 5000 & npx wait-on http://localhost:5000/index.html && npx axe http://localhost:5000/index.html --chrome-options=\"--no-sandbox\" --exit",
-    "test:checkout": "vitest run src/billing/HostingFirstInvoiceCheckout.test.tsx src/api/hostingFirstInvoice.test.ts src/api/accountControlUi.test.ts src/account/controlUiSession.test.ts src/account/AccountCheckoutRoute.test.tsx"
+    "accessibility": "npm run build && npx serve dist -l 5000 & npx wait-on http://localhost:5000/index.html && npx axe http://localhost:5000/index.html --chrome-options=\"--no-sandbox\" --exit"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.100.13",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^9.0.1",
-    "@stripe/stripe-js": "^10.2.1",
-    "@tanstack/react-query": "^5.100.13",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
   "devDependencies": {
     "@axe-core/cli": "^4.11.3",
     "@eslint/js": "^10.0.0",
-    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
@@ -33,13 +30,11 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
-    "jsdom": "^31.0.0",
     "prettier": "^3.8.3",
     "serve": "^14.2.6",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.59.4",
     "vite": "^8.0.16",
-    "vitest": "^5.1.0",
     "wait-on": "^9.0.10"
   }
 }

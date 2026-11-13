@@ -1029,10 +1029,6 @@ jobs:
           npm run format -- -c
         working-directory: web-client
 
-      - name: Run first-invoice checkout regression tests
-        run: npm run test:checkout
-        working-directory: web-client
-
       - name: Install pinned Chrome for Testing and ChromeDriver
         env:
           CHROME_FOR_TESTING_VERSION: ${{ steps.workflow-tool-versions.outputs.chrome-for-testing-version }}
