@@ -141,11 +141,6 @@ public final class AccountTenantCapacityRepository {
         || history.get("owner_readback", byte[].class) == null) throw conflict();
   }
 
-  public Result create(Request request, Instant expiresAt, Clock clock) {
-    return createIfQuotaAvailable(request, expiresAt, clock)
-        .orElseThrow(() -> new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED));
-  }
-
   /** Retains acceptance only after the locked quota check, in the same reservation transaction. */
   public Optional<Result> createIfQuotaAvailable(Request request, Instant expiresAt, Clock clock) {
     Record usage = usage(request);
