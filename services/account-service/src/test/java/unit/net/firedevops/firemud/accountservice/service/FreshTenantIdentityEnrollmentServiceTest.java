@@ -150,6 +150,64 @@ class FreshTenantIdentityEnrollmentServiceTest {
     verify(generations).initializeTenantIfAbsent(evidence.canonicalTenantId());
   }
 
+  @Test
+  void missingAssociationReadbackCannotInitializeTenantGeneration() {
+    assertAssociationMismatchCannotInitializeGeneration(false, true);
+  }
+
+  @Test
+  void substitutedAssociationReadbackCannotInitializeTenantGeneration() {
+    assertAssociationMismatchCannotInitializeGeneration(false, false);
+  }
+
+  @Test
+  void substitutedImportedAssociationCannotInitializeTenantGeneration() {
+    assertAssociationMismatchCannotInitializeGeneration(true, false);
+  }
+
+  private static void assertAssociationMismatchCannotInitializeGeneration(
+      boolean substituteImport, boolean missingReadback) {
+    GameDesignFreshTenantIdentityClient client = mock(GameDesignFreshTenantIdentityClient.class);
+    FreshTenantIdentityAssociationRepository associations =
+        mock(FreshTenantIdentityAssociationRepository.class);
+    AccountAuthorityGenerationRepository generations =
+        mock(AccountAuthorityGenerationRepository.class);
+    TransactionTemplate transaction = mock(TransactionTemplate.class);
+    var original = evidence(REQUEST_ID, REQUEST_DIGEST);
+    var substituted =
+        evidence(UUID.fromString("22222222-2222-4222-8222-222222222222"), REQUEST_DIGEST);
+    when(client.resolveCreation(REQUEST_ID, REQUEST_DIGEST)).thenReturn(original);
+    when(associations.importVerified(original))
+        .thenReturn(substituteImport ? substituted : original);
+    when(associations.read(original.canonicalTenantId()))
+        .thenReturn(
+            missingReadback
+                ? java.util.Optional.empty()
+                : java.util.Optional.of(substituteImport ? original : substituted));
+    when(transaction.execute(
+            ArgumentMatchers
+                .<TransactionCallback<
+                        net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence>>
+                    any()))
+        .thenAnswer(
+            invocation ->
+                ((TransactionCallback<?>) invocation.getArgument(0))
+                    .doInTransaction(mock(TransactionStatus.class)));
+
+    FreshTenantIdentityEnrollmentService service =
+        new FreshTenantIdentityEnrollmentService(client, associations, generations, transaction);
+
+    assertThatThrownBy(() -> service.enroll(REQUEST_ID, REQUEST_DIGEST))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining(
+            missingReadback ? "readback is absent" : "readback differs from owner evidence");
+
+    verify(client).resolveCreation(REQUEST_ID, REQUEST_DIGEST);
+    verify(associations).importVerified(original);
+    verify(associations).read(original.canonicalTenantId());
+    verifyNoInteractions(generations);
+  }
+
   private static net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence evidence(
       UUID creationRequestId, String requestDigest) {
     UUID operationId = UUID.fromString("33333333-3333-4333-8333-333333333333");
