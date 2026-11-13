@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -29,6 +30,8 @@ public record AccountHostingFirstInvoicePayment(
     Instant capturedAt,
     Instant expiresAt) {
   public AccountHostingFirstInvoicePayment {
+    capturedAt = Objects.requireNonNull(capturedAt).truncatedTo(ChronoUnit.MICROS);
+    expiresAt = Objects.requireNonNull(expiresAt).truncatedTo(ChronoUnit.MICROS);
     for (UUID id :
         new UUID[] {
           subscriptionId, creationRequestId, tenantId, ownerAccountId, paymentInstrumentId
@@ -51,7 +54,7 @@ public record AccountHostingFirstInvoicePayment(
         || !quoteDigest.matches("sha256:[0-9a-f]{64}")
         || billingPolicyDigest == null
         || !billingPolicyDigest.matches("sha256:[0-9a-f]{64}")
-        || !Objects.requireNonNull(expiresAt).isAfter(Objects.requireNonNull(capturedAt))) {
+        || !expiresAt.isAfter(capturedAt)) {
       throw new IllegalArgumentException(
           "Exact first-invoice commercial and expiry binding required");
     }
