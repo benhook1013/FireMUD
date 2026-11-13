@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.CallOptions;
@@ -103,6 +104,29 @@ class SocialInternalGrpcClientAuthTest {
     client.buildStub(channel).createReport(CreateReportRequest.getDefaultInstance());
 
     assertInternalServiceToken(channel, "unknown-service");
+  }
+
+  @Test
+  void loggingAdminClientRejectsNoncanonicalAccountsBeforeChannelAccess() {
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    LoggingAdminClient client =
+        new LoggingAdminClient(
+            new ServiceEndpointsProperties(),
+            plaintextGrpcProperties(),
+            channelFactory,
+            jwtUtil,
+            runtimeIdentityProvider());
+
+    for (String invalid :
+        List.of(
+            "42",
+            "invalid",
+            "00000000-0000-0000-0000-000000000000",
+            "A0000000-0000-0000-0000-000000000042")) {
+      assertThatThrownBy(() -> client.reportChatViolation(7L, invalid, "Filtered profanity"))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    verifyNoInteractions(channelFactory);
   }
 
   @Test
