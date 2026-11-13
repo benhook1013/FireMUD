@@ -50,6 +50,7 @@ import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixtu
 import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution;
 import net.firedevops.firemud.gamesession.service.CanonicalGameplayRegionLeaseRedisScriptContribution;
 import org.jooq.ConnectionProvider;
@@ -590,6 +591,77 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
     } finally {
       release.countDown();
       verify(provider, timeout(2000)).release(connection);
+      verifyNoInteractions(connection);
+    }
+  }
+
+  @Test
+  void handoffStatusReadBoundsAcquisitionAndCannotExecuteAfterItsDeadline() throws Exception {
+    ConnectionProvider provider = mock();
+    Connection connection = mock();
+    CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+    when(provider.acquire())
+        .thenAnswer(
+            invocation -> {
+              entered.countDown();
+              awaitUninterruptibly(release);
+              return connection;
+            });
+    var dsl = source(provider);
+    var transferRepository =
+        new CanonicalGameplayRegionOwnerTransferRepository(
+            dsl, CLOCK, mock(CanonicalGameplayTenantGameplayTagRepository.class));
+    var transfer =
+        new CanonicalGameplayRegionOwnerTransferCoordinator(
+            dsl,
+            CLOCK,
+            transferRepository,
+            mock(CanonicalGameplayOriginalNewCapacityExecutionOwner.class),
+            mock(CanonicalGameplayProtectedIncarnationReceiver.class));
+    UUID tenantId = UUID.randomUUID();
+    UUID gameInstanceId = UUID.randomUUID();
+    var lifecycleRequest =
+        new WorldCanonicalInstanceLifecycleEvidence.Request(
+            WorldCanonicalInstanceLifecycleEvidence.Request.SCHEMA_VERSION,
+            UUID.randomUUID(),
+            "prod",
+            tenantId,
+            "world",
+            gameInstanceId,
+            UUID.randomUUID(),
+            "SHARED",
+            true,
+            "budget-test",
+            UUID.randomUUID(),
+            "sha256:" + "a".repeat(64),
+            "sha256:" + "b".repeat(64),
+            "sha256:" + "c".repeat(64));
+    var regionSource =
+        new CanonicalGameplayRegionRuntimeStatusRepository.Source(
+            tenantId,
+            gameInstanceId,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            1L,
+            0L,
+            lifecycleRequest,
+            UUID.randomUUID(),
+            "d".repeat(64),
+            "sha256:" + "e".repeat(64));
+
+    try {
+      assertThatThrownBy(
+              () ->
+                  transfer.withStatusRepository(
+                      CLOCK.millis() + 1000,
+                      statusRepository -> statusRepository.findTimelinePreparation(regionSource)))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
+      verifyNoInteractions(connection);
+    } finally {
+      release.countDown();
+      verify(provider, timeout(2000)).release(connection);
+      verifyNoInteractions(connection);
     }
   }
 
