@@ -339,8 +339,10 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     Fixture f = fixture(false, aheadOfDatabase);
     assertThat(aheadOfDatabase.instant()).isAfter(databaseNow(f.dsl));
 
+    Instant databaseBeforeEvaluation = databaseNow(f.dsl);
     var value = f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN);
     Instant databaseAfterEvaluation = databaseNow(f.dsl);
+    assertThat(value.evaluatedAt()).isAfterOrEqualTo(databaseBeforeEvaluation);
     assertThat(value.evaluatedAt()).isBeforeOrEqualTo(databaseAfterEvaluation);
 
     var target = (Map<?, ?>) value.fields().get("target");

@@ -439,6 +439,11 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       StripeHostingSubscriptionObserver.Result result,
       TerminalUnpaidObservation unpaid) {
     requireTransaction();
+    Record isolation = dsl.fetchOne("SHOW transaction_isolation");
+    if (isolation == null || !"read committed".equals(isolation.get(0, String.class))) {
+      throw new IllegalStateException(
+          "Unpaid first-invoice cancellation requires READ COMMITTED isolation");
+    }
     Objects.requireNonNull(captured);
     if (captured.replayResult() != null) return captured.replayResult();
     Instant evaluated = now();
@@ -588,13 +593,12 @@ public final class AccountHostingSubscriptionLifecycleRepository {
                 cancellationClaim(current.subscriptionId()), cancellation.confirmationId)) {
           throw new FenceRejectedException("First-invoice cancellation evidence changed");
         }
-        if (cancellation.confirmationId != null
-            && Boolean.TRUE.equals(
-                dsl.fetchSingle(
-                        "SELECT account_first_invoice_signed_success_retained(?, ?)",
-                        invoice.paymentIntentId(),
-                        invoice.livemode())
-                    .get(0, Boolean.class))) {
+        if (Boolean.TRUE.equals(
+            dsl.fetchSingle(
+                    "SELECT account_first_invoice_signed_success_retained(?, ?)",
+                    invoice.paymentIntentId(),
+                    invoice.livemode())
+                .get(0, Boolean.class))) {
           return new Preparation(
               requestId, null, null, Outcome.RECONCILING, "UNPAID_CANCELLATION_UNCONFIRMED", 0);
         }
