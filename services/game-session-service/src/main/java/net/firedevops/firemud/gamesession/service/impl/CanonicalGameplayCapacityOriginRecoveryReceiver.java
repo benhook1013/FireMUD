@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Metadata;
 import io.grpc.Status;
 import java.time.Clock;
@@ -18,7 +19,12 @@ import net.firedevops.firemud.gamesession.security.CanonicalGameplayOriginalNewC
 public final class CanonicalGameplayCapacityOriginRecoveryReceiver {
   private static final Metadata.Key<String> AUTHORIZATION =
       Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER);
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Shares the injected custody owner without exposing it")
   private final CanonicalGameplayOriginalNewCapacityExecutionOwner owner;
+
   private final CanonicalGameplayOriginalNewCapacityExecutionReadWorkloadGuard identityGuard;
   private final String namespace;
   private final Clock clock;
