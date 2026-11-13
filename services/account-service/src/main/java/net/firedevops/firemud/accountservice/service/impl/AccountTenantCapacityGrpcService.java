@@ -85,7 +85,9 @@ public final class AccountTenantCapacityGrpcService
         observer.onError(denied.code().toStatusException());
         return;
       }
-      result = TenantCapacityAdmissionGrpcCodec.toRefusal(request, denied.code());
+      result =
+          TenantCapacityAdmissionGrpcCodec.toRefusal(
+              request, denied.code(), denied.durableDenialId());
     } catch (org.jooq.exception.DataAccessException
         | org.springframework.dao.DataAccessException
         | org.springframework.transaction.TransactionException unavailable) {

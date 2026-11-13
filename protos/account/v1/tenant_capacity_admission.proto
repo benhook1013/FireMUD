@@ -80,6 +80,8 @@ message TenantCapacityAdmissionRefusal {
   repeated string snapshot_identity = 7;
   repeated string evaluation_identity = 8;
   repeated Code code = 9;
+  // Zero or one canonical UUID. Only an irrevocable Account quota denial can carry this receipt.
+  repeated string durable_denial_id = 10;
 }
 // Exactly one commitment or one produced domain refusal. Transport/pre-domain failure is non-OK.
 message CommitTenantCapacityAdmissionResponse {

@@ -101,22 +101,37 @@ public final class AccountTenantCapacityOwner {
     requireCaller(request, authenticatedCaller);
     request.requireStructurallyValid();
     if (!(request.context() instanceof PlayerContext)) throw unavailable();
-    return commitWithFreshSnapshot(
-        () -> {
-          // Exact replay/conflict can linearize at the snapshot read without taking a mutation
-          // lock.
-          Record existing = capacity.findForReplay(request.identity());
-          if (existing != null) return capacity.exact(request, existing);
-          lockPlayerAccount(request);
-          if (request.capacityRearmFence() != 1) throw conflict();
-          current(request);
-          requireSupportedShape(request);
-          if (!request.evidence().permitsCreation())
-            throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
-          originDecisions.accept(request);
-          return capacity.create(request, request.evidence().expiresAt(), clock);
-        });
+    CommitDecision decision =
+        commitWithFreshSnapshot(
+            () -> {
+              // Replay precedes current sources and quota. A lost refusal response retains its
+              // original decision even if capacity becomes available before the caller retries.
+              Record existing = capacity.findForReplay(request.identity());
+              if (existing != null) {
+                return new CommitDecision(capacity.exact(request, existing), null);
+              }
+              if (request.capacityRearmFence() != 1) throw conflict();
+              UUID retainedDenial = originDecisions.retainedQuotaDenial(request);
+              if (retainedDenial != null) return new CommitDecision(null, retainedDenial);
+              lockPlayerAccount(request);
+              current(request);
+              requireSupportedShape(request);
+              if (!request.evidence().permitsCreation())
+                throw new CapacityException(Failure.TENANT_BILLING_BLOCKED);
+              var reservation =
+                  capacity.createIfQuotaAvailable(request, request.evidence().expiresAt(), clock);
+              if (reservation.isPresent()) {
+                return new CommitDecision(reservation.orElseThrow(), null);
+              }
+              return new CommitDecision(null, originDecisions.refuseQuota(request));
+            });
+    // Throw only after the transaction has committed the exact denial.
+    if (decision.denialId() != null)
+      throw new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED, decision.denialId());
+    return decision.reservation();
   }
+
+  private record CommitDecision(Result reservation, UUID denialId) {}
 
   /**
    * Bounded private recovery entrypoint, not registered as an RPC. A lookup does not mutate.
@@ -335,7 +350,7 @@ public final class AccountTenantCapacityOwner {
       throw conflict();
   }
 
-  private Result commitWithFreshSnapshot(Supplier<Result> action) {
+  private <T> T commitWithFreshSnapshot(Supplier<T> action) {
     Context caller = Context.current();
     Deadline localDeadline = Deadline.after(TRANSACTION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     Deadline incoming = caller.getDeadline();
