@@ -101,7 +101,7 @@ public final class AccountCredentialAbuseRedisStore
       attempt.remainingNanos();
       attempt.commands = connection.async();
       attempt.remainingNanos();
-      String principal = await(attempt.commands::aclWhoami, attempt);
+      String principal = await(attempt.commands::aclWhoami, attempt, true);
       if (!AccountCredentialAbuseRedisScriptContribution.PRINCIPAL.equals(principal)) return null;
       long[] pressure =
           script(
@@ -172,7 +172,7 @@ public final class AccountCredentialAbuseRedisStore
     if (source.length == 0
         || source.length > 32 * 1024
         || !digest("SHA-256", source).equals(descriptor.sha256())) return null;
-    String sha = await(() -> attempt.commands.scriptLoad(source), attempt);
+    String sha = await(() -> attempt.commands.scriptLoad(source), attempt, true);
     if (!digest("SHA-1", source).equals(sha)) return null;
     byte[][] arguments = {
       ascii(now.toEpochMilli()),
@@ -251,9 +251,15 @@ public final class AccountCredentialAbuseRedisStore
   }
 
   private static <T> T await(Supplier<RedisFuture<T>> dispatch, Attempt attempt) throws Exception {
+    return await(dispatch, attempt, false);
+  }
+
+  /** Preparation commands cannot change bucket state, even when their result is uncertain. */
+  private static <T> T await(
+      Supplier<RedisFuture<T>> dispatch, Attempt attempt, boolean nonMutating) throws Exception {
     // Defer command dispatch until this check; the async accessor is checked separately.
     attempt.remainingNanos();
-    attempt.inFlight = true;
+    attempt.inFlight = !nonMutating;
     RedisFuture<T> future = dispatch.get();
     try {
       T result = future.get(attempt.remainingNanos(), TimeUnit.NANOSECONDS);

@@ -207,6 +207,9 @@ class AccountCheckoutRegisteredReceivingPostgresIntegrationTest {
                 PASSWORD);
         var denied = new HashMap<String, Object>(login);
         denied.put("requestId", UUID.randomUUID());
+        // Keep this early wrong-credential observation out of the later account-candidate
+        // throttle phase. The shared source bucket is still exercised by both phases.
+        denied.put("email", otherAccount.getEmail());
         denied.put("secret", "wrong-secret");
         assertThat(receiving.request("POST", "/api/account/auth/login", null, denied).statusCode())
             .isEqualTo(401);

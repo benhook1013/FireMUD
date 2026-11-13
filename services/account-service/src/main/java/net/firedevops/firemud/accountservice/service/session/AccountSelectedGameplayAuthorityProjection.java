@@ -241,12 +241,13 @@ public final class AccountSelectedGameplayAuthorityProjection {
   private static boolean sameMembershipFacts(
       MembershipAuthorityEventV1Codec.MembershipEvent left,
       MembershipAuthorityEventV1Codec.MembershipEvent right) {
+    // Invalidation belongs to each transition result. The checkpoint records false for itself
+    // without erasing a prior event's true value or lowering the generation it advanced.
     return left.membershipLifecycleState().equals(right.membershipLifecycleState())
         && left.membershipVersion().equals(right.membershipVersion())
         && left.membershipAuthorityGeneration().equals(right.membershipAuthorityGeneration())
         && left.roles().equals(right.roles())
-        && left.gameplayAdmissionAllowed() == right.gameplayAdmissionAllowed()
-        && left.callerBoundAuthorityInvalidated() == right.callerBoundAuthorityInvalidated();
+        && left.gameplayAdmissionAllowed() == right.gameplayAdmissionAllowed();
   }
 
   private static Map<String, Object> base(

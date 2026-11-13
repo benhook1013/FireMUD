@@ -626,13 +626,93 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
   }
 
   @Test
+  void preparedTimelineIncarnationReadReusesPermitWhenBothBackgroundSlotsAreHeld()
+      throws Exception {
+    PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
+    TestSchema testSchema = newTestSchema();
+    try {
+      try (RedisFixture redis = RedisFixture.open()) {
+        var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
+        var redisOwner =
+            new CanonicalGameplayRegionLeaseRedisOwner(
+                redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
+        WorldFixture world = WorldFixture.open();
+        var incarnationSource = new ControlledStableIncarnationSource();
+        var bindingEvidence = provisionalEvidence(world.request());
+        var source = source(world.originalEvidence());
+        var incarnation =
+            incarnationSource.readCurrent(
+                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source));
+        var preparation =
+            statusRepository.prepareInitialTimeline(
+                bindingEvidence,
+                world.request(),
+                world.resolver().resolve(world.request()),
+                source,
+                incarnation,
+                redisOwner.requireTimelineAbsent(source, incarnation),
+                NOW);
+        long deadline = System.currentTimeMillis() + 10_000L;
+        var deadlineBoundRedisOwner = redisOwner.forHandoffDeadline(Clock.systemUTC(), deadline);
+        RuntimeIdentity identity =
+            new RuntimeIdentity(
+                "game-session-service",
+                "overlapping-timeline-preparation",
+                "localhost",
+                NOW,
+                "controlled-test",
+                "controlled-sha",
+                "controlled-image");
+        var bindingInventory = new CanonicalGameplayBindingInventoryRepository(testSchema.dsl());
+
+        try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization first =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity);
+            CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization second =
+                deadlineBoundRedisOwner.prepareTimelineInitialization(
+                    preparation, Duration.ofSeconds(30), identity)) {
+          var claim =
+              first.runWithinRetainedPermit(
+                  retainedBudget -> {
+                    assertThatThrownBy(
+                            () ->
+                                CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                                    Clock.systemUTC(), deadline, ignored -> true))
+                        .isInstanceOf(IllegalStateException.class);
+                    assertThatThrownBy(() -> first.runWithinRetainedPermit(ignored -> null))
+                        .isInstanceOf(IllegalStateException.class);
+                    assertThat(
+                            bindingInventory.withinTransferRead(
+                                retainedBudget,
+                                CanonicalGameplayBindingInventoryRepository::readSnapshot))
+                        .isNotNull();
+                    assertThat(
+                            incarnationSource.readCurrent(
+                                CanonicalGameplayRegionIncarnationSource.RegionScope.from(source)))
+                        .isEqualTo(incarnation);
+                    return new CanonicalGameplayRegionRuntimeStatusRepository(
+                            retainedBudget.sql(testSchema.dsl()))
+                        .beginInitialTimeline(preparation, NOW);
+                  });
+          assertThat(claim)
+              .hasValueSatisfying(
+                  permit -> assertThat(permit.operationId()).isEqualTo(preparation.operationId()));
+        }
+      }
+    } finally {
+      dropSchema(testSchema.schema());
+    }
+  }
+
+  @Test
   void timelinePreflightFailuresLeavePreparedPermissionAndAllowLaterFirstClaim() throws Exception {
     PostgresBackedServiceTestSupport.awaitPostgresJdbcReady(POSTGRES);
     TestSchema testSchema = newTestSchema();
     try (RedisFixture redis = RedisFixture.open()) {
       var statusRepository = new CanonicalGameplayRegionRuntimeStatusRepository(testSchema.dsl());
       var validRedisOwner =
-          new CanonicalGameplayRegionLeaseRedisOwner(redis.ownerClient(), redis.catalog());
+          new CanonicalGameplayRegionLeaseRedisOwner(
+              redis.ownerClient(), RedisFixture.clientUri(PRINCIPAL, PASSWORD), redis.catalog());
       WorldFixture world = WorldFixture.open();
       var incarnationSource = new ControlledStableIncarnationSource();
       var bindingEvidence = provisionalEvidence(world.request());
@@ -651,6 +731,49 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               incarnation,
               validRedisOwner.requireTimelineAbsent(source, incarnation),
               NOW);
+      assertPreparedTimelineUnchanged(
+          testSchema.dsl(), statusRepository, redis, source, preparation);
+
+      var deadlineBoundRedisOwner =
+          validRedisOwner.forHandoffDeadline(
+              Clock.systemUTC(), System.currentTimeMillis() + 10_000L);
+      redis.setOwnerTimeAllowed(false);
+      try {
+        assertThatThrownBy(
+                () ->
+                    deadlineBoundRedisOwner.prepareTimelineInitialization(
+                        preparation,
+                        Duration.ofSeconds(30),
+                        new RuntimeIdentity(
+                            "game-session-service",
+                            "time-denied-during-probe",
+                            "localhost",
+                            NOW,
+                            "controlled-test",
+                            "controlled-sha",
+                            "controlled-image")))
+            .isInstanceOf(IllegalStateException.class)
+            .hasStackTraceContaining("ACL failure in script")
+            .hasStackTraceContaining("the 'time' command");
+        assertPreparedTimelineUnchanged(
+            testSchema.dsl(), statusRepository, redis, source, preparation);
+      } finally {
+        redis.setOwnerTimeAllowed(true);
+      }
+      try (CanonicalGameplayRegionLeaseRedisOwner.PreparedTimelineInitialization session =
+          deadlineBoundRedisOwner.prepareTimelineInitialization(
+              preparation,
+              Duration.ofSeconds(30),
+              new RuntimeIdentity(
+                  "game-session-service",
+                  "time-granted-after-probe-refusal",
+                  "localhost",
+                  NOW,
+                  "controlled-test",
+                  "controlled-sha",
+                  "controlled-image"))) {
+        assertThat(session).isNotNull();
+      }
       assertPreparedTimelineUnchanged(
           testSchema.dsl(), statusRepository, redis, source, preparation);
 
@@ -2313,13 +2436,17 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     }
 
     private static RedisClient createClient(String username, String password) {
+      RedisClient client = RedisClient.create(clientUri(username, password));
+      client.setOptions(ClientOptions.builder().autoReconnect(false).build());
+      return client;
+    }
+
+    private static RedisURI clientUri(String username, String password) {
       RedisURI.Builder builder =
           RedisURI.Builder.redis(REDIS.getHost(), REDIS.getMappedPort(REDIS_PORT))
               .withTimeout(Duration.ofSeconds(3));
       if (username != null) builder.withAuthentication(username, password);
-      RedisClient client = RedisClient.create(builder.build());
-      client.setOptions(ClientOptions.builder().autoReconnect(false).build());
-      return client;
+      return builder.build();
     }
 
     RedisClient ownerClient() {
@@ -2342,10 +2469,19 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
     }
 
     void setOwnerScriptLoadAllowed(boolean allowed) {
-      admin.aclSetuser(PRINCIPAL, ownerArguments(PASSWORD, allowed));
+      admin.aclSetuser(PRINCIPAL, ownerArguments(PASSWORD, allowed, true));
+    }
+
+    void setOwnerTimeAllowed(boolean allowed) {
+      admin.aclSetuser(PRINCIPAL, ownerArguments(PASSWORD, true, allowed));
     }
 
     private static AclSetuserArgs ownerArguments(String password, boolean allowScriptLoad) {
+      return ownerArguments(password, allowScriptLoad, true);
+    }
+
+    private static AclSetuserArgs ownerArguments(
+        String password, boolean allowScriptLoad, boolean allowTime) {
       AclSetuserArgs args =
           new AclSetuserArgs()
               .reset()
@@ -2366,6 +2502,7 @@ class CanonicalGameplayRegionLeaseOwnerIntegrationTest {
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)
               .addCommand(CommandType.PEXPIRE);
+      if (allowTime) args.addCommand(CommandType.TIME);
       if (allowScriptLoad) args.addCommand(CommandType.SCRIPT, CommandKeyword.LOAD);
       return args;
     }
