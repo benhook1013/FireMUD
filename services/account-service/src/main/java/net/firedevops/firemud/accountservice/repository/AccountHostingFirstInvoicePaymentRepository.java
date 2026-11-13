@@ -886,7 +886,8 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         || !object.path("livemode").isBoolean()
         || invoice.livemode() != object.path("livemode").asBoolean()
         || invoice.livemode() != verified.livemode()
-        || verified.eventCreatedAtEpochSeconds() < earliestPayment.getEpochSecond()) throw refused();
+        || verified.eventCreatedAtEpochSeconds() < earliestPayment.getEpochSecond())
+      throw refused();
   }
 
   public AccountHostingFirstInvoicePayment find(UUID subscriptionId) {
