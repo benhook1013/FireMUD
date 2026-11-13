@@ -26,6 +26,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl.BillingPrimaryVerification;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl.ControlUiPrimaryIdentity;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -77,7 +78,13 @@ public final class AccountRecentReauthenticationService {
    * exact Account/action/creation-operation evidence in the same writable owner transaction.
    */
   public AccountRecentReauthenticationEvidence reauthenticate(Request request) {
-    return reauthenticate(request, action -> transaction.execute(ignored -> action.get()));
+    requireRequest(request);
+    return reauthenticate(
+        request,
+        action -> transaction.execute(ignored -> action.get()),
+        account ->
+            primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                EmailCanonicalization.normalize(request.email), request.secret));
   }
 
   AccountRecentReauthenticationEvidence reauthenticateAndBindBilling(
@@ -85,6 +92,18 @@ public final class AccountRecentReauthenticationService {
       AccountControlUiActorService actors,
       String bearer,
       Consumer<AccountRecentReauthenticationEvidence> bind) {
+    requireRequest(request);
+    // Exact retained retries authenticate against the existing request MAC. Fresh requests
+    // perform the expensive verifier before taking the shared producer locks.
+    boolean retained =
+        Boolean.TRUE.equals(
+            transaction.execute(
+                ignored -> evidenceRepository.findByRequest(request.requestId).isPresent()));
+    BillingPrimaryVerification verification =
+        retained
+            ? null
+            : primaryAuthentication.preverifyBillingPrimaryCredential(
+                request.accountId, EmailCanonicalization.normalize(request.email), request.secret);
     return reauthenticate(
         request,
         action ->
@@ -102,11 +121,11 @@ public final class AccountRecentReauthenticationService {
                     bind.accept(evidence);
                   }
                   return attempt;
-                }));
+                }),
+        account -> primaryAuthentication.applyBillingPrimaryVerification(account, verification));
   }
 
-  private AccountRecentReauthenticationEvidence reauthenticate(
-      Request request, Function<Supplier<Attempt>, Attempt> retainInOwnerTransaction) {
+  private static void requireRequest(Request request) {
     Objects.requireNonNull(request, "Account reauthentication request is required");
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException("Recent reauthentication must own its Account transaction");
@@ -126,7 +145,12 @@ public final class AccountRecentReauthenticationService {
         || request.secret.length() > 1024) {
       throw new IllegalArgumentException("Bounded Account reauthentication request is required");
     }
+  }
 
+  private AccountRecentReauthenticationEvidence reauthenticate(
+      Request request,
+      Function<Supplier<Attempt>, Attempt> retainInOwnerTransaction,
+      Function<Account, ControlUiPrimaryIdentity> authenticate) {
     byte[] credentialRequest = credentialRequest(request);
     Attempt attempt;
     try {
@@ -170,9 +194,7 @@ public final class AccountRecentReauthenticationService {
 
                 ControlUiPrimaryIdentity authenticated;
                 try {
-                  authenticated =
-                      primaryAuthentication.authenticateControlUiPrimaryIdentity(
-                          email, request.secret);
+                  authenticated = authenticate.apply(account);
                 } catch (AuthenticationException denied) {
                   // Return the denial from the transaction callback so normal failed-attempt
                   // accounting commits. A successful OTP remains rollback-capable with retention.
