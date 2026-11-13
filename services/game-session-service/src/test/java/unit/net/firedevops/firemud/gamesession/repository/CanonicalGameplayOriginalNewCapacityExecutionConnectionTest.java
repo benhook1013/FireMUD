@@ -13,6 +13,7 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
+import java.lang.reflect.Constructor;
 import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -105,34 +106,9 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
   }
 
   @Test
-  void nonInterruptibleConnectsSaturateFourSharedSlotsWithoutQueuingAnotherAttempt()
-      throws Exception {
-    RedisClient redis = mock();
+  void physicalConnectorWorkersSaturateFourSlotsWithoutQueuingAnotherAttempt() throws Exception {
     int maximum = CanonicalGameplayOriginalNewCapacityExecutionOwner.MAX_IN_FLIGHT_CONNECTS;
-    var lateConnections = new java.util.ArrayList<StatefulRedisConnection<byte[], byte[]>>();
-    for (int index = 0; index < maximum; index++) {
-      StatefulRedisConnection<byte[], byte[]> late = mock();
-      when(late.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
-      lateConnections.add(late);
-    }
-    var nextConnection = new java.util.concurrent.atomic.AtomicInteger();
-    CountDownLatch ready = new CountDownLatch(maximum), start = new CountDownLatch(1);
     CountDownLatch entered = new CountDownLatch(maximum), release = new CountDownLatch(1);
-    when(redis.connect(ByteArrayCodec.INSTANCE))
-        .thenAnswer(
-            invocation -> {
-              var late = lateConnections.get(nextConnection.getAndIncrement());
-              entered.countDown();
-              for (; ; ) {
-                try {
-                  release.await();
-                  break;
-                } catch (InterruptedException interrupted) {
-                  /* Model a non-interruptible connect. */
-                }
-              }
-              return late;
-            });
     ThreadPoolExecutor connectors =
         (ThreadPoolExecutor)
             java.util.Objects.requireNonNull(
@@ -146,51 +122,34 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
     int operationMaximum =
         CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
     long completedBefore = connectors.getCompletedTaskCount();
+    RedisClient redis = mock();
     var owner = owner(mock(), redis, mock());
-    var scheduler = Executors.newSingleThreadScheduledExecutor();
-    var callerThreads = Executors.newFixedThreadPool(maximum);
-    var callers = new java.util.ArrayList<java.util.concurrent.Future<Void>>();
     try {
       for (int index = 0; index < maximum; index++)
-        callers.add(
-            callerThreads.submit(
-                () -> {
-                  ready.countDown();
-                  start.await();
-                  // Construct deadlines only after all dedicated callers are ready. Common-pool
-                  // startup and mock preparation must not consume the controlled deadline.
-                  try (var context =
-                      Context.current().withDeadlineAfter(1, TimeUnit.SECONDS, scheduler)) {
-                    assertThatThrownBy(() -> context.call(owner::connectForRead))
-                        .isInstanceOf(IllegalStateException.class);
-                  }
-                  return null;
-                }));
-      assertThat(ready.await(2, TimeUnit.SECONDS)).isTrue();
-      start.countDown();
+        connectors.execute(
+            () -> {
+              entered.countDown();
+              for (; ; ) {
+                try {
+                  release.await();
+                  break;
+                } catch (InterruptedException interrupted) {
+                  /* Model an unrelated connector worker that ignores cancellation. */
+                }
+              }
+            });
       assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
-      for (var caller : callers) caller.get(3, TimeUnit.SECONDS);
-      // Caller return can precede resource-worker abandonment. Prove operation permits have
-      // recovered before testing connector saturation, so that the fifth refusal cannot be
-      // explained by the independent operation cap.
-      Awaitility.await()
-          .atMost(2, TimeUnit.SECONDS)
-          .untilAsserted(() -> assertThat(permits.availablePermits()).isEqualTo(operationMaximum));
       assertThat(connectors.getActiveCount()).isEqualTo(maximum);
       assertThat(connectors.getQueue()).isEmpty();
       assertThat(connectors.getTaskCount()).isEqualTo(completedBefore + maximum);
+      assertThat(permits.availablePermits()).isEqualTo(operationMaximum);
       assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
-      verify(redis, org.mockito.Mockito.times(maximum)).connect(ByteArrayCodec.INSTANCE);
+      verifyNoInteractions(redis);
       assertThat(connectors.getActiveCount()).isEqualTo(maximum);
       assertThat(connectors.getQueue()).isEmpty();
       assertThat(connectors.getTaskCount()).isEqualTo(completedBefore + maximum);
-      lateConnections.forEach(org.mockito.Mockito::verifyNoInteractions);
     } finally {
-      // Cleanup never verifies: a failed barrier/deadline assertion must remain the primary error.
-      start.countDown();
       release.countDown();
-      scheduler.shutdownNow();
-      callerThreads.shutdownNow();
     }
     Awaitility.await()
         .atMost(2, TimeUnit.SECONDS)
@@ -200,22 +159,182 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
               assertThat(connectors.getQueue()).isEmpty();
               assertThat(connectors.getCompletedTaskCount()).isEqualTo(completedBefore + maximum);
             });
-    for (var late : lateConnections) verify(late).closeAsync();
     assertThat(permits.availablePermits()).isEqualTo(operationMaximum);
+  }
+
+  @Test
+  void interruptedBackgroundConnectorsLeaveTwoWorkersForForeground() throws Exception {
+    RedisClient redis = mock();
+    int backgroundMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_BACKGROUND_OPERATIONS;
+    var lateConnections = new java.util.ArrayList<StatefulRedisConnection<byte[], byte[]>>();
+    var foregroundConnections = new java.util.ArrayList<StatefulRedisConnection<byte[], byte[]>>();
+    for (int index = 0; index < backgroundMaximum; index++) {
+      StatefulRedisConnection<byte[], byte[]> late = mock();
+      when(late.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+      lateConnections.add(late);
+    }
+    for (int index = 0; index < 2; index++) {
+      StatefulRedisConnection<byte[], byte[]> foreground = mock();
+      when(foreground.isOpen()).thenReturn(true);
+      when(foreground.getOptions())
+          .thenReturn(ClientOptions.builder().autoReconnect(false).build());
+      when(foreground.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
+      foregroundConnections.add(foreground);
+    }
+
+    var nextConnection = new java.util.concurrent.atomic.AtomicInteger();
+    CountDownLatch ready = new CountDownLatch(backgroundMaximum), start = new CountDownLatch(1);
+    CountDownLatch entered = new CountDownLatch(backgroundMaximum), release = new CountDownLatch(1);
+    when(redis.connect(ByteArrayCodec.INSTANCE))
+        .thenAnswer(
+            invocation -> {
+              int index = nextConnection.getAndIncrement();
+              if (index < backgroundMaximum) {
+                var late = lateConnections.get(index);
+                entered.countDown();
+                for (; ; ) {
+                  try {
+                    release.await();
+                    break;
+                  } catch (InterruptedException interrupted) {
+                    /* Model a blocking connector that ignores cancellation interruption. */
+                  }
+                }
+                return late;
+              }
+              return foregroundConnections.get(index - backgroundMaximum);
+            });
+
+    ThreadPoolExecutor connectors =
+        (ThreadPoolExecutor)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionOwner.class, "CONNECTS"));
+    Semaphore operationPermits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    Semaphore backgroundPermits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+                    "BACKGROUND_OPERATIONS"));
+    int operationMaximum =
+        CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS;
+    long completedBefore = connectors.getCompletedTaskCount();
+    var dsl = mock(DSLContext.class);
+    var tags = mock(CanonicalGameplayTenantGameplayTagRepository.class);
+    var scripts =
+        RedisScriptCatalog.fromContributions(
+            List.of(new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution()));
+    var foregroundOwner = owner(dsl, redis, tags);
+    var scheduler = Executors.newSingleThreadScheduledExecutor();
+    var callerThreads = Executors.newFixedThreadPool(backgroundMaximum);
+    var callers = new java.util.ArrayList<java.util.concurrent.Future<Void>>();
+    try {
+      for (int index = 0; index < backgroundMaximum; index++)
+        callers.add(
+            callerThreads.submit(
+                () -> {
+                  ready.countDown();
+                  start.await();
+                  try (var context =
+                      Context.current().withDeadlineAfter(600, TimeUnit.MILLISECONDS, scheduler)) {
+                    assertThatThrownBy(
+                            () ->
+                                context.call(
+                                    () ->
+                                        CanonicalGameplayOriginalNewCapacityExecutionBudget
+                                            .runBackground(
+                                                Clock.systemUTC(),
+                                                Long.MAX_VALUE,
+                                                budget ->
+                                                    budgetOwner(dsl, redis, scripts, tags, budget)
+                                                        .connectForRead())))
+                        .isInstanceOf(IllegalStateException.class);
+                  }
+                  return null;
+                }));
+      assertThat(ready.await(2, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+      assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+      for (var caller : callers) caller.get(3, TimeUnit.SECONDS);
+      assertThat(operationPermits.availablePermits())
+          .isEqualTo(operationMaximum - backgroundMaximum);
+      assertThat(backgroundPermits.availablePermits()).isZero();
+      assertThat(connectors.getActiveCount()).isEqualTo(backgroundMaximum);
+      assertThat(connectors.getQueue()).isEmpty();
+
+      // Background operation permits remain held by the blocked connectors, leaving two permits
+      // for foreground calls that complete while both physical background connects remain active.
+      for (int index = 0; index < 2; index++) {
+        assertThat(foregroundOwner.connectForRead()).isSameAs(foregroundConnections.get(index));
+        foregroundConnections.get(index).closeAsync();
+      }
+      verify(redis, org.mockito.Mockito.times(backgroundMaximum + 2))
+          .connect(ByteArrayCodec.INSTANCE);
+      assertThat(connectors.getActiveCount()).isEqualTo(backgroundMaximum);
+      assertThat(connectors.getQueue()).isEmpty();
+      assertThat(connectors.getTaskCount()).isEqualTo(completedBefore + backgroundMaximum + 2);
+      assertThat(operationPermits.availablePermits())
+          .isEqualTo(operationMaximum - backgroundMaximum);
+      assertThat(backgroundPermits.availablePermits()).isZero();
+      lateConnections.forEach(org.mockito.Mockito::verifyNoInteractions);
+    } finally {
+      start.countDown();
+      release.countDown();
+      scheduler.shutdownNow();
+      callerThreads.shutdownNow();
+    }
+
+    Awaitility.await()
+        .atMost(2, TimeUnit.SECONDS)
+        .untilAsserted(
+            () -> {
+              assertThat(connectors.getActiveCount()).isZero();
+              assertThat(connectors.getQueue()).isEmpty();
+              assertThat(connectors.getCompletedTaskCount())
+                  .isEqualTo(completedBefore + backgroundMaximum + 2);
+              assertThat(operationPermits.availablePermits()).isEqualTo(operationMaximum);
+              assertThat(backgroundPermits.availablePermits())
+                  .isEqualTo(
+                      CanonicalGameplayOriginalNewCapacityExecutionBudget
+                          .MAX_BACKGROUND_OPERATIONS);
+            });
+    lateConnections.forEach(late -> verify(late).closeAsync());
+    foregroundConnections.forEach(foreground -> verify(foreground).closeAsync());
     assertThat(callerThreads.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
   }
 
   @Test
-  void reconnectingConnectionIsRefusedAndClosedRatherThanReusedForReadback() {
+  void failedLateCloseIsNotRetriedOrPermitLeaked() {
     RedisClient redis = mock();
-    StatefulRedisConnection<byte[], byte[]> connection = mock();
-    when(redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(connection);
-    when(connection.isOpen()).thenReturn(true);
-    when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
-    when(connection.closeAsync()).thenReturn(CompletableFuture.completedFuture(null));
-    assertThatThrownBy(() -> owner(mock(), redis, mock()).connectForRead())
-        .isInstanceOf(IllegalStateException.class);
-    verify(connection, org.mockito.Mockito.atLeastOnce()).closeAsync();
+    StatefulRedisConnection<byte[], byte[]> asyncFailure = mock();
+    StatefulRedisConnection<byte[], byte[]> syncFailure = mock();
+    for (StatefulRedisConnection<byte[], byte[]> connection : List.of(asyncFailure, syncFailure)) {
+      when(connection.isOpen()).thenReturn(true);
+      when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(true).build());
+    }
+    when(redis.connect(ByteArrayCodec.INSTANCE)).thenReturn(asyncFailure, syncFailure);
+    when(asyncFailure.closeAsync())
+        .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("close failed")));
+    when(syncFailure.closeAsync()).thenThrow(new IllegalStateException("close failed"));
+    var owner = owner(mock(), redis, mock());
+
+    assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(owner::connectForRead).isInstanceOf(IllegalStateException.class);
+    verify(asyncFailure).closeAsync();
+    verify(syncFailure).closeAsync();
+    Semaphore operationPermits =
+        (Semaphore)
+            java.util.Objects.requireNonNull(
+                ReflectionTestUtils.getField(
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
+    assertThat(operationPermits.availablePermits())
+        .isEqualTo(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS);
   }
 
   @Test
@@ -280,5 +399,28 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
             List.of(new CanonicalGameplayOriginalNewFinalAdmissionRedisScriptContribution())),
         Clock.systemUTC(),
         tags);
+  }
+
+  private static CanonicalGameplayOriginalNewCapacityExecutionOwner budgetOwner(
+      DSLContext dsl,
+      RedisClient redis,
+      RedisScriptCatalog scripts,
+      CanonicalGameplayTenantGameplayTagRepository tags,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    try {
+      Constructor<CanonicalGameplayOriginalNewCapacityExecutionOwner> constructor =
+          CanonicalGameplayOriginalNewCapacityExecutionOwner.class.getDeclaredConstructor(
+              DSLContext.class,
+              RedisClient.class,
+              RedisScriptCatalog.class,
+              Clock.class,
+              CanonicalGameplayTenantGameplayTagRepository.class,
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.class,
+              StatefulRedisConnection.class);
+      constructor.setAccessible(true);
+      return constructor.newInstance(dsl, redis, scripts, Clock.systemUTC(), tags, budget, null);
+    } catch (ReflectiveOperationException failure) {
+      throw new AssertionError("Unable to create scoped owner for connector proof", failure);
+    }
   }
 }
