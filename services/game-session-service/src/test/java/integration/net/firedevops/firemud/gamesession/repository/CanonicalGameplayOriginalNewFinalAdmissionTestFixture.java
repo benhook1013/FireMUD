@@ -268,13 +268,14 @@ final class CanonicalGameplayOriginalNewFinalAdmissionTestFixture implements Aut
   /** Real authenticated client decoding over controlled World/Entity response DTOs and test PKI. */
   static final class ControlledRegionSources implements AutoCloseable {
     enum WorldRead {
+      NONE,
       PLACEMENT,
       LIFECYCLE
     }
 
     final java.util.concurrent.CountDownLatch withheldReadEntered =
         new java.util.concurrent.CountDownLatch(1);
-    volatile WorldRead withholdWorldRead;
+    volatile WorldRead withholdWorldRead = WorldRead.NONE;
     final net.firedevops.firemud.worldmanagement.v1.CanonicalInitialPlayerLocationRequest request;
     final net.firedevops.firemud.gamesession.service.CanonicalInitialPlayerLocationRegionResolver
         resolver;
