@@ -251,6 +251,8 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
                             origin.candidateDigest(),
                             origin.selectedOwnerId(),
                             origin.selectedOwnerFence());
+                    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
+                        tx, execution, origin.tenantGameplayTag());
                     Record existing = find(tx, execution);
                     if (existing != null) {
                       exact(existing, execution);
@@ -313,8 +315,6 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         "ABORTED".equals(transition.get("status", String.class))
             ? scopedTags().assignmentForRetainedCapacityExecution(origin.transitionId())
             : scopedTags().assignmentForTransition(origin.transitionId());
-    CanonicalGameplayCapacityEvidenceBudget.requireCharge(
-        sql(), execution, assignment.tenantGameplayTag());
     long result =
         scopedFinalOwner()
             .forOrigin(origin, retained)
