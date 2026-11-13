@@ -494,30 +494,22 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       OriginalNewCapacityExecution execution,
       String action,
       long deadline) {
-    requireNoAmbientTransaction();
-    if (!"INSTALL".equals(action)) throw unavailable();
-    var candidate = requireSource(source);
-    requireExecutionBinding(source, execution);
-    var assignment = tenantTags.assignmentForTransition(candidate.transition().transitionId());
-    requireAssignment(assignment, candidate);
-    Keys keys = requireKeys(candidate, assignment, accountOpen.key(), execution);
-    requireAccountOpen(accountOpen, candidate, assignment, keys.accountAdmissionBarrier());
-    var issuer =
-        requireIssuerOpen(issuerOpen, candidate, assignment, keys.issuerAdmissionBarrier());
+    PreparedInstall prepared =
+        prepareInstall(source, template, accountOpen, issuerOpen, execution, action, deadline);
     byte[] script = scriptSource(requireDescriptor());
     byte[] bytes = template.finalCasTemplateBytes();
     try {
       return execute(
           script,
-          keys,
-          candidate,
-          assignment,
-          candidate.canonicalBytes(),
-          characterProjection(candidate),
+          prepared.keys(),
+          prepared.candidate(),
+          prepared.assignment(),
+          prepared.candidate().canonicalBytes(),
+          characterProjection(prepared.candidate()),
           bytes,
           template.canonicalSessionDurationMillis(),
           canonicalJson(accountOpen.exactFields()),
-          issuerMetadataJson(issuer),
+          issuerMetadataJson(prepared.issuerValue()),
           deadline,
           issuerOpen.exactPhysicalPayload(),
           execution,
@@ -526,6 +518,47 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       wipe(script);
       wipe(bytes);
     }
+  }
+
+  /** Checks deterministic INSTALL inputs without reading or mutating Redis. */
+  void validateInstallInputs(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      long deadline) {
+    prepareInstall(source, template, accountOpen, issuerOpen, execution, "INSTALL", deadline);
+    byte[] script = scriptSource(requireDescriptor());
+    wipe(script);
+  }
+
+  private PreparedInstall prepareInstall(
+      CanonicalGameplayBindingInventoryRepository.OriginalNewFinalAdmissionSource source,
+      CanonicalGameplayOriginalNewAuthenticatedSession.Template template,
+      CanonicalGameplayAccountInitialOpenProof.CurrentOpen accountOpen,
+      CanonicalGameplayIssuerAdmissionBarrierRedisOwner.Readback issuerOpen,
+      OriginalNewCapacityExecution execution,
+      String action,
+      long deadline) {
+    requireNoAmbientTransaction();
+    if (!"INSTALL".equals(action)
+        || template == null
+        || accountOpen == null
+        || issuerOpen == null
+        || execution == null) throw unavailable();
+    requireDeadline(clock.millis(), deadline);
+    var candidate = requireSource(source);
+    requireExecutionBinding(source, execution);
+    var assignment = tenantTags.assignmentForTransition(candidate.transition().transitionId());
+    requireAssignment(assignment, candidate);
+    Keys keys = requireKeys(candidate, assignment, accountOpen.key(), execution);
+    requireAccountOpen(accountOpen, candidate, assignment, keys.accountAdmissionBarrier());
+    requireCurrentOpenWindow(accountOpen, clock.millis());
+    CanonicalGameplayIssuerAdmissionBarrierValue issuerValue =
+        requireIssuerOpen(issuerOpen, candidate, assignment, keys.issuerAdmissionBarrier());
+    template.requireCapacityExecutionBinding(candidate, execution);
+    return new PreparedInstall(candidate, assignment, keys, issuerValue);
   }
 
   static void requireExecutionBinding(
@@ -1193,6 +1226,12 @@ final class CanonicalGameplayOriginalNewFinalAdmissionRedisOwner {
       String accountAdmissionBarrier,
       String issuerAdmissionBarrier,
       String capacityExecution) {}
+
+  private record PreparedInstall(
+      CanonicalGameplayOriginalNewCandidate candidate,
+      CanonicalGameplayTenantGameplayTagRepository.Assignment assignment,
+      Keys keys,
+      CanonicalGameplayIssuerAdmissionBarrierValue issuerValue) {}
 
   /**
    * Private-constructor capability tied to this owner's exact seven-key physical readback. Closing
