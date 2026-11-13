@@ -429,13 +429,7 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
 
   @ParameterizedTest
   @ValueSource(
-      strings = {
-        "issued",
-        "observed-before",
-        "observed-after-expiry",
-        "expires",
-        "clock-back"
-      })
+      strings = {"issued", "observed-before", "observed-after-expiry", "expires", "clock-back"})
   void timeWindowMismatchOrDeadlineExpiryRefuses(String mode) {
     var fixture = new Fixture();
     switch (mode) {
