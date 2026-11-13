@@ -105,7 +105,8 @@ class CanonicalGameplayOriginalNewCapacityExecutionConnectionTest {
                   ReflectionTestUtils.getField(
                       CanonicalGameplayOriginalNewCapacityExecutionBudget.class, "OPERATIONS"));
       assertThat(operationPermits.availablePermits())
-          .isEqualTo(CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS - 1);
+          .isEqualTo(
+              CanonicalGameplayOriginalNewCapacityExecutionBudget.MAX_IN_FLIGHT_OPERATIONS - 1);
       verifyNoInteractions(dsl, tags);
     } finally {
       release.countDown();
