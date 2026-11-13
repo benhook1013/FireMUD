@@ -903,6 +903,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!committed && !"PROVISIONAL".equals(status)) {
             throw conflict("Only a provisional or committed original NEW can be a final source");
           }
+          if (committed
+              && row.get("original_new_capacity_execution_digest", String.class) == null) {
+            throw conflict(
+                "Historical original NEW receipt lacks exact capacity execution evidence");
+          }
           Record inventoryRow =
               transaction.fetchOne(
                   "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ? FOR UPDATE",
@@ -1122,6 +1127,73 @@ public final class CanonicalGameplayBindingInventoryRepository {
       throw conflict("Region transfer committed source differs from the pinned original");
     }
     return Optional.of(current);
+  }
+
+  /**
+   * Revalidates an exact retained first-NEW Account abort for transfer topology only. The abort
+   * remains terminal and this method never constructs provisional or final-admission evidence.
+   */
+  Optional<CanonicalGameplayOriginalNewCandidate> readRegionTransferAbortedCandidate(
+      UUID transitionId, CanonicalGameplayOriginalNewCandidate expectedOriginal) {
+    requireNoAmbientTransaction();
+    Objects.requireNonNull(expectedOriginal, "pinned original transfer candidate");
+    if (!expectedOriginal.bindingDecisionId().equals(transitionId)) {
+      throw conflict("Region transfer changed its original transition");
+    }
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext transaction = DSL.using(configuration);
+          transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+          Record row = readTransition(transaction, transitionId);
+          if (row == null) throw conflict("Region transfer original transition is missing");
+          if (!"ABORTED".equals(row.get("status", String.class))) return Optional.empty();
+          var aborted = loadFirstNewAdmissionAbortSource(transaction, transitionId, false, true);
+          if (!aborted.isAccountAborted()
+              || !sameRegionTransferCandidate(expectedOriginal, aborted)) {
+            throw conflict(
+                "Region transfer retained Account abort differs from its pinned original");
+          }
+          return Optional.of(expectedOriginal);
+        });
+  }
+
+  private static boolean sameRegionTransferCandidate(
+      CanonicalGameplayOriginalNewCandidate expected,
+      CanonicalGameplayAdmissionAbortSource aborted) {
+    var transition = aborted.transition();
+    var expectedTransition = expected.transition();
+    var reservation = aborted.reservation();
+    var expectedReservation = expected.reservation();
+    return expected.bindingIdentity().equals(aborted.candidate().identity())
+        && expected
+            .leaseEvidence()
+            .canonicalJson()
+            .equals(aborted.originalDecision().leaseEvidenceJson())
+        && expected.targetEvidence().equals(aborted.originalDecision().targetEvidence())
+        && expectedTransition.transitionId().equals(transition.transitionId())
+        && expectedTransition.bindingRef().equals(transition.bindingRef())
+        && expectedTransition.bindingGeneration().equals(transition.bindingGeneration())
+        && expectedTransition.issuerReservationId().equals(transition.issuerReservationId())
+        && expectedTransition.reservationFence().equals(transition.reservationFence())
+        && expectedTransition
+            .candidateAccountIndexFence()
+            .equals(transition.candidateAccountIndexFence())
+        && expectedReservation.reservationId().equals(reservation.reservationId())
+        && expectedReservation.ownerBindingRef().equals(reservation.owner().bindingRef())
+        && expectedReservation.bindingGeneration().equals(reservation.bindingGeneration())
+        && expectedReservation.transitionId().equals(reservation.transitionId())
+        && expectedReservation.partitionId().equals(reservation.partitionId())
+        && expectedReservation.reservationFence().equals(reservation.reservationFence())
+        && expectedReservation
+            .issuerCoverageOperationId()
+            .equals(reservation.issuerCoverageOperationId())
+        && expectedReservation
+            .issuerCoverageOperationFence()
+            .equals(reservation.issuerCoverageOperationFence())
+        && expectedReservation.coverageFence().equals(reservation.coverageFence())
+        && expectedReservation
+            .inventorySnapshotRevision()
+            .equals(reservation.inventorySnapshotRevision());
   }
 
   /** Revalidates actual final lifecycle/receipts; never presents COMMITTED as provisional work. */

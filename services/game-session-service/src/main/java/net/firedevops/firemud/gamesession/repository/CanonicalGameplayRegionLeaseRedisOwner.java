@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.repository;
 
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisFuture;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.async.RedisAsyncCommands;
@@ -81,17 +82,28 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
               "regionSessionBinding", "tick:", RedisScriptDescriptor.HashTagDeclaration.REQUIRED));
 
   private final RedisClient redisClient;
+  private final RedisURI coordinationUri;
   private final RedisScriptCatalog catalog;
   private final Clock handoffClock;
   private final long handoffDeadlineMillis;
 
   CanonicalGameplayRegionLeaseRedisOwner(RedisClient redisClient, RedisScriptCatalog catalog) {
-    this(redisClient, catalog, null, 0L);
+    this(redisClient, null, catalog, null, 0L);
+  }
+
+  CanonicalGameplayRegionLeaseRedisOwner(
+      RedisClient redisClient, RedisURI coordinationUri, RedisScriptCatalog catalog) {
+    this(redisClient, Objects.requireNonNull(coordinationUri), catalog, null, 0L);
   }
 
   private CanonicalGameplayRegionLeaseRedisOwner(
-      RedisClient redisClient, RedisScriptCatalog catalog, Clock handoffClock, long deadline) {
+      RedisClient redisClient,
+      RedisURI coordinationUri,
+      RedisScriptCatalog catalog,
+      Clock handoffClock,
+      long deadline) {
     this.redisClient = Objects.requireNonNull(redisClient, "Configured Coordination Redis client");
+    this.coordinationUri = coordinationUri;
     this.catalog = Objects.requireNonNull(catalog, "Installed region lease script catalog");
     this.handoffClock = handoffClock;
     this.handoffDeadlineMillis = deadline;
@@ -99,7 +111,11 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
 
   CanonicalGameplayRegionLeaseRedisOwner forHandoffDeadline(Clock clock, long deadline) {
     return new CanonicalGameplayRegionLeaseRedisOwner(
-        redisClient, catalog, Objects.requireNonNull(clock), deadline);
+        redisClient,
+        Objects.requireNonNull(coordinationUri, "Configured Coordination Redis URI"),
+        catalog,
+        Objects.requireNonNull(clock),
+        deadline);
   }
 
   LeaseGrant acquire(
@@ -623,8 +639,7 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
       CanonicalGameplayOriginalNewCapacityExecutionBudget budget,
       boolean acquiring) {
     if (budget != null) budget.check();
-    try (StatefulRedisConnection<byte[], byte[]> connection =
-        redisClient.connect(ByteArrayCodec.INSTANCE)) {
+    try (StatefulRedisConnection<byte[], byte[]> connection = openConnection(budget)) {
       RedisAsyncCommands<byte[], byte[]> commands = connection.async();
       requirePrincipal(await(commands::aclWhoami, budget));
       String loadedSha = await(() -> commands.scriptLoad(script), budget);
@@ -645,6 +660,35 @@ final class CanonicalGameplayRegionLeaseRedisOwner {
     } catch (RuntimeException failure) {
       throw unavailable(failure);
     }
+  }
+
+  private StatefulRedisConnection<byte[], byte[]> openConnection(
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    if (budget == null) return redisClient.connect(ByteArrayCodec.INSTANCE);
+    RedisURI uri = Objects.requireNonNull(coordinationUri);
+    long timeout = Math.min(uri.getTimeout().toMillis(), budget.remainingMillis());
+    if (timeout < 1) throw unavailable();
+    RedisURI bounded = RedisURI.builder(uri).withTimeout(Duration.ofMillis(timeout)).build();
+    var pending = redisClient.connectAsync(ByteArrayCodec.INSTANCE, bounded);
+    try {
+      return pending.get(timeout, TimeUnit.MILLISECONDS);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      closeLateConnection(pending);
+      throw unavailable(interrupted);
+    } catch (TimeoutException expired) {
+      closeLateConnection(pending);
+      throw unavailable(expired);
+    } catch (ExecutionException failure) {
+      throw unavailable(failure);
+    }
+  }
+
+  private static void closeLateConnection(
+      io.lettuce.core.ConnectionFuture<StatefulRedisConnection<byte[], byte[]>> pending) {
+    // The public Lettuce future wraps the channel handshake. Keep its result observable so
+    // an asynchronously successful connection after our deadline can be closed.
+    pending.thenAccept(connection -> connection.closeAsync());
   }
 
   private RedisScriptDescriptor requireBridgeDescriptor() {

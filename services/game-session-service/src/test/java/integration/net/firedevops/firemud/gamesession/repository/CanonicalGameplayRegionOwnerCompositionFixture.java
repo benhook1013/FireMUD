@@ -81,6 +81,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   static ExistingBinding installExistingOriginalCandidate(
       DSLContext dsl,
       RedisClient coordinationRedis,
+      RedisURI coordinationUri,
       UUID transitionId,
       CanonicalInitialPlayerLocationRequest worldRequest,
       CanonicalInitialPlayerLocationRegionResolver worldRegionResolver,
@@ -98,6 +99,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
             dsl,
             coordinationRedis,
+            coordinationUri,
             RedisScriptCatalog.fromContributions(
                 List.of(
                     new CanonicalGameplayRegionLeaseRedisScriptContribution(),
@@ -124,6 +126,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
       DSLContext dsl,
       RedisClient coordinationRedis,
+      RedisURI coordinationUri,
       RedisScriptCatalog catalog,
       CanonicalGameplayRegionLeaseOwner.Installation original,
       CanonicalInitialPlayerLocationRegionResolver resolver,
@@ -132,6 +135,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
     return handoffExistingOriginal(
         dsl,
         coordinationRedis,
+        coordinationUri,
         catalog,
         original,
         resolver,
@@ -144,6 +148,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   static CanonicalGameplayRegionLeaseOwner.Installation handoffExistingOriginal(
       DSLContext dsl,
       RedisClient coordinationRedis,
+      RedisURI coordinationUri,
       RedisScriptCatalog catalog,
       CanonicalGameplayRegionLeaseOwner.Installation original,
       CanonicalInitialPlayerLocationRegionResolver resolver,
@@ -163,6 +168,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         CanonicalGameplayRegionLeaseOwnerFactory.compose(
             dsl,
             coordinationRedis,
+            coordinationUri,
             catalog,
             incarnationSource,
             resolver,
@@ -1106,6 +1112,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           CanonicalGameplayRegionLeaseOwnerFactory.compose(
               dsl,
               redis.ownerClient(),
+              redis.ownerUri,
               scriptCatalog,
               stableSource,
               worldRegionResolver,
@@ -1273,6 +1280,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
             CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
                 dsl,
                 redis.ownerClient(),
+                redis.ownerUri,
                 scriptCatalog,
                 stableSource,
                 secondBinding.worldRegionResolver(),
@@ -1397,6 +1405,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
           CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
               dsl,
               redis.ownerClient(),
+              redis.ownerUri,
               scriptCatalog,
               stableSource,
               secondBinding.worldRegionResolver(),
@@ -1535,6 +1544,7 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
         CanonicalGameplayRegionBindingBridgeOwnerFactory.compose(
             dsl,
             redis.ownerClient(),
+            redis.ownerUri,
             scriptCatalog,
             stableSource,
             worldRegionResolver,
@@ -2258,16 +2268,19 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
   private static final class RegionRedis implements AutoCloseable {
     private final RedisClient administrator;
     private final RedisClient ownerClient;
+    private final RedisURI ownerUri;
     private final StatefulRedisConnection<byte[], byte[]> adminConnection;
     private final RedisCommands<byte[], byte[]> admin;
 
     private RegionRedis(
         RedisClient administrator,
         RedisClient ownerClient,
+        RedisURI ownerUri,
         StatefulRedisConnection<byte[], byte[]> adminConnection,
         RedisCommands<byte[], byte[]> admin) {
       this.administrator = administrator;
       this.ownerClient = ownerClient;
+      this.ownerUri = ownerUri;
       this.adminConnection = adminConnection;
       this.admin = admin;
     }
@@ -2319,7 +2332,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .withTimeout(Duration.ofSeconds(5))
               .withAuthentication(REDIS_PRINCIPAL, REDIS_PASSWORD)
               .build();
-      return new RegionRedis(administrator, RedisClient.create(ownerUri), adminConnection, admin);
+      return new RegionRedis(
+          administrator, RedisClient.create(ownerUri), ownerUri, adminConnection, admin);
     }
 
     RedisClient ownerClient() {
