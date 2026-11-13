@@ -1851,7 +1851,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(
               f.dsl
                   .fetchSingle(
-                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(14) FROM "
+                      "SELECT catalog_bytes=gs_runtime_family_catalog_bytes(catalog_epoch) FROM "
                           + EPOCHS
                           + " WHERE catalog_epoch=15")
                   .get(0, Boolean.class))
