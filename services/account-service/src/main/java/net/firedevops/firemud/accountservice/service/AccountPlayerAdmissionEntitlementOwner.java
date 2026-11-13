@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeM
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository.CanonicalConnectScopeEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountDemoTenantEntitlementRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayAdmissionCurrentSources;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountHostingSubscriptionCurrentReceipt;
@@ -139,8 +140,13 @@ public final class AccountPlayerAdmissionEntitlementOwner {
           case PAID_HOSTING -> capturePaidSources(request, caller, prepared);
           case NON_PAID_DEMO -> captureDemoSources(request, caller, prepared);
         };
+    // Preserve the live caller-scope deadline after the final source transaction commits. This
+    // check uses Account's application clock; the evidence timestamp comparison below uses the
+    // same PostgreSQL clock that stamped the retained bundle.
+    requireCurrentTimes(prepared.player(), now());
     try {
-      evidence.requireCurrentAt(now());
+      evidence.requireCurrentAt(
+          inSourceTransaction(() -> AccountTenantCapacityRepository.databaseNow(dsl)));
     } catch (IllegalArgumentException expired) {
       // This final post-commit check only rejects an expired or future source observation.
       throw unavailable();
@@ -164,15 +170,17 @@ public final class AccountPlayerAdmissionEntitlementOwner {
     PublishedRealmEvidence target = readProtectedTarget(request, prepared.player().scope());
     return inSourceTransaction(
         () -> {
-          CurrentPlayer player = readCurrentPlayer(request, caller);
-          if (!prepared.player().scope().equals(player.scope())) throw unavailable();
-          requireSameHead(request, prepared.selection());
+          AccountGameplayAdmissionCurrentSources.lockRequiredAccountsBeforeTenantSources(
+              dsl, request.tenantId(), caller.identity().accountId());
           final AccountHostingSubscriptionCurrentReceipt receipt;
           try {
             receipt = hosting.readCurrent(fence, observation);
           } catch (FenceRejectedException rejected) {
             throw unavailable();
           }
+          CurrentPlayer player = readCurrentPlayer(request, caller);
+          if (!prepared.player().scope().equals(player.scope())) throw unavailable();
+          requireSameHead(request, prepared.selection());
           Instant evaluatedAt = now();
           requireFreshReceipt(request, receipt, evaluatedAt);
           var event = receipt.tenantAuthorityEvent();
@@ -218,7 +226,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
                       "billingEventId", receipt.billingEventId().toString(),
                       "billingEventDigest", receipt.billingEventDigest(),
                       "tenantAuthorityEventDigest", event.eventDigest())),
-              evaluatedAt,
               receipt.validUntil());
         });
   }
@@ -274,7 +281,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
                   demo.tenantBillingSequence(),
                   demo.tenantAuthorityGeneration()),
               demo.snapshotIdentity(),
-              capturedAt,
               null);
         });
   }
@@ -582,7 +588,6 @@ public final class AccountPlayerAdmissionEntitlementOwner {
       PublishedRealmEvidence target,
       Map<String, Object> facts,
       String entitlementSourceDigest,
-      Instant time,
       Instant paidReceiptValidUntil) {
     var scope = player.scope();
     var current = target.currentTarget();
@@ -635,6 +640,11 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
     sources.put("worldCaptureId", world.captureId().toString());
     sources.put("worldRowVersion", Long.toString(world.rowVersion()));
+    // The capacity bundle's freshness is enforced against PostgreSQL time by the capacity owner.
+    // Keep all source checks on the injected Account clock, but stamp this new evaluation from the
+    // same database clock so a small application/database skew cannot future-date its evidence.
+    Instant capacityEvaluatedAt = AccountTenantCapacityRepository.databaseNow(dsl);
+    if (capacityEvaluatedAt.isBefore(Instant.parse(scope.evaluatedAt()))) throw unavailable();
     var evidence =
         RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
             request.requestId(),
@@ -644,7 +654,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
             binding,
             facts,
             sources,
-            time);
+            capacityEvaluatedAt);
     // Retain only inside this actual evaluator's final source transaction. A supplied bundle
     // cannot register itself as capacity authority, and commit failure returns no evidence.
     try {

@@ -1,18 +1,23 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAccountAuthority;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseRefusal;
+import net.firedevops.firemud.accountservice.service.auth.AccountCredentialAbuseService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.EmailCanonicalization;
+import net.firedevops.firemud.common.account.auth.AccountControlUiAuthenticationGrpcCodec.SourceContext;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -21,14 +26,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Minimum genuine backend creator issuance/recovery, deliberately unregistered and unmounted.
- * Primary credentials, existing owner sources and actual Coordination are all required. An
+ * Genuine Account and creator issuance/recovery. Only Account issuance is selected by the isolated
+ * checkout receiving composition; creator receiving and default production activation remain
+ * closed. Primary credentials, existing owner sources and actual Coordination are all required. An
  * independently protected exact peer binding supplies transport identity, never creator authority.
  */
 public final class AccountControlUiIssuanceService {
   private final AccountServiceImpl primaryAuthentication;
+  private final AccountCredentialAbuseService credentialAbuse;
   private final AccountControlUiIssuanceRepository operations;
-  private final AccountControlUiAuthority authority;
+  private final AccountControlUiAccountAuthority authority;
   private final DraftAuthorizationFenceRepository fences;
   private final AccountControlUiSignerOwner signers;
   private final AccountControlUiResponseCryptography cryptography;
@@ -42,11 +49,13 @@ public final class AccountControlUiIssuanceService {
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification =
-          "Injected primary authentication and Draft fence services remain internal Account owner collaborators.")
+          "Injected primary authentication and Draft fence services remain internal Account owner"
+              + " collaborators.")
   public AccountControlUiIssuanceService(
       AccountServiceImpl primaryAuthentication,
+      AccountCredentialAbuseService credentialAbuse,
       AccountControlUiIssuanceRepository operations,
-      AccountControlUiAuthority authority,
+      AccountControlUiAccountAuthority authority,
       DraftAuthorizationFenceRepository fences,
       AccountControlUiSignerOwner signers,
       AccountControlUiResponseCryptography cryptography,
@@ -57,6 +66,7 @@ public final class AccountControlUiIssuanceService {
       @Value("${firemud.auth.session-safety-margin-ms:300000}") long sessionSafetyMarginMillis,
       String independentlyProtectedCallerUri) {
     this.primaryAuthentication = Objects.requireNonNull(primaryAuthentication);
+    this.credentialAbuse = credentialAbuse;
     this.operations = Objects.requireNonNull(operations);
     this.authority = Objects.requireNonNull(authority);
     this.fences = Objects.requireNonNull(fences);
@@ -80,6 +90,7 @@ public final class AccountControlUiIssuanceService {
 
   public IssuedCredential issue(Request request, CapturedEnvironmentBoundary environment) {
     Objects.requireNonNull(request);
+    tenantAuthority();
     return issueInternal(
         new Invocation(
             request.requestId,
@@ -88,7 +99,8 @@ public final class AccountControlUiIssuanceService {
             request.callerContextId,
             AccountControlUiAuthority.ScopeKind.TENANT,
             java.util.Optional.of(request.tenantId),
-            java.util.Optional.of(Objects.requireNonNull(environment))));
+            java.util.Optional.of(Objects.requireNonNull(environment)),
+            java.util.Optional.empty()));
   }
 
   /** Account-global sign-in: no tenant, membership, creator or terms selector is accepted. */
@@ -102,7 +114,8 @@ public final class AccountControlUiIssuanceService {
             request.callerContextId,
             AccountControlUiAuthority.ScopeKind.ACCOUNT,
             java.util.Optional.empty(),
-            java.util.Optional.empty()));
+            java.util.Optional.empty(),
+            java.util.Optional.of(request.sourceContext)));
   }
 
   private IssuedCredential issueInternal(Invocation request) {
@@ -117,6 +130,8 @@ public final class AccountControlUiIssuanceService {
     }
     String email = EmailCanonicalization.normalize(request.email);
     Map<String, Object> requestFields = new java.util.LinkedHashMap<>();
+    // Source is transient new-attempt input. Preserve the immutable v1 credential replay MAC;
+    // a source change neither creates a new operation nor resets its retained failure budget.
     requestFields.put("schema", "account-control-ui-request/v1");
     requestFields.put("requestId", request.requestId.toString());
     requestFields.put("email", email);
@@ -130,66 +145,91 @@ public final class AccountControlUiIssuanceService {
     requestFields.put("callerContextId", request.callerContextId.toString());
     byte[] exactRequest = AccountControlUiAuthority.canonical(requestFields);
     try {
+      // Retained exact replay is selected before consulting the availability of shared abuse state.
+      // Release all SQL locks before the remote shared admission. A concurrent winner is selected
+      // again under the same request lock before local password/OTP verification.
       InitialPreparation initial =
-          transaction.execute(
-              ignored -> {
-                var existing = operations.findRequest(request.requestId);
-                if (existing != null) {
-                  requireRequest(existing, request, peer.uri(), exactRequest);
-                  return new InitialPreparation(current(existing, environment), null);
-                }
-                // Preserve canonical tenant -> Account owner order before OTP/advisory
-                // authentication.
-                java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
-                    request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
-                        ? java.util.Optional.of(
-                            authority.captureInitial(
-                                request.tenantId.orElseThrow(), environment.orElseThrow()))
-                        : java.util.Optional.empty();
-                tenantSource.ifPresent(value -> fences.lockProducerSourcesNowait(value.sources()));
-                AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
-                try {
-                  authenticated =
-                      primaryAuthentication.authenticateControlUiPrimaryIdentity(
-                          email, request.secret);
-                } catch (AuthenticationException denial) {
-                  // Only primary denial commits attempt accounting. No signer/issuance work
-                  // follows.
-                  return new InitialPreparation(
-                      null, new PrimaryDenial(denial.getCode(), denial.getMessage()));
-                }
-                var source =
-                    tenantSource.orElseGet(
-                        () -> authority.captureAccount(authenticated.accountId()));
-                if (!source.actor().equals(authenticated.accountId())
-                    || source.scopeKind() != request.scopeKind) {
-                  throw denied();
-                }
-                if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
-                  fences.lockProducerSourcesNowait(source.sources());
-                }
-                var signer = signers.captureCurrent();
-                String macKey = cryptography.currentKeyId();
-                String requestDigest = cryptography.requestDigest(macKey, exactRequest);
-                var stored =
-                    operations.prepare(
-                        request.requestId,
-                        peer.uri(),
-                        request.callerContextId,
-                        macKey,
-                        requestDigest,
-                        authenticated,
-                        source,
-                        signer,
-                        Instant.ofEpochSecond(clock.instant().getEpochSecond()),
-                        sessionSafetyMarginMillis);
-                return new InitialPreparation(new Prepared(stored, source, signer), null);
-              });
+          request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+              ? transaction.execute(ignored -> selectReplay(request, peer.uri(), exactRequest))
+              : null;
+      AccountCredentialAbuseService.Permit permit = null;
+      if (initial == null && request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+        permit = admitNewAccountAttempt(request, email);
+      }
+      final AccountCredentialAbuseService.Permit selectedPermit = permit;
+      if (initial == null)
+        initial =
+            transaction.execute(
+                ignored -> {
+                  var replay = selectReplay(request, peer.uri(), exactRequest);
+                  if (replay != null) return replay;
+                  if (request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT
+                      && !credentialAbuse.isUsable(selectedPermit))
+                    throw AccountCredentialAbuseRefusal.unavailable();
+                  // Preserve canonical tenant -> Account owner order before OTP/advisory
+                  // authentication.
+                  java.util.Optional<AccountControlUiAuthority.Snapshot> tenantSource =
+                      request.scopeKind == AccountControlUiAuthority.ScopeKind.TENANT
+                          ? java.util.Optional.of(
+                              tenantAuthority()
+                                  .captureInitial(
+                                      request.tenantId.orElseThrow(), environment.orElseThrow()))
+                          : java.util.Optional.empty();
+                  tenantSource.ifPresent(
+                      value -> fences.lockProducerSourcesNowait(value.sources()));
+                  AccountServiceImpl.ControlUiPrimaryIdentity authenticated;
+                  try {
+                    authenticated =
+                        primaryAuthentication.authenticateControlUiPrimaryIdentity(
+                            email, request.secret);
+                  } catch (AuthenticationException denial) {
+                    // Only primary denial commits attempt accounting. No signer/issuance work
+                    // follows.
+                    return new InitialPreparation(null, denial);
+                  }
+                  var source =
+                      tenantSource.orElseGet(
+                          () -> authority.captureAccount(authenticated.accountId()));
+                  if (!source.actor().equals(authenticated.accountId())
+                      || source.scopeKind() != request.scopeKind) {
+                    throw denied();
+                  }
+                  if (source.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT) {
+                    fences.lockProducerSourcesNowait(source.sources());
+                  }
+                  var signer = signers.captureCurrent();
+                  String macKey = cryptography.currentKeyId();
+                  String requestDigest = cryptography.requestDigest(macKey, exactRequest);
+                  var stored =
+                      operations.prepare(
+                          request.requestId,
+                          peer.uri(),
+                          request.callerContextId,
+                          macKey,
+                          requestDigest,
+                          authenticated,
+                          source,
+                          signer,
+                          Instant.ofEpochSecond(clock.instant().getEpochSecond()),
+                          sessionSafetyMarginMillis);
+                  return new InitialPreparation(new Prepared(stored, source, signer), null);
+                });
       if (initial == null) {
         throw denied();
       }
       if (initial.denial != null) {
-        throw new AuthenticationException(initial.denial.code, initial.denial.message);
+        // This runs after SQL completion. Shared-accounting failure must not become a credential
+        // denial or roll back the original OTP failure history.
+        if (permit != null
+            && initial.denial instanceof AuthenticationException failure
+            && "AUTH_INVALID_CREDENTIALS".equals(failure.getCode())) {
+          if (TransactionSynchronizationManager.isActualTransactionActive()) throw denied();
+          var recorded = credentialAbuse.recordFailure(permit);
+          if (recorded == null
+              || recorded.outcome() != AccountCredentialAbuseService.Outcome.FAILURE_RECORDED)
+            throw AccountCredentialAbuseRefusal.from(recorded);
+        }
+        throw initial.denial;
       }
       Prepared preparation = Objects.requireNonNull(initial.prepared);
       var original = preparation.stored;
@@ -320,19 +360,35 @@ public final class AccountControlUiIssuanceService {
     }
   }
 
-  private void requireRequest(
-      AccountControlUiIssuanceRepository.Stored stored,
-      Invocation request,
-      String caller,
-      byte[] exactRequest) {
+  private void requireRequestBinding(
+      AccountControlUiIssuanceRepository.Stored stored, Invocation request, String caller) {
     if (!stored.requestId.equals(request.requestId)
         || stored.scopeKind() != request.scopeKind
         || !stored.optionalTenantId().equals(request.tenantId)
         || !stored.caller.equals(caller)
-        || !stored.callerContextId.equals(request.callerContextId)
-        || !stored.requestDigest.equals(
-            cryptography.requestDigest(stored.requestMacKeyId, exactRequest))) {
-      throw new IllegalArgumentException("Control-ui issuance idempotency conflict");
+        || !stored.callerContextId.equals(request.callerContextId)) {
+      throw new IdempotencyConflictException();
+    }
+  }
+
+  private boolean matchesOriginalRequest(
+      AccountControlUiIssuanceRepository.Stored stored, byte[] exactRequest) {
+    byte[] expected = stored.requestDigest.getBytes(StandardCharsets.US_ASCII);
+    byte[] supplied =
+        cryptography
+            .requestDigest(stored.requestMacKeyId, exactRequest)
+            .getBytes(StandardCharsets.US_ASCII);
+    try {
+      return MessageDigest.isEqual(expected, supplied);
+    } finally {
+      Arrays.fill(expected, (byte) 0);
+      Arrays.fill(supplied, (byte) 0);
+    }
+  }
+
+  public static final class IdempotencyConflictException extends IllegalArgumentException {
+    public IdempotencyConflictException() {
+      super("Control-ui issuance idempotency conflict");
     }
   }
 
@@ -349,7 +405,8 @@ public final class AccountControlUiIssuanceService {
     var source =
         original.scopeKind() == AccountControlUiAuthority.ScopeKind.ACCOUNT
             ? authority.captureAccount(original.accountId)
-            : authority.capture(original.accountId, original.tenantId(), environment.orElseThrow());
+            : tenantAuthority()
+                .capture(original.accountId, original.tenantId(), environment.orElseThrow());
     fences.lockProducerSourcesNowait(source.sources());
     if (!Arrays.equals(source.evidence(), original.sources)) {
       throw denied();
@@ -391,6 +448,39 @@ public final class AccountControlUiIssuanceService {
     return AccountControlUiAuthority.canonical(binding);
   }
 
+  private InitialPreparation selectReplay(Invocation request, String peer, byte[] exactRequest) {
+    boolean account = request.scopeKind == AccountControlUiAuthority.ScopeKind.ACCOUNT;
+    if (account) operations.lockReplayRequest(request.requestId);
+    var existing = operations.findRequest(request.requestId);
+    if (existing == null) return null;
+    requireRequestBinding(existing, request, peer);
+    if (!account) operations.lockReplayRequest(existing.requestId);
+    if (operations.countReplayFailures(existing) >= 5) {
+      return new InitialPreparation(null, new IdempotencyConflictException());
+    }
+    if (!matchesOriginalRequest(existing, exactRequest)) {
+      operations.recordReplayFailure(existing);
+      return new InitialPreparation(null, new IdempotencyConflictException());
+    }
+    return new InitialPreparation(current(existing, request.environment), null);
+  }
+
+  private AccountCredentialAbuseService.Permit admitNewAccountAttempt(
+      Invocation request, String email) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) throw denied();
+    if (credentialAbuse == null) throw AccountCredentialAbuseRefusal.unavailable();
+    var source = request.sourceContext.orElseThrow(AccountCredentialAbuseRefusal::unavailable);
+    var decision =
+        credentialAbuse.admit(
+            new AccountCredentialAbuseService.CredentialSourceContext(
+                source.canonicalClientAddress(), AccountCredentialAbuseService.Transport.HTTP),
+            email);
+    if (decision == null || decision.outcome() != AccountCredentialAbuseService.Outcome.ADMITTED) {
+      throw AccountCredentialAbuseRefusal.from(decision);
+    }
+    return decision.permit();
+  }
+
   private record Invocation(
       UUID requestId,
       String email,
@@ -398,13 +488,17 @@ public final class AccountControlUiIssuanceService {
       UUID callerContextId,
       AccountControlUiAuthority.ScopeKind scopeKind,
       java.util.Optional<UUID> tenantId,
-      java.util.Optional<CapturedEnvironmentBoundary> environment) {
+      java.util.Optional<CapturedEnvironmentBoundary> environment,
+      java.util.Optional<SourceContext> sourceContext) {
     private Invocation {
       Objects.requireNonNull(scopeKind);
       Objects.requireNonNull(tenantId);
       Objects.requireNonNull(environment);
+      Objects.requireNonNull(sourceContext);
       boolean tenant = scopeKind == AccountControlUiAuthority.ScopeKind.TENANT;
-      if (tenant != tenantId.isPresent() || tenant != environment.isPresent()) {
+      if (tenant != tenantId.isPresent()
+          || tenant != environment.isPresent()
+          || tenant == sourceContext.isPresent()) {
         throw new IllegalArgumentException(
             "Explicit control-ui scope and source selection required");
       }
@@ -417,7 +511,11 @@ public final class AccountControlUiIssuanceService {
   }
 
   public record AccountSignInRequest(
-      UUID requestId, String email, String secret, UUID callerContextId) {
+      UUID requestId,
+      String email,
+      String secret,
+      UUID callerContextId,
+      SourceContext sourceContext) {
     public AccountSignInRequest {
       if (requestId == null
           || requestId.equals(new UUID(0L, 0L))
@@ -428,7 +526,8 @@ public final class AccountControlUiIssuanceService {
           || email.length() > 254
           || secret == null
           || secret.isEmpty()
-          || secret.length() > 1024) {
+          || secret.length() > 1024
+          || sourceContext == null) {
         throw new IllegalArgumentException("Exact bounded account-global sign-in request required");
       }
     }
@@ -439,14 +538,7 @@ public final class AccountControlUiIssuanceService {
     }
   }
 
-  private record PrimaryDenial(String code, String message) {
-    private PrimaryDenial {
-      Objects.requireNonNull(code);
-      Objects.requireNonNull(message);
-    }
-  }
-
-  private record InitialPreparation(Prepared prepared, PrimaryDenial denial) {
+  private record InitialPreparation(Prepared prepared, RuntimeException denial) {
     private InitialPreparation {
       if ((prepared == null) == (denial == null)) {
         throw new IllegalArgumentException(
@@ -525,6 +617,11 @@ public final class AccountControlUiIssuanceService {
     public String toString() {
       return "AccountControlUiIssuanceService.IssuedCredential[redacted]";
     }
+  }
+
+  private AccountControlUiAuthority tenantAuthority() {
+    if (authority instanceof AccountControlUiAuthority tenantAuthority) return tenantAuthority;
+    throw denied();
   }
 
   private static IllegalStateException denied() {

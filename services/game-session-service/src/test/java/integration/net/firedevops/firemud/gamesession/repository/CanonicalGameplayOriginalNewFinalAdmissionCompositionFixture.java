@@ -836,7 +836,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         binding
             .dsl()
             .fetchSingle(
-                "SELECT recovery_deadline,recovery_max_observations,recovery_observations,last_observation_deadline,reservation_policy_applied,custody_owner_id,custody_owner_fence,state FROM game_session_original_new_capacity_origin");
+                "SELECT recovery_deadline,recovery_max_observations,recovery_observations,last_observation_deadline,last_observation_custody_fence,reservation_policy_applied,custody_owner_id,custody_owner_fence,state FROM game_session_original_new_capacity_origin");
     return new java.util.LinkedHashMap<>(row.intoMap());
   }
 
@@ -846,11 +846,22 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
             .dsl()
             .fetchSingle(
                 "SELECT tenant_gameplay_tag,admission_attempt_id FROM game_session_original_new_capacity_origin");
-    String key =
+    return redisHashImage(
         "session:game:capacity-origin:{"
             + row.get("tenant_gameplay_tag", String.class)
             + "}:"
-            + row.get("admission_attempt_id", java.util.UUID.class);
+            + row.get("admission_attempt_id", UUID.class));
+  }
+
+  public java.util.Map<String, String> capacityExecutionPhysicalImage(UUID attemptId) {
+    return redisHashImage(
+        "session:game:capacity-execution:{"
+            + tags.assignmentForTransition(decisionId()).tenantGameplayTag()
+            + "}:"
+            + attemptId);
+  }
+
+  private java.util.Map<String, String> redisHashImage(String key) {
     var result = new java.util.LinkedHashMap<String, String>();
     administration
         .sync()

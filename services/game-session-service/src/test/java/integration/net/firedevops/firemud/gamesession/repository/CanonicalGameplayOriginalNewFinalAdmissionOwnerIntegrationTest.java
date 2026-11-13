@@ -14,6 +14,7 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.RestoreArgs;
+import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.codec.ByteArrayCodec;
@@ -847,6 +848,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
             .addCommand(CommandType.ACL, CommandKeyword.WHOAMI)
             .addCommand(CommandType.SCRIPT, CommandKeyword.LOAD)
             .addCommand(CommandType.EVALSHA)
+            .addCommand(CommandType.EVALSHA_RO)
             .addCommand(CommandType.TYPE)
             .addCommand(CommandType.PTTL)
             .addCommand(CommandType.GET)
@@ -882,6 +884,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayOriginalNewOriginFinalAdmissionRedisScriptContribution(),
                 new CanonicalGameplayCapacityOriginCustodyRedisScriptContribution(),
+                new net.firedevops.firemud.gamesession.service
+                    .CanonicalGameplayOriginalNewAdmittedLogoutRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
                     .CanonicalGameplayAccountMemberRepairRedisScriptContribution(),
                 new net.firedevops.firemud.gamesession.service
@@ -950,6 +954,33 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
 
     // The initial charge happened in bridge(); the exact replay is idempotent even at capacity.
     owner.precharge(source, controlledCapacity.request(), selected, deadline());
+    var original = controlledCapacity.request();
+    var unsupported =
+        new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Request(
+                original.identity(),
+                UUID.randomUUID(),
+                original.capacityRearmFence(),
+                original.targetNamespace(),
+                original.context(),
+                original.operation(),
+                original.priorShape(),
+                new net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission.Shape(
+                    2, 0, 0),
+                original.evidence(),
+                2L,
+                null)
+            .withDigest();
+    unsupported.requireCommittable();
+    assertThatThrownBy(() -> owner.precharge(source, unsupported, selected, deadline()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Exact original NEW capacity request required");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT 1 FROM game_session_capacity_evidence_charge WHERE admission_attempt_id = ?",
+                    unsupported.admissionAttemptId()))
+        .isNull();
     assertThat(
             fixture
                 .dsl()
@@ -1175,7 +1206,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                 new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
                         ownerClient, catalog, CLOCK, tags)
                     .fenceCapacityExecutionOnce(
-                        changed, source.candidate(), assignment, deadline()))
+                        changed, source.candidate(), assignment, UUID.randomUUID(), deadline()))
         .isInstanceOf(IllegalStateException.class);
     assertThat(admin.type(ascii(capacityKey(assignment)))).isEqualTo("none");
     assertThat(sqlImage()).isEqualTo(retained);
@@ -3120,7 +3151,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                           CLOCK,
                           tags,
                           () -> delayed.connect(ByteArrayCodec.INSTANCE),
-                          () -> frozenDeadline - CLOCK.millis());
+                          () -> frozenDeadline - CLOCK.millis(),
+                          java.util.concurrent.CompletableFuture::join);
                   try (var ignored =
                       owner.finalizeOriginalNewOnce(
                           source, template, account, issuer, controlledCapacity, frozenDeadline)) {
@@ -3460,6 +3492,130 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     controlledCapacity.digest())
                 .get(0, String.class))
         .isEqualTo("AUTHORIZED");
+  }
+
+  @Test
+  void admittedLogoutIntentRequiresActualFinalAndReplaysAfterServingStateDisappears()
+      throws Exception {
+    repairAccountMember();
+    bridge();
+    var provisional = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var intents = new CanonicalGameplayOriginalNewAdmittedLogoutIntentRepository(fixture.dsl());
+    var logout = UUID.randomUUID();
+    assertThatThrownBy(
+            () -> intents.prepare(logout, provisional, controlledCapacity, new byte[] {1}))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    try (var credential =
+            new CanonicalGameplayOriginalNewFinalAdmissionTestFixture(
+                provisional.candidate(), CLOCK);
+        var template = credential.template();
+        var actual =
+            finalOwner()
+                .finalizeOriginalNewOnce(
+                    provisional,
+                    template,
+                    controlledAccountOpen(),
+                    issuerOpen(),
+                    controlledCapacity,
+                    deadline())) {
+      inventory.commitOriginalNewFinalAdmission(actual);
+    }
+    var admitted = inventory.readOriginalNewFinalAdmissionSource(decision);
+    var assignment = tags.assignmentForTransition(fixture.transitionId());
+    var sessionKey =
+        CanonicalGameplaySessionRedisKeys.session(
+            assignment, admitted.candidate().bindingIdentity().bindingRef());
+    var execution = controlledCapacity;
+    var physical = physicalImage();
+    byte[] observed = admin.get(ascii(sessionKey));
+    var retained = intents.prepare(logout, admitted, execution, observed);
+    assertThat(retained.originalFinalSessionSha256())
+        .isEqualTo(admitted.finalReceipt().orElseThrow().finalSessionSha256());
+    assertThat(intents.prepare(logout, admitted, execution, observed)).isEqualTo(retained);
+    assertThatThrownBy(() -> intents.prepare(UUID.randomUUID(), admitted, execution, observed))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(() -> intents.prepare(logout, admitted, execution, new byte[] {1}))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThatThrownBy(
+            () -> capacityOwner().requireAdmittedLogoutFence(logout, execution, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(physicalImage()).isEqualTo(physical);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "DELETE FROM game_session_original_new_admitted_logout_intent WHERE logout_id = ?",
+                        logout))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    var binding = admitted.candidate().bindingIdentity();
+    var ref = binding.bindingRef();
+    try (var script =
+        getClass()
+            .getResourceAsStream("/redis/lua/game-session-original-new-admitted-logout.lua")) {
+      assertThat(script).isNotNull();
+      assertThat(
+              admin.<Long>eval(
+                  java.util.Objects.requireNonNull(script).readAllBytes(),
+                  ScriptOutputType.INTEGER,
+                  new byte[][] {
+                    ascii(sessionKey),
+                    ascii(CanonicalGameplaySessionRedisKeys.characterIndex(assignment, ref)),
+                    ascii(CanonicalGameplaySessionRedisKeys.accountTenantIndex(assignment, ref)),
+                    ascii(CanonicalGameplaySessionRedisKeys.tenantIndex(assignment, ref)),
+                    ascii(capacityKey(assignment))
+                  },
+                  ascii(binding.tenantId().toString()),
+                  ascii(binding.accountId().toString()),
+                  ascii(binding.playableStateNamespaceId().toString()),
+                  ascii(binding.characterId().toString()),
+                  ascii(binding.gameInstanceId().toString()),
+                  ascii(binding.sessionId()),
+                  ascii(retained.bindingGeneration().toString()),
+                  ascii(assignment.tenantGameplayTag()),
+                  ascii(retained.executionDigest()),
+                  ascii(logout.toString()),
+                  ascii(Long.toString(deadline())),
+                  execution.canonicalBytes(),
+                  ascii(retained.originalSessionSha1()),
+                  ascii("DISPATCH")))
+          .isEqualTo(1L);
+    }
+    var fenced = physicalImage();
+    var sql = sqlImage();
+    capacityOwner().requireAdmittedLogoutFence(logout, execution, deadline());
+    var ownerWithoutLogoutDescriptor =
+        new CanonicalGameplayOriginalNewCapacityExecutionOwner(
+            fixture.dsl(),
+            ownerClient,
+            RedisScriptCatalog.fromContributions(List.of()),
+            CLOCK,
+            tags);
+    assertThatThrownBy(
+            () ->
+                ownerWithoutLogoutDescriptor.requireAdmittedLogoutFence(
+                    logout, execution, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                capacityOwner()
+                    .requireAdmittedLogoutFence(UUID.randomUUID(), execution, deadline()))
+        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class);
+    assertThat(physicalImage()).isEqualTo(fenced);
+    assertThat(sqlImage()).isEqualTo(sql);
+    controlledRemoveServingKeys(admitted, assignment);
+    assertThatThrownBy(
+            () -> capacityOwner().requireAdmittedLogoutFence(logout, execution, deadline()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            new CanonicalGameplayOriginalNewAdmittedLogoutIntentRepository(fixture.dsl())
+                .readExact(execution.digest(), logout))
+        .isEqualTo(retained);
+    assertThat(
+            capacityOwner()
+                .readExact(controlledCapacity.request(), controlledCapacity.reservation())
+                .disposition())
+        .isEqualTo("COMMITTED");
   }
 
   @Test
