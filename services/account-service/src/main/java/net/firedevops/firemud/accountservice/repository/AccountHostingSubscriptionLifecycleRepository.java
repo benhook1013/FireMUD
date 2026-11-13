@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.client.StripeHostingFirstInvoicePaymentClient.TerminalUnpaidObservation;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ExpectedBinding;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver.ObservedSubscription;
@@ -417,21 +418,26 @@ public final class AccountHostingSubscriptionLifecycleRepository {
           expectedVersion,
           null,
           null,
+          null,
+          null,
           preparationOutcome(operation).result());
     }
     var current = intents.lockForLifecycle(creationId, expectedVersion);
     ExpectedBinding binding = expected(original, providerId);
-    requireUnclaimedUnpaidFirstInvoice(current, binding);
+    var invoice = requireUnpaidFirstInvoice(current, binding);
+    UUID confirmationId = cancellationClaim(current.subscriptionId());
     if (links(current.subscriptionId()).get("lifecycle_inflight_request_id") != null) {
       throw new FenceRejectedException("Another lifecycle request owns the current fence");
     }
     return new UnpaidCancellationCapture(
-        requestId, creationId, expectedVersion, binding, now(), null);
+        requestId, creationId, expectedVersion, binding, now(), invoice, confirmationId, null);
   }
 
   /** A nonterminal or ambiguous observation never takes the durable lifecycle fence. */
   public TransitionResult applyUnpaidFirstInvoiceCancellation(
-      UnpaidCancellationCapture captured, StripeHostingSubscriptionObserver.Result result) {
+      UnpaidCancellationCapture captured,
+      StripeHostingSubscriptionObserver.Result result,
+      TerminalUnpaidObservation unpaid) {
     requireTransaction();
     Objects.requireNonNull(captured);
     if (captured.replayResult() != null) return captured.replayResult();
@@ -440,7 +446,17 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         || !observed.providerStatusIsCanceled()
         || observed.readStartedAt().isBefore(captured.capturedAt)
         || !evaluated.isBefore(captured.capturedAt.plus(limits.lease()))
-        || policy.evaluate(observed, evaluated, null).status() != Status.CANCELED) {
+        || policy.evaluate(observed, evaluated, null).status() != Status.CANCELED
+        || (captured.confirmationId != null
+            && (unpaid == null
+                || !captured.invoice.digest().equals(unpaid.tupleDigest())
+                || unpaid.readStartedAt().isBefore(observed.observedAt())
+                || evaluated.isBefore(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS))
+                || !evaluated.isBefore(
+                    unpaid
+                        .readStartedAt()
+                        .truncatedTo(ChronoUnit.MICROS)
+                        .plus(policy.maximumObservationAge()))))) {
       return new TransitionResult(
           captured.requestId, Outcome.RECONCILING, 0, "UNPAID_CANCELLATION_UNCONFIRMED");
     }
@@ -452,11 +468,24 @@ public final class AccountHostingSubscriptionLifecycleRepository {
             captured.expectedVersion,
             captured.binding().providerSubscriptionId(),
             null,
-            captured.capturedAt);
+            captured);
     if (prepared.outcome() == Outcome.COMMITTED) return prepared.result();
+    if (prepared.outcome() == Outcome.RECONCILING) return prepared.result();
     if (prepared.outcome() != Outcome.READY) {
       throw new FenceRejectedException(
           "Unpaid first-invoice cancellation did not reserve its receipt");
+    }
+    if (captured.confirmationId != null) {
+      dsl.execute(
+          "INSERT INTO subscription_first_invoice_no_send_cancellations "
+              + "(cancellation_request_id, confirmation_request_id, invoice_id, payment_intent_id, "
+              + "read_started_at, observed_at) VALUES (?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
+          captured.requestId,
+          captured.confirmationId,
+          unpaid.invoiceId(),
+          unpaid.paymentIntentId(),
+          utc(unpaid.readStartedAt().truncatedTo(ChronoUnit.MICROS)),
+          utc(unpaid.observedAt().truncatedTo(ChronoUnit.MICROS)));
     }
     return apply(prepared, observed, true);
   }
@@ -512,9 +541,9 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       long expectedVersion,
       String providerId,
       UUID provisioningAttemptId,
-      Instant cancellationCapturedAt) {
+      UnpaidCancellationCapture cancellation) {
     requireTransaction();
-    boolean unpaidCancellation = cancellationCapturedAt != null;
+    boolean unpaidCancellation = cancellation != null;
     byte[] input =
         reconciliationInput(
             requestId,
@@ -553,7 +582,22 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       }
       Record priorReceipt = receiptForCurrent(currentLinks);
       if (unpaidCancellation) {
-        requireUnclaimedUnpaidFirstInvoice(current, expected(original, providerId));
+        var invoice = requireUnpaidFirstInvoice(current, expected(original, providerId));
+        if (!invoice.digest().equals(cancellation.invoice.digest())
+            || !Objects.equals(
+                cancellationClaim(current.subscriptionId()), cancellation.confirmationId)) {
+          throw new FenceRejectedException("First-invoice cancellation evidence changed");
+        }
+        if (cancellation.confirmationId != null
+            && Boolean.TRUE.equals(
+                dsl.fetchSingle(
+                        "SELECT account_first_invoice_signed_success_retained(?, ?)",
+                        invoice.paymentIntentId(),
+                        invoice.livemode())
+                    .get(0, Boolean.class))) {
+          return new Preparation(
+              requestId, null, null, Outcome.RECONCILING, "UNPAID_CANCELLATION_UNCONFIRMED", 0);
+        }
       }
       if (current.providerSubscriptionId() != null
           && !providerId.equals(current.providerSubscriptionId())) {
@@ -654,7 +698,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
       return new Preparation(requestId, null, null, Outcome.RECONCILING, "BACKOFF_OR_INFLIGHT", 0);
     }
     UUID attemptId = UUID.randomUUID();
-    Instant attemptStarted = unpaidCancellation ? cancellationCapturedAt : now;
+    Instant attemptStarted = unpaidCancellation ? cancellation.capturedAt : now;
     Instant expires =
         earlier(
             attemptStarted.plusMillis(operation.get("lease_millis", Long.class)),
@@ -1012,7 +1056,7 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         prepared.requestId(), Outcome.COMMITTED, current.rowVersion() + 1, null);
   }
 
-  private void requireUnclaimedUnpaidFirstInvoice(
+  private AccountHostingFirstInvoicePayment requireUnpaidFirstInvoice(
       AccountSubscriptionCurrentRecord current, ExpectedBinding binding) {
     var payments = new AccountHostingFirstInvoicePaymentRepository(dsl, intents, clock);
     var invoice = payments.find(current.subscriptionId());
@@ -1032,15 +1076,30 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         || binding.expectedQuantity() != invoice.providerQuantity()
         || binding.livemode() != invoice.livemode()
         || dsl.fetchOne(
-                "SELECT 1 FROM subscription_first_invoice_command_claims WHERE subscription_id = ?"
-                    + " UNION ALL SELECT 1 FROM subscription_first_invoice_success_evidence WHERE subscription_id = ? LIMIT 1",
-                current.subscriptionId(),
+                "SELECT 1 FROM subscription_first_invoice_success_evidence WHERE subscription_id = ?",
                 current.subscriptionId())
             != null) {
-      throw new FenceRejectedException(
-          "Exact unclaimed unpaid first invoice is required for cancellation");
+      throw new FenceRejectedException("Exact unpaid first invoice is required for cancellation");
     }
     payments.requireAwaitingPayment(invoice, current.rowVersion());
+    return invoice;
+  }
+
+  private UUID cancellationClaim(UUID subscriptionId) {
+    Record claim =
+        dsl.fetchOne(
+            "SELECT request_id FROM subscription_first_invoice_command_claims WHERE subscription_id = ?",
+            subscriptionId);
+    if (claim == null) return null;
+    UUID requestId = claim.get("request_id", UUID.class);
+    if (dsl.fetchOne(
+            "SELECT request_id FROM subscription_first_invoice_expired_before_post WHERE request_id = ?",
+            requestId)
+        == null) {
+      throw new FenceRejectedException(
+          "Exact unclaimed unpaid first invoice or committed no-send evidence is required for cancellation");
+    }
+    return requestId;
   }
 
   private void lockReconciliationWallet(AccountSubscriptionCreationRecord original) {
@@ -1478,6 +1537,8 @@ public final class AccountHostingSubscriptionLifecycleRepository {
     private final long expectedVersion;
     private final ExpectedBinding binding;
     private final Instant capturedAt;
+    private final AccountHostingFirstInvoicePayment invoice;
+    private final UUID confirmationId;
     private final TransitionResult replay;
 
     private UnpaidCancellationCapture(
@@ -1486,12 +1547,16 @@ public final class AccountHostingSubscriptionLifecycleRepository {
         long expectedVersion,
         ExpectedBinding binding,
         Instant capturedAt,
+        AccountHostingFirstInvoicePayment invoice,
+        UUID confirmationId,
         TransitionResult replay) {
       this.requestId = requestId;
       this.creationId = creationId;
       this.expectedVersion = expectedVersion;
       this.binding = binding;
       this.capturedAt = capturedAt;
+      this.invoice = invoice;
+      this.confirmationId = confirmationId;
       this.replay = replay;
     }
 
@@ -1501,6 +1566,10 @@ public final class AccountHostingSubscriptionLifecycleRepository {
 
     public TransitionResult replayResult() {
       return replay;
+    }
+
+    public AccountHostingFirstInvoicePayment invoiceRequiringTerminalRead() {
+      return confirmationId == null ? null : invoice;
     }
   }
 

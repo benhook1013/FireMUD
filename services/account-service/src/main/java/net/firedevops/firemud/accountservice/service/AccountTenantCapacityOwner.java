@@ -36,6 +36,7 @@ import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrp
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.postgresql.util.PSQLException;
 import org.springframework.dao.CannotSerializeTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -54,6 +55,8 @@ import org.springframework.transaction.support.TransactionTemplate;
     justification = "Private Account owner collaborators.")
 public final class AccountTenantCapacityOwner {
   private static final int TRANSACTION_TIMEOUT_SECONDS = 5;
+  private static final String CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT =
+      "account_tenant_capacity_attempt_freshness";
   private static final int MAX_SERIALIZATION_ATTEMPTS = 4;
   private static final long INITIAL_RETRY_DELAY_MILLIS = 5;
 
@@ -320,6 +323,8 @@ public final class AccountTenantCapacityOwner {
               return action.get();
             });
       } catch (RuntimeException failure) {
+        if (capacityAttemptFreshnessFailure(failure))
+          throw new CapacityException(Failure.CAPACITY_ADMISSION_STALE);
         // A PostgreSQL serialization failure rolls back the whole transaction. Retry outside
         // that transaction so a concurrent original can become exact replay or conflict.
         if (attempt >= MAX_SERIALIZATION_ATTEMPTS
@@ -342,6 +347,17 @@ public final class AccountTenantCapacityOwner {
       return false;
     }
     return !caller.isCancelled() && !deadline.isExpired();
+  }
+
+  private static boolean capacityAttemptFreshnessFailure(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof PSQLException postgresFailure
+          && "23514".equals(postgresFailure.getSQLState())
+          && postgresFailure.getServerErrorMessage() != null
+          && CAPACITY_ATTEMPT_FRESHNESS_CONSTRAINT.equals(
+              postgresFailure.getServerErrorMessage().getConstraint())) return true;
+    }
+    return false;
   }
 
   private static boolean serializationFailure(RuntimeException failure) {

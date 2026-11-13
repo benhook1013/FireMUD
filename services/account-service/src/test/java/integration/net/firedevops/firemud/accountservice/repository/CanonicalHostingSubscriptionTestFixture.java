@@ -278,9 +278,20 @@ public final class CanonicalHostingSubscriptionTestFixture {
             clock,
             Duration.ofMillis(250),
             Duration.ofSeconds(1));
+    var terminalInvoiceTransport =
+        new ControlledFirstInvoiceTransport(creation, instrument, "sub_" + row, true);
+    var terminalInvoiceClient =
+        new StripeHostingFirstInvoicePaymentClient(
+            new com.stripe.StripeClient(terminalInvoiceTransport),
+            clock,
+            Duration.ofMillis(250),
+            Duration.ofSeconds(1));
     var service =
         new AccountHostingSubscriptionLifecycleService(
-            lifecycleRepository, observer, new DataSourceTransactionManager(source));
+            lifecycleRepository,
+            observer,
+            new DataSourceTransactionManager(source),
+            terminalInvoiceClient);
     Fixture fixture =
         new Fixture(
             jdbc,
@@ -295,6 +306,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
             "sub_" + row,
             clock,
             transport,
+            terminalInvoiceTransport,
             service,
             lifecycleRepository,
             observer,
@@ -345,7 +357,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       AccountSubscriptionCreationRecord creation,
       AccountPaymentInstrumentRecord instrument,
       String providerId,
-      Clock clock,
+      MutableClock clock,
       AccountHostingSubscriptionLifecycleRepository lifecycle) {
     in(
         transaction,
@@ -364,6 +376,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
         });
     var claim =
         in(transaction, () -> lifecycle.claim(creation.requestId(), 1, UUID.randomUUID()).claim());
+    clock.advanceToAtLeast(claim.claimedAt());
     var prepared =
         in(transaction, () -> lifecycle.prepareProviderDispatch(claim, UUID.randomUUID()));
     var dispatch = in(transaction, () -> lifecycle.readProviderDispatch(prepared));
@@ -547,6 +560,44 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch
         prepareConfirmationDispatch(String password) {
+      return prepareConfirmationDispatch(password, () -> {});
+    }
+
+    /** Produces the actual committed claim and V1046.4 no-send witness without issuing a POST. */
+    public StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost claimExpiredBeforePost(
+        String password) {
+      var dispatch = prepareConfirmationDispatch(password);
+      StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost observation;
+      try {
+        provider.confirm(
+            dispatch,
+            () -> {
+              var claim =
+                  in(transaction, () -> payments.claimCommand(dispatch, invoice.ownerAccountId()));
+              if (claim == null) throw new IllegalStateException("Exact command claim required");
+              if (!(clock instanceof MutableClock mutableClock))
+                throw new IllegalStateException("Mutable test clock required");
+              mutableClock.advanceToAtLeast(dispatch.validUntil());
+              return claim;
+            });
+        throw new IllegalStateException("The controlled confirm unexpectedly reached Stripe");
+      } catch (StripeHostingFirstInvoicePaymentClient.ExpiredBeforePost noSend) {
+        observation = noSend;
+      } catch (StripeException failure) {
+        throw new IllegalStateException(
+            "Controlled expiry-before-post observation failed", failure);
+      }
+      in(
+          transaction,
+          () -> {
+            payments.retainExpiredBeforePost(observation);
+            return true;
+          });
+      return observation;
+    }
+
+    public AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch
+        prepareConfirmationDispatch(String password, Runnable beforeConsent) {
       UUID requestId = UUID.randomUUID();
       Account account =
           in(
@@ -578,6 +629,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
                   billingContext,
                   account.getEmail(),
                   password));
+      beforeConsent.run();
       var prepared =
           in(
               transaction,
@@ -648,11 +700,21 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
   public record SignedSuccess(String payload, String signature) {}
 
-  private static final class ControlledFirstInvoiceTransport implements StripeResponseGetter {
+  public static final class ControlledFirstInvoiceTransport implements StripeResponseGetter {
     private final AccountSubscriptionCreationRecord creation;
     private final AccountPaymentInstrumentRecord instrument;
     private final String providerId, invoiceId, intentId;
+    private final boolean terminalReadOnly;
     private String status = "requires_confirmation";
+    private String terminalInvoiceStatus = "void";
+    private String terminalIntentStatus = "canceled";
+    private String terminalDirectIntentId;
+    private long terminalAmountPaid;
+    private long terminalAmountRemaining;
+    private long terminalAmountReceived;
+    private int reads;
+    private final List<String> readPaths = new java.util.ArrayList<>();
+    private Runnable duringRead;
     private int confirmations;
     private String confirmationStatus = "succeeded";
     private boolean loseNextConfirmationResponse;
@@ -662,12 +724,57 @@ public final class CanonicalHostingSubscriptionTestFixture {
         AccountSubscriptionCreationRecord creation,
         AccountPaymentInstrumentRecord instrument,
         String providerId) {
+      this(creation, instrument, providerId, false);
+    }
+
+    public ControlledFirstInvoiceTransport(
+        AccountSubscriptionCreationRecord creation,
+        AccountPaymentInstrumentRecord instrument,
+        String providerId,
+        boolean terminalReadOnly) {
       this.creation = creation;
       this.instrument = instrument;
       this.providerId = providerId;
+      this.terminalReadOnly = terminalReadOnly;
       String suffix = creation.subscriptionId().toString().replace("-", "");
       invoiceId = "in_" + suffix;
       intentId = "pi_" + suffix;
+      terminalDirectIntentId = intentId;
+    }
+
+    public int reads() {
+      return reads;
+    }
+
+    public int confirmations() {
+      return confirmations;
+    }
+
+    public List<String> readPaths() {
+      return List.copyOf(readPaths);
+    }
+
+    public void terminalInvoiceStatus(String value) {
+      terminalInvoiceStatus = Objects.requireNonNull(value);
+    }
+
+    public void terminalIntentStatus(String value) {
+      terminalIntentStatus = Objects.requireNonNull(value);
+    }
+
+    public void terminalIntentId(String value) {
+      terminalDirectIntentId = Objects.requireNonNull(value);
+    }
+
+    public void terminalAmounts(long paid, long remaining, long received) {
+      terminalAmountPaid = paid;
+      terminalAmountRemaining = remaining;
+      terminalAmountReceived = received;
+    }
+
+    public void duringRead(Runnable action) {
+      if (duringRead != null) throw new IllegalStateException("A provider-read action is pending");
+      duringRead = Objects.requireNonNull(action);
     }
 
     @Override
@@ -683,7 +790,22 @@ public final class CanonicalHostingSubscriptionTestFixture {
         throws StripeException {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
       String json;
-      if (path.equals("/v1/subscriptions/" + providerId)) {
+      if (terminalReadOnly) {
+        reads++;
+        readPaths.add(path);
+        Runnable action = duringRead;
+        duringRead = null;
+        if (action != null) action.run();
+        if (path.equals("/v1/invoices/" + invoiceId)) {
+          assertThat(method).isEqualTo(RequestMethod.GET);
+          json = terminalInvoice();
+        } else if (path.equals("/v1/payment_intents/" + intentId)) {
+          assertThat(method).isEqualTo(RequestMethod.GET);
+          json = terminalIntent(terminalDirectIntentId);
+        } else {
+          throw new AssertionError("Unexpected terminal-evidence Stripe call: " + path);
+        }
+      } else if (path.equals("/v1/subscriptions/" + providerId)) {
         assertThat(method).isEqualTo(RequestMethod.GET);
         json =
             "{\"id\":\""
@@ -748,6 +870,50 @@ public final class CanonicalHostingSubscriptionTestFixture {
       return (T) com.stripe.net.ApiResource.GSON.fromJson(json, type);
     }
 
+    private String terminalInvoice() {
+      return "{\"id\":\""
+          + invoiceId
+          + "\",\"object\":\"invoice\",\"customer\":\""
+          + creation.providerCustomerId()
+          + "\",\"livemode\":false,\"billing_reason\":\"subscription_create\",\"status\":\""
+          + terminalInvoiceStatus
+          + "\",\"amount_due\":2400,\"total\":2400,\"starting_balance\":0,\"amount_paid\":"
+          + terminalAmountPaid
+          + ",\"amount_remaining\":"
+          + terminalAmountRemaining
+          + ",\"currency\":\"usd\",\"parent\":{\"subscription_details\":{\"subscription\":\""
+          + providerId
+          + "\"}},\"lines\":{\"has_more\":false,\"data\":[{\"object\":\"line_item\",\"amount\":2400,\"currency\":\"usd\",\"quantity\":"
+          + creation.planQuote().providerQuantity()
+          + ",\"pricing\":{\"type\":\"price_details\",\"price_details\":{\"price\":\""
+          + creation.planQuote().providerPriceId()
+          + "\"}}}]},\"payments\":{\"object\":\"list\",\"has_more\":false,\"data\":[{\"object\":\"invoice_payment\",\"payment\":{\"type\":\"payment_intent\",\"payment_intent\":{\"id\":\""
+          + intentId
+          + "\",\"object\":\"payment_intent\",\"customer\":\""
+          + creation.providerCustomerId()
+          + "\",\"payment_method\":\""
+          + instrument.providerPaymentMethodId()
+          + "\",\"livemode\":false,\"confirmation_method\":\"automatic\",\"status\":\""
+          + terminalIntentStatus
+          + "\",\"amount\":2400,\"amount_received\":"
+          + terminalAmountReceived
+          + ",\"currency\":\"usd\"}}}]}}";
+    }
+
+    private String terminalIntent(String id) {
+      return "{\"id\":\""
+          + id
+          + "\",\"object\":\"payment_intent\",\"customer\":\""
+          + creation.providerCustomerId()
+          + "\",\"payment_method\":\""
+          + instrument.providerPaymentMethodId()
+          + "\",\"livemode\":false,\"confirmation_method\":\"automatic\",\"status\":\""
+          + terminalIntentStatus
+          + "\",\"amount\":2400,\"amount_received\":"
+          + terminalAmountReceived
+          + ",\"currency\":\"usd\"}";
+    }
+
     private String intent(String state) {
       return "{\"id\":\""
           + intentId
@@ -795,6 +961,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
     private final String providerId;
     private final MutableClock clock;
     private final ControlledStripeTransport transport;
+    private final ControlledFirstInvoiceTransport terminalInvoiceTransport;
     private final AccountHostingSubscriptionLifecycleService service;
     private final AccountHostingSubscriptionLifecycleRepository lifecycleRepository;
     private final StripeHostingSubscriptionObserver observer;
@@ -815,6 +982,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
         String providerId,
         MutableClock clock,
         ControlledStripeTransport transport,
+        ControlledFirstInvoiceTransport terminalInvoiceTransport,
         AccountHostingSubscriptionLifecycleService service,
         AccountHostingSubscriptionLifecycleRepository lifecycleRepository,
         StripeHostingSubscriptionObserver observer,
@@ -832,6 +1000,7 @@ public final class CanonicalHostingSubscriptionTestFixture {
       this.providerId = providerId;
       this.clock = clock;
       this.transport = transport;
+      this.terminalInvoiceTransport = terminalInvoiceTransport;
       this.service = service;
       this.lifecycleRepository = lifecycleRepository;
       this.observer = observer;
@@ -897,6 +1066,10 @@ public final class CanonicalHostingSubscriptionTestFixture {
 
     public ControlledStripeTransport transport() {
       return transport;
+    }
+
+    public ControlledFirstInvoiceTransport terminalInvoiceTransport() {
+      return terminalInvoiceTransport;
     }
 
     public AccountHostingSubscriptionLifecycleService service() {
@@ -1019,12 +1192,16 @@ public final class CanonicalHostingSubscriptionTestFixture {
   public static final class MutableClock extends Clock {
     private volatile Instant current;
 
-    private MutableClock(Instant current) {
+    public MutableClock(Instant current) {
       this.current = current;
     }
 
     public void advance(Duration duration) {
       current = current.plus(duration);
+    }
+
+    public void advanceToAtLeast(Instant instant) {
+      if (instant.isAfter(current)) current = instant;
     }
 
     @Override
