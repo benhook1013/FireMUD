@@ -903,6 +903,11 @@ public final class CanonicalGameplayBindingInventoryRepository {
           if (!committed && !"PROVISIONAL".equals(status)) {
             throw conflict("Only a provisional or committed original NEW can be a final source");
           }
+          if (committed
+              && row.get("original_new_capacity_execution_digest", String.class) == null) {
+            throw conflict(
+                "Historical original NEW receipt lacks exact capacity execution evidence");
+          }
           Record inventoryRow =
               transaction.fetchOne(
                   "SELECT * FROM " + INVENTORY + " WHERE binding_ref = ? FOR UPDATE",
