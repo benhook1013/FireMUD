@@ -228,7 +228,9 @@ val gameSessionClassesProofJar by tasks.registering(Jar::class) {
         include("redis/lua/game-session-region-lease-read.lua")
         include("redis/scripts/game-session-region-lease-read.json")
         include("redis/lua/game-session-region-timeline-initialize.lua")
+        include("redis/lua/game-session-region-timeline-initialize-v2.lua")
         include("redis/scripts/game-session-region-timeline-initialize.json")
+        include("redis/scripts/game-session-region-timeline-initialize-v2.json")
         include("redis/lua/game-session-region-session-binding-bridge.lua")
         include("redis/scripts/game-session-region-session-binding-bridge.json")
     }
