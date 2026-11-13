@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.accountservice.client.CanonicalGameplayAdmissionDecisionReadClient;
 import net.firedevops.firemud.accountservice.client.StripeHostingSubscriptionObserver;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
@@ -60,6 +61,7 @@ import net.firedevops.firemud.accountservice.service.impl.AccountPlayerAdmission
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.AuthenticatedSignerCorrespondence;
+import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -330,6 +332,26 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
         .containsExactlyEntriesOf(Map.of(f.tenantId.toString(), "2"));
     assertThat(value.membershipSource().membershipAuthorityGeneration()).isEqualTo("1");
     assertThat(value.membershipSource().gameplayAdmissionAllowed()).isTrue();
+    var retained =
+        f.dsl.fetchOne(
+            "SELECT canonical_evidence, snapshot_identity FROM account_tenant_capacity_evaluations WHERE evaluation_identity = ?",
+            value.fields().get("evaluationIdentity"));
+    assertThat(retained).isNotNull();
+    byte[] retainedEvidence = retained.get("canonical_evidence", byte[].class);
+    assertThat(
+            new String(retainedEvidence, StandardCharsets.UTF_8).contains(f.scope.connectScopeId()))
+        .isFalse();
+    assertThat(retainedEvidence).containsExactly(value.canonicalBytes());
+    var decoded = RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(retainedEvidence);
+    assertThat(decoded.verifiedConnectScopeTokenHash())
+        .isEqualTo(AccountJoinDigest.tokenHash(f.scope.connectScopeId()));
+    assertThat(decoded.fields()).doesNotContainKey("verifiedConnectScopeId");
+    assertThat(retained.get("snapshot_identity", String.class))
+        .isEqualTo(value.fields().get("snapshotIdentity"));
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_reservations"))).isZero();
+    // This old fixture tenant was imported before creator completion. Eligibility evaluation
+    // never invents an empty capacity baseline for it.
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_usage"))).isZero();
     var binding = (Map<?, ?>) value.fields().get("target");
     assertThat(binding.get("realmId")).isEqualTo(f.scope.realmId().toString());
     assertThat(binding.get("playableStateNamespaceId"))
@@ -412,6 +434,7 @@ class AccountPlayerAdmissionEntitlementOwnerPostgresIntegrationTest {
     assertThatThrownBy(() -> f.owner.evaluate(f.request(), CONTROLLED_COMPACT_TOKEN))
         .hasMessageContaining("controlled final source commit refusal");
     assertThat(competingWriterRefused.get()).isTrue();
+    assertThat(f.dsl.fetchCount(DSL.table("account_tenant_capacity_evaluations"))).isZero();
     var unlocked =
         f.transaction.execute(
             status -> f.accounts.findByAccountUuidForUpdate(f.account.getAccountUuid()));

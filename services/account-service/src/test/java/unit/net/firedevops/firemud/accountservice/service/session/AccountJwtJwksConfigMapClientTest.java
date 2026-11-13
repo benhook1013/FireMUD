@@ -97,6 +97,38 @@ class AccountJwtJwksConfigMapClientTest {
   }
 
   @org.junit.jupiter.api.Test
+  void temporaryPrincipalReviewResponsesDenyTheReadWithoutRejectingCustody() {
+    for (int status : List.of(408, 429, 500, 502, 503, 504)) {
+      FakeKubernetesApi api = new FakeKubernetesApi();
+      api.principalReviewStatus = status;
+      AccountJwtJwksConfigMapClient client = client(api);
+
+      assertThatThrownBy(client::observe)
+          .isInstanceOfSatisfying(
+              AccountJwtJwksConfigMapClient.ApiFailureException.class,
+              failure -> assertThat(failure.statusCode()).isEqualTo(status));
+      assertThat(api.calls).containsExactly(ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL);
+      assertThat(api.patchCount).isZero();
+
+      api.principalReviewStatus = 201;
+      assertThat(client.observe().uid()).isEqualTo(CONFIG_MAP_UID);
+    }
+  }
+
+  @org.junit.jupiter.api.Test
+  void otherUnsuccessfulPrincipalReviewsRemainCustodyRejections() {
+    for (int status : List.of(204, 302, 400, 401, 403, 404, 409, 600)) {
+      FakeKubernetesApi api = new FakeKubernetesApi();
+      api.principalReviewStatus = status;
+
+      assertThatThrownBy(() -> client(api).observe())
+          .isInstanceOf(AccountJwtJwksConfigMapClient.BindingRejectedException.class);
+      assertThat(api.calls).containsExactly(ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL);
+      assertThat(api.patchCount).isZero();
+    }
+  }
+
+  @org.junit.jupiter.api.Test
   void rejectsWrongAccountPrincipalAndEitherNamespaceIncarnationBeforeConfigMapRead() {
     FakeKubernetesApi wrongPrincipal = new FakeKubernetesApi();
     wrongPrincipal.authenticatedUsername = "system:serviceaccount:firemud-prod:firemud-app";
@@ -437,6 +469,7 @@ class AccountJwtJwksConfigMapClientTest {
                 "unrelated.txt",
                 "retain"));
     private String authenticatedUsername = API_USERNAME;
+    private int principalReviewStatus = 201;
     private String kubeSystemUid = KUBE_SYSTEM_UID;
     private String targetNamespaceUid = TARGET_NAMESPACE_UID;
     private String configMapUid = CONFIG_MAP_UID;
@@ -478,7 +511,7 @@ class AccountJwtJwksConfigMapClientTest {
           switch (call) {
             case REVIEW_AUTHENTICATED_PRINCIPAL ->
                 response(
-                    201,
+                    principalReviewStatus,
                     "{\"apiVersion\":\"authentication.k8s.io/v1\",\"kind\":\"SelfSubjectReview\","
                         + "\"status\":{\"userInfo\":{\"username\":\""
                         + authenticatedUsername

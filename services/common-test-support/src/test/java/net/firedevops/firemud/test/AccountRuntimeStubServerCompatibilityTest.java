@@ -1,17 +1,21 @@
 package net.firedevops.firemud.test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
+import net.firedevops.firemud.account.v1.CommitTenantCapacityAdmissionRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
@@ -43,6 +47,9 @@ class AccountRuntimeStubServerCompatibilityTest {
           "RequestEmailVerification",
           "VerifyEmail",
           "VerifyEmailLoginOtp");
+  // Private runtime mutations require their actual bounded mTLS owner, never fake authority.
+  private static final Set<String> UNIMPLEMENTED_RUNTIME_METHODS =
+      Set.of("CommitTenantCapacityAdmission");
 
   @Test
   void accountServiceMethodSetIsFullyCategorized() {
@@ -53,13 +60,38 @@ class AccountRuntimeStubServerCompatibilityTest {
 
     assertThat(actualMethods)
         .containsExactlyInAnyOrderElementsOf(
-            java.util.stream.Stream.concat(
+            java.util.stream.Stream.of(
                     AccountRuntimeStubServer.implementedRuntimeMethodNames().stream(),
-                    NON_RUNTIME_METHODS.stream())
+                    NON_RUNTIME_METHODS.stream(),
+                    UNIMPLEMENTED_RUNTIME_METHODS.stream())
+                .flatMap(java.util.function.Function.identity())
                 .collect(java.util.stream.Collectors.toSet()));
 
     assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
         .contains("IssueDirectTextConnectScope", "JoinPublicProductionMembership");
+  }
+
+  @Test
+  void privateCapacityMutationRemainsUnimplementedOnSharedFakeRuntimeServer() throws Exception {
+    assertThat(AccountRuntimeStubServer.implementedRuntimeMethodNames())
+        .doesNotContain("CommitTenantCapacityAdmission");
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        var stub = AccountServiceGrpc.newBlockingStub(channel);
+        assertThatThrownBy(
+                () ->
+                    stub.commitTenantCapacityAdmission(
+                        CommitTenantCapacityAdmissionRequest.getDefaultInstance()))
+            .isInstanceOfSatisfying(
+                StatusRuntimeException.class,
+                failure ->
+                    assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNIMPLEMENTED));
+      } finally {
+        channel.shutdownNow();
+      }
+    }
   }
 
   @Test

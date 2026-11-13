@@ -312,6 +312,12 @@ public final class AccountJwtJwksConfigMapClient {
     ParsedBinding binding = operation.binding();
     ApiResponse selfReview =
         send(operation, ApiCall.REVIEW_AUTHENTICATED_PRINCIPAL, SELF_SUBJECT_REVIEW_REQUEST);
+    if (selfReview.statusCode() == 408
+        || selfReview.statusCode() == 429
+        || (selfReview.statusCode() >= 500 && selfReview.statusCode() < 600)) {
+      // An unavailable principal review proves no identity and must not become custody rejection.
+      throw new ApiFailureException(selfReview.statusCode());
+    }
     if ((selfReview.statusCode() != 200 && selfReview.statusCode() != 201)
         || !binding.expectedApiUsername().equals(parseAuthenticatedUsername(selfReview.body()))) {
       throw new BindingRejectedException();

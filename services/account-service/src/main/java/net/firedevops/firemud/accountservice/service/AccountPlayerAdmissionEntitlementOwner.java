@@ -28,6 +28,8 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountSubscriptionIntentRepository.FenceRejectedException;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantAuthorityEventRepository.SourceSelection;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantCapacityRepository.CapacityException;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayAdmissionCallerVerifier.VerifiedCaller;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.TenantBillingCutoff;
@@ -35,6 +37,7 @@ import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorit
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
 import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
 import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmissionGrpcCodec.Failure;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.PublishedRealmEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.RetainedTargetSelector;
@@ -573,7 +576,7 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         || !"PRESEEDED_ONLY".equals(target.characterCreationPolicy())) throw targetPrecondition();
   }
 
-  private static RuntimePlayerAdmissionEntitlementEvidence capture(
+  private RuntimePlayerAdmissionEntitlementEvidence capture(
       Request request,
       CurrentPlayer player,
       PublishedRealmEvidence target,
@@ -632,15 +635,25 @@ public final class AccountPlayerAdmissionEntitlementOwner {
         RuntimePlayerAdmissionEntitlementEvidence.digestBytes(world.canonicalBytes()));
     sources.put("worldCaptureId", world.captureId().toString());
     sources.put("worldRowVersion", Long.toString(world.rowVersion()));
-    return RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
-        request.requestId(),
-        request.authenticatedCallerWorkload(),
-        request.connectScopeId(),
-        player.snapshot(),
-        binding,
-        facts,
-        sources,
-        time);
+    var evidence =
+        RuntimePlayerAdmissionEntitlementEvidence.fromOwnerEvaluation(
+            request.requestId(),
+            request.authenticatedCallerWorkload(),
+            scope.scopeTokenHash(),
+            player.snapshot(),
+            binding,
+            facts,
+            sources,
+            time);
+    // Retain only inside this actual evaluator's final source transaction. A supplied bundle
+    // cannot register itself as capacity authority, and commit failure returns no evidence.
+    try {
+      new AccountTenantCapacityRepository(dsl).retainPlayerEvaluation(evidence);
+    } catch (CapacityException retentionFailure) {
+      if (retentionFailure.code() == Failure.ENTITLEMENT_UNAVAILABLE) throw unavailable();
+      throw retentionFailure;
+    }
+    return evidence;
   }
 
   private static Map<String, Object> facts(

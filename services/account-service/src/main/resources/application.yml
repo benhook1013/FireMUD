@@ -104,6 +104,7 @@ firemud:
           path-pattern: /.well-known/**
     grpc:
       public-methods:
+        - account.v1.AccountPublicJwksReadService/GetCurrentPublicJwks
         - account.v1.AccountService/Authenticate
         - account.v1.AccountService/RequestEmailLoginOtp
         - account.v1.AccountService/VerifyEmailLoginOtp
