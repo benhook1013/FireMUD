@@ -17,6 +17,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -76,13 +78,20 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
   }
 
   @Test
-  void longerOperationStillUsesConfiguredObservationTtlAndFreshNonce() {
+  void configuredObservationTtlShorterThanTheOperationBudgetWinsAndUsesFreshNonce() {
     var fixture = new Fixture();
+    fixture.ttl = Duration.ofSeconds(2);
     var first = fixture.observe(NOW + 60_000L);
     var second = fixture.observe(NOW + 60_000L);
-    assertThat(first.expiresAtEpochMillis()).isEqualTo(NOW + 30_000L);
+    assertThat(first.expiresAtEpochMillis()).isEqualTo(NOW + 2_000L);
     assertThat(second.observationNonce()).isNotEqualTo(first.observationNonce());
     assertThat(second.incarnationDigest()).isEqualTo(first.incarnationDigest());
+  }
+
+  @Test
+  void observationExpiryCannotExceedTheLocalOperationCap() {
+    var fixture = new Fixture();
+    assertThat(fixture.observe(NOW + 60_000L).expiresAtEpochMillis()).isEqualTo(NOW + 5_000L);
   }
 
   @ParameterizedTest
@@ -420,14 +429,7 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
 
   @ParameterizedTest
   @ValueSource(
-      strings = {
-        "issued",
-        "observed-before",
-        "observed-after-expiry",
-        "expires",
-        "expired",
-        "clock-back"
-      })
+      strings = {"issued", "observed-before", "observed-after-expiry", "expires", "clock-back"})
   void timeWindowMismatchOrDeadlineExpiryRefuses(String mode) {
     var fixture = new Fixture();
     switch (mode) {
@@ -439,11 +441,20 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
           fixture.mutation = root -> root.put("observationObservedAtEpochMillis", NOW + 1_001L);
       case "expires" ->
           fixture.mutation = root -> root.put("observationExpiresAtEpochMillis", NOW + 999L);
-      case "expired" -> fixture.afterSign = () -> fixture.now.set(NOW + 1_000L);
       case "clock-back" -> fixture.afterSign = () -> fixture.now.set(NOW - 1L);
       default -> throw new IllegalArgumentException(mode);
     }
     assertRejected(fixture);
+  }
+
+  @Test
+  void expiredObservationSkipsTheSecondSourceRead() {
+    var fixture = new Fixture();
+    fixture.afterSign = () -> fixture.now.set(NOW + 1_000L);
+    assertThatThrownBy(() -> fixture.observe(NOW + 1_000L))
+        .isInstanceOf(
+            CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
+    assertThat(fixture.sourceReads).hasValue(1);
   }
 
   @Test
@@ -477,6 +488,62 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
         .isInstanceOf(
             CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
     assertThat(fixture.channelCalls).hasValue(0);
+  }
+
+  @Test
+  void stalledChannelReturnsByDeadlineAndRetainsBackgroundAdmission() throws Exception {
+    var fixture = new Fixture();
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var peerEntered = new CountDownLatch(1);
+    var peerRelease = new CountDownLatch(1);
+    fixture.afterSign =
+        () -> {
+          entered.countDown();
+          awaitRelease(release);
+        };
+    var peer =
+        Thread.ofVirtual()
+            .start(
+                () ->
+                    CanonicalGameplayOriginalNewCapacityExecutionBudget.runBackground(
+                        Clock.systemUTC(),
+                        System.currentTimeMillis() + 5_000L,
+                        budget -> {
+                          peerEntered.countDown();
+                          awaitRelease(peerRelease);
+                          return null;
+                        }));
+    try {
+      assertThat(peerEntered.await(2, TimeUnit.SECONDS)).isTrue();
+      long started = System.nanoTime();
+      assertThatThrownBy(() -> fixture.observe(NOW + 500L))
+          .isInstanceOf(
+              CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
+      assertThat(entered.getCount()).isZero();
+      assertThat(System.nanoTime() - started).isLessThan(TimeUnit.SECONDS.toNanos(2));
+      var denied = new Fixture();
+      assertThatThrownBy(() -> denied.observe(NOW + 500L))
+          .isInstanceOf(
+              CanonicalGameplayProtectedIncarnationReceiver.ObservationUnavailableException.class);
+      assertThat(denied.sourceReads).hasValue(0);
+      assertThat(fixture.sourceReads).hasValue(1);
+    } finally {
+      release.countDown();
+      peerRelease.countDown();
+      peer.join(2_000L);
+    }
+  }
+
+  private static void awaitRelease(CountDownLatch release) {
+    try {
+      if (!release.await(3, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Controlled observation was not released");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Controlled observation was interrupted", interrupted);
+    }
   }
 
   @ParameterizedTest
@@ -701,6 +768,7 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
     private Consumer<Map<String, Object>> mutation = root -> {};
     private Runnable afterSign = () -> {};
     private Runnable onSourceRead = () -> {};
+    private Duration ttl = Duration.ofSeconds(30);
     private boolean sourceUnavailable;
     private String encodingFailure = "";
 
@@ -808,7 +876,7 @@ class CanonicalGameplayRegionOwnerTransferObservationReceiverTest {
           DIGEST,
           16 * 1024,
           2,
-          Duration.ofSeconds(30));
+          ttl);
     }
 
     private CanonicalGameplayProtectedIncarnationReceiver.SignedObservation signed(
