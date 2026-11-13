@@ -196,11 +196,11 @@ class AccountHostingFirstInvoicePaymentServiceTest {
   }
 
   @Test
-  void unmatchedVerifiedPaymentIntentSuccessRemainsRetryableWithoutLocalOperation()
-      throws Exception {
+  void linkedFirstInvoiceSuccessRemainsRetryableWithoutLocalConfirmation() throws Exception {
     var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
     when(event.eventType()).thenReturn("payment_intent.succeeded");
     when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.hasSignedFirstInvoiceLinkage(event)).thenReturn(true);
 
     assertThat(service.completeSigned("signed", "header"))
         .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("RECONCILING", null));
@@ -209,6 +209,22 @@ class AccountHostingFirstInvoicePaymentServiceTest {
     verify(payments).retainedSignedConflictRequestId(event);
     verify(payments).candidateForSignedEvent(event);
     verify(payments).unconsentedCanceledInvoice(event);
+    verify(payments).hasSignedFirstInvoiceLinkage(event);
+    verifyNoInteractions(provider, lifecycle, actors, reauthentication);
+  }
+
+  @Test
+  void unrelatedPaymentIntentSuccessIsRetainedAndAcknowledged() throws Exception {
+    var event = mock(StripeHostingWebhookVerifier.VerifiedEvent.class);
+    when(event.eventType()).thenReturn("payment_intent.succeeded");
+    when(verifier.verify("signed", "header")).thenReturn(event);
+    when(payments.hasSignedFirstInvoiceLinkage(event)).thenReturn(false);
+
+    assertThat(service.completeSigned("signed", "header"))
+        .isEqualTo(new AccountHostingFirstInvoicePaymentService.Completion("IGNORED", null));
+
+    verify(inbox).retainOrReplay(event);
+    verify(payments).hasSignedFirstInvoiceLinkage(event);
     verifyNoInteractions(provider, lifecycle, actors, reauthentication);
   }
 
