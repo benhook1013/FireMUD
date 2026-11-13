@@ -606,13 +606,11 @@ public final class AccountHostingFirstInvoicePaymentRepository {
   }
 
   /**
-   * Rechecks a secret-bearing provider handoff under the current Account and owner locks. This
-   * path is read-only: it neither consumes the one-shot command permission nor opens a claim.
+   * Rechecks a secret-bearing provider handoff under the current Account and owner locks. This path
+   * is read-only: it neither consumes the one-shot command permission nor opens a claim.
    */
   public void validateHandoffAuthorization(
-      ConfirmationDispatch dispatch,
-      UUID actor,
-      AccountRecentReauthenticationEvidence evidence) {
+      ConfirmationDispatch dispatch, UUID actor, AccountRecentReauthenticationEvidence evidence) {
     Objects.requireNonNull(evidence);
     var current = requireCurrentDispatch(dispatch, actor);
     var context = evidence.billingContext();
@@ -631,10 +629,10 @@ public final class AccountHostingFirstInvoicePaymentRepository {
             != current.confirmation().get("expected_row_version", Long.class)
         || dispatch.authorizationVersion()
             != current.authorization().get("authorization_version", Long.class)
-        || !dispatch.reauthenticationEvidenceId()
+        || !dispatch
+            .reauthenticationEvidenceId()
             .equals(current.authorization().get("reauthentication_evidence_id", UUID.class))
-        || !dispatch.validUntil()
-            .equals(instant(current.authorization(), "valid_until"))
+        || !dispatch.validUntil().equals(instant(current.authorization(), "valid_until"))
         || !evidence.evidenceId().equals(dispatch.reauthenticationEvidenceId())
         || !dispatch.requestId().equals(context.originalRequestId())
         || dispatch.expectedRowVersion() != context.expectedRowVersion()
@@ -841,9 +839,7 @@ public final class AccountHostingFirstInvoicePaymentRepository {
   }
 
   private record CurrentDispatch(
-      Record confirmation,
-      Record authorization,
-      AccountHostingFirstInvoicePayment invoice) {}
+      Record confirmation, Record authorization, AccountHostingFirstInvoicePayment invoice) {}
 
   public record SignedOutcome(ConfirmationDispatch dispatch, boolean latePaidConflict) {}
 
