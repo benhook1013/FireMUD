@@ -971,6 +971,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
             binding.dsl(),
             coordination,
+            coordinationUri,
             scripts,
             regionInstallation,
             sources.resolver,
