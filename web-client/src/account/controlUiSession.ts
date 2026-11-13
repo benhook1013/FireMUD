@@ -593,9 +593,11 @@ export class ControlUiSessionStore {
   }
 
   private clearLoginRecovery(): void {
+    const hadRecovery = this.loginRecovery !== null;
     if (this.loginRecoveryTimer !== null) clearTimeout(this.loginRecoveryTimer);
     this.loginRecoveryTimer = null;
     this.loginRecovery = null;
+    if (hadRecovery) this.emitChange();
   }
 
   private expireIfCurrent(identity: string, revision: number): void {
@@ -646,6 +648,10 @@ export class ControlUiSessionStore {
     } catch {
       // Cache clearing must not restore or retain the invalidated token.
     }
+    this.emitChange();
+  }
+
+  private emitChange(): void {
     for (const listener of this.listeners) listener();
   }
 }
