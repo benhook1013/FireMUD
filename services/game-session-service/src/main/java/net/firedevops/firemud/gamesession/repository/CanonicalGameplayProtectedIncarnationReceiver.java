@@ -329,26 +329,53 @@ final class CanonicalGameplayProtectedIncarnationReceiver {
     if (absoluteDeadlineMillis <= clock.millis()) {
       throw new ObservationUnavailableException("Protected transfer observation deadline expired");
     }
+    try {
+      return regionOwnerTransferSource.withinObservation(
+          clock,
+          absoluteDeadlineMillis,
+          budget -> observeForRegionOwnerTransfer(transferId, targetOrdinal, budget));
+    } catch (CanonicalGameplayOriginalNewCapacityExecutionBudget.BudgetUnavailable expired) {
+      throw new ObservationUnavailableException(
+          "Protected transfer observation deadline or admission unavailable");
+    }
+  }
+
+  VerifiedIncarnation observeForRegionOwnerTransfer(
+      UUID transferId,
+      long targetOrdinal,
+      CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
+    requireNoAmbientTransaction();
+    requireAvailable(OwnerKind.REGION_OWNER_TRANSFER);
+    long absoluteDeadlineMillis = budget.absoluteDeadlineMillis();
     CurrentContext before =
         loadRegionOwnerTransferCurrentContext(transferId, targetOrdinal, absoluteDeadlineMillis);
+    budget.check();
     return observeCurrentContext(
         before,
-        () ->
-            loadRegionOwnerTransferCurrentContext(
-                transferId, targetOrdinal, absoluteDeadlineMillis),
+        () -> {
+          budget.check();
+          return loadRegionOwnerTransferCurrentContext(
+              transferId, targetOrdinal, absoluteDeadlineMillis);
+        },
         absoluteDeadlineMillis);
   }
 
-  VerifiedIncarnation observeForOriginTransfer(UUID transferId, long ordinal, long deadline) {
+  VerifiedIncarnation observeForOriginTransfer(
+      UUID transferId, long ordinal, CanonicalGameplayOriginalNewCapacityExecutionBudget budget) {
     requireNoAmbientTransaction();
     requireNonNil(transferId, "transferId");
-    if (ordinal < 0 || deadline <= clock.millis())
+    if (ordinal < 0)
       throw new ObservationUnavailableException("Origin transfer observation unavailable");
     requireAvailable(OwnerKind.ORIGIN_OWNER_TRANSFER);
+    long deadline = budget.absoluteDeadlineMillis();
     CurrentContext before = loadOriginOwnerTransferCurrentContext(transferId, ordinal, deadline);
+    budget.check();
     return observeCurrentContext(
         before,
-        () -> loadOriginOwnerTransferCurrentContext(transferId, ordinal, deadline),
+        () -> {
+          budget.check();
+          return loadOriginOwnerTransferCurrentContext(transferId, ordinal, deadline);
+        },
         deadline);
   }
 
