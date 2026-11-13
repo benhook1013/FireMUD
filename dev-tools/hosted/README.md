@@ -39,3 +39,5 @@ Use it before ad hoc live inspection so preview debugging stays deterministic an
 
 - [shared/show-rollout-diagnostics.sh](shared/show-rollout-diagnostics.sh) – first-look diagnostics for a hosted namespace when a rollout is blocked.
 - [shared/wait-for-hosted-runtime-rollouts.sh](shared/wait-for-hosted-runtime-rollouts.sh) – bounded readiness wait for the canonical hosted runtime deployment inventory.
+
+- [preview/write-playable-proof.py](preview/write-playable-proof.py) – offline diagnostic record builder for an independently supplied exact preview comparison, Namespace, HostedEnvironmentIdentity and application Pod inventory. It contacts no cluster and runs no probes. Explicitly passed Telnet/WSS diagnostic inputs are not successful PLAY, promotion evidence or permission to publish images. Focused proof: `python3 -m unittest discover -s dev-tools/tests -p test_write_playable_proof.py`.

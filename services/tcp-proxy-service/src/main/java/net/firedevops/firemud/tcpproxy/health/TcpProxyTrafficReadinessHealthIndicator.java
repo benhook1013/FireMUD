@@ -43,6 +43,17 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
     dependencies.put(
         "telnetListener",
         DependencyReadinessSupport.upDependency("bind", "tcp://0.0.0.0:telnet", "LISTENING"));
+    if (!server.isTlsMaterialHealthy()) {
+      dependencies.put(
+          "telnetTlsMaterial",
+          DependencyReadinessSupport.downDependency(
+              "tlsReload", "telnet://tls", "Telnet TLS certificate watcher unhealthy"));
+      return DependencyReadinessSupport.recordOutOfService(
+          readinessTransitionTracker, COMPONENT, CONTRACT, "telnetTlsMaterial", dependencies);
+    }
+    dependencies.put(
+        "telnetTlsMaterial",
+        DependencyReadinessSupport.upDependency("tlsReload", "telnet://tls", "READY"));
     if (!gatewayGameplayReadinessProbe.isReady()) {
       dependencies.put(
           "gatewayGameplayPath",
