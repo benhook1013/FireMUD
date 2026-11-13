@@ -481,6 +481,59 @@ class AccountCanonicalFirstJoinTerminalCoordinatorTest {
         .commitCanonicalFirstJoin(anyString(), any(), anyString(), any());
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void absentOrUnavailableAuditReadbackCannotTerminalizePendingJoin(boolean unavailable) {
+    Fixture fixture = new Fixture();
+    fixture.arrangePending();
+    var readback =
+        when(fixture.audit.findExactCanonicalTenantEnvelopeForUpdate(fixture.auditEnvelope));
+    if (unavailable) readback.thenThrow(new IllegalStateException("audit readback unavailable"));
+    else readback.thenReturn(Optional.empty());
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalFirstJoin(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            unavailable ? "audit readback unavailable" : "Canonical JOIN audit readback is absent");
+    verify(fixture.operations, never())
+        .commitCanonicalFirstJoin(anyString(), any(), anyString(), any());
+    // The exception escapes the mandatory owner transaction. Physical rollback is not mocked proof.
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void absentOrUnavailableCommittedAuditCannotBeRecreatedFromMembership(boolean unavailable) {
+    Fixture fixture = new Fixture();
+    fixture.arrangeCommittedReplay();
+    var readback =
+        when(
+            fixture.audit.findCanonicalTenantEnvelopeForUpdate(
+                fixture.expectedProof.auditEventId()));
+    if (unavailable) readback.thenThrow(new IllegalStateException("audit readback unavailable"));
+    else readback.thenReturn(Optional.empty());
+    fixture.startWritableTransaction();
+
+    assertThatThrownBy(
+            () ->
+                fixture.coordinator.commitCanonicalFirstJoin(
+                    fixture.scope, REQUEST_ID, CALLER_BINDING))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            unavailable
+                ? "audit readback unavailable"
+                : "Committed canonical JOIN audit is absent");
+    verify(fixture.memberships, never()).createFreshMembershipForJoin(any(), any());
+    verify(fixture.roles, never()).replaceCanonical(any(), any(), any(), any(), anyLong(), any());
+    verify(fixture.audit, never())
+        .appendCanonicalTenant(any(), anyString(), anyString(), anyString());
+    verify(fixture.operations, never())
+        .commitCanonicalFirstJoin(anyString(), any(), anyString(), any());
+  }
+
   @Test
   void readOnlyTransactionIsRejectedBeforeOwnerRepositoriesAreTouched() {
     Fixture fixture = new Fixture();
