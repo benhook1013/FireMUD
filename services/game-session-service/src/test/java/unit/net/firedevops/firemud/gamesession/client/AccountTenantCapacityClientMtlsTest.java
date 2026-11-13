@@ -394,12 +394,14 @@ class AccountTenantCapacityClientMtlsTest {
                     assertThat(GrpcPeerIdentity.current().uri())
                         .isEqualTo("spiffe://firemud/ns/prod/sa/game-session-service"));
             var request = TenantCapacityAdmissionGrpcCodec.parseRequest(wire);
+            assertServerSide(
+                serverFailure,
+                () ->
+                    assertThat(request)
+                        .isEqualTo(
+                            CapacityAdmissionTestFixture.playerRequest(
+                                request.evidence().permitsCreation())));
             if (!request.evidence().permitsCreation()) {
-              assertServerSide(
-                  serverFailure,
-                  () ->
-                      assertThat(request)
-                          .isEqualTo(CapacityAdmissionTestFixture.playerRequest(false)));
               var response =
                   TenantCapacityAdmissionGrpcCodec.toRefusal(
                       request, TenantCapacityAdmissionGrpcCodec.Failure.TENANT_BILLING_BLOCKED);
