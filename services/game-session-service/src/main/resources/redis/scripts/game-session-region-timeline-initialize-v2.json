@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.region-timeline-initialize.v2",
   "resourcePath": "redis/lua/game-session-region-timeline-initialize-v2.lua",
-  "sha256": "aa4f7ee9eb2608b5b4d85e14a1d4898d6b6b32c27e8fedd4f8803913894bc72b",
+  "sha256": "414d70da8725513438eea21af2ac81984b5c8a79ba96fefb00eee8f41fd98e94",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -26,7 +26,7 @@
   ],
   "resetSensitivity": "REGION",
   "lossClass": "STAGED_EFFECT_OR_RETRY",
-  "tailLossBehavior": "Only the original durable preparation may establish the complete epoch-1 and tick-minus-one APPLIED baseline. The original single-use SQL creation permission remains required, and Redis refuses a delayed INITIALIZE mutation after the frozen operation deadline. An exact retained marker permits same-operation lease recovery; absent, changed, or partial state never triggers a new initialization.",
+  "tailLossBehavior": "Only the original durable preparation may establish the complete epoch-1 and tick-minus-one APPLIED baseline. The original single-use SQL creation permission remains required. The deadline-bound PROBE requires the configured principal's TIME permission before that creation permission is consumed; denial leaves the preparation PREPARED. Redis refuses a delayed INITIALIZE mutation after the frozen operation deadline. An exact retained marker permits same-operation lease recovery; absent, changed, or partial state never triggers a new initialization.",
   "compatibilityLevel": "COMPATIBLE",
   "supportedCoexistence": [{"callerVersion": "v2", "payloadVersion": "none"}],
   "legacyPayloadShape": null
