@@ -224,6 +224,10 @@ class FriendsCommandHandlerTest {
                                 .setOnline(true)
                                 .setCharacterId("99")
                                 .setCharacterName("Sora")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setWorldSlug("demo")
                                 .setWorldDisplayName("Demo World")
                                 .setRealmSlug("production")
@@ -249,7 +253,6 @@ class FriendsCommandHandlerTest {
         (FriendPresenceViewOutput) result.outputs().getFirst().payload();
     assertThat(view.filter()).isEqualTo("ALL");
     assertThat(view.totalCount()).isEqualTo(1);
-    assertThat(view.matchCount()).isEqualTo(1);
     assertThat(view.friends())
         .singleElement()
         .satisfies(
@@ -265,8 +268,7 @@ class FriendsCommandHandlerTest {
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
-        .contains(
-            "Sora [acct #" + FRIEND_ACCOUNT_ID + "] - online in Demo World / Live Realm (idle)");
+        .contains("Sora [acct #" + FRIEND_ACCOUNT_ID + "] - online (idle)");
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.any(),
@@ -296,6 +298,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(false)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
                                 .build())
@@ -319,7 +325,7 @@ class FriendsCommandHandlerTest {
               assertThat(entry.displayName()).isEqualTo("Friend #" + FRIEND_ACCOUNT_ID);
               assertThat(entry.lastSeenAtEpochMs())
                   .isEqualTo(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli());
-              assertThat(entry.visibilityPolicy()).isNull();
+              assertThat(entry.visibilityPolicy()).isEqualTo("PUBLIC");
             });
     String rendered =
         new TextPlayerOutputRenderer(
@@ -395,6 +401,10 @@ class FriendsCommandHandlerTest {
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
                                 .setCharacterName("Sora")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .build())
                         .build())
                 .build());
@@ -408,7 +418,6 @@ class FriendsCommandHandlerTest {
         (FriendPresenceViewOutput) result.outputs().getFirst().payload();
     assertThat(view.filter()).isEqualTo("ONLINE");
     assertThat(view.totalCount()).isEqualTo(2);
-    assertThat(view.matchCount()).isEqualTo(1);
     assertThat(view.friends())
         .singleElement()
         .satisfies(entry -> assertThat(entry.ordinal()).isEqualTo(1));
@@ -416,124 +425,89 @@ class FriendsCommandHandlerTest {
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
-        .contains("Friends ONLINE [1/2]:")
+        .contains("Friends ONLINE:")
         .contains("1) Sora [acct #" + FRIEND_ACCOUNT_ID + "] - online");
     Mockito.verify(socialGroupsClient)
         .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_ONLINE);
   }
 
   @Test
-  void friendsPrivateFiltersCanonicalRosterByVisibilityPolicy() {
-    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
-    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
-    FriendsCommandHandler handler =
-        newHandler(
-            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(
-            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE))
-        .thenReturn(
-            ListFriendsResponse.newBuilder()
-                .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE)
-                .setTotalCount(2)
-                .setMatchCount(1)
-                .addFriends(
-                    FriendRosterEntry.newBuilder()
-                        .setOrdinal(2)
-                        .setFriendAccountId(OTHER_FRIEND_ACCOUNT_ID)
-                        .setPresence(
-                            FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId(OTHER_FRIEND_ACCOUNT_ID)
-                                .setOnline(false)
-                                .setVisibilityPolicy(
-                                    net.firedevops.firemud.socialgroups.v1
-                                        .FriendPresenceVisibilityPolicy
-                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE)
-                                .build())
-                        .build())
-                .build());
-
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("PRIVATE"), "FRIENDS PRIVATE"),
-            GAMEPLAY_CONTEXT);
-
-    FriendPresenceViewOutput view =
-        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
-    assertThat(view.filter()).isEqualTo("PRIVATE");
-    assertThat(view.totalCount()).isEqualTo(2);
-    assertThat(view.matchCount()).isEqualTo(1);
-    assertThat(view.friends())
-        .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.ordinal()).isEqualTo(2);
-              assertThat(entry.friendAccountId()).isEqualTo(OTHER_FRIEND_ACCOUNT_ID);
-              assertThat(entry.visibilityPolicy()).isEqualTo("PRIVATE");
-            });
-    assertThat(
-            new TextPlayerOutputRenderer(
-                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
-                .render(result.outputs().getFirst()))
-        .contains("Friends PRIVATE [1/2]:");
-    Mockito.verify(socialGroupsClient)
-        .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_PRIVATE);
+  void privateMissingAndUnknownPoliciesNeverBecomeOfflineOrLeakRawPresence() throws Exception {
+    for (int policy : List.of(0, 3, 4, 999)) {
+      var social = Mockito.mock(SocialGroupsClient.class);
+      var raw =
+          FriendRosterEntry.newBuilder()
+              .setFriendAccountId(FRIEND_ACCOUNT_ID)
+              .setPresence(
+                  FriendPresenceEntry.newBuilder()
+                      .setVisibilityPolicyValue(policy)
+                      .setOnline(true)
+                      .setCharacterName("SecretHero")
+                      .setWorldSlug("secret-world")
+                      .setRealmSlug("secret-realm")
+                      .setLastSeenAtMs(12345)
+                      .setPointerVersion(88))
+              .build();
+      when(social.listFriends(1L, CALLER_ACCOUNT_ID))
+          .thenReturn(ListFriendsResponse.newBuilder().addFriends(raw).build());
+      var result =
+          newHandler(
+                  social,
+                  Mockito.mock(EntityManagementClient.class),
+                  Mockito.mock(ScriptEventPublisher.class))
+              .handle(
+                  new TextCommand(TextCommandType.FRIENDS, List.of(), "FRIENDS"), GAMEPLAY_CONTEXT);
+      var view = (FriendPresenceViewOutput) result.outputs().getFirst().payload();
+      assertThat(view.friends()).hasSize(1);
+      var entry = view.friends().getFirst();
+      assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
+      assertThat(entry.online()).isNull();
+      assertThat(entry.visibilityPolicy()).isNull();
+      String json =
+          tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(entry);
+      assertThat(json)
+          .doesNotContain(
+              "SecretHero",
+              "secret-world",
+              "secret-realm",
+              "12345",
+              "online",
+              "lastSeenAtEpochMs",
+              "visibilityPolicy",
+              "pointerVersion");
+      String rendered =
+          new TextPlayerOutputRenderer(
+                  new net.firedevops.firemud.gamesession.config.PresentationProperties())
+              .render(result.outputs().getFirst());
+      assertThat(rendered)
+          .contains("presence unavailable")
+          .doesNotContain("offline", "online", "SecretHero", "secret-world", "secret-realm");
+    }
   }
 
   @Test
-  void friendsSharedFiltersCanonicalRosterByPlayableStateScope() {
-    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
-    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
-    FriendsCommandHandler handler =
-        newHandler(
-            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(
-            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED))
-        .thenReturn(
-            ListFriendsResponse.newBuilder()
-                .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED)
-                .setTotalCount(2)
-                .setMatchCount(1)
-                .addFriends(
-                    FriendRosterEntry.newBuilder()
-                        .setOrdinal(1)
-                        .setFriendAccountId(FRIEND_ACCOUNT_ID)
-                        .setPresence(
-                            FriendPresenceEntry.newBuilder()
-                                .setFriendAccountId(FRIEND_ACCOUNT_ID)
-                                .setOnline(true)
-                                .setCharacterName("Sora")
-                                .setPlayableStateScope(
-                                    PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                                .build())
-                        .build())
-                .build());
-
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommand(TextCommandType.FRIENDS, java.util.List.of("SHARED"), "FRIENDS SHARED"),
-            GAMEPLAY_CONTEXT);
-
-    FriendPresenceViewOutput view =
-        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
-    assertThat(view.filter()).isEqualTo("SHARED");
-    assertThat(view.totalCount()).isEqualTo(2);
-    assertThat(view.matchCount()).isEqualTo(1);
-    assertThat(view.friends())
-        .singleElement()
-        .satisfies(
-            entry -> {
-              assertThat(entry.ordinal()).isEqualTo(1);
-              assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
-              assertThat(entry.playableStateScope()).isEqualTo("SHARED");
-            });
-    assertThat(
-            new TextPlayerOutputRenderer(
-                    new net.firedevops.firemud.gamesession.config.PresentationProperties())
-                .render(result.outputs().getFirst()))
-        .contains("Friends SHARED [1/2]:");
-    Mockito.verify(socialGroupsClient)
-        .listFriends(1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED);
+  void privacyAndLocationFiltersFailBeforeAnyRemoteRead() {
+    for (String filter :
+        List.of(
+            "PRIVATE",
+            "PUBLIC",
+            "FRIENDS_ONLY",
+            "OFFLINE",
+            "UNSPECIFIED_VISIBILITY",
+            "SHARED",
+            "ISOLATED",
+            "UNSPECIFIED_SCOPE")) {
+      var social = Mockito.mock(SocialGroupsClient.class);
+      var entity = Mockito.mock(EntityManagementClient.class);
+      var events = Mockito.mock(ScriptEventPublisher.class);
+      var result =
+          newHandler(social, entity, events)
+              .handle(
+                  new TextCommand(TextCommandType.FRIENDS, List.of(filter), "FRIENDS " + filter),
+                  GAMEPLAY_CONTEXT);
+      assertThat(result.commandResult().accepted()).isFalse();
+      Mockito.verifyNoInteractions(social, entity, events);
+    }
   }
 
   @Test
@@ -558,6 +532,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(false)
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setLastSeenAtMs(
                                     Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
                                 .build())
@@ -573,7 +551,6 @@ class FriendsCommandHandlerTest {
         (FriendPresenceViewOutput) result.outputs().getFirst().payload();
     assertThat(view.filter()).isEqualTo("RECENT");
     assertThat(view.totalCount()).isEqualTo(2);
-    assertThat(view.matchCount()).isEqualTo(1);
     assertThat(view.friends())
         .singleElement()
         .satisfies(entry -> assertThat(entry.friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID));
@@ -619,30 +596,13 @@ class FriendsCommandHandlerTest {
     FriendRosterSummaryViewOutput view =
         (FriendRosterSummaryViewOutput) result.outputs().getFirst().payload();
     assertThat(view.totalCount()).isEqualTo(4);
-    assertThat(view.onlineCount()).isEqualTo(1);
-    assertThat(view.offlineCount()).isEqualTo(3);
-    assertThat(view.recentCount()).isEqualTo(2);
-    assertThat(view.publicCount()).isEqualTo(1);
-    assertThat(view.friendsOnlyCount()).isEqualTo(2);
-    assertThat(view.privateCount()).isEqualTo(1);
-    assertThat(view.unspecifiedVisibilityCount()).isZero();
-    assertThat(view.sharedCount()).isEqualTo(2);
-    assertThat(view.isolatedCount()).isEqualTo(1);
-    assertThat(view.unspecifiedScopeCount()).isEqualTo(1);
     assertThat(
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
         .contains("Friend roster summary:")
         .contains("Linked: 4")
-        .contains("Online: 1")
-        .contains("Offline: 3")
-        .contains("Recent offline: 2")
-        .contains("Visibility public: 1")
-        .contains("Visibility friends-only: 2")
-        .contains("Visibility private: 1")
-        .contains("Scope shared: 2")
-        .contains("Scope isolated: 1");
+        .doesNotContain("Online:", "Offline:", "Visibility", "Scope", "Recent");
     Mockito.verify(socialGroupsClient).getFriendRosterSummary(1L, CALLER_ACCOUNT_ID);
   }
 
@@ -788,6 +748,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setCharacterName("Sora")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .build())
                         .build())
                 .build());
@@ -835,6 +799,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId("abc")
                                 .setCharacterName("Sora")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .build())
                         .build())
                 .build());
@@ -871,6 +839,10 @@ class FriendsCommandHandlerTest {
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setOnline(true)
                                 .setCharacterName("Sora")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .setWorldDisplayName("Demo World")
                                 .setRealmDisplayName("Live Realm")
                                 .setPlayableStateScope(
@@ -900,16 +872,15 @@ class FriendsCommandHandlerTest {
     assertThat(detail.friend().friendAccountId()).isEqualTo(FRIEND_ACCOUNT_ID);
     assertThat(detail.friend().friendLinkId()).isEqualTo(11L);
     assertThat(detail.friend().characterName()).isEqualTo("Sora");
-    assertThat(detail.friend().playableStateScope()).isEqualTo("SHARED");
-    assertThat(detail.friend().pointerVersion()).isEqualTo(17L);
+    assertThat(detail.friend().playableStateScope()).isNull();
+    assertThat(detail.friend().pointerVersion()).isNull();
     assertThat(
             new TextPlayerOutputRenderer(
                     new net.firedevops.firemud.gamesession.config.PresentationProperties())
                 .render(result.outputs().getFirst()))
         .contains("Friend Sora [acct #" + FRIEND_ACCOUNT_ID + "]")
-        .contains("Presence: online in Demo World / Live Realm (idle)")
-        .contains("State scope: shared")
-        .contains("Pointer version: 17");
+        .contains("Presence: online (idle)")
+        .doesNotContain("State scope:", "Pointer version:", "Demo World", "Live Realm");
   }
 
   @Test
@@ -930,6 +901,10 @@ class FriendsCommandHandlerTest {
                             FriendPresenceEntry.newBuilder()
                                 .setFriendAccountId(FRIEND_ACCOUNT_ID)
                                 .setCharacterName("Sora")
+                                .setVisibilityPolicy(
+                                    net.firedevops.firemud.socialgroups.v1
+                                        .FriendPresenceVisibilityPolicy
+                                        .FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
                                 .build())
                         .build())
                 .build());
@@ -1492,36 +1467,5 @@ class FriendsCommandHandlerTest {
               "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|OFFLINE|RECENT|PUBLIC|FRIENDS_ONLY|PRIVATE|UNSPECIFIED_VISIBILITY|SHARED|ISOLATED|UNSPECIFIED_SCOPE]");
       Mockito.verifyNoInteractions(socialGroupsClient);
     }
-  }
-
-  @Test
-  void friendsUnspecifiedVisibilityUsesCanonicalFilterAlias() {
-    SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
-    EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
-    FriendsCommandHandler handler =
-        newHandler(
-            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    when(socialGroupsClient.listFriends(
-            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY))
-        .thenReturn(
-            ListFriendsResponse.newBuilder()
-                .setFilter(FriendRosterFilter.FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY)
-                .build());
-
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommand(
-                TextCommandType.FRIENDS,
-                java.util.List.of("UNSPECIFIED_VISIBILITY"),
-                "FRIENDS UNSPECIFIED_VISIBILITY"),
-            GAMEPLAY_CONTEXT);
-
-    assertThat(result.commandResult().accepted()).isTrue();
-    FriendPresenceViewOutput view =
-        (FriendPresenceViewOutput) result.outputs().getFirst().payload();
-    assertThat(view.filter()).isEqualTo("UNSPECIFIED_VISIBILITY");
-    Mockito.verify(socialGroupsClient)
-        .listFriends(
-            1L, CALLER_ACCOUNT_ID, FriendRosterFilter.FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY);
   }
 }
