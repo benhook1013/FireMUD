@@ -161,6 +161,29 @@ describe('first-invoice owner API', () => {
     );
   });
 
+  it('retains only known Account reauthentication error codes', async () => {
+    const authenticated = vi.fn().mockResolvedValue(
+      Response.json(
+        {
+          status: 'ERROR',
+          error: {
+            code: 'AUTH_INVALID_CREDENTIALS',
+            message: 'private credential detail',
+          },
+        },
+        { status: 401 }
+      )
+    );
+    const client = createFirstInvoiceClient(
+      'https://game.example',
+      authenticated
+    );
+
+    await expect(client.read(subscriptionId)).rejects.toEqual(
+      new FirstInvoiceError(401, 'AUTH_INVALID_CREDENTIALS')
+    );
+  });
+
   it('refuses another intent secret, secret on non-action status, and unknown status', async () => {
     const authenticated = vi.fn();
     const client = createFirstInvoiceClient(

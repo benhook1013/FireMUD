@@ -61,6 +61,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -90,6 +91,8 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationResponseEnvelopeRepository.RecoveredCredential;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.OwnerFence;
+import net.firedevops.firemud.accountservice.repository.AccountSubscriptionCreateRequest.ProducerEvidence;
 import net.firedevops.firemud.accountservice.service.AccountCanonicalFirstJoinTerminalCoordinator;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider;
@@ -125,6 +128,8 @@ import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfil
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile.AccountSecurityCutoff;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord.AccountAuthoritySnapshot;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorDigest;
+import net.firedevops.firemud.common.tenant.FreshTenantCreatorEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
@@ -301,6 +306,89 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
                         caller.committedCandidate,
                         paid.prepare().observeOutsideSql()))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void paidAdmissionLocksWalletBeforeTenantGenerationInBothSqlPhases() throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    Fixture caller = paid.caller();
+    List<String> sourceImageBefore = caller.sourceAndIssuanceImage();
+
+    var prepared = whileWalletInstrumentIsLockedBeforeTenantGeneration(paid, () -> paid.prepare());
+    var observed = prepared.observeOutsideSql();
+    var current =
+        whileWalletInstrumentIsLockedBeforeTenantGeneration(paid, () -> paid.read(observed));
+
+    assertThat(current.snapshot().tenantId()).isEqualTo(paid.hosting().tenantId().toString());
+    assertThat(caller.sourceAndIssuanceImage()).isEqualTo(sourceImageBefore);
+  }
+
+  @Test
+  void currentDemoHeadRemainsSelectedWhileSameTenantHasPendingHostingSubscription()
+      throws Exception {
+    Fixture caller = newFixture(null);
+    var hosting = CanonicalHostingSubscriptionTestFixture.create(caller.dataSource, TEST_NAMESPACE);
+    String authorizationDigest = "sha256:" + "a".repeat(64);
+    UUID authorizationOperation = UUID.randomUUID();
+    var creator =
+        new FreshTenantCreatorEvidence(
+            1,
+            caller.tenantEvidence,
+            hosting.accountUuid(),
+            authorizationOperation,
+            authorizationDigest,
+            FreshTenantCreatorDigest.evidenceDigest(
+                1,
+                caller.tenantEvidence,
+                hosting.accountUuid(),
+                authorizationOperation,
+                authorizationDigest));
+    var owner =
+        caller.transaction.execute(
+            status ->
+                new AccountInitialTenantBillingOwnerRepository(caller.dsl)
+                    .establishInitial(
+                        new AccountInitialTenantBillingOwnerRepository.InitialRequest(
+                            UUID.randomUUID(), creator, UUID.randomUUID(), 1, true)));
+    var instrument = hosting.instrument();
+    caller.transaction.execute(
+        status ->
+            hosting
+                .intents()
+                .retainPending(
+                    new AccountSubscriptionCreateRequest(
+                        UUID.randomUUID(),
+                        caller.tenantUuid,
+                        new OwnerFence(
+                            hosting.accountUuid(), owner.ownerVersion(), owner.ownerGeneration()),
+                        "hosting",
+                        instrument.instrumentUuid(),
+                        instrument.rowVersion(),
+                        new ProducerEvidence(
+                            hosting.accountUuid(), UUID.randomUUID(), authorizationDigest),
+                        null)));
+
+    int providerReads = hosting.transport().reads();
+    var prepared =
+        caller.inCurrentSources(
+            sources ->
+                sources.prepareCurrentPublicProductionNew(
+                    caller.tenantUuid,
+                    caller.committedCandidate.identity().tokenJti(),
+                    caller.committedCandidate,
+                    hosting.admissionPaidSource()));
+    var observed = prepared.observeOutsideSql();
+    var current =
+        caller.inCurrentSources(
+            sources ->
+                sources.readCurrentPublicProductionNew(
+                    caller.tenantUuid,
+                    caller.committedCandidate.identity().tokenJti(),
+                    caller.committedCandidate,
+                    observed));
+
+    assertThat(current.sourceValidUntilMs()).isNull();
+    assertThat(hosting.transport().reads()).isEqualTo(providerReads);
   }
 
   @Test
@@ -1893,6 +1981,60 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       Thread.sleep(10);
     } while (System.nanoTime() < deadline);
     return -1;
+  }
+
+  private <T> T whileWalletInstrumentIsLockedBeforeTenantGeneration(
+      PaidFixture paid, Callable<T> admissionPhase) throws Exception {
+    Fixture caller = paid.caller();
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (Connection blocker = caller.dataSource.getConnection()) {
+      blocker.setAutoCommit(false);
+      int blockerPid;
+      try (Statement statement = blocker.createStatement();
+          ResultSet pid = statement.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(pid.next()).isTrue();
+        blockerPid = pid.getInt(1);
+      }
+      try (PreparedStatement instrumentLock =
+          blocker.prepareStatement(
+              "SELECT instrument_uuid FROM payment_instrument WHERE account_uuid = ? "
+                  + "AND instrument_uuid = ? FOR UPDATE")) {
+        instrumentLock.setObject(1, paid.hosting().instrument().accountUuid());
+        instrumentLock.setObject(2, paid.hosting().instrument().instrumentUuid());
+        try (ResultSet instrument = instrumentLock.executeQuery()) {
+          assertThat(instrument.next()).isTrue();
+        }
+      }
+
+      Future<T> phase = executor.submit(admissionPhase);
+      int blockedPid = awaitBackendBlockedBy(caller.dsl, blockerPid, 3, TimeUnit.SECONDS);
+      assertThat(blockedPid).isPositive().isNotEqualTo(blockerPid);
+      assertTenantGenerationCanBeLocked(caller.dataSource, paid.hosting().tenantId());
+      blocker.rollback();
+      return phase.get(5, TimeUnit.SECONDS);
+    } finally {
+      executor.shutdown();
+      if (!executor.awaitTermination(5, TimeUnit.SECONDS)) executor.shutdownNow();
+    }
+  }
+
+  private static void assertTenantGenerationCanBeLocked(DataSource dataSource, UUID tenantId)
+      throws SQLException {
+    try (Connection probe = dataSource.getConnection()) {
+      probe.setAutoCommit(false);
+      try (PreparedStatement lock =
+          probe.prepareStatement(
+              "SELECT generation FROM account_authority_generations WHERE scope_kind = 'TENANT' "
+                  + "AND issuer_id IS NULL AND account_uuid IS NULL AND tenant_uuid = ? "
+                  + "FOR UPDATE NOWAIT")) {
+        lock.setObject(1, tenantId);
+        try (ResultSet row = lock.executeQuery()) {
+          assertThat(row.next()).isTrue();
+        }
+      } finally {
+        probe.rollback();
+      }
+    }
   }
 
   private static DataSource holdOriginalCommitBeforePhysicalCommit(

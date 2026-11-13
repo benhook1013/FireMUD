@@ -81,11 +81,31 @@ export type ControlUiAuthenticatedRequest = (
 
 export class FirstInvoiceError extends Error {
   readonly status: number;
+  readonly code: 'AUTH_INVALID_CREDENTIALS' | 'INVALID_CREDENTIALS' | null;
 
-  constructor(status: number) {
+  constructor(
+    status: number,
+    code: 'AUTH_INVALID_CREDENTIALS' | 'INVALID_CREDENTIALS' | null = null
+  ) {
     super('Account could not confirm the checkout result.');
     this.name = 'FirstInvoiceError';
     this.status = status;
+    this.code = code;
+  }
+}
+
+async function authenticationErrorCode(
+  response: Response
+): Promise<FirstInvoiceError['code']> {
+  try {
+    const body = record(await response.clone().json());
+    const error = record(body.error);
+    return error.code === 'AUTH_INVALID_CREDENTIALS' ||
+      error.code === 'INVALID_CREDENTIALS'
+      ? error.code
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -203,8 +223,12 @@ export function createFirstInvoiceClient(
       throw new FirstInvoiceError(0);
     }
     if (!response.ok) {
-      // Provider/server error bodies may contain sensitive data. Never surface them.
-      throw new FirstInvoiceError(response.status);
+      // Retain only Account's two known reauthentication codes, never the error message/body.
+      const code =
+        response.status === 401
+          ? await authenticationErrorCode(response)
+          : null;
+      throw new FirstInvoiceError(response.status, code);
     }
     try {
       return await response.json();

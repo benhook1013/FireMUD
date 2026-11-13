@@ -521,6 +521,14 @@ class AccountTenantCapacityOwnerTest {
                   return mock(Record.class);
                 throw new AssertionError(sql);
               });
+      Record databaseTime = mock(Record.class);
+      var databaseNow =
+          expired
+              ? request.evidence().expiresAt()
+              : request.evidence().evaluatedAt().plusSeconds(1);
+      when(databaseTime.get("observed_at", java.time.OffsetDateTime.class))
+          .thenReturn(AccountTenantCapacityRepository.at(databaseNow));
+      when(dsl.fetchSingle("SELECT clock_timestamp() AS observed_at")).thenReturn(databaseTime);
       owner =
           new AccountTenantCapacityOwner(
               dsl,

@@ -23,6 +23,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
   private final StripeClient stripe;
   private final Clock clock;
   private final RequestOptions options;
+  private final Duration exchangeBudget;
 
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -32,6 +33,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
       StripeClient stripe, Clock clock, Duration connect, Duration read) {
     this.stripe = Objects.requireNonNull(stripe);
     this.clock = Objects.requireNonNull(clock);
+    this.exchangeBudget = read;
     options =
         RequestOptions.builder()
             .setConnectTimeout(timeout(connect))
@@ -128,6 +130,7 @@ public final class StripeHostingFirstInvoicePaymentClient {
         || "requires_payment_method".equals(intent.getStatus())) {
       if (!dispatch.takeInitialCommandPermission())
         return new Handoff("AUTHORIZED_NOT_CONFIRMED", null);
+      require(clock.instant().plus(exchangeBudget).isBefore(dispatch.validUntil()));
       CommandClaim claim = claimCommand.get();
       outsideSql();
       if (claim == null || !claim.takePermission(dispatch))

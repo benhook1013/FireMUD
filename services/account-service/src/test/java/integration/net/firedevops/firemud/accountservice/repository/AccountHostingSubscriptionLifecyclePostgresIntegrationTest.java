@@ -1358,6 +1358,187 @@ class AccountHostingSubscriptionLifecyclePostgresIntegrationTest {
   }
 
   @Test
+  void lateSignedPaymentAfterUnclaimedCancellationRetainsOneOperatorConflict() throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var dispatch =
+        checkout.prepareConfirmationDispatch(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    UUID cancellationId = UUID.randomUUID();
+    f.transport().json = response(f, "canceled");
+    assertThat(
+            f.service()
+                .reconcileUnpaidFirstInvoiceCancellation(
+                    cancellationId,
+                    f.creation().requestId(),
+                    dispatch.expectedRowVersion(),
+                    f.providerId())
+                .outcome())
+        .isEqualTo(Outcome.COMMITTED);
+    List<String> canceledImage = firstInvoiceImage(c);
+
+    checkout.status("succeeded");
+    var signed = checkout.signedSuccess();
+    var owner =
+        new net.firedevops.firemud.accountservice.service.session
+            .AccountHostingFirstInvoicePaymentService(
+            mock(
+                net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService
+                    .class),
+            mock(
+                net.firedevops.firemud.accountservice.service.session
+                    .AccountRecentReauthenticationService.class),
+            checkout.payments(),
+            new StripeEventInboxRepository(c.dsl()),
+            checkout.provider(),
+            checkout.verifier(),
+            f.service(),
+            new DataSourceTransactionManager(c.source()));
+    var conflict = owner.completeSigned(signed.payload(), signed.signature());
+    assertThat(conflict.state()).isEqualTo("OPERATOR_RECONCILIATION_REQUIRED");
+    assertThat(conflict.requestId()).isEqualTo(dispatch.requestId());
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
+
+    checkout.status("requires_confirmation");
+    assertThat(owner.completeSigned(signed.payload(), signed.signature())).isEqualTo(conflict);
+    var unrelated =
+        checkout.signWebhookPayload(
+            signed
+                .payload()
+                .replace("evt_", "evt_unrelated_")
+                .replace("payment_intent.succeeded", "invoice.paid"));
+    assertThat(owner.completeSigned(unrelated.payload(), unrelated.signature()).state())
+        .isEqualTo("IGNORED");
+    var wrongMethod =
+        checkout.signWebhookPayload(
+            signed
+                .payload()
+                .replace("evt_", "evt_wrongmethod_")
+                .replace(checkout.invoice().providerPaymentMethodId(), "pm_other"));
+    assertThatThrownBy(() -> owner.completeSigned(wrongMethod.payload(), wrongMethod.signature()))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(firstInvoiceImage(c)).isEqualTo(canceledImage);
+    assertThat(count(c, "subscription_first_invoice_late_paid_conflicts")).isOne();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(f.service().readCurrent(f.creation().tenantId()).gameplayAvailable()).isFalse();
+  }
+
+  @Test
+  void unavailableReservedInstrumentRefusesFirstInvoiceCommandWithoutClaimOrProviderPost()
+      throws Exception {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var dispatch =
+        checkout.prepareConfirmationDispatch(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    var instrument = f.instrument();
+    in(
+        c,
+        () ->
+            new AccountPaymentInstrumentRepository(c.dsl())
+                .recordAvailability(
+                    new AccountPaymentInstrumentRepository.AvailabilityObservation(
+                        UUID.randomUUID(),
+                        instrument.instrumentUuid(),
+                        instrument.accountUuid(),
+                        instrument.rowVersion(),
+                        AccountPaymentInstrumentRecord.State.UNAVAILABLE,
+                        instrument.display(),
+                        "sha256:" + "e".repeat(64))));
+
+    assertThatThrownBy(
+            () ->
+                checkout
+                    .provider()
+                    .confirm(
+                        dispatch,
+                        () ->
+                            in(
+                                c,
+                                () ->
+                                    checkout
+                                        .payments()
+                                        .claimCommand(
+                                            dispatch, checkout.invoice().ownerAccountId()))))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
+    assertThat(checkout.confirmations()).isZero();
+    assertThat(count(c, "subscription_first_invoice_command_claims")).isZero();
+  }
+
+  @Test
+  void paidFirstInvoiceWithCanceledProviderKeepsCustodyAndRecordsOperatorWork() {
+    Context c = context("latest");
+    Fixture f = fixture(c);
+    var checkout =
+        CanonicalHostingSubscriptionTestFixture.prepareFirstInvoice(
+            c.source(),
+            c.dsl(),
+            c.tx(),
+            f.creation(),
+            f.instrument(),
+            f.providerId(),
+            f.clock(),
+            f.owner());
+    var paid =
+        checkout.authorizeAndRetainSuccess(
+            CanonicalHostingSubscriptionTestFixture.BILLING_PASSWORD);
+    f.transport().json = response(f, "canceled");
+
+    var result =
+        f.service()
+            .reconcile(
+                paid.lifecycleRequestId(),
+                f.creation().requestId(),
+                paid.expectedRowVersion(),
+                f.providerId(),
+                null);
+
+    assertThat(result.outcome()).isEqualTo(Outcome.TERMINAL_FAILURE);
+    assertThat(
+            one(
+                    c,
+                    "SELECT reason FROM subscription_lifecycle_operator_outbox WHERE request_id = ?",
+                    paid.lifecycleRequestId())
+                .get("reason", String.class))
+        .isEqualTo("PAID_FIRST_INVOICE_PROVIDER_CANCELED");
+    var held =
+        one(
+            c,
+            "SELECT s.status, w.phase, r.released_at FROM subscription s "
+                + "JOIN subscription_provisioning_work w USING (subscription_id) "
+                + "JOIN subscription_instrument_reservations r USING (subscription_id) "
+                + "WHERE s.subscription_id = ?",
+            paid.invoice().subscriptionId());
+    assertThat(held.get("status", String.class)).isEqualTo("provisioning");
+    assertThat(held.get("phase", String.class)).isEqualTo("AWAITING_PAYMENT");
+    assertThat(held.get("released_at")).isNull();
+    assertThat(count(c, "subscription_lifecycle_receipts")).isZero();
+    assertThat(count(c, "subscription_first_invoice_completions")).isZero();
+    assertThat(count(c, "subscription_first_invoice_success_evidence")).isOne();
+  }
+
+  @Test
   void freshReadsBeyondObservationAgePreserveCommittedReceiptAndAuthorityUntilRealPeriodEnd() {
     for (String status : List.of("active", "trialing")) {
       Context c = context("latest");

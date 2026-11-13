@@ -212,7 +212,16 @@ public final class AccountSubscriptionIntentRepository {
    */
   public AccountSubscriptionCurrentRecord lockForLifecycle(
       UUID requestId, long expectedRowVersion) {
-    return lockBinding(requestId, expectedRowVersion, true, true, true);
+    return lockBinding(requestId, expectedRowVersion, true, true, InstrumentRequirement.RETAINED);
+  }
+
+  /**
+   * First-invoice dispatch requires the current observation of the retained method to be usable.
+   */
+  AccountSubscriptionCurrentRecord lockForFirstInvoiceCommand(
+      UUID requestId, long expectedRowVersion) {
+    return lockBinding(
+        requestId, expectedRowVersion, true, false, InstrumentRequirement.ATTACHABLE);
   }
 
   /**
@@ -221,12 +230,19 @@ public final class AccountSubscriptionIntentRepository {
    */
   AccountSubscriptionCurrentRecord lockForProvisioningSettlement(
       UUID requestId, long expectedRowVersion) {
-    return lockBinding(requestId, expectedRowVersion, true, false, true);
+    return lockBinding(requestId, expectedRowVersion, true, false, InstrumentRequirement.RETAINED);
   }
 
   private AccountSubscriptionCurrentRecord lockProvisioningBinding(
       UUID requestId, long expectedRowVersion, boolean allowProvisioning) {
-    return lockBinding(requestId, expectedRowVersion, allowProvisioning, false, false);
+    return lockBinding(
+        requestId, expectedRowVersion, allowProvisioning, false, InstrumentRequirement.ORIGINAL);
+  }
+
+  private enum InstrumentRequirement {
+    ORIGINAL,
+    ATTACHABLE,
+    RETAINED
   }
 
   private AccountSubscriptionCurrentRecord lockBinding(
@@ -234,7 +250,7 @@ public final class AccountSubscriptionIntentRepository {
       long expectedRowVersion,
       boolean allowProvisioning,
       boolean lifecycle,
-      boolean allowInstrumentObservation) {
+      InstrumentRequirement instrumentRequirement) {
     requireWritableTransaction();
     AccountBillingCustomerRecord.requireUuid(requestId);
     if (expectedRowVersion < 1) {
@@ -252,12 +268,12 @@ public final class AccountSubscriptionIntentRepository {
         currentForUpdate(original.tenantId())
             .orElseThrow(() -> new FenceRejectedException("Current subscription is absent"));
     boolean instrumentVersionAndStateMatch =
-        allowInstrumentObservation
-            ? instrument.rowVersion() >= original.reservedInstrumentVersion()
-                && (instrument.state() == AccountPaymentInstrumentRecord.State.ATTACHABLE
-                    || instrument.state() == AccountPaymentInstrumentRecord.State.UNAVAILABLE)
-            : instrument.rowVersion() == original.reservedInstrumentVersion()
-                && instrument.state() == AccountPaymentInstrumentRecord.State.ATTACHABLE;
+        instrument.rowVersion() >= original.reservedInstrumentVersion()
+            && (instrumentRequirement != InstrumentRequirement.ORIGINAL
+                || instrument.rowVersion() == original.reservedInstrumentVersion())
+            && (instrument.state() == AccountPaymentInstrumentRecord.State.ATTACHABLE
+                || (instrumentRequirement == InstrumentRequirement.RETAINED
+                    && instrument.state() == AccountPaymentInstrumentRecord.State.UNAVAILABLE));
     if (!current.subscriptionId().equals(original.subscriptionId())
         || !current.tenantId().equals(original.tenantId())
         || !current.owner().equals(original.owner())
