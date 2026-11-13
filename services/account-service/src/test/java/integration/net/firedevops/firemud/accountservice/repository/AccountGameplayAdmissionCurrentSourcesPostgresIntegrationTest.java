@@ -1864,8 +1864,7 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return new PaidFixture(caller, hosting);
   }
 
-  record PaidFixture(
-      Fixture caller, CanonicalHostingSubscriptionTestFixture.Fixture hosting) {
+  record PaidFixture(Fixture caller, CanonicalHostingSubscriptionTestFixture.Fixture hosting) {
     AccountGameplayAdmissionCurrentSources.Prepared prepare() {
       return caller.inCurrentSources(
           sources ->

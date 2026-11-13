@@ -280,8 +280,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         inWritableSerializableTransaction(
             dsl -> {
               SourceRead current =
-                  readCurrentOriginalSource(
-                      dsl, currentCaller, requestedLease, currentObservation);
+                  readCurrentOriginalSource(dsl, currentCaller, requestedLease, currentObservation);
               requireSameOriginalOperation(initial.operation(), current.operation());
               AccountOriginalNewBoundGameplayIssuanceRepository issuance =
                   new AccountOriginalNewBoundGameplayIssuanceRepository(dsl);
@@ -389,8 +388,7 @@ public final class AccountOriginalNewBoundGameplayCredentialOwner {
         inWritableSerializableTransaction(
             dsl -> {
               SourceRead current =
-                  readCurrentOriginalSource(
-                      dsl, caller, requestedLease, beforeGenesisObservation);
+                  readCurrentOriginalSource(dsl, caller, requestedLease, beforeGenesisObservation);
               requireSameOriginalOperation(beforeRead.operation(), current.operation());
               Genesis stored =
                   new AccountOriginalNewBoundGameplayIssuanceRepository(dsl)
