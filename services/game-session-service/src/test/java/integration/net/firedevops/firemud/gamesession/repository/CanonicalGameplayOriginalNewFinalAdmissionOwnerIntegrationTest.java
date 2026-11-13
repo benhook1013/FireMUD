@@ -1367,7 +1367,14 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     admin.pexpire(ascii(original.grant.key()), 0);
     var successor =
         CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
-            fixture.dsl(), ownerClient, ownerUri, catalog, original, sources.resolver, transfer, deadline());
+            fixture.dsl(),
+            ownerClient,
+            ownerUri,
+            catalog,
+            original,
+            sources.resolver,
+            transfer,
+            deadline());
     UUID transferId =
         fixture
             .dsl()

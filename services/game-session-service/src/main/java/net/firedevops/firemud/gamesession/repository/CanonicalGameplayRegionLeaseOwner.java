@@ -128,9 +128,7 @@ final class CanonicalGameplayRegionLeaseOwner {
         retainedTerminalSource == null
             ? resolveExactBridgeSource(worldRequest, evidence.candidate().identity(), worldDeadline)
             : resolveExactBridgeSource(
-                worldRequest,
-                retainedTerminalSource.candidate().bindingIdentity(),
-                worldDeadline);
+                worldRequest, retainedTerminalSource.candidate().bindingIdentity(), worldDeadline);
     CanonicalGameplayRegionRuntimeStatusRepository.Source source = initialResolved.source;
     CanonicalGameplayRegionIncarnationSource.StableEvidence incarnation =
         readCurrentIncarnation(source);
@@ -146,8 +144,7 @@ final class CanonicalGameplayRegionLeaseOwner {
     if (prior == null && expectedRegionEpoch != 1L) throw unavailable();
     if (prior != null && prior.regionEpoch() != expectedRegionEpoch) throw unavailable();
     if (retainedTerminalSource != null) {
-      if (prior == null
-          || retainedOriginal != null && retainedOriginal.finalReceipt().isEmpty()) {
+      if (prior == null || retainedOriginal != null && retainedOriginal.finalReceipt().isEmpty()) {
         throw unavailable();
       }
       transferOwner.requireFrozenOriginal(frozenOriginal, source, prior, handoffDeadline);
