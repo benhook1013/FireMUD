@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.stripe.model.StripeObject;
@@ -21,7 +22,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePayment;
+import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository.CommandClaim;
 import net.firedevops.firemud.accountservice.repository.AccountHostingFirstInvoicePaymentRepository.ConfirmationDispatch;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -199,6 +203,50 @@ class StripeHostingFirstInvoicePaymentClientTest {
   }
 
   @Test
+  void expiryAfterClaimBeforePostKeepsOriginalCommandHeldAcrossRetries() throws Exception {
+    var transport =
+        new Transport(
+            invoice("requires_confirmation"),
+            intent("requires_confirmation"),
+            invoice("requires_confirmation"),
+            intent("requires_confirmation"));
+    var clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(NOW);
+    var provider = client(transport, clock);
+    var original = dispatch();
+    Instant expiredAt = original.validUntil().plusSeconds(1);
+    var originalClaim = claim();
+    var held = new AtomicBoolean();
+    Supplier<CommandClaim> claimCommand =
+        () -> {
+          if (!held.compareAndSet(false, true)) return null;
+          when(clock.instant()).thenReturn(expiredAt);
+          return originalClaim;
+        };
+
+    assertThatThrownBy(() -> provider.confirm(original, claimCommand))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Exact existing first-invoice provider binding refused");
+    verify(originalClaim).takePermission(original);
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+
+    assertThatThrownBy(() -> provider.confirm(original, claimCommand))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Committed current billing-owner consent required");
+    assertThat(transport.methods).containsExactly(RequestMethod.GET, RequestMethod.GET);
+
+    // Fresh consent keeps the original invoice and provider key, and cannot reclaim its command.
+    var renewed = dispatch();
+    when(renewed.validUntil()).thenReturn(NOW.plusSeconds(240));
+    var handoff = provider.confirm(renewed, claimCommand);
+    assertThat(handoff.status()).isEqualTo("AUTHORIZED_NOT_CONFIRMED");
+    assertThat(handoff.clientSecret()).isNull();
+    assertThat(transport.methods)
+        .containsExactly(
+            RequestMethod.GET, RequestMethod.GET, RequestMethod.GET, RequestMethod.GET);
+  }
+
+  @Test
   void expiryAfterDispatchDoesNotPermitAnotherCommandOrClientSecretDisclosure() {
     var transport = new Transport();
     var original = dispatch();
@@ -312,9 +360,13 @@ class StripeHostingFirstInvoicePaymentClientTest {
   }
 
   private static StripeHostingFirstInvoicePaymentClient client(Transport transport) {
+    return client(transport, Clock.fixed(NOW, ZoneOffset.UTC));
+  }
+
+  private static StripeHostingFirstInvoicePaymentClient client(Transport transport, Clock clock) {
     return new StripeHostingFirstInvoicePaymentClient(
         new com.stripe.StripeClient(transport),
-        Clock.fixed(NOW, ZoneOffset.UTC),
+        clock,
         Duration.ofMillis(250),
         Duration.ofSeconds(1));
   }
