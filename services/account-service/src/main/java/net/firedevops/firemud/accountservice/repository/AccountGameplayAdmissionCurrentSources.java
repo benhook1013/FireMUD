@@ -146,6 +146,16 @@ public final class AccountGameplayAdmissionCurrentSources {
       UUID originalTokenJti,
       CommittedCandidateVerificationData candidate,
       AccountGameplayAdmissionPaidSource paidSource) {
+    return prepareCurrentPublicProductionNew(
+        tenantId, originalTokenJti, candidate, paidSource, false);
+  }
+
+  Prepared prepareCurrentPublicProductionNew(
+      UUID tenantId,
+      UUID originalTokenJti,
+      CommittedCandidateVerificationData candidate,
+      AccountGameplayAdmissionPaidSource paidSource,
+      boolean requalifyPaidMembership) {
     UUID accountId = verifiedCallerAccountId(tenantId, originalTokenJti, candidate);
     requireWritableSerializableAccountTransaction();
 
@@ -157,6 +167,12 @@ public final class AccountGameplayAdmissionCurrentSources {
         && paidSource.hasCurrentPaidSourceCandidate(dsl, workloadNamespace, tenantId)) {
       lockRequiredAccountsBeforeTenantSources(dsl, tenantId, accountId);
       paidPreparation = paidSource.prepare(dsl, workloadNamespace, tenantId);
+      if (requalifyPaidMembership) {
+        var selected = tenantAuthorityEvents.readCurrentSourceSelection(tenantId);
+        if (selected.kind() != SourceKind.PAID_HOSTING) throw unavailable();
+        readCommittedCandidate(originalTokenJti, candidate);
+        return new Prepared(selected, paidSource, paidPreparation);
+      }
     } else {
       lockExactAccountFirst(accountId);
     }
@@ -191,6 +207,16 @@ public final class AccountGameplayAdmissionCurrentSources {
       UUID expectedOriginalTokenJti,
       CommittedCandidateVerificationData expectedCommittedCandidate,
       Observed observed) {
+    return readCurrentPublicProductionNew(
+        targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate, observed, false);
+  }
+
+  Current readCurrentPublicProductionNew(
+      UUID targetTenantId,
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate,
+      Observed observed,
+      boolean requalifyPaidMembership) {
     UUID accountId =
         verifiedCallerAccountId(
             targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate);
@@ -207,13 +233,13 @@ public final class AccountGameplayAdmissionCurrentSources {
     } else {
       lockExactAccountFirst(accountId);
     }
-    CallerSources caller =
-        readCallerSources(
-            targetTenantId, expectedOriginalTokenJti, expectedCommittedCandidate, accountId);
-    SourceSelection selected = caller.selection();
+    SourceSelection selected = tenantAuthorityEvents.readCurrentSourceSelection(targetTenantId);
     if (observed != null
         && (selected.kind() != observed.selected.kind()
             || !observed.selected.matches(selected.checkpoint()))) throw unavailable();
+    CommittedCandidateVerificationData candidate =
+        readCommittedCandidate(expectedOriginalTokenJti, expectedCommittedCandidate);
+    Snapshot snapshot;
     Long sourceValidUntilMs = null;
     if (selected.kind() == SourceKind.PAID_HOSTING) {
       if (paidReceipt == null) throw unavailable();
@@ -229,14 +255,21 @@ public final class AccountGameplayAdmissionCurrentSources {
           || !receipt.allowNewGameplayBindings()) {
         throw unavailable();
       }
+      snapshot =
+          requalifyPaidMembership
+              ? membershipSnapshots.requalifyPaidAcquisition(accountId, targetTenantId, receipt)
+              : membershipSnapshots.readCurrent(accountId, targetTenantId);
       requireSupportedPublicTenantTuple(
-          caller.snapshot(), targetTenantId, event, receipt.tenantBillingSequence());
+          snapshot, targetTenantId, event, receipt.tenantBillingSequence());
       sourceValidUntilMs = receipt.validUntil().toEpochMilli();
     } else {
       if (paidReceipt != null) throw unavailable();
-      requireCurrentDemo(caller.snapshot(), targetTenantId, selected.checkpoint());
+      snapshot = membershipSnapshots.readCurrent(accountId, targetTenantId);
+      requireCurrentDemo(snapshot, targetTenantId, selected.checkpoint());
     }
-    return new Current(caller.snapshot(), caller.candidate(), sourceValidUntilMs);
+    requireCurrentActiveMembership(snapshot, accountId, targetTenantId);
+    requireCandidateAuthorityMatchesSnapshot(candidate, snapshot, accountId);
+    return new Current(snapshot, candidate, sourceValidUntilMs);
   }
 
   private void requireCurrentDemo(
@@ -258,6 +291,15 @@ public final class AccountGameplayAdmissionCurrentSources {
     requireCurrentActiveMembership(snapshot, accountId, targetTenantId);
 
     CommittedCandidateVerificationData currentCommittedCandidate =
+        readCommittedCandidate(expectedOriginalTokenJti, expectedCommittedCandidate);
+    requireCandidateAuthorityMatchesSnapshot(currentCommittedCandidate, snapshot, accountId);
+    return new CallerSources(snapshot, selected, currentCommittedCandidate);
+  }
+
+  private CommittedCandidateVerificationData readCommittedCandidate(
+      UUID expectedOriginalTokenJti,
+      CommittedCandidateVerificationData expectedCommittedCandidate) {
+    CommittedCandidateVerificationData currentCommittedCandidate =
         issuance
             .readCurrentCommittedCandidateByJti(expectedOriginalTokenJti)
             .orElseThrow(AccountGameplayAdmissionCurrentSources::unavailable);
@@ -265,9 +307,7 @@ public final class AccountGameplayAdmissionCurrentSources {
         expectedCommittedCandidate, currentCommittedCandidate)) {
       throw unavailable();
     }
-    requireCandidateAuthorityMatchesSnapshot(currentCommittedCandidate, snapshot, accountId);
-
-    return new CallerSources(snapshot, selected, currentCommittedCandidate);
+    return currentCommittedCandidate;
   }
 
   private UUID verifiedCallerAccountId(
@@ -416,7 +456,7 @@ public final class AccountGameplayAdmissionCurrentSources {
         "tokenIdentityEvidence", currentTokenIdentityEvidence(snapshot, currentCommittedCandidate));
   }
 
-  private static Map<String, Object> currentAuthorityTuple(Snapshot snapshot) {
+  static Map<String, Object> currentAuthorityTuple(Snapshot snapshot) {
     AuthorityTuple current = snapshot.authorityTuple();
     Optional<AccountSecurityCutoff> accountCutoff =
         current

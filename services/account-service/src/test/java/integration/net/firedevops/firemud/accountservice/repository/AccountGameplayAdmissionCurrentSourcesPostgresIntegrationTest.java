@@ -502,6 +502,93 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   }
 
   @Test
+  void paidRenewalRequalifiesFreshAcquisitionAndPreservesOriginalMembershipAndLease()
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    var original = paid.read(paid.prepare().observeOutsideSql());
+    var lease = paid.caller().beginPendingAdmissionLease(original);
+    String stream =
+        "account:auth-authority:v1:membership/"
+            + paid.caller().account.getAccountUuid()
+            + "/"
+            + paid.hosting().tenantId();
+    var outbox = new AccountAuthorityOutboxRepository(paid.caller().dsl);
+    var firstJoin = outbox.findEvent(stream, 1L).orElseThrow();
+    var pairRepository = new AccountMembershipPairAuthorityRepository(paid.caller().dsl);
+    var pairBefore =
+        paid.caller()
+            .transaction
+            .execute(
+                ignored ->
+                    pairRepository
+                        .readPositive(
+                            paid.caller().account.getAccountUuid(), paid.hosting().tenantId())
+                        .orElseThrow());
+
+    paid.hosting().clock().advance(Duration.ofSeconds(1));
+    paid.refresh();
+    assertThatThrownBy(paid::prepare)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenantAuthorityGeneration current equality");
+
+    var fresh = paid.readFreshAcquisition(paid.prepareFreshAcquisition().observeOutsideSql());
+    assertThatThrownBy(() -> fresh.requireMatchesOriginalLease(lease))
+        .isInstanceOf(IllegalStateException.class);
+    var newLease = paid.caller().beginPendingAdmissionLease(fresh);
+    fresh.requireMatchesOriginalLease(newLease);
+    assertThat(paid.caller().readLeaseOperation(lease).evidence().canonicalJson())
+        .isEqualTo(lease.canonicalJson());
+    var checkpoint = outbox.readCheckpoint(stream).orElseThrow();
+    assertThat(checkpoint.outboxSequence()).isEqualTo(2L);
+    assertThat(outbox.findEvent(stream, 1L)).contains(firstJoin);
+    var pairAfter =
+        paid.caller()
+            .transaction
+            .execute(
+                ignored ->
+                    pairRepository
+                        .readPositive(
+                            paid.caller().account.getAccountUuid(), paid.hosting().tenantId())
+                        .orElseThrow());
+    assertThat(pairAfter.membershipVersion()).isEqualTo(pairBefore.membershipVersion());
+    assertThat(pairAfter.membershipAuthorityGeneration())
+        .isEqualTo(pairBefore.membershipAuthorityGeneration());
+    assertThat(
+            paid.readFreshAcquisition(paid.prepareFreshAcquisition().observeOutsideSql())
+                .leaseSourceFields())
+        .isEqualTo(fresh.leaseSourceFields());
+    assertThat(outbox.readCheckpoint(stream)).contains(checkpoint);
+  }
+
+  @Test
+  void newerPaidCutoffDuringAcquisitionObservationDoesNotAppendMembershipCheckpoint()
+      throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    paid.hosting().clock().advance(Duration.ofSeconds(1));
+    paid.refresh();
+    String stream =
+        "account:auth-authority:v1:membership/"
+            + paid.caller().account.getAccountUuid()
+            + "/"
+            + paid.hosting().tenantId();
+    var outbox = new AccountAuthorityOutboxRepository(paid.caller().dsl);
+    var before = outbox.readCheckpoint(stream);
+    var prepared = paid.prepareFreshAcquisition();
+    paid.hosting()
+        .transport()
+        .duringRead(
+            () -> {
+              paid.hosting().clock().advance(Duration.ofSeconds(1));
+              paid.refresh();
+            });
+    var observed = prepared.observeOutsideSql();
+    assertThatThrownBy(() -> paid.readFreshAcquisition(observed))
+        .isInstanceOf(AccountSubscriptionIntentRepository.FenceRejectedException.class);
+    assertThat(outbox.readCheckpoint(stream)).isEqualTo(before);
+    assertThat(outbox.findEvent(stream, 2L)).isEmpty();
+  }
+
+  @Test
   void authenticatedPaidOwnerCapsTheLeaseFinalizesOnceAndRecoversWithoutPaidAuthority()
       throws Exception {
     try (PhysicalRedisFixture redis = PhysicalRedisFixture.start()) {
@@ -1867,24 +1954,44 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   private record PaidFixture(
       Fixture caller, CanonicalHostingSubscriptionTestFixture.Fixture hosting) {
     AccountGameplayAdmissionCurrentSources.Prepared prepare() {
+      return prepare(false);
+    }
+
+    AccountGameplayAdmissionCurrentSources.Prepared prepareFreshAcquisition() {
+      return prepare(true);
+    }
+
+    private AccountGameplayAdmissionCurrentSources.Prepared prepare(boolean requalify) {
       return caller.inCurrentSources(
           sources ->
               sources.prepareCurrentPublicProductionNew(
                   hosting.tenantId(),
                   caller.committedCandidate.identity().tokenJti(),
                   caller.committedCandidate,
-                  hosting.admissionPaidSource()));
+                  hosting.admissionPaidSource(),
+                  requalify));
     }
 
     AccountGameplayAdmissionCurrentSources.Current read(
         AccountGameplayAdmissionCurrentSources.Observed observed) {
+      return read(observed, false);
+    }
+
+    AccountGameplayAdmissionCurrentSources.Current readFreshAcquisition(
+        AccountGameplayAdmissionCurrentSources.Observed observed) {
+      return read(observed, true);
+    }
+
+    private AccountGameplayAdmissionCurrentSources.Current read(
+        AccountGameplayAdmissionCurrentSources.Observed observed, boolean requalify) {
       return caller.inCurrentSources(
           sources ->
               sources.readCurrentPublicProductionNew(
                   hosting.tenantId(),
                   caller.committedCandidate.identity().tokenJti(),
                   caller.committedCandidate,
-                  observed));
+                  observed,
+                  requalify));
     }
 
     void refresh() {
