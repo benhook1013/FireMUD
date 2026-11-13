@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -79,7 +80,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
       var write = new TransactionTemplate(transactions);
       FreshTenantCreationEvidence tenant = bootstrapFreshTenant(dsl, write);
 
-      Instant priorAt = Instant.now();
+      Instant priorAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
       var prior =
           playerRequest(
               tenant.canonicalTenantId(),
@@ -132,7 +133,7 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
           });
 
       waitUntil(prior.evidence().expiresAt().plusMillis(100));
-      Instant nextAt = Instant.now();
+      Instant nextAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
       var nextSeed =
           playerRequest(
               tenant.canonicalTenantId(),
