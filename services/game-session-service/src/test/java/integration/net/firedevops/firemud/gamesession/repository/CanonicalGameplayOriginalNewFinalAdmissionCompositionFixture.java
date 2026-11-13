@@ -73,7 +73,7 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
     implements AutoCloseable {
   private static final Clock CLOCK = Clock.systemUTC();
   private static final int TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS = 128;
-  private static final long TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES = 128L * 1_048_576L;
+  private static final long TEST_CAPACITY_EVIDENCE_BYTES_PER_RECORD = 1_048_576L;
   private final GenericContainer<?> redis =
       new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
   private final AtomicInteger finalReadCalls = new AtomicInteger();
@@ -584,6 +584,16 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
   }
 
   public void installActualCandidate(AccountGameplayAdmissionLeaseEvidence actualLease) {
+    installActualCandidate(
+        actualLease,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
+        TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS);
+  }
+
+  public void installActualCandidate(
+      AccountGameplayAdmissionLeaseEvidence actualLease,
+      int maximumActiveRecords,
+      int maximumRetainedRecords) {
     decision =
         new CanonicalGameplayAdmissionDecision(
             binding.transitionId(),
@@ -612,11 +622,13 @@ public final class CanonicalGameplayOriginalNewFinalAdmissionCompositionFixture
         .dsl()
         .execute(
             "INSERT INTO game_session_capacity_evidence_budget"
-                + " (tenant_id,maximum_records,maximum_binding_bytes) VALUES (?,?,?)"
+                + " (tenant_id,maximum_records,maximum_binding_bytes,maximum_retained_records)"
+                + " VALUES (?,?,?,?)"
                 + " ON CONFLICT DO NOTHING",
             assignment.tenantId(),
-            TEST_CAPACITY_EVIDENCE_MAXIMUM_RECORDS,
-            TEST_CAPACITY_EVIDENCE_MAXIMUM_BINDING_BYTES);
+            maximumActiveRecords,
+            maximumActiveRecords * TEST_CAPACITY_EVIDENCE_BYTES_PER_RECORD,
+            maximumRetainedRecords);
   }
 
   public Receipt complete(
