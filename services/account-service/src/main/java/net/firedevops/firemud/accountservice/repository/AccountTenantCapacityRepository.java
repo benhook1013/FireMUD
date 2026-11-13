@@ -155,6 +155,11 @@ public final class AccountTenantCapacityRepository {
         "observed_at");
   }
 
+  public Result create(Request request, Record usage, Instant expiresAt) {
+    return createIfQuotaAvailable(request, usage, expiresAt)
+        .orElseThrow(() -> new CapacityException(Failure.CAPACITY_QUOTA_EXCEEDED));
+  }
+
   /** Retains acceptance only after the locked quota check, in the same reservation transaction. */
   public Optional<Result> createIfQuotaAvailable(Request request, Record usage, Instant expiresAt) {
     requireFresh(request.evidence());
