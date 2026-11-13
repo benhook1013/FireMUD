@@ -2,7 +2,15 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
+import de.mkammerer.argon2.Argon2;
+import de.mkammerer.argon2.Argon2Factory;
 import integration.net.firedevops.firemud.accountservice.repository.CanonicalHostingSubscriptionTestFixture;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -11,14 +19,18 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLContext;
 import net.firedevops.firemud.accountservice.controller.AccountHostingFirstInvoiceController;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -29,8 +41,10 @@ import org.apache.catalina.startup.Tomcat;
 import org.apache.coyote.http11.AbstractHttp11Protocol;
 import org.apache.tomcat.util.net.SSLHostConfig;
 import org.apache.tomcat.util.net.SSLHostConfigCertificate;
+import org.jooq.Record;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.MockedStatic;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.context.support.GenericWebApplicationContext;
 import org.springframework.web.servlet.DispatcherServlet;
@@ -99,6 +113,227 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
               "6379");
 
   @TempDir Path temporary;
+
+  @Test
+  void billingReauthenticationDoesNotHoldIssuerSourceAcrossOtpVerificationAndRollsBackBindFailure()
+      throws Exception {
+    try (var owners =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var first = owners.issueCertifiedAccount(PASSWORD);
+      var second = owners.issueCertifiedAccount(PASSWORD);
+      var dataSource = Objects.requireNonNull(first.sources().manager.getDataSource());
+      var firstHosting =
+          CanonicalHostingSubscriptionTestFixture.createAwaitingPayment(
+              dataSource, first.account());
+      var secondHosting =
+          CanonicalHostingSubscriptionTestFixture.createAwaitingPayment(
+              dataSource, second.account());
+      var reauthentication =
+          new AccountRecentReauthenticationService(
+              first.sources().primary,
+              first.sources().accounts,
+              new AccountAuthorityGenerationRepository(firstHosting.dsl()),
+              new AccountRecentReauthenticationRepository(firstHosting.dsl()),
+              new AccountRecentReauthenticationPolicyRepository(firstHosting.dsl()),
+              first.sources().manager,
+              firstHosting.clock(),
+              new AccountControlUiResponseCryptography(
+                  new AccountControlUiKeyring(temporary.resolve("custody")), firstHosting.clock()));
+      var payments =
+          new AccountHostingFirstInvoicePaymentService(
+              first.actors(),
+              reauthentication,
+              firstHosting.firstInvoiceRepository(),
+              new StripeEventInboxRepository(firstHosting.dsl()),
+              firstHosting.firstInvoiceProvider(),
+              firstHosting.webhookVerifier(),
+              firstHosting.service(),
+              first.sources().manager);
+
+      // The second issuance must not make the first Account actor stale; both are current inputs
+      // to the same billing owner and share the Account ISSUER producer source.
+      assertThat(first.actors().authenticateAccount(first.compact()).accountId())
+          .isEqualTo(first.account().getAccountUuid());
+      assertThat(second.actors().authenticateAccount(second.compact()).accountId())
+          .isEqualTo(second.account().getAccountUuid());
+      first.sources().installGlobalOtp(first.account(), "test-only-paused-billing-otp");
+      var firstTuple =
+          payments.describeOwner(first.compact(), firstHosting.creation().subscriptionId());
+      var secondTuple =
+          payments.describeOwner(second.compact(), secondHosting.creation().subscriptionId());
+      UUID firstReauthenticationRequest = UUID.randomUUID();
+      UUID firstAuthorizationRequest = UUID.randomUUID();
+      UUID secondReauthenticationRequest = UUID.randomUUID();
+      UUID secondAuthorizationRequest = UUID.randomUUID();
+      String otpBefore = otpRowImage(firstHosting, first.account().getId());
+      Map<String, String> firstBillingBefore =
+          firstInvoiceRowImages(firstHosting, firstTuple.subscriptionId());
+
+      firstHosting
+          .dsl()
+          .execute(
+              "CREATE FUNCTION fixture_refuse_paused_reauthentication_binding() RETURNS trigger "
+                  + "LANGUAGE plpgsql AS $$ BEGIN IF NEW.subscription_id = '"
+                  + firstTuple.subscriptionId()
+                  + "'::uuid THEN RAISE EXCEPTION 'controlled paused billing reauthentication bind rollback' "
+                  + "USING ERRCODE = '23514'; END IF; RETURN NEW; END; $$");
+      firstHosting
+          .dsl()
+          .execute(
+              "CREATE TRIGGER fixture_refuse_paused_reauthentication_binding BEFORE INSERT "
+                  + "ON subscription_first_invoice_operation_fences FOR EACH ROW "
+                  + "EXECUTE FUNCTION fixture_refuse_paused_reauthentication_binding()");
+      CountDownLatch verificationPaused = new CountDownLatch(1);
+      CountDownLatch releaseVerification = new CountDownLatch(1);
+      try (var requestExecutor = Executors.newSingleThreadExecutor()) {
+        var firstAttempt =
+            requestExecutor.submit(
+                () ->
+                    reauthenticateWithPausedFirstVerification(
+                        payments,
+                        first,
+                        firstTuple,
+                        firstReauthenticationRequest,
+                        firstAuthorizationRequest,
+                        "test-only-paused-billing-otp",
+                        verificationPaused,
+                        releaseVerification));
+        try {
+          assertThat(verificationPaused.await(30, TimeUnit.SECONDS)).isTrue();
+
+          // The existing HTTPS test exercises the registered controller route. This direct owner
+          // call gives deterministic control over the KDF worker: Account 2 must finish while
+          // Account 1's primary-auth path is stopped inside Argon2. Under the old order, Account 1
+          // retains the shared ISSUER lock and this call refuses at NOWAIT.
+          UUID secondEvidence =
+              reauthenticateInitialInvoice(
+                  payments,
+                  second,
+                  secondTuple,
+                  secondReauthenticationRequest,
+                  secondAuthorizationRequest,
+                  PASSWORD);
+          assertThat(secondEvidence).isNotNull();
+          assertThat(
+                  firstHosting
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT account_uuid, reauthentication_evidence_id FROM "
+                              + "subscription_first_invoice_operation_fences WHERE subscription_id = ?",
+                          secondTuple.subscriptionId())
+                      .get("account_uuid", UUID.class))
+              .isEqualTo(second.account().getAccountUuid());
+          assertThat(
+                  firstHosting
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT reauthentication_evidence_id FROM "
+                              + "subscription_first_invoice_operation_fences WHERE subscription_id = ?",
+                          secondTuple.subscriptionId())
+                      .get("reauthentication_evidence_id", UUID.class))
+              .isEqualTo(secondEvidence);
+        } finally {
+          releaseVerification.countDown();
+        }
+
+        assertThatThrownBy(() -> firstAttempt.get(60, TimeUnit.SECONDS))
+            .isInstanceOf(ExecutionException.class)
+            .satisfies(
+                failure ->
+                    assertThat(throwableMessages(failure))
+                        .contains("controlled paused billing reauthentication bind rollback"));
+      } finally {
+        firstHosting
+            .dsl()
+            .execute(
+                "DROP TRIGGER fixture_refuse_paused_reauthentication_binding "
+                    + "ON subscription_first_invoice_operation_fences");
+        firstHosting
+            .dsl()
+            .execute("DROP FUNCTION fixture_refuse_paused_reauthentication_binding()");
+      }
+
+      assertThat(otpRowImage(firstHosting, first.account().getId())).isEqualTo(otpBefore);
+      assertThat(firstInvoiceRowImages(firstHosting, firstTuple.subscriptionId()))
+          .isEqualTo(firstBillingBefore);
+      assertThat(
+              firstHosting
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_recent_reauthentication_evidence WHERE request_id = ?",
+                      firstReauthenticationRequest)
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(
+              firstHosting
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_recent_reauthentication_replay_credentials "
+                          + "WHERE request_id = ?",
+                      firstReauthenticationRequest)
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(
+              firstHosting
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_recent_reauthentication_consumptions "
+                          + "WHERE creation_operation_id = ?",
+                      firstAuthorizationRequest)
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(
+              firstHosting
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM subscription_first_invoice_operation_fences "
+                          + "WHERE subscription_id = ?",
+                      firstTuple.subscriptionId())
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(
+              firstHosting
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT evidence.xmin::text AS evidence_xmin, proof.xmin::text AS proof_xmin, "
+                          + "fence.xmin::text AS fence_xmin, evidence.billing_context_digest, "
+                          + "fence.binding_digest FROM account_recent_reauthentication_evidence evidence "
+                          + "JOIN account_recent_reauthentication_replay_credentials proof "
+                          + "ON proof.evidence_id = evidence.evidence_id "
+                          + "JOIN subscription_first_invoice_operation_fences fence "
+                          + "ON fence.reauthentication_evidence_id = evidence.evidence_id "
+                          + "WHERE evidence.evidence_id = ?",
+                      firstHosting
+                          .dsl()
+                          .fetchSingle(
+                              "SELECT reauthentication_evidence_id FROM "
+                                  + "subscription_first_invoice_operation_fences WHERE subscription_id = ?",
+                              secondTuple.subscriptionId())
+                          .get("reauthentication_evidence_id", UUID.class)))
+          .satisfies(
+              row -> {
+                assertThat(row.get("evidence_xmin", String.class))
+                    .isEqualTo(row.get("proof_xmin", String.class))
+                    .isEqualTo(row.get("fence_xmin", String.class));
+                assertThat(row.get("billing_context_digest", String.class))
+                    .isEqualTo(row.get("binding_digest", String.class));
+              });
+      assertThat(
+              firstHosting
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT count(*) FROM account_recent_reauthentication_evidence WHERE request_id = ?",
+                      secondReauthenticationRequest)
+                  .get(0, Long.class))
+          .isOne();
+    }
+  }
 
   @Test
   void actualHttpsOwnerConsentScaAndExactSignedCompletionGrantAuthorityOnlyAfterReadback()
@@ -960,6 +1195,118 @@ class AccountHostingFirstInvoiceHttpsCompositionPostgresIntegrationTest {
         assertNoReceipt(hosting);
       }
     }
+  }
+
+  private static UUID reauthenticateInitialInvoice(
+      AccountHostingFirstInvoicePaymentService payments,
+      AccountControlUiOriginalOrderFixture.IssuedAccount issued,
+      AccountHostingFirstInvoicePaymentService.OwnerView tuple,
+      UUID reauthenticationRequestId,
+      UUID authorizationRequestId,
+      String secret) {
+    return payments.reauthenticate(
+        issued.compact(),
+        tuple.subscriptionId(),
+        reauthenticationRequestId,
+        authorizationRequestId,
+        authorizationRequestId,
+        tuple.expectedRowVersion(),
+        tuple.authorizationVersion(),
+        tuple.tupleDigest(),
+        tuple.expiresAt(),
+        AccountRecentReauthenticationEvidence.BillingAuthorizationPurpose.INITIAL_CONFIRMATION,
+        issued.account().getEmail(),
+        secret);
+  }
+
+  /** Runs the real service call on one controlled worker with a thread-local Argon2 pause. */
+  private static UUID reauthenticateWithPausedFirstVerification(
+      AccountHostingFirstInvoicePaymentService payments,
+      AccountControlUiOriginalOrderFixture.IssuedAccount issued,
+      AccountHostingFirstInvoicePaymentService.OwnerView tuple,
+      UUID reauthenticationRequestId,
+      UUID authorizationRequestId,
+      String secret,
+      CountDownLatch verificationPaused,
+      CountDownLatch releaseVerification) {
+    Argon2 delegate = Argon2Factory.create();
+    Argon2 controlled = mock(Argon2.class);
+    AtomicBoolean pauseFirstVerification = new AtomicBoolean(true);
+    when(controlled.verify(anyString(), any(char[].class)))
+        .thenAnswer(
+            invocation -> {
+              if (pauseFirstVerification.compareAndSet(true, false)) {
+                verificationPaused.countDown();
+                if (!releaseVerification.await(60, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException(
+                      "Paused Account Argon2 verification was not released");
+                }
+              }
+              return delegate.verify(invocation.getArgument(0), invocation.<char[]>getArgument(1));
+            });
+    doAnswer(
+            invocation -> {
+              delegate.wipeArray(invocation.<char[]>getArgument(0));
+              return null;
+            })
+        .when(controlled)
+        .wipeArray(any(char[].class));
+    try (MockedStatic<Argon2Factory> factory = mockStatic(Argon2Factory.class)) {
+      factory.when(Argon2Factory::create).thenReturn(controlled);
+      return reauthenticateInitialInvoice(
+          payments, issued, tuple, reauthenticationRequestId, authorizationRequestId, secret);
+    }
+  }
+
+  private static String otpRowImage(
+      CanonicalHostingSubscriptionTestFixture.Fixture hosting, Long accountId) {
+    Record row =
+        hosting
+            .dsl()
+            .fetchOne(
+                "SELECT to_jsonb(challenge)::text AS row_image, challenge.xmin::text AS row_xmin "
+                    + "FROM account_email_login_challenge challenge WHERE account_id = ?",
+                accountId);
+    return row == null
+        ? "<absent>"
+        : row.get("row_image", String.class) + "\n" + row.get("row_xmin", String.class);
+  }
+
+  private static Map<String, String> firstInvoiceRowImages(
+      CanonicalHostingSubscriptionTestFixture.Fixture hosting, UUID subscriptionId) {
+    Map<String, String> images = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "subscription_first_invoices",
+            "subscription_first_invoice_operation_fences",
+            "subscription_first_invoice_confirmations",
+            "subscription_first_invoice_authorizations",
+            "subscription_first_invoice_dispatches",
+            "subscription_first_invoice_command_claims")) {
+      Record row =
+          hosting
+              .dsl()
+              .fetchOne(
+                  "SELECT to_jsonb(billing_row)::text AS row_image, billing_row.xmin::text AS row_xmin "
+                      + "FROM "
+                      + table
+                      + " billing_row WHERE subscription_id = ?",
+                  subscriptionId);
+      images.put(
+          table,
+          row == null
+              ? "<absent>"
+              : row.get("row_image", String.class) + "\n" + row.get("row_xmin", String.class));
+    }
+    return Map.copyOf(images);
+  }
+
+  private static String throwableMessages(Throwable failure) {
+    StringBuilder messages = new StringBuilder();
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current.getMessage() != null) messages.append(current.getMessage()).append('\n');
+    }
+    return messages.toString();
   }
 
   private static long consumptionCount(
