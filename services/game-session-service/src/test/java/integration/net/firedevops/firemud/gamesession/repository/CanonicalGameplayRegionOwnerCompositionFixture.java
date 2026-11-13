@@ -2330,7 +2330,8 @@ public final class CanonicalGameplayRegionOwnerCompositionFixture {
               .addCommand(CommandType.PTTL)
               .addCommand(CommandType.GET)
               .addCommand(CommandType.SET)
-              .addCommand(CommandType.PEXPIRE);
+              .addCommand(CommandType.PEXPIRE)
+              .addCommand(CommandType.TIME);
       if (allowAccountMemberRepair) {
         permissions
             .keyPattern("session:game:index:account:*")

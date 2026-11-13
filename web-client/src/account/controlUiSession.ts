@@ -6,6 +6,7 @@ import {
   type AccountControlUiLoginRequest,
   type AccountControlUiLoginResult,
 } from '../api/accountControlUi';
+import { authenticationErrorCode } from '../api/hostingFirstInvoice';
 
 export interface ControlUiSessionView {
   readonly identity: string;
@@ -400,6 +401,37 @@ export class ControlUiSessionStore {
           discardResponse(response);
           throw error;
         }
+        if (
+          response.status === 401 &&
+          target.pathname.endsWith('/reauthenticate')
+        ) {
+          let bytes: Uint8Array;
+          try {
+            bytes = await readBoundedBytes(response, controller.signal);
+          } catch {
+            assertCurrent();
+            assertWithinDeadline();
+            this.clearIfCurrent(session.identity, revision);
+            throw new ControlUiSessionError('AUTH_REJECTED');
+          }
+          assertCurrent();
+          assertWithinDeadline();
+          const boundedResponse = guardedJsonResponse(
+            response.status,
+            bytes,
+            assertCurrent,
+            response.headers.get('content-type') ?? 'application/json'
+          );
+          if (await authenticationErrorCode(boundedResponse)) {
+            assertCurrent();
+            assertWithinDeadline();
+            return boundedResponse;
+          }
+          discardResponse(boundedResponse);
+          this.requests.delete(controller);
+          this.clearIfCurrent(session.identity, revision);
+          throw new ControlUiSessionError('AUTH_REJECTED');
+        }
         if (response.status === 401 || response.status === 403) {
           discardResponse(response);
           this.requests.delete(controller);
@@ -561,9 +593,11 @@ export class ControlUiSessionStore {
   }
 
   private clearLoginRecovery(): void {
+    const hadRecovery = this.loginRecovery !== null;
     if (this.loginRecoveryTimer !== null) clearTimeout(this.loginRecoveryTimer);
     this.loginRecoveryTimer = null;
     this.loginRecovery = null;
+    if (hadRecovery) this.emitChange();
   }
 
   private expireIfCurrent(identity: string, revision: number): void {
@@ -614,6 +648,10 @@ export class ControlUiSessionStore {
     } catch {
       // Cache clearing must not restore or retain the invalidated token.
     }
+    this.emitChange();
+  }
+
+  private emitChange(): void {
     for (const listener of this.listeners) listener();
   }
 }

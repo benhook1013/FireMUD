@@ -265,6 +265,107 @@ describe('memory-only control-ui session owner', () => {
     expect(store.getSession()).toBeNull();
   });
 
+  it.each(['AUTH_INVALID_CREDENTIALS', 'INVALID_CREDENTIALS'])(
+    'keeps a valid bearer after reauthentication returns %s',
+    async (code) => {
+      const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            status: 'ERROR',
+            data: null,
+            error: { code, message: 'Invalid credentials' },
+          }),
+          {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      );
+      const store = makeStore({ fetchImpl });
+      const session = await store.signIn(loginApi(), {
+        email: 'owner@example.com',
+        secret: 'primary-secret',
+      });
+      const url = new URL(
+        `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice/reauthenticate`,
+        origin
+      );
+
+      const response = await store.authenticatedRequest(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: { code } });
+      expect(store.getSession()).toEqual(session);
+      expect(
+        new Headers(fetchImpl.mock.calls[0][1]?.headers).get('authorization')
+      ).toBe(`Bearer ${authToken}`);
+    }
+  );
+
+  it('still clears the bearer for a reauthentication session rejection', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ code: 'AUTH_SESSION_REVOKED' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const url = new URL(
+      `/api/account/billing/hosting/subscriptions/${subscriptionId}/first-invoice/reauthenticate`,
+      origin
+    );
+
+    await expect(
+      store.authenticatedRequest(url, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      })
+    ).rejects.toMatchObject({ code: 'AUTH_REJECTED' });
+    expect(store.getSession()).toBeNull();
+  });
+
+  it('does not treat a credential code on an owner read as a reauthentication denial', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'ERROR',
+          data: null,
+          error: {
+            code: 'AUTH_INVALID_CREDENTIALS',
+            message: 'Invalid credentials',
+          },
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    const store = makeStore({ fetchImpl });
+    await store.signIn(loginApi(), {
+      email: 'owner@example.com',
+      secret: 'primary-secret',
+    });
+    const { url, init } = getRequest();
+
+    await expect(store.authenticatedRequest(url, init)).rejects.toMatchObject({
+      code: 'AUTH_REJECTED',
+    });
+    expect(store.getSession()).toBeNull();
+  });
+
   it('times out a stalled owner fetch and ignores its late auth rejection', async () => {
     vi.useFakeTimers();
     const pending = deferred<Response>();
