@@ -2217,6 +2217,7 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
     assertThat(successor.evidence)
         .as("committed continuation grants no provisional bridge authority")
         .isNull();
+    // The old epoch cannot reacquire the lease after the successor advances the timeline.
     assertThatThrownBy(
             () ->
                 CanonicalGameplayRegionOwnerCompositionFixture.handoffExistingOriginal(
@@ -2228,8 +2229,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                     sources.resolver,
                     transfer,
                     deadline()))
-        .isInstanceOf(CanonicalGameplayBindingInventoryConflictException.class)
-        .hasMessage("A first binding cannot proceed while an active controller exists");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical Game Session region lease is unavailable");
     assertThat(
             new CanonicalGameplayRegionRuntimeStatusRepository(fixture.dsl()).find(original.source))
         .contains(successor.status);

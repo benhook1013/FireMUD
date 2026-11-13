@@ -596,26 +596,77 @@ public final class AccountHostingFirstInvoicePaymentRepository {
 
   /** A separate transaction and current owner/policy readback precede any provider confirmation. */
   public ConfirmationDispatch readDispatch(ConfirmationDispatch prepared, UUID actor) {
+    var current = requireCurrentDispatch(prepared, actor);
+    return authorizedDispatch(
+        current.confirmation(),
+        current.authorization(),
+        current.invoice(),
+        true,
+        prepared.takeInitialCommandPermission());
+  }
+
+  /**
+   * Rechecks a secret-bearing provider handoff under the current Account and owner locks. This
+   * path is read-only: it neither consumes the one-shot command permission nor opens a claim.
+   */
+  public void validateHandoffAuthorization(
+      ConfirmationDispatch dispatch,
+      UUID actor,
+      AccountRecentReauthenticationEvidence evidence) {
+    Objects.requireNonNull(evidence);
+    var current = requireCurrentDispatch(dispatch, actor);
+    var context = evidence.billingContext();
+    if (context == null) throw refused();
+    requireContext(current.invoice(), actor, context, evidence);
+    long expectedAuthorizationVersion = dispatch.authorizationVersion() - 1;
+    BillingAuthorizationPurpose expectedPurpose =
+        dispatch.authorizationVersion() == 1L
+            ? dispatch.requestId().equals(dispatch.authorizationRequestId())
+                ? BillingAuthorizationPurpose.INITIAL_CONFIRMATION
+                : BillingAuthorizationPurpose.PRE_ROW_RENEWAL
+            : BillingAuthorizationPurpose.FOLLOWUP_RENEWAL;
+    if (!dispatch.independentlyRead()
+        || !dispatch.invoice().equals(current.invoice())
+        || dispatch.expectedRowVersion()
+            != current.confirmation().get("expected_row_version", Long.class)
+        || dispatch.authorizationVersion()
+            != current.authorization().get("authorization_version", Long.class)
+        || !dispatch.reauthenticationEvidenceId()
+            .equals(current.authorization().get("reauthentication_evidence_id", UUID.class))
+        || !dispatch.validUntil()
+            .equals(instant(current.authorization(), "valid_until"))
+        || !evidence.evidenceId().equals(dispatch.reauthenticationEvidenceId())
+        || !dispatch.requestId().equals(context.originalRequestId())
+        || dispatch.expectedRowVersion() != context.expectedRowVersion()
+        || !dispatch.authorizationRequestId().equals(context.authorizationRequestId())
+        || expectedAuthorizationVersion != context.expectedAuthorizationVersion()
+        || context.authorizationPurpose() != expectedPurpose) {
+      throw refused();
+    }
+  }
+
+  private CurrentDispatch requireCurrentDispatch(ConfirmationDispatch prepared, UUID actor) {
     transaction();
     UUID requestId = prepared.requestId();
     Record row =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT * FROM subscription_first_invoice_confirmations WHERE request_id = ?",
-                requestId));
+        dsl.fetchOne(
+            "SELECT * FROM subscription_first_invoice_confirmations WHERE request_id = ?",
+            requestId);
+    if (row == null) throw refused();
     var invoice = requireOwner(row.get("subscription_id", UUID.class), actor);
     requireCheckoutCurrent(invoice);
     requireAwaitingPayment(invoice, row.get("expected_row_version", Long.class));
-    Record authorization = Objects.requireNonNull(authorization(prepared.authorizationRequestId()));
+    Record authorization = authorization(prepared.authorizationRequestId());
+    if (authorization == null) throw refused();
+    Instant validUntil = instant(authorization, "valid_until");
     if (!actor.equals(row.get("account_uuid", UUID.class))
         || !requestId.equals(authorization.get("request_id", UUID.class))
         || authorization.get("authorization_version", Long.class)
             != authorizationVersion(invoice.subscriptionId())
         || authorization.get("created_transaction_id", Long.class) == transactionId()
         || !invoice.digest().equals(row.get("tuple_digest", String.class))
-        || !now().isBefore(instant(authorization, "valid_until"))) throw refused();
-    return authorizedDispatch(
-        row, authorization, invoice, true, prepared.takeInitialCommandPermission());
+        || !now().isBefore(validUntil)) throw refused();
+    return new CurrentDispatch(row, authorization, invoice);
   }
 
   /**
@@ -788,6 +839,11 @@ public final class AccountHostingFirstInvoicePaymentRepository {
         utc(observed.observedAt()));
     return new SignedOutcome(dispatch, false);
   }
+
+  private record CurrentDispatch(
+      Record confirmation,
+      Record authorization,
+      AccountHostingFirstInvoicePayment invoice) {}
 
   public record SignedOutcome(ConfirmationDispatch dispatch, boolean latePaidConflict) {}
 
