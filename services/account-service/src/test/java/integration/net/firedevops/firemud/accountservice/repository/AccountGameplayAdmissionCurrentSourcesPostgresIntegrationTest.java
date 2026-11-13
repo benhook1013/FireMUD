@@ -109,10 +109,12 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayDele
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationTokenRegistry;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
+import net.firedevops.firemud.accountservice.service.session.AccountSelectedGameplayAuthorityProjection;
 import net.firedevops.firemud.accountservice.service.session.LettuceAccountCoordinationPinnedConnectionProvider;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseEvidence;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec;
 import net.firedevops.firemud.common.account.admission.AccountGameplayAdmissionLeaseGrpcCodec.State;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.Candidate;
 import net.firedevops.firemud.common.gamesession.CanonicalGameplayAdmissionDecisionReadGrpcCodec.OriginKind;
@@ -324,6 +326,19 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   }
 
   @Test
+  void paidAdmissionLocksIssuerBeforeTenantGenerationInBothSqlPhases() throws Exception {
+    PaidFixture paid = newPaidFixture(null);
+    var prepared =
+        whileIssuerAuthorityIsLockedBeforeTenantGeneration(paid, paid::prepareFreshAcquisition);
+    var observed = prepared.observeOutsideSql();
+    var current =
+        whileIssuerAuthorityIsLockedBeforeTenantGeneration(
+            paid, () -> paid.readFreshAcquisition(observed));
+
+    assertThat(current.snapshot().tenantId()).isEqualTo(paid.hosting().tenantId().toString());
+  }
+
+  @Test
   void currentDemoHeadRemainsSelectedWhileSameTenantHasPendingHostingSubscription()
       throws Exception {
     Fixture caller = newFixture(null);
@@ -504,60 +519,115 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
   @Test
   void paidRenewalRequalifiesFreshAcquisitionAndPreservesOriginalMembershipAndLease()
       throws Exception {
-    PaidFixture paid = newPaidFixture(null);
-    var original = paid.read(paid.prepare().observeOutsideSql());
-    var lease = paid.caller().beginPendingAdmissionLease(original);
-    String stream =
-        "account:auth-authority:v1:membership/"
-            + paid.caller().account.getAccountUuid()
-            + "/"
-            + paid.hosting().tenantId();
-    var outbox = new AccountAuthorityOutboxRepository(paid.caller().dsl);
-    var firstJoin = outbox.findEvent(stream, 1L).orElseThrow();
-    var pairRepository = new AccountMembershipPairAuthorityRepository(paid.caller().dsl);
-    var pairBefore =
-        paid.caller()
-            .transaction
-            .execute(
-                ignored ->
-                    pairRepository
-                        .readPositive(
-                            paid.caller().account.getAccountUuid(), paid.hosting().tenantId())
-                        .orElseThrow());
+    try (PhysicalRedisFixture redis = PhysicalRedisFixture.start()) {
+      PaidFixture paid = newPaidFixture(redis.client());
+      var authorityProjection = selectedAuthorityProjection(paid.caller(), redis.client());
+      var joinedProjection =
+          authorityProjection.publishSelectedCurrent(
+              paid.caller().account.getAccountUuid(), paid.hosting().tenantId());
+      var projectedJoin =
+          AccountSelectedGameplayAuthorityProjection.decode(
+              joinedProjection.canonicalProjections()[3],
+              paid.caller().account.getAccountUuid(),
+              paid.hosting().tenantId());
+      assertThat(projectedJoin.sequence()).isEqualTo(BigInteger.ONE);
 
-    paid.hosting().clock().advance(Duration.ofSeconds(1));
-    paid.refresh();
-    assertThatThrownBy(paid::prepare)
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("tenantAuthorityGeneration current equality");
+      var original = paid.read(paid.prepare().observeOutsideSql());
+      var lease = paid.caller().beginPendingAdmissionLease(original);
+      String stream =
+          "account:auth-authority:v1:membership/"
+              + paid.caller().account.getAccountUuid()
+              + "/"
+              + paid.hosting().tenantId();
+      var outbox = new AccountAuthorityOutboxRepository(paid.caller().dsl);
+      var firstJoin = outbox.findEvent(stream, 1L).orElseThrow();
+      var firstJoinEvent =
+          MembershipAuthorityEventV1Codec.verify(
+              new String(firstJoin.payload(), StandardCharsets.UTF_8));
+      var pairRepository = new AccountMembershipPairAuthorityRepository(paid.caller().dsl);
+      var pairBefore =
+          paid.caller()
+              .transaction
+              .execute(
+                  ignored ->
+                      pairRepository
+                          .readPositive(
+                              paid.caller().account.getAccountUuid(), paid.hosting().tenantId())
+                          .orElseThrow());
 
-    var fresh = paid.readFreshAcquisition(paid.prepareFreshAcquisition().observeOutsideSql());
-    assertThatThrownBy(() -> fresh.requireMatchesOriginalLease(lease))
-        .isInstanceOf(IllegalStateException.class);
-    var newLease = paid.caller().beginPendingAdmissionLease(fresh);
-    fresh.requireMatchesOriginalLease(newLease);
-    assertThat(paid.caller().readLeaseOperation(lease).evidence().canonicalJson())
-        .isEqualTo(lease.canonicalJson());
-    var checkpoint = outbox.readCheckpoint(stream).orElseThrow();
-    assertThat(checkpoint.outboxSequence()).isEqualTo(2L);
-    assertThat(outbox.findEvent(stream, 1L)).contains(firstJoin);
-    var pairAfter =
-        paid.caller()
-            .transaction
-            .execute(
-                ignored ->
-                    pairRepository
-                        .readPositive(
-                            paid.caller().account.getAccountUuid(), paid.hosting().tenantId())
-                        .orElseThrow());
-    assertThat(pairAfter.membershipVersion()).isEqualTo(pairBefore.membershipVersion());
-    assertThat(pairAfter.membershipAuthorityGeneration())
-        .isEqualTo(pairBefore.membershipAuthorityGeneration());
-    assertThat(
-            paid.readFreshAcquisition(paid.prepareFreshAcquisition().observeOutsideSql())
-                .leaseSourceFields())
-        .isEqualTo(fresh.leaseSourceFields());
-    assertThat(outbox.readCheckpoint(stream)).contains(checkpoint);
+      paid.hosting().clock().advance(Duration.ofSeconds(1));
+      paid.refresh();
+      assertThatThrownBy(paid::prepare)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("tenantAuthorityGeneration current equality");
+
+      var fresh = paid.readFreshAcquisition(paid.prepareFreshAcquisition().observeOutsideSql());
+      assertThatThrownBy(() -> fresh.requireMatchesOriginalLease(lease))
+          .isInstanceOf(IllegalStateException.class);
+      var newLease = paid.caller().beginPendingAdmissionLease(fresh);
+      fresh.requireMatchesOriginalLease(newLease);
+      assertThat(paid.caller().readLeaseOperation(lease).evidence().canonicalJson())
+          .isEqualTo(lease.canonicalJson());
+      var checkpoint = outbox.readCheckpoint(stream).orElseThrow();
+      assertThat(checkpoint.outboxSequence()).isEqualTo(2L);
+      assertThat(outbox.findEvent(stream, 1L)).contains(firstJoin);
+      var checkpointRow = outbox.findEvent(stream, 2L).orElseThrow();
+      var checkpointEvent =
+          MembershipAuthorityEventV1Codec.verify(
+              new String(checkpointRow.payload(), StandardCharsets.UTF_8));
+      assertThat(checkpointEvent.eventType())
+          .isEqualTo(MembershipAuthorityEventV1Codec.AUTHORITY_CHECKPOINT_EVENT_TYPE);
+      assertThat(checkpointEvent.callerBoundAuthorityInvalidated()).isFalse();
+      assertThat(checkpointEvent.membershipLifecycleState())
+          .isEqualTo(firstJoinEvent.membershipLifecycleState());
+      assertThat(checkpointEvent.gameplayAdmissionAllowed())
+          .isEqualTo(firstJoinEvent.gameplayAdmissionAllowed());
+      assertThat(checkpointEvent.roles()).isEqualTo(firstJoinEvent.roles());
+      assertThat(checkpointEvent.membershipVersion()).isEqualTo(firstJoinEvent.membershipVersion());
+      assertThat(checkpointEvent.membershipAuthorityGeneration())
+          .isEqualTo(firstJoinEvent.membershipAuthorityGeneration());
+      assertThat(
+              Long.parseLong(
+                  checkpointEvent
+                      .authorityTuple()
+                      .tenantAuthorityGeneration()
+                      .get(paid.hosting().tenantId().toString())))
+          .isGreaterThan(
+              Long.parseLong(
+                  firstJoinEvent
+                      .authorityTuple()
+                      .tenantAuthorityGeneration()
+                      .get(paid.hosting().tenantId().toString())));
+      var pairAfter =
+          paid.caller()
+              .transaction
+              .execute(
+                  ignored ->
+                      pairRepository
+                          .readPositive(
+                              paid.caller().account.getAccountUuid(), paid.hosting().tenantId())
+                          .orElseThrow());
+      assertThat(pairAfter.membershipVersion()).isEqualTo(pairBefore.membershipVersion());
+      assertThat(pairAfter.membershipAuthorityGeneration())
+          .isEqualTo(pairBefore.membershipAuthorityGeneration());
+      assertThat(
+              paid.readFreshAcquisition(paid.prepareFreshAcquisition().observeOutsideSql())
+                  .leaseSourceFields())
+          .isEqualTo(fresh.leaseSourceFields());
+      assertThat(outbox.readCheckpoint(stream)).contains(checkpoint);
+      var paidProjection =
+          authorityProjection.publishSelectedCurrent(
+              paid.caller().account.getAccountUuid(), paid.hosting().tenantId());
+      var projectedCheckpoint =
+          AccountSelectedGameplayAuthorityProjection.decode(
+              paidProjection.canonicalProjections()[3],
+              paid.caller().account.getAccountUuid(),
+              paid.hosting().tenantId());
+      assertThat(projectedCheckpoint.sequence()).isEqualTo(BigInteger.valueOf(2L));
+      assertThat(projectedCheckpoint.membershipVersion())
+          .isEqualTo(projectedJoin.membershipVersion());
+      assertThat(projectedCheckpoint.generation()).isEqualTo(projectedJoin.generation());
+    }
   }
 
   @Test
@@ -1951,6 +2021,19 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
     return new PaidFixture(caller, hosting);
   }
 
+  private static AccountGameplayDelegationAuthorityProjection selectedAuthorityProjection(
+      Fixture caller, AccountGameplayDelegationRedisClient redis) {
+    return new AccountGameplayDelegationAuthorityProjection(
+        caller.sourceEvidence,
+        caller.manager,
+        redis,
+        caller.generations,
+        caller.memberships,
+        caller.membershipPairs,
+        caller.authorityOutbox,
+        caller.tenantAuthorityEvents);
+  }
+
   private record PaidFixture(
       Fixture caller, CanonicalHostingSubscriptionTestFixture.Fixture hosting) {
     AccountGameplayAdmissionCurrentSources.Prepared prepare() {
@@ -2109,6 +2192,41 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         instrumentLock.setObject(2, paid.hosting().instrument().instrumentUuid());
         try (ResultSet instrument = instrumentLock.executeQuery()) {
           assertThat(instrument.next()).isTrue();
+        }
+      }
+
+      Future<T> phase = executor.submit(admissionPhase);
+      int blockedPid = awaitBackendBlockedBy(caller.dsl, blockerPid, 3, TimeUnit.SECONDS);
+      assertThat(blockedPid).isPositive().isNotEqualTo(blockerPid);
+      assertTenantGenerationCanBeLocked(caller.dataSource, paid.hosting().tenantId());
+      blocker.rollback();
+      return phase.get(5, TimeUnit.SECONDS);
+    } finally {
+      executor.shutdown();
+      if (!executor.awaitTermination(5, TimeUnit.SECONDS)) executor.shutdownNow();
+    }
+  }
+
+  private <T> T whileIssuerAuthorityIsLockedBeforeTenantGeneration(
+      PaidFixture paid, Callable<T> admissionPhase) throws Exception {
+    Fixture caller = paid.caller();
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (Connection blocker = caller.dataSource.getConnection()) {
+      blocker.setAutoCommit(false);
+      int blockerPid;
+      try (Statement statement = blocker.createStatement();
+          ResultSet pid = statement.executeQuery("SELECT pg_backend_pid()")) {
+        assertThat(pid.next()).isTrue();
+        blockerPid = pid.getInt(1);
+      }
+      try (PreparedStatement issuerLock =
+          blocker.prepareStatement(
+              "SELECT generation FROM account_authority_generations WHERE scope_kind = 'ISSUER' "
+                  + "AND issuer_id = ? AND account_uuid IS NULL AND tenant_uuid IS NULL "
+                  + "FOR UPDATE")) {
+        issuerLock.setString(1, ACCOUNT_ISSUER);
+        try (ResultSet issuer = issuerLock.executeQuery()) {
+          assertThat(issuer.next()).isTrue();
         }
       }
 
@@ -3046,9 +3164,10 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
         AccountAuthEvidenceBundleRepository bundles,
         AccountGameplayDelegationRedisClient redisClient)
         throws Exception {
+      IssuerAccountSourceSnapshot candidateSource = issuanceSource;
       long now = Math.floorDiv(System.currentTimeMillis(), 1_000L);
       Optional<AccountSecurityCutoff> cutoff =
-          issuanceSource
+          candidateSource
               .account()
               .accountSecurityCutoff()
               .map(
@@ -3064,12 +3183,12 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       AccountAuthoritySnapshot authority =
           new AccountAuthoritySnapshot(
               account.getAccountUuid(),
-              issuanceSource.issuer().generation(),
-              issuanceSource.issuer().sourceVersion(),
-              issuanceSource.account().generation(),
-              issuanceSource.account().sourceVersion(),
-              issuanceSource.issuanceFence().value(),
-              issuanceSource.issuanceFence().sourceVersion(),
+              candidateSource.issuer().generation(),
+              candidateSource.issuer().sourceVersion(),
+              candidateSource.account().generation(),
+              candidateSource.account().sourceVersion(),
+              candidateSource.issuanceFence().value(),
+              candidateSource.issuanceFence().sourceVersion(),
               cutoff);
       var pending =
           new AccountGameplayDelegationIssuanceRepository.PendingIntent(
@@ -3110,7 +3229,8 @@ class AccountGameplayAdmissionCurrentSourcesPostgresIntegrationTest {
       AccountGameplayDelegationRedisClient currentRedisClient = redisClient;
       if (currentRedisClient == null) {
         var redisHarness =
-            new RedisHarness(account.getAccountUuid(), issuanceSource, getClass().getClassLoader());
+            new RedisHarness(
+                account.getAccountUuid(), candidateSource, getClass().getClassLoader());
         currentRedisClient = redisHarness.client();
       }
       var registry =
