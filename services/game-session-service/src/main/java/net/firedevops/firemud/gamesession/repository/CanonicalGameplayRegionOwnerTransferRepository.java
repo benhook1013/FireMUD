@@ -607,6 +607,52 @@ final class CanonicalGameplayRegionOwnerTransferRepository
     return List.copyOf(result);
   }
 
+  FenceDispatch fenceDispatch(
+      Item item, CanonicalGameplayProtectedIncarnationReceiver.VerifiedIncarnation before) {
+    return sql()
+        .transactionResult(
+            configuration -> {
+              var tx = DSL.using(configuration);
+              Record transfer = current(tx, item.transferId(), true);
+              requireObservation(readCurrent(tx, item.transferId(), item.ordinal()), before);
+              String incarnation = transfer.get("incarnation_digest", String.class);
+              if (incarnation != null && !incarnation.equals(before.incarnationDigest()))
+                throw unavailable();
+              Record dispatched =
+                  tx.fetchOne(
+                      "SELECT fence_dispatch_incarnation FROM "
+                          + ITEM
+                          + " WHERE execution_digest=? AND fence_dispatch_id IS NOT NULL",
+                      item.execution().digest());
+              if (dispatched != null
+                  && !before
+                      .incarnationDigest()
+                      .equals(dispatched.get("fence_dispatch_incarnation"))) throw unavailable();
+              if (dispatched != null
+                  || exists(
+                      tx,
+                      "SELECT 1 FROM "
+                          + ITEM
+                          + " WHERE execution_digest=? AND fence_readback IS NOT NULL",
+                      item.execution().digest())) return new FenceDispatch(item, null);
+              if (clock.millis() >= before.expiresAtEpochMillis()) throw unavailable();
+              UUID dispatchId = UUID.randomUUID();
+              if (tx.execute(
+                      "UPDATE "
+                          + ITEM
+                          + " SET fence_dispatch_id=?,fence_dispatch_incarnation=?"
+                          + " WHERE transfer_id=? AND target_ordinal=?"
+                          + " AND execution_digest=? AND fence_readback IS NULL AND fence_dispatch_id IS NULL",
+                      dispatchId,
+                      before.incarnationDigest(),
+                      item.transferId(),
+                      item.ordinal(),
+                      item.execution().digest())
+                  != 1) throw unavailable();
+              return new FenceDispatch(item, dispatchId);
+            });
+  }
+
   void retainFence(
       Item item,
       CanonicalGameplayOriginalNewCapacityExecutionOwner.TransferFence actual,
@@ -641,6 +687,20 @@ final class CanonicalGameplayRegionOwnerTransferRepository
               byte[] prior = row.get("fence_readback", byte[].class);
               if (prior != null && !Arrays.equals(prior, actual.canonicalReadback()))
                 throw unavailable();
+              UUID dispatchId = row.get("fence_dispatch_id", UUID.class);
+              if (dispatchId != null
+                  && (!actual.provesDispatchEnded(dispatchId)
+                      || !before.incarnationDigest().equals(row.get("fence_dispatch_incarnation"))))
+                throw unavailable();
+              if (exists(
+                  tx,
+                  "SELECT 1 FROM "
+                      + ITEM
+                      + " WHERE execution_digest=? AND fence_readback IS NOT NULL"
+                      + " AND (fence_readback IS DISTINCT FROM ? OR incarnation_digest IS DISTINCT FROM ?)",
+                  item.execution().digest(),
+                  actual.canonicalReadback(),
+                  after.incarnationDigest())) throw unavailable();
               tx.execute(
                   "UPDATE "
                       + ITEM
@@ -1390,6 +1450,24 @@ final class CanonicalGameplayRegionOwnerTransferRepository
       OriginalNewCapacityExecution execution,
       CanonicalGameplayOriginalNewCandidate candidate,
       CanonicalGameplayTenantGameplayTagRepository.Assignment assignment) {}
+
+  static final class FenceDispatch {
+    private final Item item;
+    private final UUID id;
+    private boolean submitted;
+
+    private FenceDispatch(Item item, UUID id) {
+      this.item = item;
+      this.id = id;
+    }
+
+    synchronized UUID takeSubmission(Item expected) {
+      if (item != expected) throw unavailable();
+      if (submitted) return null;
+      submitted = true;
+      return id;
+    }
+  }
 
   static final class Completion {
     private final UUID transferId;

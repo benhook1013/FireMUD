@@ -859,6 +859,41 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void rawOwnerReplacementRejectsSnapshotThatPredatesCommittedDispatch() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      String schema = proof.sql.fetchSingle("SELECT current_schema()").get(0, String.class);
+      try (var connection =
+          java.sql.DriverManager.getConnection(
+              POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+        connection.setSchema(schema);
+        connection.setAutoCommit(false);
+        DSLContext tx = DSL.using(connection, SQLDialect.POSTGRES);
+        tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+        assertThat(
+                tx.fetchSingle("SELECT count(*) FROM game_session_original_new_capacity_execution")
+                    .get(0, Long.class))
+            .isZero();
+
+        proof.seedUndeliveredDispatch(proof.execution);
+        assertThat(proof.executionState(proof.execution)).isEqualTo("INSTALL_DISPATCHED");
+        assertThatThrownBy(
+                () -> proof.rawReplaceOwner(tx, "stale-snapshot-successor", "e".repeat(64)))
+            .rootCause()
+            .isInstanceOfSatisfying(
+                org.postgresql.util.PSQLException.class,
+                failure -> {
+                  assertThat(failure.getSQLState()).isEqualTo("23514");
+                  assertThat(failure.getMessage())
+                      .contains("Region owner replacement requires READ COMMITTED owner fencing");
+                });
+        connection.rollback();
+      }
+      assertThat(proof.currentOwner()).isEqualTo(proof.prior);
+      assertThat(proof.executionState(proof.execution)).isEqualTo("INSTALL_DISPATCHED");
+    }
+  }
+
+  @Test
   void rawTransferChildInsertSerializesWithCompletionAcrossCurrentAndOlderSnapshots()
       throws Exception {
     try (var proof = new TransferSqlProof();
@@ -1606,6 +1641,43 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
   }
 
   @Test
+  void lostFenceDispatchReplyRecoversOnlyItsPhysicalWitnessAndCannotRecreateIt() throws Exception {
+    try (var proof = new TransferSqlProof()) {
+      proof.seedUndeliveredDispatch(proof.execution);
+      UUID id = proof.begin();
+      var item =
+          proof.transfers.within(
+              transferDeadline(), ignored -> proof.transfers.capture(id).getFirst());
+      long deadline = transferDeadline();
+      proof.transfers.within(
+          deadline,
+          budget -> {
+            var before = proof.receiver.observeForRegionOwnerTransfer(id, item.ordinal(), deadline);
+            var dispatch = proof.transfers.fenceDispatch(item, before);
+            var competing = proof.transfers.fenceDispatch(item, before);
+            assertThat(competing.takeSubmission(item)).isNull();
+            var owner = proof.capacity(proof.sql).forTransferBudget(budget);
+            owner.fenceForTransfer(item, dispatch, deadline);
+            return null;
+          });
+      assertThat(proof.itemImage(id)).contains("\"fence_readback\": null");
+      proof.recreateTransferOwners();
+      proof.fence(item);
+      proof.verifyPage(id);
+      proof.transfers.within(transferDeadline(), ignored -> proof.transfers.finishVerification(id));
+      var installed = proof.install(id);
+      String receipt = proof.itemImage(id);
+      String completion = proof.transferImage(id);
+      proof.losePhysicalExecution(item.execution());
+      assertThatThrownBy(() -> proof.fence(item)).isInstanceOf(IllegalStateException.class);
+      assertThat(proof.physicalExecutionExists(item.execution())).isFalse();
+      assertThat(proof.currentOwner()).isEqualTo(installed);
+      assertThat(proof.transferImage(id)).isEqualTo(completion);
+      assertThat(proof.itemImage(id)).isEqualTo(receipt);
+    }
+  }
+
+  @Test
   void recreatedRepositoryRetainsLostFenceReplyAndImmutableOriginalReceiptsAndCompletion()
       throws Exception {
     try (var proof = new TransferSqlProof()) {
@@ -2250,16 +2322,17 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private void fence(CanonicalGameplayRegionOwnerTransferRepository.Item item) {
-      var before =
-          receiver.observeForRegionOwnerTransfer(
-              item.transferId(), item.ordinal(), transferDeadline());
-      var actual = capacity(sql).fenceForTransfer(item, transferDeadline());
-      var after =
-          receiver.observeForRegionOwnerTransfer(
-              item.transferId(), item.ordinal(), transferDeadline());
+      long deadline = transferDeadline();
       transfers.within(
-          transferDeadline(),
-          ignored -> {
+          deadline,
+          budget -> {
+            var before =
+                receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), deadline);
+            var dispatch = transfers.fenceDispatch(item, before);
+            var actual =
+                capacity(sql).forTransferBudget(budget).fenceForTransfer(item, dispatch, deadline);
+            var after =
+                receiver.observeForRegionOwnerTransfer(item.transferId(), item.ordinal(), deadline);
             transfers.retainFence(item, actual, before, after);
             return null;
           });
@@ -2407,7 +2480,11 @@ class CanonicalGameplayRegionRuntimeStatusRepositoryIntegrationTest {
     }
 
     private void rawReplaceOwner(String owner, String correlation) {
-      sql.execute(
+      rawReplaceOwner(sql, owner, correlation);
+    }
+
+    private void rawReplaceOwner(DSLContext context, String owner, String correlation) {
+      context.execute(
           "UPDATE game_session_region_runtime_status SET owner_instance_id=?,executor_fence=nextval('game_session_region_executor_fence_seq'),lease_token_correlation=? WHERE tenant_id=? AND game_instance_id=? AND region_id=?",
           owner,
           correlation,

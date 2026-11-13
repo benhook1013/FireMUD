@@ -97,7 +97,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       Map<String, String> before = f.rows(f.tables());
       var evidence = f.owner().capture(request());
       var catalog = evidence.catalog();
-      assertThat(catalog.catalogEpoch()).isEqualTo(17);
+      assertThat(catalog.catalogEpoch()).isEqualTo(19);
       assertThat(
               catalog.schemaFacts().stream()
                   .filter(fact -> fact.kind() == FactKind.TABLE)
@@ -216,6 +216,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               "catalog-installation:1065.0.5",
               "catalog-installation:1065.0.6",
               "catalog-installation:1065.0.7",
+              "catalog-installation:1065.0.8",
+              "catalog-installation:1065.0.9",
               "catalog-installation:1065.1")
           .noneMatch(
               identity ->
@@ -235,6 +237,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                       || identity.contains(":1065.0.5:")
                       || identity.contains(":1065.0.6:")
                       || identity.contains(":1065.0.7:")
+                      || identity.contains(":1065.0.8:")
+                      || identity.contains(":1065.0.9:")
                       || identity.contains(":1065.1:"));
       assertThat(
               f.dsl
@@ -778,7 +782,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "CREATE MATERIALIZED VIEW catalog_probe_materialized AS SELECT id,description FROM game_manifest WITH NO DATA");
         migration(f.source, f.schema, f.history, null).migrate();
         var original = f.owner().capture(request());
-        assertThat(original.catalog().catalogEpoch()).isEqualTo(17);
+        assertThat(original.catalog().catalogEpoch()).isEqualTo(19);
         assertThat(original.catalog().schemaFacts())
             .anyMatch(
                 fact ->
@@ -930,6 +934,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.5",
             "1065.0.6",
             "1065.0.7",
+            "1065.0.8",
+            "1065.0.9",
             "1065.1")) {
       for (String change :
           List.of("success=false", "script='wrong_installation.sql'", "type='JDBC'")) {
@@ -975,6 +981,8 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
             "1065.0.5",
             "1065.0.6",
             "1065.0.7",
+            "1065.0.8",
+            "1065.0.9",
             "1065.1")) {
       try (Fixture f = fixture(null)) {
         f.dsl.execute(
@@ -997,12 +1005,12 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       var original = f.owner().capture(request());
       f.addComponent();
       for (long invalid :
-          new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19}) {
+          new long[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21}) {
         assertThatThrownBy(() -> f.installEpoch(invalid))
             .hasMessageContaining("exact classified installed schema");
       }
       // Controlled explicit owner revision, not an exposed registry/runtime mutation API.
-      f.installEpoch(18);
+      f.installEpoch(20);
       assertThatThrownBy(() -> f.owner().capture(original.request()))
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
       assertThatThrownBy(() -> f.owner().readExact(original.request()))
@@ -1010,9 +1018,9 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
       assertThat(f.evidence(original.request()))
           .isEqualTo(GameSessionRuntimeFamilyCatalogCodec.evidenceBytes(original));
       var revised = f.owner().capture(request());
-      assertThat(revised.catalog().catalogEpoch()).isEqualTo(18);
+      assertThat(revised.catalog().catalogEpoch()).isEqualTo(20);
       assertThat(revised.catalog().digest()).isNotEqualTo(original.catalog().digest());
-      assertThat(f.count(EPOCHS)).isEqualTo(18);
+      assertThat(f.count(EPOCHS)).isEqualTo(20);
     }
   }
 
@@ -1685,8 +1693,16 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
               .fetchSingle("SELECT canonical_execution FROM " + executionTable)
               .get(0, byte[].class);
 
+      migration(f.source, f.schema, f.history, "1065.0.9").migrate();
+      var beforeOriginCustody = f.owner().capture(request());
+      assertThat(beforeOriginCustody.catalog().catalogEpoch()).isEqualTo(18);
+      assertThat(f.owner().readExact(beforeOriginCustody.request())).isEqualTo(beforeOriginCustody);
+      byte[] beforeOriginCustodyEvidence = f.evidence(beforeOriginCustody.request());
+
+      // Apply the immutable child only after the parent's .0.8/.0.9 seals.
       migration(f.source, f.schema, f.history, "1065.1").migrate();
 
+      assertThat(f.evidence(beforeOriginCustody.request())).isEqualTo(beforeOriginCustodyEvidence);
       assertThat(f.rows(predecessorExecution.keySet())).isEqualTo(predecessorExecution);
       assertThat(
               f.dsl
@@ -1704,7 +1720,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .hasMessageContaining(
               "Historical execution cannot acquire fabricated pre-Account origin");
       assertThat(f.rows(predecessorExecution.keySet())).isEqualTo(predecessorExecution);
-      assertThat(f.historyRows(false)).hasSize(history.size() + 4);
+      assertThat(f.historyRows(false)).hasSize(history.size() + 6);
       assertThat(f.historyRows(false).subList(0, history.size())).isEqualTo(history);
       assertThat(f.classificationRows())
           .containsAllEntriesOf(classifications)
@@ -1723,7 +1739,7 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
           .isInstanceOf(GameSessionRuntimeFamilyCatalogRepository.CatalogConflictException.class);
 
       var current = f.owner().capture(request());
-      assertThat(current.catalog().catalogEpoch()).isEqualTo(17);
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(19);
       assertThat(f.owner().readExact(current.request())).isEqualTo(current);
       for (String family :
           List.of(
@@ -1830,6 +1846,86 @@ class GameSessionRuntimeFamilyCatalogPostgresIntegrationTest {
                   "Captured region transfer item lacks its full exact current receipt")),
           "game_session_original_new_capacity_execution.gs_capacity_close_after_final_receipt",
           "reject_gs_capacity_close_after_final_receipt()");
+    }
+  }
+
+  @Test
+  void capacityEvidenceBudgetUpgradeRetainsPredecessorAndSealsNewOwnerTables() {
+    try (Fixture f = fixture("1065.0.4")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(13);
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(EPOCHS);
+      before.remove(CLASSIFICATIONS);
+      var priorClassifications = f.classificationRows();
+      byte[] retained = f.evidence(original.request());
+
+      migration(f.source, f.schema, f.history, "1065.0.5").migrate();
+
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.classificationRows()).containsAllEntriesOf(priorClassifications);
+      assertThat(f.count("game_session_capacity_evidence_budget")).isZero();
+      assertThat(f.count("game_session_capacity_evidence_charge")).isZero();
+      assertThat(f.evidence(original.request())).isEqualTo(retained);
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(14);
+      assertThat(current.catalog().families())
+          .extracting(GameSessionRuntimeFamilyCatalog.Family::familyId)
+          .contains(
+              "game_session_capacity_evidence_budget", "game_session_capacity_evidence_charge");
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      migration(f.source, f.schema, f.history, "1065.0.5").validate();
+    }
+  }
+
+  @Test
+  void transferHistoryBudgetUpgradeSealsItsOwnerWithoutChangingRetainedEvidence() {
+    try (Fixture f = fixture("1065.0.6")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(15);
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(EPOCHS);
+      before.remove(CLASSIFICATIONS);
+      byte[] retained = f.evidence(original.request());
+
+      migration(f.source, f.schema, f.history, "1065.0.7").migrate();
+
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.count("game_session_region_transfer_history_budget")).isZero();
+      assertThat(f.evidence(original.request())).isEqualTo(retained);
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(16);
+      assertThat(current.catalog().families())
+          .extracting(GameSessionRuntimeFamilyCatalog.Family::familyId)
+          .contains("game_session_region_transfer_history_budget");
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      migration(f.source, f.schema, f.history, "1065.0.7").validate();
+    }
+  }
+
+  @Test
+  void ownerReplacementIsolationUpgradeSealsGuardAndPreservesRetainedEvidence() {
+    try (Fixture f = fixture("1065.0.7")) {
+      f.populatePredecessor();
+      var original = f.owner().capture(request());
+      assertThat(original.catalog().catalogEpoch()).isEqualTo(16);
+      var before = f.rows(f.tables());
+      before.remove(f.history);
+      before.remove(EPOCHS);
+      byte[] retained = f.evidence(original.request());
+
+      migration(f.source, f.schema, f.history, "1065.0.8").migrate();
+
+      assertThat(f.rows(before.keySet())).isEqualTo(before);
+      assertThat(f.evidence(original.request())).isEqualTo(retained);
+      var current = f.owner().capture(request());
+      assertThat(current.catalog().catalogEpoch()).isEqualTo(17);
+      assertThat(f.owner().readExact(current.request())).isEqualTo(current);
+      migration(f.source, f.schema, f.history, "1065.0.8").validate();
     }
   }
 
