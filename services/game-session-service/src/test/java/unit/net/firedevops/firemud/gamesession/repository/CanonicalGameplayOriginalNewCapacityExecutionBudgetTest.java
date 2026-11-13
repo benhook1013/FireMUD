@@ -196,7 +196,11 @@ class CanonicalGameplayOriginalNewCapacityExecutionBudgetTest {
                       budget -> {
                         owner
                             .forTransferBudget(budget)
-                            .withTransferReadback(ignored -> readbackReturned.countDown());
+                            .withTransferReadback(
+                                ignored -> {
+                                  readbackReturned.countDown();
+                                  return true;
+                                });
                         return true;
                       }));
       try {

@@ -3117,7 +3117,8 @@ class CanonicalGameplayOriginalNewFinalAdmissionOwnerIntegrationTest {
                           CLOCK,
                           tags,
                           () -> delayed.connect(ByteArrayCodec.INSTANCE),
-                          () -> frozenDeadline - CLOCK.millis());
+                          () -> frozenDeadline - CLOCK.millis(),
+                          java.util.concurrent.CompletableFuture::join);
                   try (var ignored =
                       owner.finalizeOriginalNewOnce(
                           source, template, account, issuer, controlledCapacity, frozenDeadline)) {

@@ -1416,7 +1416,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
         if (actual != null) Arrays.fill(actual, (byte) 0);
       }
     } finally {
-      connection.closeAsync();
+      budget.awaitAsyncClose(connection.closeAsync());
     }
   }
 
@@ -1429,7 +1429,7 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
       principal(commands);
       return readExecution(commands, execution, tag);
     } finally {
-      connection.closeAsync();
+      budget.awaitAsyncClose(connection.closeAsync());
     }
   }
 
@@ -1579,7 +1579,13 @@ public final class CanonicalGameplayOriginalNewCapacityExecutionOwner {
 
   private CanonicalGameplayOriginalNewFinalAdmissionRedisOwner scopedFinalOwner() {
     return new CanonicalGameplayOriginalNewFinalAdmissionRedisOwner(
-        redis, scripts, clock, scopedTags(), this::connectForRead, budget::remainingMillis);
+        redis,
+        scripts,
+        clock,
+        scopedTags(),
+        this::connectForRead,
+        budget::remainingMillis,
+        budget::awaitAsyncClose);
   }
 
   private <T> T within(
