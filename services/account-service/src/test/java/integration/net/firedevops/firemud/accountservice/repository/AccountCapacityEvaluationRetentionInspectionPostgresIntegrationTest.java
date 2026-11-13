@@ -1,15 +1,33 @@
-package integration.net.firedevops.firemud.accountservice.repository;
+package net.firedevops.firemud.accountservice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture;
 import java.sql.SQLException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.repository.AccountCanonicalRuntimeMembershipSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentity;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
-import net.firedevops.firemud.accountservice.service.AccountCapacityEvaluationRetentionInspectionOwner;
 import net.firedevops.firemud.accountservice.service.AccountCapacityEvaluationRetentionInspectionOwner.Blocker;
+import net.firedevops.firemud.common.account.authority.RuntimePlayerAdmissionEntitlementEvidence;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionDigest;
+import net.firedevops.firemud.common.account.capacity.CapacityAdmissionTestFixture;
+import net.firedevops.firemud.common.account.capacity.TenantCapacityAdmission;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
@@ -46,6 +64,154 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
   void freshAndPopulatedForwardMigrationPreserveRowsAndGuardsWhileBoundingObservations() {
     verifyForwardMigration(false);
     verifyForwardMigration(true);
+  }
+
+  @Test
+  void policyQualifiedInspectionFindsRearmedOldEvaluationAndLeavesUnrelatedRowCandidate()
+      throws InterruptedException {
+    String schema = "capacity_retention_history_" + UUID.randomUUID().toString().replace("-", "");
+    new JdbcTemplate(POSTGRES.dataSource()).execute("CREATE SCHEMA " + schema);
+    var data = POSTGRES.dataSource(schema);
+    try {
+      configure(data, schema).load().migrate();
+      var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
+      var transactions = new DataSourceTransactionManager(data);
+      var write = new TransactionTemplate(transactions);
+      FreshTenantCreationEvidence tenant = bootstrapFreshTenant(dsl, write);
+
+      Instant priorAt = Instant.now();
+      var prior =
+          playerRequest(
+              tenant.canonicalTenantId(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              priorAt,
+              priorAt.plusSeconds(10));
+      var unrelated =
+          playerRequest(
+              tenant.canonicalTenantId(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              priorAt.minus(Duration.ofDays(10)),
+              priorAt.minus(Duration.ofDays(10)).plusSeconds(90));
+      UUID reservationId = UUID.randomUUID();
+      UUID recoveryOwner = UUID.randomUUID();
+      String readbackDigest = "b".repeat(64);
+      write.executeWithoutResult(
+          status -> {
+            insertEvaluation(dsl, prior, priorAt, priorAt.plusSeconds(10));
+            insertEvaluation(
+                dsl,
+                unrelated,
+                unrelated.evidence().evaluatedAt(),
+                unrelated.evidence().expiresAt());
+            dsl.execute(
+                "INSERT INTO account_tenant_capacity_reservations "
+                    + "(tenant_uuid, request_id, admission_id, reservation_id, owner_service, caller_workload, "
+                    + "admission_attempt_id, capacity_rearm_fence, reservation_fence, mutation_digest, "
+                    + "canonical_payload, evaluation_identity, capacity_delta, expires_at, state, execution_status, "
+                    + "reconcile_deadline) VALUES (?, ?, ?, ?, 'game-session-service', ?, ?, 1, 1, ?, ?, ?, 1, "
+                    + "?::timestamptz, 'RESERVED', 'OWNER_EXECUTION_PENDING', ?::timestamptz)",
+                prior.identity().tenantId(),
+                prior.identity().requestId(),
+                prior.identity().admissionId(),
+                reservationId,
+                prior.evidence().callerWorkload(),
+                prior.admissionAttemptId(),
+                prior.mutationDigest(),
+                CapacityAdmissionDigest.preimage(prior),
+                prior.evidence().evaluationIdentity(),
+                prior.evidence().expiresAt().toString(),
+                prior.evidence().expiresAt().plusSeconds(60).toString());
+            dsl.execute(
+                "UPDATE account_tenant_capacity_usage SET held_units = 1, usage_revision = 2 "
+                    + "WHERE tenant_uuid = ? AND owner_service = 'game-session-service'",
+                tenant.canonicalTenantId());
+          });
+
+      waitUntil(prior.evidence().expiresAt().plusMillis(100));
+      Instant nextAt = Instant.now();
+      var nextSeed =
+          playerRequest(
+              tenant.canonicalTenantId(),
+              prior.identity().requestId(),
+              prior.identity().admissionId(),
+              UUID.randomUUID(),
+              nextAt,
+              nextAt.plusSeconds(60));
+      var next =
+          new TenantCapacityAdmission.Request(
+                  prior.identity(),
+                  nextSeed.admissionAttemptId(),
+                  2,
+                  prior.targetNamespace(),
+                  prior.context(),
+                  prior.operation(),
+                  prior.priorShape(),
+                  prior.requestedShape(),
+                  nextSeed.evidence(),
+                  prior.capacityDelta(),
+                  null)
+              .withDigest();
+      byte[] ownerReadback =
+          "controlled-terminal-no-commit".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+      write.executeWithoutResult(
+          status -> {
+            insertEvaluation(dsl, next, next.evidence().evaluatedAt(), next.evidence().expiresAt());
+            dsl.execute(
+                "UPDATE account_tenant_capacity_reservations SET recovery_owner = ?, "
+                    + "recovery_claim_fence = 1, recovery_claim_expires_at = clock_timestamp() + INTERVAL '1 day', "
+                    + "execution_status = 'NOT_EXECUTED_AFTER_AUTHORIZATION', owner_readback = ?, "
+                    + "owner_readback_digest = ? WHERE tenant_uuid = ? AND request_id = ? AND admission_id = ?",
+                recoveryOwner,
+                ownerReadback,
+                readbackDigest,
+                prior.identity().tenantId(),
+                prior.identity().requestId(),
+                prior.identity().admissionId());
+          });
+      var capacityOwner = capacityOwner(dsl, transactions, next);
+      var rearmed = capacityOwner.rearm(prior, next, recoveryOwner, 1L);
+      assertThat(rearmed.evaluationIdentity()).isEqualTo(next.evidence().evaluationIdentity());
+
+      List<String> beforeObservation = rowImages(dsl);
+      var owner = new AccountCapacityEvaluationRetentionInspectionOwner(dsl, transactions);
+      Instant policyObservedAt = Instant.now().minusSeconds(1);
+      var schedule =
+          new AccountCapacityEvaluationRetentionPolicy.Schedule(
+              "physical-fixture/v1",
+              Duration.ofDays(30),
+              Duration.ofDays(2),
+              Duration.ofDays(3),
+              Duration.ofDays(4),
+              Duration.ofDays(5),
+              Duration.ofDays(6));
+      var safety =
+          new AccountCapacityEvaluationRetentionPolicy.Safety(
+              "physical-fixture/v1",
+              policyObservedAt,
+              policyObservedAt.plus(Duration.ofHours(1)),
+              policyObservedAt.minus(Duration.ofDays(1)),
+              Map.of(
+                  prior.evidence().evaluationIdentity(),
+                      AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR,
+                  next.evidence().evaluationIdentity(),
+                      AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR,
+                  unrelated.evidence().evaluationIdentity(),
+                      AccountCapacityEvaluationRetentionPolicy.Hold.CLEAR));
+
+      var observation = owner.observe(10, schedule, safety);
+
+      assertThat(observation.sampledRows()).isEqualTo(3);
+      assertThat(observation.blockers().get(Blocker.RETAINED_RESERVATION_SCOPE).rows())
+          .isEqualTo(2);
+      assertThat(observation.candidates().rows()).isEqualTo(1);
+      assertThat(rowImages(dsl)).isEqualTo(beforeObservation);
+    } finally {
+      new JdbcTemplate(POSTGRES.dataSource()).execute("DROP SCHEMA " + schema + " CASCADE");
+    }
   }
 
   private static void verifyForwardMigration(boolean populated) {
@@ -311,6 +477,185 @@ class AccountCapacityEvaluationRetentionInspectionPostgresIntegrationTest {
               request,
               admission);
         });
+  }
+
+  private static FreshTenantCreationEvidence bootstrapFreshTenant(
+      DSLContext dsl, TransactionTemplate write) {
+    FreshTenantCreationEvidence tenant = source();
+    UUID bootstrap = UUID.randomUUID();
+    write.executeWithoutResult(
+        status -> {
+          UUID account =
+              dsl.fetchSingle(
+                      "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, 'test-password') RETURNING account_uuid",
+                      "lineage-" + UUID.randomUUID(),
+                      "lineage-" + UUID.randomUUID() + "@example.test")
+                  .get(0, UUID.class);
+          new FreshTenantIdentityAssociationRepository(dsl, "prod").importVerified(tenant);
+          dsl.execute(
+              "INSERT INTO account_tenant_creation_bootstrap_operations "
+                  + "(request_id, schema_version, initiating_account_uuid, tenant_uuid, creation_request_id, "
+                  + "creation_operation_id, account_authorization_operation_id, account_authorization_digest, "
+                  + "creator_evidence_digest, creator_evidence_payload, source_snapshot_payload, source_snapshot_digest, "
+                  + "request_payload, request_digest, baseline_membership_version, baseline_membership_authority_generation, "
+                  + "baseline_event_sequence, status) "
+                  + "VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0, 'IN_PROGRESS')",
+              bootstrap,
+              account,
+              tenant.canonicalTenantId(),
+              tenant.creationRequestId(),
+              tenant.operationId(),
+              bootstrap,
+              digest('d'),
+              tenant.evidenceDigest(),
+              new byte[] {1},
+              new byte[] {2},
+              digest('e'),
+              new byte[] {3},
+              digest('f'));
+          dsl.execute(
+              "UPDATE account_tenant_creation_bootstrap_operations SET membership_id = 1, membership_version = 2, "
+                  + "membership_authority_generation = 1, membership_lifecycle_state = 'ACTIVE', gameplay_admission_allowed = FALSE, "
+                  + "membership_roles_payload = convert_to('[\"tenantAdmin\"]', 'UTF8'), event_stream_key = ?, "
+                  + "event_request_id = ?, event_sequence = 1, event_id = ?, event_digest = ?, event_payload = ?, "
+                  + "audit_event_id = ?, audit_event_type = 'ACCOUNT_TENANT_CREATOR_BOOTSTRAPPED', "
+                  + "audit_occurred_at = CURRENT_TIMESTAMP, audit_payload_digest = ?, audit_payload = ?, result_payload = ?, "
+                  + "result_digest = ?, status = 'COMMITTED' WHERE request_id = ?",
+              "account:auth-authority:v1:membership/" + account + "/" + tenant.canonicalTenantId(),
+              bootstrap.toString(),
+              "lineage-bootstrap-" + bootstrap,
+              digest('1'),
+              new byte[] {4},
+              UUID.randomUUID(),
+              digest('2'),
+              new byte[] {5},
+              new byte[] {6},
+              digest('3'),
+              bootstrap);
+        });
+    return tenant;
+  }
+
+  @SuppressWarnings("unchecked")
+  private static AccountTenantCapacityOwner capacityOwner(
+      DSLContext dsl,
+      DataSourceTransactionManager transactions,
+      TenantCapacityAdmission.Request request) {
+    var player = (TenantCapacityAdmission.PlayerContext) request.context();
+    var parsed =
+        RuntimePlayerAdmissionEntitlementEvidence.parseCanonical(
+            request.evidence().canonicalBytes());
+    AccountRepository accounts = mock(AccountRepository.class);
+    when(accounts.findByAccountUuidForUpdate(player.accountId()))
+        .thenReturn(Optional.of(new Account()));
+    AccountCanonicalRuntimeMembershipSnapshotRepository memberships =
+        mock(AccountCanonicalRuntimeMembershipSnapshotRepository.class);
+    when(memberships.readCurrent(player.accountId(), player.tenantId()))
+        .thenReturn(parsed.membershipSource());
+
+    Map<String, Object> evidenceFields = request.evidence().fields();
+    Map<String, Object> sourceReferences =
+        (Map<String, Object>) evidenceFields.get("sourceReferences");
+    Map<String, Object> target = (Map<String, Object>) evidenceFields.get("target");
+    UUID tokenJti = UUID.fromString((String) sourceReferences.get("callerTokenJti"));
+    UUID callerContextId = UUID.fromString((String) sourceReferences.get("callerContextId"));
+    UUID operationId = UUID.fromString((String) sourceReferences.get("callerOperationId"));
+    long now = Instant.now().getEpochSecond();
+    var issuanceIdentity =
+        new AccountGameplayDelegationPendingIdentity(
+            operationId,
+            request.identity().requestId(),
+            player.accountId(),
+            request.evidence().callerWorkload(),
+            callerContextId,
+            new AccountGameplayCredentialRequestBinding(1, "fixture", "f".repeat(64)),
+            "e".repeat(64),
+            tokenJti,
+            now - 10,
+            now - 10,
+            now + 3600);
+    var issuance =
+        mock(AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData.class);
+    when(issuance.identity()).thenReturn(issuanceIdentity);
+    when(issuance.tokenSha256()).thenReturn((String) sourceReferences.get("callerTokenSha256"));
+    when(issuance.canonicalRegistryRecordSha256())
+        .thenReturn((String) sourceReferences.get("callerRegistryRecordSha256"));
+    when(issuance.commitProofSha256())
+        .thenReturn((String) sourceReferences.get("callerCommitProofSha256"));
+    AccountGameplayDelegationIssuanceRepository issuances =
+        mock(AccountGameplayDelegationIssuanceRepository.class);
+    when(issuances.readCurrentCommittedCandidateByJti(tokenJti)).thenReturn(Optional.of(issuance));
+
+    var scope = mock(AccountConnectScopeRepository.CanonicalConnectScopeEvidence.class);
+    when(scope.accountUuid()).thenReturn(player.accountId());
+    when(scope.tenantUuid()).thenReturn(player.tenantId());
+    when(scope.scopeDigest()).thenReturn((String) sourceReferences.get("scopeDigest"));
+    when(scope.gameInstanceUuid()).thenReturn(player.gameInstanceId());
+    when(scope.playableStateNamespaceUuid()).thenReturn(player.playableStateNamespaceId());
+    when(scope.realmId()).thenReturn(player.realmId());
+    when(scope.playableStateScope()).thenReturn(player.playableStateScope());
+    when(scope.connectScopeExpiresAt()).thenReturn((String) target.get("connectScopeExpiresAt"));
+    AccountConnectScopeRepository scopes = mock(AccountConnectScopeRepository.class);
+    when(scopes.findCanonicalEvidenceByTokenHash(parsed.verifiedConnectScopeTokenHash()))
+        .thenReturn(Optional.of(scope));
+
+    return new AccountTenantCapacityOwner(
+        dsl, accounts, memberships, issuances, scopes, transactions, Clock.systemUTC(), "prod");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static TenantCapacityAdmission.Request playerRequest(
+      UUID tenantId,
+      UUID requestId,
+      UUID admissionId,
+      UUID attemptId,
+      Instant at,
+      Instant scopeExpiry) {
+    var template = CapacityAdmissionTestFixture.playerRequest();
+    var original = (TenantCapacityAdmission.PlayerContext) template.context();
+    var player =
+        new TenantCapacityAdmission.PlayerContext(
+            original.accountId(),
+            tenantId,
+            original.playableStateNamespaceId(),
+            original.gameInstanceId(),
+            original.characterId(),
+            original.sessionId(),
+            original.realmId(),
+            requestId,
+            original.playableStateScope());
+    var target =
+        new LinkedHashMap<String, Object>(
+            (Map<String, Object>) template.evidence().fields().get("target"));
+    target.put("tenantId", tenantId.toString());
+    target.put("evaluatedAt", at.toString());
+    target.put("connectScopeExpiresAt", scopeExpiry.toString());
+    return CapacityAdmissionTestFixture.playerRequestFor(
+        player, admissionId, attemptId, "prod", target, at);
+  }
+
+  private static void insertEvaluation(
+      DSLContext dsl,
+      TenantCapacityAdmission.Request request,
+      Instant evaluatedAt,
+      Instant expiresAt) {
+    dsl.execute(
+        "INSERT INTO account_tenant_capacity_evaluations "
+            + "(evaluation_identity, snapshot_identity, tenant_uuid, caller_workload, owner_service, "
+            + "canonical_evidence, evaluated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?::timestamptz, ?::timestamptz)",
+        request.evidence().evaluationIdentity(),
+        request.evidence().snapshotIdentity(),
+        request.identity().tenantId(),
+        request.evidence().callerWorkload(),
+        request.context().owner().service(),
+        request.evidence().canonicalBytes(),
+        evaluatedAt.toString(),
+        expiresAt.toString());
+  }
+
+  private static void waitUntil(Instant deadline) throws InterruptedException {
+    long remainingMillis = Duration.between(Instant.now(), deadline).toMillis();
+    if (remainingMillis > 0) Thread.sleep(remainingMillis);
   }
 
   private static FreshTenantCreationEvidence source() {
